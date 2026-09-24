@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 
 from deps import get_storage
 from core.distiller import Distiller
+from core.text_manager import new_session_entry
 from routers.auth import get_current_user
 from routers.card import router as card_router
 from routers.history import router as history_router
@@ -389,7 +390,7 @@ class TestHoleOwnershipRegression:
         """
         from deps import get_sessions
         sid = f"ses_mem_{uuid.uuid4().hex}"
-        get_sessions()[sid] = {"user_id": user_a, "engine": object()}
+        get_sessions()[sid] = new_session_entry(object(), None, user_a)
         try:
             r = client_b.post("/api/chat/revoke", json={"session_id": sid, "message_id": 1})
         finally:

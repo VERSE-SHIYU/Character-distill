@@ -45,7 +45,8 @@ _main_loop: asyncio.AbstractEventLoop | None = None
 _llm: LLMAdapter | None = None
 _rag_config: dict[str, Any] = _config["rag"]
 
-# {session_id: {"engine": ChatEngine, "card": CharacterCard}}
+# {session_id: 一对一会话条目} —— 条目的字段清单只在 `core.text_manager.new_session_entry`
+# 一处定义，别处不许手搓 dict（漏字段的后果见该工厂的 docstring）
 # Transitional: kept until chat_engine migrates to storage-backed history
 _sessions: dict[str, dict[str, Any]] = {}
 
@@ -298,6 +299,41 @@ def touch_session(session: dict) -> None:
 _SESSION_IDLE_TTL = int(os.getenv("SESSION_IDLE_TTL_SECONDS", "3600"))
 
 
+def _outbox_of(sess: Any) -> Any:
+    """会话条目上的补写队列 —— 一对一那张表是 dict，群聊那张表是 `GroupSession` 对象。
+
+    两种形状都认，是为了让空闲清理与关停**共用同一个出口**（下面那个函数）：各写一遍的
+    话，改了一处另一处会悄悄漏。
+
+    不做「没有队列 → None」的兜底：两种条目都**定义**了 `outbox`（一对一在
+    `core/text_manager.new_session_entry`，群聊在 `GroupSession.__init__`），缺了就是
+    构造点漏了 —— 那要当场 `KeyError` 暴露，而不是静默跳过这一笔补写。
+    """
+    if isinstance(sess, dict):
+        return sess["outbox"]
+    return sess.outbox
+
+
+async def flush_outboxes(sessions: dict[str, Any]) -> int:
+    """把这张会话表里所有带队列的会话补写掉，返回补上的条数（只用于日志）。
+
+    **空闲清理与关停共用这一个出口**：会话一旦从内存里消失，队列跟着消失 —— 没补上的
+    消息就永久丢了。
+
+    存储**每次调用时才解析**（`get_storage()`），与 `_assemble_text_manager` 同口径：
+    队列不持有存储实例（缺陷 117）。
+    """
+    ping = get_storage().ping
+    flushed = 0
+    for sess in list(sessions.values()):
+        outbox = _outbox_of(sess)
+        if not outbox.has_pending:
+            continue
+        report = await outbox.flush(ping=ping)
+        flushed += len(report.flushed)
+    return flushed
+
+
 async def _session_cleanup_loop() -> None:
     """Periodically evict idle sessions from the in-memory cache.
 
@@ -315,6 +351,12 @@ async def _session_cleanup_loop() -> None:
                 continue
             lk = sess.get("lock")
             if lk is not None and lk.locked():
+                continue
+            # 先补写再出队：出队之后队列就没了，没补上的消息永久丢。
+            await flush_outboxes({sid: sess})
+            if _outbox_of(sess).has_pending:
+                # 还是没补上（库不可达 → flush 有意整队保留，不是这条写不进去）：本轮跳过，
+                # 下一轮再看 —— 与上面「持锁就跳过」同形。出队 = 队列没了 = 这些消息永久丢。
                 continue
             sessions.pop(sid, None)
             evicted += 1

@@ -1,7 +1,7 @@
 -- ============================================================
--- 026 — 退役 texts.content_resolved / coref_resolved：共指消解整条链路已删
+-- 027 — 退役 texts.content_resolved / coref_resolved：共指消解整条链路已删
 --
--- 与 SQLite 092 同一主题、同一语义。两列由 PG `001_init.sql` 的 CREATE TABLE 直接
+-- 与 SQLite 094 同一主题、同一语义。两列由 PG `001_init.sql` 的 CREATE TABLE 直接
 -- 声明（SQLite 侧是 056 加的），只服务已删除的 `Distiller.coref_resolve` /
 -- `DISTILL_USE_COREF` 开关，字段再无写入方。
 --

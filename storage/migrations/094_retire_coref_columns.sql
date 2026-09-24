@@ -1,4 +1,4 @@
--- 092 — 退役 texts.content_resolved / coref_resolved：共指消解整条链路已删
+-- 094 — 退役 texts.content_resolved / coref_resolved：共指消解整条链路已删
 --
 -- 两列由 056 加、只服务 `Distiller.coref_resolve` 与 `DISTILL_USE_COREF` 开关；
 -- 两者连同「按开关选原文/消解版」的读路径一并删除，字段再无写入方。

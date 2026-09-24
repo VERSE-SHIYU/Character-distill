@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 from core.chat_engine import ChatEngine
 from core.group_session import GroupSession
 from core.schema import CharacterCard
+from core.text_manager import new_session_entry
 from deps import get_storage
 from storage.sqlite_store import SQLiteStore
 
@@ -198,9 +199,9 @@ def test_T4_refresh_reaches_only_that_users_one_to_one_sessions(user_llm):
 
     mine_a, mine_b = _engine(_StubLLM()), _engine(_StubLLM())
     theirs = _engine(_StubLLM())
-    deps.get_sessions()["s_mine_a"] = {"engine": mine_a, "user_id": "u_owner"}
-    deps.get_sessions()["s_mine_b"] = {"engine": mine_b, "user_id": "u_owner"}
-    deps.get_sessions()["s_theirs"] = {"engine": theirs, "user_id": "u_other"}
+    deps.get_sessions()["s_mine_a"] = new_session_entry(mine_a, None, "u_owner")
+    deps.get_sessions()["s_mine_b"] = new_session_entry(mine_b, None, "u_owner")
+    deps.get_sessions()["s_theirs"] = new_session_entry(theirs, None, "u_other")
 
     swapped = asyncio.run(deps.refresh_user_llm("u_owner", _FakeStorage()))
 
@@ -239,7 +240,7 @@ def test_T6_saving_settings_swaps_the_live_session(store, client, owner, user_ll
 
     _seed_user(store, owner)
     engine = _engine(_StubLLM())
-    deps.get_sessions()["s_save"] = {"engine": engine, "user_id": owner}
+    deps.get_sessions()["s_save"] = new_session_entry(engine, None, owner)
 
     r = _save(client)
 
@@ -257,7 +258,7 @@ def test_T7_refresh_failure_does_not_undo_the_save(store, client, owner, user_ll
     import deps
 
     _seed_user(store, owner)
-    deps.get_sessions()["s_boom"] = {"engine": _ExplodingEngine(), "user_id": owner}
+    deps.get_sessions()["s_boom"] = new_session_entry(_ExplodingEngine(), None, owner)
 
     r = _save(client)
 
@@ -285,7 +286,7 @@ def test_T8_save_path_does_not_run_preflight(store, client, owner, monkeypatch):
     monkeypatch.setattr(deps, "get_llm", lambda: None)
 
     engine = _engine(_StubLLM())
-    deps.get_sessions()["s_refuse"] = {"engine": engine, "user_id": owner}
+    deps.get_sessions()["s_refuse"] = new_session_entry(engine, None, owner)
 
     r = _save(client)
 
@@ -309,8 +310,8 @@ def test_T10_hot_reload_leaves_self_configured_sessions_alone(monkeypatch):
     old_global, new_global = _StubLLM(), _StubLLM(NEW_MODEL)
     user_own = _StubLLM()
     on_global, on_user = _engine(old_global), _engine(user_own)
-    deps.get_sessions()["s_global"] = {"engine": on_global, "user_id": "u1"}
-    deps.get_sessions()["s_user"] = {"engine": on_user, "user_id": "u1"}
+    deps.get_sessions()["s_global"] = new_session_entry(on_global, None, "u1")
+    deps.get_sessions()["s_user"] = new_session_entry(on_user, None, "u1")
 
     monkeypatch.setattr(deps, "_llm", old_global)
     monkeypatch.setattr(deps, "_make_global_llm", lambda: new_global)

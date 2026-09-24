@@ -1180,13 +1180,31 @@ class PostgresStore(StorageBase):
             raise StoreError("delete_card", exc) from exc
 
     async def restore_card(self, card_id: str) -> bool:
-        """Restore a soft-deleted card."""
+        """Restore a soft-deleted card, undoing its cross-border delete in the same transaction.
+
+        Two halves of the undo, both required for the peer to end up with the card:
+          - a `card_delete` outbox row may still be queued (a resync tick is 60s
+            apart); left in place, the peer deletes the card we just restored;
+          - `cross_border_synced` is still 1 from the earlier publish, and the card
+            resync only picks `= 0` rows — so a replica the peer already deleted
+            can never be rebuilt without resetting the flag.
+
+        No `visibility` branch: a private card has no queued delete, and resetting
+        the flag on one is harmless since the resync query is public-only anyway.
+        """
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE cards SET deleted_at = NULL WHERE id = $1",
-                    card_id,
-                )
+                async with conn.transaction():
+                    await conn.execute(
+                        """UPDATE cards SET deleted_at = NULL, cross_border_synced = 0
+                           WHERE id = $1""",
+                        card_id,
+                    )
+                    await conn.execute(
+                        """DELETE FROM cross_border_delete_outbox
+                           WHERE op_type = 'card_delete' AND target_id = $1""",
+                        card_id,
+                    )
             return True
         except Exception as exc:
             print(f"[PostgresStore] Restore card failed: {exc}")
@@ -1601,18 +1619,35 @@ class PostgresStore(StorageBase):
     async def save_message(self, session_id: str, role: str, content: str, rag_context: str,
                            *,
                            reply_to_id: int | None = None, reply_to_preview: str = "",
-                           retracted: bool = False, evidence: str | None = None) -> dict:
-        """Save one message and touch session updated_at."""
+                           retracted: bool = False, evidence: str | None = None,
+                           client_key: str | None = None) -> dict:
+        """Save one message and touch session updated_at.
+
+        `client_key` 非空时幂等：先在**同一事务内**按 `(session_id, client_key)` 查，命中就
+        原样返回那一行、不再插入。补写队列（`core/message_outbox.py`）靠它把「重放」收敛成
+        一行；部分唯一索引是兜底（迁移 026），不是主路径。为 None 时行为与加它之前一字不差。
+        """
         try:
             async with await self._connect() as conn:
                 async with conn.transaction():
+                    if client_key is not None:
+                        dup = await conn.fetchrow(
+                            """
+                            SELECT id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview, retracted, evidence
+                            FROM messages
+                            WHERE session_id = $1 AND client_key = $2
+                            """,
+                            session_id, client_key,
+                        )
+                        if dup is not None:
+                            return self._row_to_dict(dup) or {}
                     row = await conn.fetchrow(
                         """
-                        INSERT INTO messages (session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted, evidence)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                        INSERT INTO messages (session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted, evidence, client_key)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
                         RETURNING id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview, retracted, evidence
                         """,
-                        session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted, evidence,
+                        session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted, evidence, client_key,
                     )
                     await conn.execute(
                         "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = $1",
@@ -1773,15 +1808,26 @@ class PostgresStore(StorageBase):
         self, group_id: str, speaker: str, role: str, content: str,
         *,
         speaker_card_id: str = "", reply_to_id: int | None = None,
-        reply_to_preview: str = "",
+        reply_to_preview: str = "", client_key: str | None = None,
     ) -> int:
+        """`client_key` 非空时幂等，语义与 `save_message` 同一份（见那里的 docstring）。
+
+        去重范围是 `(group_id, client_key)`：不同群用同一个 key 各写一行。
+        """
         try:
             async with await self._connect() as conn:
+                if client_key is not None:
+                    dup = await conn.fetchrow(
+                        "SELECT id FROM group_messages WHERE group_id = $1 AND client_key = $2",
+                        group_id, client_key,
+                    )
+                    if dup is not None:
+                        return dup[0]
                 row = await conn.fetchrow(
-                    """INSERT INTO group_messages (group_id, speaker, role, content, speaker_card_id, reply_to_id, reply_to_preview)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    """INSERT INTO group_messages (group_id, speaker, role, content, speaker_card_id, reply_to_id, reply_to_preview, client_key)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                        RETURNING id""",
-                    group_id, speaker, role, content, speaker_card_id, reply_to_id, reply_to_preview,
+                    group_id, speaker, role, content, speaker_card_id, reply_to_id, reply_to_preview, client_key,
                 )
                 return row[0]
         except Exception as exc:

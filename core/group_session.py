@@ -7,6 +7,7 @@ from typing import Any
 
 from core.chat_engine import ChatEngine
 from core.context_engine import _count_tokens
+from core.message_outbox import MessageOutbox
 
 MAX_HISTORY_TOKENS = 2000
 
@@ -36,6 +37,10 @@ class GroupSession:
         # 自己的群聊被判 404。失败即关：响亮且当场暴露，不会静默放行。
         self.user_id = user_id
         self.group_history: list[dict[str, Any]] = []
+        # 写失败的消息留在这里，等下一次写 / 重试接口 / 关停时按原顺序补上。
+        # 和一对一一样是**会话级**的：群聊的消息顺序同样由 messages.id 决定，乱序补写
+        # 会让读回来的历史不是用户看到的那个顺序。构造点只有本类，故不需要 setdefault。
+        self.outbox = MessageOutbox()
         self.lock = asyncio.Lock()
         self.user_persona_type = user_persona_type
         self.user_persona_card_id = user_persona_card_id

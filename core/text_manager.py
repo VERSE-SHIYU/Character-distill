@@ -16,11 +16,33 @@ from core.character_roster import aliases_for, cached_characters, resolve_charac
 from core.chat_engine import ChatEngine
 from core.chat_preprocessor import ChatPreprocessor
 from core.distiller import Distiller
+from core.message_outbox import MessageOutbox
 from core.moderation.card_guard import GuardVerdict, guard_card_obj
 from core.schema import CharacterCard
 from core.text_failure import TEXT_FAILURE_MESSAGES as _MSG
 from core.utils import try_record_usage
 from storage.base import StorageBase, new_review_id
+
+
+def new_session_entry(engine: Any, card: Any, user_id: str) -> dict[str, Any]:
+    """一对一会话条目的**唯一**定义 —— 建会话和测试夹具都从这里拿，别处不许手搓 dict。
+
+    `lock` / `outbox` / `retract_state` 都是条目的一部分，不是「谁用到谁 `setdefault`」：
+    队列跟着会话走（`history.py` 与 `_ensure_session` 里「把引擎挪到原 session_id 名下」
+    那一步整份搬条目，队列一起搬）；锁每个会话一把，`setdefault` 版会在条目漏带时**静默
+    补上**，看着没事，漏掉的却是「建会话那条路没带上」这件事本身。
+
+    `message_ids` 曾经也在这里 —— 它**只写不读**（没有任何地方靠它做事），已删。
+
+    `user_id` 与 `card` 没有默认值：漏登记属主的后果是**属主本人**被挡在门外（响亮，当场
+    暴露），而不是所有登录用户都能进来（静默）；`card` 同理，缺了会当场露出来。
+    """
+    return {
+        "engine": engine, "card": card, "user_id": user_id,
+        "lock": asyncio.Lock(),
+        "retract_state": {"last_retract_turn": -999, "retract_count": 0, "turn_index": 0},
+        "outbox": MessageOutbox(),
+    }
 
 
 class TextManager:
@@ -621,5 +643,5 @@ class TextManager:
             storage=self._storage,
         )
         session_id = uuid.uuid4().hex[:12]
-        self._sessions[session_id] = {"engine": engine, "card": card, "message_ids": [], "user_id": user_id}
+        self._sessions[session_id] = new_session_entry(engine, card, user_id)
         return session_id

@@ -4,7 +4,7 @@ import { parseCardJson } from '../utils/card'
 import { resolveOpeningMessages } from './openingMessage'
 import { TERMS_VERSION, PRIVACY_VERSION } from '../legal/versions'
 import { checkRepeat } from '../utils/repeatGuard'
-import { withSaveResult } from '../utils/withSaveResult'
+import { applyFlushReport, withSaveResult } from '../utils/withSaveResult'
 import { FALLBACK } from '../config/navigation'
 import { scoped, bumpScope } from './scope'
 
@@ -1230,6 +1230,7 @@ const useAppStore = create((set, get) => {
 
     let sessionId = card.session_id || null
     let backendFirstMessage = null
+    let backendFirstMessageSave = null
     try {
       if (!sessionId) {
         if (!cardId) {
@@ -1246,6 +1247,7 @@ const useAppStore = create((set, get) => {
 
         sessionId = result.session_id
         backendFirstMessage = result?.first_message
+        backendFirstMessageSave = result?.first_message_save
       }
       // when card.session_id already exists, backend stays null
       // and the opening line will come from history loading instead
@@ -1260,10 +1262,12 @@ const useAppStore = create((set, get) => {
       ? (get().texts.find((t) => t.id === card.text_id)?.title || get().currentTextTitle)
       : get().currentTextTitle
 
+    // 开场白是后端写的第一笔：写失败时它也带 `save`，标上「未保存」等后续补写认领。
+    // `save` 缺省（写成功了 / 走到本地兜底那条）时 withSaveResult 原样返回。
     const _startChatMsgs = resolveOpeningMessages(
       { backendFirstMessage, cardFirstMessage: data.first_message },
       withCid,
-    )
+    ).map((m) => withSaveResult(m, backendFirstMessageSave))
 
     set({
       _pendingChatCardId: null,
@@ -1409,16 +1413,18 @@ const useAppStore = create((set, get) => {
         const prevUser = msgs[msgs.length - 1]
         msgs[msgs.length - 1] = withSaveResult(
           { ...prevUser, id: data.user_msg_id ?? prevUser.id, timestamp: data.user_created_at },
-          data.user_saved,
+          data.user_save,
         )
         msgs.push(withSaveResult(withCid({
           role: 'char', content: data.reply, id: data.char_msg_id,
           retracted: data.retracted || false, timestamp: data.char_created_at,
-        }), data.char_saved))
+        }), data.char_save))
         if (data.summary) {
           msgs.splice(msgs.length - 2, 0, withCid({ role: 'summary', content: data.summary }))
         }
-        return { messages: msgs, sending: false }
+        // 这一轮里每一次写都会顺带补写队头，读数（flushed/dropped）随响应体一起来 ——
+        // 先前的「未保存」据此填回真 id 或翻成「保存失败」。
+        return { messages: applyFlushReport(msgs, data), sending: false }
       })
 
       if (voiceEnabled) {
@@ -1458,6 +1464,49 @@ const useAppStore = create((set, get) => {
 
     let fullReply = ''
 
+    // done 与 error 两种帧的**唯一**收尾函数。`err` 有值 = 错误帧：它不带 user_msg_id /
+    // summary / retracted 这些只有成功一轮才有的字段，只走两帧共用的那一段（补写报告 +
+    // 解锁）。两帧分开写的话，error 那条路会漏掉 `applyFlushReport`。
+    const settle = (payload, err) => {
+      if (get().sessionId !== streamSessionId) return
+      if (err) console.error('[store] stream failed:', err)
+      set((s) => {
+        const msgs = [...s.messages]
+        if (!err && msgs.length >= 2) {
+          // 没落库时后端给的 msg_id 是 null，这里不再拿它当「有没有这段」的门闩 ——
+          // 要不要标「未保存」只由 user_save/char_save 说了算。
+          const prevUser = msgs[msgs.length - 2]
+          msgs[msgs.length - 2] = withSaveResult(
+            { ...prevUser, id: payload.user_msg_id ?? prevUser.id, timestamp: payload.user_created_at },
+            payload.user_save,
+          )
+          const prevChar = msgs[msgs.length - 1]
+          msgs[msgs.length - 1] = withSaveResult(
+            { ...prevChar, id: payload.char_msg_id ?? prevChar.id, timestamp: payload.char_created_at },
+            payload.char_save,
+          )
+        }
+        if (!err && payload.summary) {
+          msgs.splice(msgs.length - 2, 0, withCid({ role: 'summary', content: payload.summary }))
+        }
+        if (!err && payload.retracted) {
+          msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], retracted: true }
+        }
+        // 两种帧都走到这里：本轮补写成功的消息据此填回真 id、翻成「已保存」
+        const next = { messages: applyFlushReport(msgs, payload), sending: false }
+        if (err) next.error = err.message
+        return next
+      })
+      if (err) return
+
+      if (voiceEnabled && fullReply) {
+        const { messages: currentMsgs } = get()
+        get()._synthesizeVoiceReply(fullReply, currentMsgs.length - 1)
+      }
+
+      get().fetchAffinity()
+    }
+
     const body = { session_id: sessionId, message, stream: true, user_role: get().sessionUserRole, web_search: get().webSearchEnabled, agent_mode: get().agentMode, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled, client_tz: clientTz() }
     if (reply_to_id) { body.reply_to_id = reply_to_id; body.reply_to_preview = reply_to_preview }
 
@@ -1474,46 +1523,11 @@ const useAppStore = create((set, get) => {
           return { messages: msgs }
         })
       },
-      async (payload) => {
-        if (get().sessionId !== streamSessionId) return
-        set((s) => {
-          const msgs = [...s.messages]
-          if (msgs.length >= 2) {
-            // 存失败时后端给的 msg_id 是 null，这里不再拿它当「有没有这段」的门闩 ——
-            // 要不要标「未保存」只由 user_saved/char_saved 说了算。
-            const prevUser = msgs[msgs.length - 2]
-            msgs[msgs.length - 2] = withSaveResult(
-              { ...prevUser, id: payload.user_msg_id ?? prevUser.id, timestamp: payload.user_created_at },
-              payload.user_saved,
-            )
-            const prevChar = msgs[msgs.length - 1]
-            msgs[msgs.length - 1] = withSaveResult(
-              { ...prevChar, id: payload.char_msg_id ?? prevChar.id, timestamp: payload.char_created_at },
-              payload.char_saved,
-            )
-          }
-          if (payload.summary) {
-            const userIdx = msgs.length - 2
-            msgs.splice(userIdx, 0, withCid({ role: 'summary', content: payload.summary }))
-          }
-          if (payload.retracted) {
-            msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], retracted: true }
-          }
-          return { messages: msgs, sending: false }
-        })
-
-        if (voiceEnabled && fullReply) {
-          const { messages: currentMsgs } = get()
-          get()._synthesizeVoiceReply(fullReply, currentMsgs.length - 1)
-        }
-
-        get().fetchAffinity()
-      },
-      (err) => {
-        if (get().sessionId !== streamSessionId) return
-        console.error('[store] stream failed:', err)
-        set({ sending: false, error: err.message })
-      },
+      // done 帧与 error 帧走**同一个**收尾函数：两种帧由后端同一个出口构造，都带本轮
+      // 的 `flushed` / `dropped`。分开两处处理时 error 那条路漏了 `applyFlushReport`，
+      // 这一轮里顺路补写成功的消息就永远停在「未保存」。
+      async (payload) => settle(payload, undefined),
+      (err, payload) => settle(payload, err),
       undefined,
       // evidence 帧先于 token 流到达（后端在首个 token 前发），此刻末条仍是本轮 char 占位。
       // 认 type 不认字段存在性：未知 type 一律忽略（后端将来加事件不该让前端出意外）。
@@ -1533,6 +1547,20 @@ const useAppStore = create((set, get) => {
     set({ _chatStreamCancel: cancel })
     return cancel
   },
+
+  // 后端「重试」入口：把这条会话里没落库的消息按原顺序再写一遍。
+  // 每次写本身也会顺带补写队头，但用户不该为了补一条消息被迫再发一条 —— 这就是那个按钮。
+  flushMessages: protect(async (setScoped, get) => {
+    const { sessionId } = get()
+    if (!sessionId) return
+    try {
+      const data = await postJSON(`/api/chat/${sessionId}/flush`, {})
+      setScoped((s) => ({ messages: applyFlushReport(s.messages, data) }))
+    } catch (err) {
+      console.error('[store] flushMessages failed:', err)
+      setScoped({ error: err.message })
+    }
+  }),
 
   revokeCooldown: false,
 
@@ -1581,6 +1609,29 @@ const useAppStore = create((set, get) => {
 
     let fullReply = ''
 
+    // 与 `sendMessageStream` 同一条规矩：done 与 error 帧共用一个收尾函数，
+    // 本轮补写报告两种帧都带（撤回通知这一轮同样会把队里积压的消息顺路补上）。
+    const settle = (payload, err) => {
+      if (get().sessionId !== streamSessionId) return
+      if (err) console.error('[store] revoke notice failed:', err)
+      set((s) => {
+        const msgs = [...s.messages]
+        if (!err) {
+          const prev = msgs[msgs.length - 1]
+          msgs[msgs.length - 1] = withSaveResult(
+            { ...prev, id: payload.char_msg_id ?? prev?.id }, payload.char_save,
+          )
+        }
+        const next = { messages: applyFlushReport(msgs, payload), sending: false }
+        if (err) next.error = err.message
+        return next
+      })
+      if (err) return
+      if (voiceEnabled && fullReply) {
+        get()._synthesizeVoiceReply(fullReply, get().messages.length - 1)
+      }
+    }
+
     const cancel = streamSSE(
       '/api/chat/send',
       { session_id: sessionId, message: hiddenMsg, stream: true, hidden: true, user_role: get().sessionUserRole },
@@ -1594,25 +1645,8 @@ const useAppStore = create((set, get) => {
           return { messages: msgs }
         })
       },
-      (payload) => {
-        if (get().sessionId !== streamSessionId) return
-        set((s) => {
-          const msgs = [...s.messages]
-          const prev = msgs[msgs.length - 1]
-          msgs[msgs.length - 1] = withSaveResult(
-            { ...prev, id: payload.char_msg_id ?? prev?.id }, payload.char_saved,
-          )
-          return { messages: msgs, sending: false }
-        })
-        if (voiceEnabled && fullReply) {
-          get()._synthesizeVoiceReply(fullReply, get().messages.length - 1)
-        }
-      },
-      (err) => {
-        if (get().sessionId !== streamSessionId) return
-        console.error('[store] revoke notice failed:', err)
-        set({ sending: false, error: err.message })
-      },
+      (payload) => settle(payload, undefined),
+      (err, payload) => settle(payload, err),
     )
 
     set({ _chatStreamCancel: cancel })
@@ -1655,15 +1689,16 @@ const useAppStore = create((set, get) => {
     try {
       const data = await postJSON(`/api/history/${sessionId}/resume`, { client_tz: clientTz(), voice_mode: get().voiceEnabled })
       const session = data.session || {}
-      const messages = (data.messages || []).map((m) => withCid({
+      const messages = (data.messages || []).map((m) => withSaveResult(withCid({
         role: m.role,
         content: m.content,
         id: m.id,
         timestamp: m.created_at,
         retracted: m.retracted || false,
         evidence: m.evidence ?? null,
-        ...(data.reunion_greeting_id && m.id === data.reunion_greeting_id ? { _reunionTyping: true } : {}),
-      }))
+        // 打字机标记认后端那个 `reunion` 标记，不认 id：重逢问候没落库时它还没有 id。
+        ...(m.reunion ? { _reunionTyping: true } : {}),
+      }), m.save))
       set({
         sessionId: session.id || sessionId,
         sessionUserRole: session.user_role || get().getUserRole(session.card_id),

@@ -51,6 +51,7 @@ from core.schema import (
     scene_evidence,
     web_evidence,
 )
+from core.text_manager import new_session_entry
 from deps import get_sessions, get_storage
 from routers.auth import get_current_user
 from routers.group import router as group_router
@@ -306,7 +307,7 @@ _pg = PG_ENV.skipif(
 
 
 def _dsn() -> str:
-    return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+    return os.environ["DATABASE_URL"]
 
 
 async def _pg_session(store) -> str:
@@ -438,12 +439,17 @@ class _RecordingStorage:
         self.saved.append({"role": role, "content": content, "evidence": kw.get("evidence")})
         return {"id": len(self.saved), "role": role, "created_at": ""}
 
+    async def ping(self):
+        """库可达 —— 于是消息当场落库、不留队（本文件断言的是「落库了什么」）。"""
+
     async def get_messages(self, session_id):
         return []
 
 
 def _wire(monkeypatch, engine, storage):
-    session = {"engine": engine, "lock": asyncio.Lock(), "user_id": "u1"}
+    # 条目形状只从 `new_session_entry` 拿（不手搓 dict），也不在这里补字段 ——
+    # 在调用点补等于把「条目长什么样」又拆成两处定义。
+    session = new_session_entry(engine, None, "u1")
 
     async def _fake_ensure(session_id, storage_, sessions, user_id=""):
         return session
@@ -637,7 +643,7 @@ class TestResumeCarriesEvidence:
             _indexing_service = _StubIndexing()
 
             def _create_session(self, *_a, **_kw):
-                sessions["ses_rebuilt"] = {"engine": engine}
+                sessions["ses_rebuilt"] = new_session_entry(engine, None, "")
                 return "ses_rebuilt"
 
         async def _fake_user_llm(*_a, **_kw):
@@ -672,7 +678,7 @@ class TestResumeCarriesEvidence:
             _indexing_service = _StubIndexing()
 
             def _create_session(self, *_a, **_kw):
-                sessions["ses_rebuilt"] = {"engine": engine}
+                sessions["ses_rebuilt"] = new_session_entry(engine, None, "")
                 return "ses_rebuilt"
 
         async def _fake_user_llm(*_a, **_kw):

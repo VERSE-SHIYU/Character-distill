@@ -126,25 +126,6 @@ class TestResumeEndpointMessageIds:
             {"role": "char", "content": "嗨", "id": 102, "created_at": "2025-01-01T00:00:01Z", "retracted": False},
         ]
 
-    def test_greeting_id_in_message_ids_after_rebuild(self):
-        """Greeting_id still appended to message_ids for revoke support."""
-        db_msg_ids = [101, 102, 103]
-        greeting_id = 999
-
-        message_ids = list(db_msg_ids)
-        greeting_data = {
-            "reunion_greeting_id": greeting_id,
-            "reunion_greeting": "你回来了。",
-        }
-
-        message_ids = list(db_msg_ids)
-        if greeting_data:
-            message_ids.append(greeting_data["reunion_greeting_id"])
-
-        assert greeting_id in message_ids
-        assert message_ids == [101, 102, 103, 999]
-
-
 class TestReunionGreeting:
     """generate_reunion_greeting() condition and output tests."""
 

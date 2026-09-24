@@ -15,6 +15,7 @@ from core.affinity_service import read_persisted_affinity
 from deps import get_sessions, get_storage
 from core.schema import CharacterCard, parse_evidence
 from core.clock import UserClock
+from core.message_outbox import SaveState, save_field
 from core.nonfatal import nonfatal
 from storage.base import StorageBase
 from routers.auth import get_current_user
@@ -319,23 +320,38 @@ async def resume_session(
     _visit_count = _prev_count + 1 if _prev_date == _daily_visit_today else 1
     _daily_visits[session_id] = (_daily_visit_today, _visit_count)
 
-    greeting_data: dict[str, Any] | None = None
+    greeting = ""
+    greeting_save: SaveState | None = None
+    greeting_id: int | None = None
+    greeting_created_at = ""
     async with nonfatal("history", "reunion greeting"):
         greeting = await asyncio.to_thread(
             engine.generate_reunion_greeting, None, _body.voice_mode,
         )
-        if greeting:
-            msg_rec = await storage.save_message(session_id, "char", greeting, "")
-            engine.history.append({"role": "assistant", "content": greeting})
-            sessions[session_id].setdefault("message_ids", []).append(msg_rec["id"])
-            greeting_data = {
-                "reunion_greeting_id": msg_rec["id"],
-                "reunion_greeting_created_at": msg_rec["created_at"],
-                "reunion_greeting": greeting,
-            }
+    if greeting:
+        # 写完直接返回 `messages` 尾部，和**别处**的写入走同一条路：写失败就留在队里，
+        # 下次写 / 重试 / 关停时补上，前端按 key 认领。所以「问候已生成」和「问候已落库」
+        # 是两件事 —— 上面那个 `greeting` 才是「生成过」，后面的 id/时间戳可能还没有。
+        outbox = sessions[session_id]["outbox"]
+        greeting_rows: list[dict] = []
+
+        async def _save_greeting(key: str) -> int:
+            rec = await storage.save_message(session_id, "char", greeting, "", client_key=key)
+            greeting_rows.append(rec)
+            return rec["id"]
+
+        greeting_save, _greeting_report = await outbox.write(_save_greeting, ping=storage.ping)
+        # 记忆无条件追加（同 start_session 的开场白）：写失败只是「没落库」，不是「没说过」。
+        # 绑在 `if greeting_rows:` 上，库一抖动这句问候就只出现在返回的 `messages` 里、
+        # 不在记忆里 —— 下一轮 LLM 不知道刚打过招呼，会再打一次。
+        engine.history.append({"role": "assistant", "content": greeting})
+        if greeting_rows:
+            rec = greeting_rows[0]
+            greeting_id = rec["id"]
+            greeting_created_at = rec["created_at"]
 
     # ── 今日到访觉察：count>=3 且当次未触发重逢问候 → 传给 engine ──
-    if _visit_count >= 3 and not greeting_data:
+    if _visit_count >= 3 and not greeting:
         engine.set_daily_visits(_visit_count)
 
     # 10. Build messages array for frontend (includes greeting as a regular message)
@@ -347,23 +363,25 @@ async def resume_session(
          "evidence": parse_evidence(m.get("evidence"))}
         for m in db_messages
     ]
-    if greeting_data:
+    result: dict[str, Any] = {"session": db_session, "messages": frontend_messages}
+    if greeting:
         frontend_messages.append({
             "role": "char",
-            "content": greeting_data["reunion_greeting"],
-            "id": greeting_data["reunion_greeting_id"],
-            "created_at": greeting_data["reunion_greeting_created_at"],
+            "content": greeting,
+            "id": greeting_id,
+            "created_at": greeting_created_at,
             "retracted": False,
             # 重逢问候在本轮检索之外生成，如实 None
             "evidence": None,
+            # 前端靠这个标记放打字机动画 —— 不能靠 id：写失败的问候此刻还没有 id。
+            "reunion": True,
+            **save_field(greeting_save, "save"),
         })
+        result["reunion_greeting"] = greeting
+        result["reunion_greeting_id"] = greeting_id
+        result["reunion_greeting_created_at"] = greeting_created_at
 
-    # 11. Rebuild message_ids so revoke works after resume
-    sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
-    if greeting_data:
-        sessions[session_id]["message_ids"].append(greeting_data["reunion_greeting_id"])
-
-    return {"session": db_session, "messages": frontend_messages, **(greeting_data or {})}
+    return result
 
 
 @router.post("/{session_id}/restore")

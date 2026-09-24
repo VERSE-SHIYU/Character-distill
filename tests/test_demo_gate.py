@@ -40,6 +40,7 @@ import deps
 import route_facts
 import server
 from core import roles
+from core.text_manager import new_session_entry
 from routers.auth import JWT_ALGORITHM, _create_access_token, get_jwt_secret, security_scheme
 from server import AuthMiddleware
 from storage.sqlite_store import SQLiteStore
@@ -332,7 +333,7 @@ class TestNonDemoAccountUnchanged:
                 self.resets += 1
 
         sid = f"ses_{uuid.uuid4().hex}"
-        session = {"engine": _Engine(), "user_id": plain["id"]}
+        session = new_session_entry(_Engine(), None, plain["id"])
         get_sessions()[sid] = session
         try:
             r = client.post("/api/chat/reset", headers=_headers(plain), json={"session_id": sid})

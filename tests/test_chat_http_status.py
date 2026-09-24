@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 import routers.chat as chat
 from adapters.llm_adapter import IncompleteResponseError
+from core.text_manager import new_session_entry
 
 
 def _err(finish_reason: str) -> IncompleteResponseError:
@@ -38,7 +39,9 @@ class _Engine:
 
 
 def _wire(monkeypatch, exc):
-    session = {"engine": _Engine(exc), "lock": asyncio.Lock(), "user_id": "u1"}
+    # 条目形状只从 `new_session_entry` 拿（不手搓 dict），也不在这里补字段 ——
+    # 在调用点补等于把「条目长什么样」又拆成两处定义。
+    session = new_session_entry(_Engine(exc), None, "u1")
 
     async def _fake_ensure(session_id, storage, sessions, user_id=""):
         return session

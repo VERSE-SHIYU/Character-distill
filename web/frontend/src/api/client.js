@@ -234,7 +234,11 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus, onEvent
               //   length                       → 内容过长，建议缩短输入后重试
               //   content_filter               → 内容被安全策略拦截，提示改输入（重试无用）
               //   insufficient_system_resource → 上游资源不足，提示稍后重试
-              onError(new AppError(payload.error, 0, payload.code || ''))
+              //
+              // 整个 payload 一起给出去（不只是那三个键）：错误帧与 done 帧同一个后端出口，
+              // 都带本轮的 `flushed` / `dropped` —— 只透传 error/code 的话，这一轮里已经补写
+              // 成功的消息在前端永远翻不成「已保存」。
+              onError(new AppError(payload.error, 0, payload.code || ''), payload)
               return
             }
             if (payload.done) {

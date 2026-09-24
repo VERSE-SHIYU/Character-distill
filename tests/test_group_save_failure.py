@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
-"""群聊广播：三类保存各自为政，失败的那一条照发、并由帧上的 `saved` 自己声明。
+"""群聊广播：三类保存各自为政，失败的那一条照发、并由帧上的 `save` 自己声明。
 
 口径（用户已确认）：保存失败**不中断**这一轮，用户可见行为与一对一一致 —— 失败的那条
-消息在帧上带 `saved: false`，前端据此标「未保存，刷新后会丢失」。
+消息在帧上带 `save: {"state", "key"}`，前端据此标「未保存」并在后续补写后填回真 id。
 
 改前形态：`broadcast` 的三类保存（user / silent / assistant）裸露在外层 `try` 里，
 任一失败即整轮中断；且 `reply` 帧只在保存成功后才发 —— 角色已经说完的话因为写库失败
 从用户眼前消失。本文件锁的就是这两条。
+
+这里的库是**可达**的（`_FailingGroupSave` 把 ping 转发给真 store）：一条坏消息重试一次
+后判死（`failed` + `dropped`），同一轮里其他消息照写。
 
 判据落在**帧**上而不是库上：库那一面由 `tests/test_group_save_failure` 之外的 store 测试
 守着，这里要证的是「用户还看得到那句话」。
@@ -223,11 +226,11 @@ def _assert_no_error_frame(frames: list[dict]) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# G1–G3：三类保存各自失败，帧照发、`saved` 自己声明
+# G1–G3：三类保存各自失败，帧照发、`save` 自己声明
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_G1_assistant_save_failure_still_delivers_the_reply(store, user_id):
-    """角色回复存失败 → 仍发 `reply` 帧（`saved=false`、`msg_id=null`），本轮照常收尾。"""
+    """角色回复存失败 → 仍发 `reply` 帧（`save.state=failed`、`msg_id=null`），本轮照常收尾。"""
     failing = _FailingGroupSave(store, {"assistant"})
     client = _client(failing, user_id)
     gid, cid = _make_owned_group(client, store, user_id)
@@ -237,14 +240,15 @@ def test_G1_assistant_save_failure_still_delivers_the_reply(store, user_id):
     _assert_no_error_frame(frames)
     reply = _one(frames, "reply")
     assert reply["reply"] == "固定回复", "角色已经说完的话因为写库失败从用户眼前消失了"
-    assert reply["saved"] is False, "没存上却没告诉前端 —— 用户无从知道这条刷新后会丢"
+    assert reply["save"]["state"] == "failed", "没存上却没告诉前端 —— 用户无从知道这条会丢"
     assert reply["msg_id"] is None, "没入库却给了一个消息 id"
-    assert _one(frames, "done")
+    done = _one(frames, "done")
+    assert reply["save"]["key"] in done["dropped"], "判死了却没进 dropped —— 前端找不到是哪一条"
     assert failing.saved == ["user"], f"实际写进库的 role 不对：{failing.saved}"
 
 
 def test_G2_user_save_failure_still_runs_the_round(store, user_id):
-    """用户消息存失败 → `user` 帧仍发（`saved=false`），角色回复照常生成并发出。"""
+    """用户消息存失败 → `user` 帧仍发（`save.state=failed`），角色回复照常生成并发出。"""
     failing = _FailingGroupSave(store, {"user"})
     client = _client(failing, user_id)
     gid, cid = _make_owned_group(client, store, user_id)
@@ -254,18 +258,18 @@ def test_G2_user_save_failure_still_runs_the_round(store, user_id):
     _assert_no_error_frame(frames)
     user_frames = [f for f in frames if f.get("type") == "user"]
     assert len(user_frames) == 1, f"应有恰一个 user 帧，实得 {len(user_frames)}：{frames}"
-    assert user_frames[0]["saved"] is False, "用户那条没存上，帧却报成功"
+    assert user_frames[0]["save"]["state"] == "failed", "用户那条没存上，帧却报成功"
     assert user_frames[0]["msg_id"] is None
 
     replies = [f for f in frames if f.get("type") == "reply"]
     assert len(replies) == 1, f"用户那条存失败把角色回复也带走了：{frames}"
-    assert replies[0]["saved"] is True and replies[0]["msg_id"] is not None
+    assert "save" not in replies[0] and replies[0]["msg_id"] is not None
     assert failing.saved == ["assistant"], f"实际写进库的 role 不对：{failing.saved}"
-    assert _one(frames, "done")
+    _one(frames, "done")
 
 
 def test_G3_silent_save_failure_still_delivers_the_silent_mark(store, user_id):
-    """`silent`（[SILENT] 那条）存失败 → 同 G1：帧照发、`saved=false`、`msg_id=null`。"""
+    """`silent`（[SILENT] 那条）存失败 → 同 G1：帧照发、`save.state=failed`、`msg_id=null`。"""
     _ReplyLLM.reply = "[SILENT]"
     try:
         failing = _FailingGroupSave(store, {"silent"})
@@ -279,9 +283,9 @@ def test_G3_silent_save_failure_still_delivers_the_silent_mark(store, user_id):
     _assert_no_error_frame(frames)
     reply = _one(frames, "reply")
     assert reply["role"] == "silent", f"没走到 silent 那条分支，本用例没验到东西：{reply}"
-    assert reply["saved"] is False, "沉默那条没存上，帧却报成功"
+    assert reply["save"]["state"] == "failed", "沉默那条没存上，帧却报成功"
     assert reply["msg_id"] is None
-    assert _one(frames, "done")
+    _one(frames, "done")
     assert failing.saved == ["user"], f"实际写进库的 role 不对：{failing.saved}"
 
 

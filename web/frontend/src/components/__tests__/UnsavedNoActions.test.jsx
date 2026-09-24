@@ -97,9 +97,9 @@ vi.mock('../../api/client', () => ({
         json: () => Promise.resolve({
           // 用户气泡与角色气泡各一对 —— 群聊那两个调用点各写了一份判断，两处都要有红源。
           messages: [
-            { id: 'optimistic-1', role: 'user', content: '没存上的那条', speaker: '我', created_at: '2026-09-01T10:00:00', reactions: [], unsaved: true },
+            { id: 'optimistic-1', role: 'user', content: '没存上的那条', speaker: '我', created_at: '2026-09-01T10:00:00', reactions: [], saveState: 'pending' },
             { id: 7, role: 'user', content: '存上了的那条', speaker: '我', created_at: '2026-09-01T10:01:00', reactions: [] },
-            { id: 'optimistic-2', role: 'assistant', content: '没存上的回复', speaker: '张三', card_id: 'c1', created_at: '2026-09-01T10:02:00', reactions: [], unsaved: true },
+            { id: 'optimistic-2', role: 'assistant', content: '没存上的回复', speaker: '张三', card_id: 'c1', created_at: '2026-09-01T10:02:00', reactions: [], saveState: 'pending' },
             { id: 8, role: 'assistant', content: '存上的回复', speaker: '张三', card_id: 'c1', created_at: '2026-09-01T10:03:00', reactions: [] },
           ],
         }),
@@ -121,10 +121,10 @@ vi.mock('../../store/db', () => ({
 vi.mock('../common/ChatSessionList', () => ({ default: () => null }))
 
 describe('未保存的消息不给需要 id 的入口', () => {
-  it('V5 一对一：unsaved 那条没有引用/反应入口，普通那条有', () => {
+  it('V5 一对一：标了「未保存」那条没有引用/反应入口，普通那条有', () => {
     mutate({
       messages: [
-        { _cid: 'm1', role: 'char', content: '没存上的回复', unsaved: true },
+        { _cid: 'm1', role: 'char', content: '没存上的回复', saveState: 'pending' },
         { _cid: 'm2', role: 'char', content: '存上的回复' },
       ],
     })

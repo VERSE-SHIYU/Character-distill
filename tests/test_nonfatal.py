@@ -24,6 +24,7 @@ import core.utils as utils
 import routers.chat as chat_router_mod
 from core.log_collector import get_recent_logs, install_log_collector
 from core.nonfatal import nonfatal
+from core.text_manager import new_session_entry
 
 
 @pytest.fixture(autouse=True)
@@ -181,9 +182,17 @@ class _Engine:
 
 
 class _FailingSaveStorage:
-    """只坏在落库上：get_messages 照常返回，好让失败面窄到「消息写库」这一处。"""
+    """**库不可达**：写与 ping 一起失败，队列因此整队保留（一条也不丢）。
+
+    `get_messages` 照常返回，好让失败面窄到「消息写库」这一处。ping 是**显式**写出来的：
+    不写它，`storage.ping` 是 AttributeError，也恰好被 `nonfatal` 吞成「探不到库」——
+    那是碰巧对，不是判据。这里要的是「不可达」这件事本身。
+    """
 
     async def save_message(self, *a, **kw):
+        raise RuntimeError("message db down")
+
+    async def ping(self):
         raise RuntimeError("message db down")
 
     async def get_messages(self, session_id):
@@ -191,7 +200,9 @@ class _FailingSaveStorage:
 
 
 def _wire(monkeypatch, **engine_kwargs):
-    session = {"engine": _Engine(**engine_kwargs), "lock": asyncio.Lock(), "user_id": "u1"}
+    # 条目形状只从 `new_session_entry` 拿（不手搓 dict），也不在这里补字段 ——
+    # 在调用点补等于把「条目长什么样」又拆成两处定义。
+    session = new_session_entry(_Engine(**engine_kwargs), None, "u1")
 
     async def _fake_ensure(session_id, storage, sessions, user_id=""):
         return session
@@ -206,6 +217,9 @@ def test_do_chat_save_failure_reaches_the_panel(monkeypatch):
     调用**自身不炸**（缺陷 98 已修：`user_rec` / `char_rec` 有初值，取值统一走
     `_msg_fields`）。这里只断言交付物：面板收到了那一条 —— 换成 `pytest.raises`
     会与「失败不影响主流程」这条相反，两条判据分属不同用例。
+
+    `source` 从 `chat` 变成了 `outbox`：消息写入现在由队列代劳，异常在队列那一层被
+    吞掉。文案仍是同一处 `nonfatal` 出口，故面板上照样看得见。
     """
     _wire(monkeypatch)
     asyncio.run(
@@ -214,9 +228,8 @@ def test_do_chat_save_failure_reaches_the_panel(monkeypatch):
         )
     )
 
-    errs = _panel_errors("chat")
-    assert any("message db down" in e["message"] for e in errs), \
-        "消息落库失败没上面板 —— 又回到「失败只 print」的老样子"
+    errs = _panel_errors("message db down")
+    assert errs, "消息落库失败没上面板 —— 又回到「失败只 print」的老样子"
 
 
 def test_do_chat_returns_normally_when_save_fails(monkeypatch):
@@ -226,8 +239,10 @@ def test_do_chat_returns_normally_when_save_fails(monkeypatch):
     块一吞掉异常，后面那两行 `.get("created_at")` 就是 UnboundLocalError → 500。
     修法是给它们初值 `None` 并统一走 `_msg_fields`（`None` → `(None, "")`）。
 
-    判据是**三样一起**：回复没被吃掉、两个 id 为 `None`、两个 created_at 为空串 ——
-    只断言「没抛异常」的话，「把 deref 挪走但给个假时间戳」也会绿。
+    判据是**四样一起**：回复没被吃掉、两个 id 为 `None`、两个 created_at 为空串、
+    两条 save 都报 `pending` —— 只断言「没抛异常」的话，「把 deref 挪走但给个假
+    时间戳」也会绿；而 `pending` 是「还留在队里，下次写/重试/关停会补上」这件事的
+    唯一表述（库不可达 → 整队保留，一条不丢）。
     """
     _wire(monkeypatch)
     result = asyncio.run(
@@ -239,6 +254,11 @@ def test_do_chat_returns_normally_when_save_fails(monkeypatch):
     assert result["user_msg_id"] is None and result["char_msg_id"] is None
     assert result["user_created_at"] == "" and result["char_created_at"] == "", \
         "没有这条消息却给了时间戳 —— 假默认值"
+    assert result["user_save"]["state"] == "pending"
+    assert result["char_save"]["state"] == "pending", \
+        "库不可达却报「丢了」—— 那会把还能补上的消息判死"
+    assert result["flushed"] == [] and result["dropped"] == [], \
+        "库不可达时不该有任何一条被判成补上或丢掉"
 
 
 async def _drive_stream(storage, **kwargs) -> list[dict]:
@@ -280,17 +300,24 @@ def test_do_chat_stream_finishes_with_a_done_frame_when_save_fails(monkeypatch):
     assert done[0]["user_msg_id"] is None and done[0]["char_msg_id"] is None
     assert done[0]["user_created_at"] == "" and done[0]["char_created_at"] == "", \
         "没有这条消息却给了时间戳 —— 假默认值"
+    assert done[0]["user_save"]["state"] == "pending"
+    assert done[0]["char_save"]["state"] == "pending"
     assert "".join(f.get("token", "") for f in frames) == "回复", "正文没流出来"
 
 
 # ── 3. 逐条保存逐条上报（口径统一：未保存的那一条自己标） ──────────────────
 #
 # 上面那两条只证「失败不上屏、回复不丢」。本段证**失败信号到了客户端**：done 帧带
-# `user_saved` / `char_saved`，前端才可能给失败的那一条标「未保存」。失败面收窄到
-# 单一 role，正是为了把「一个块串起三笔」与「三笔各管各的」分开。
+# `save`（`{"state", "key"}`）与 `flushed` / `dropped`，前端才可能给失败的那一条标
+# 「未保存」并在补上之后填回真 id。失败面收窄到单一 role，正是为了把「一个块串起
+# 三笔」与「三笔各管各的」分开。
+#
+# 这里的库是**可达**的（ping 正常）：一条坏消息重试一次后判死（`failed` + `dropped`），
+# 后面的消息照写。与第 2 段那个「库不可达 → 整队保留（`pending`）」是两条不同的路，
+# 判据也分属不同用例。
 
 class _RoleFailingStorage:
-    """只让指定 role 的那一次落库失败，其余照常 —— 失败面窄到「这一条消息」。"""
+    """库**可达**，只让指定 role 的那一次落库失败 —— 失败面窄到「这一条消息」。"""
 
     def __init__(self, *, fail_role: str | None = None, fail_get_messages: bool = False):
         self._fail_role = fail_role
@@ -303,10 +330,18 @@ class _RoleFailingStorage:
         self.saved.append(role)
         return {"id": len(self.saved), "created_at": "2026-01-01 00:00:00"}
 
+    async def ping(self):
+        """探得到库 —— 于是「写不进去」是这一条自己的问题，不是库的问题。"""
+
     async def get_messages(self, session_id):
         if self._fail_get_messages:
             raise RuntimeError("summary read down")
         return []
+
+
+def _save_pair(frame: dict) -> tuple[dict | None, dict | None]:
+    """取 done 帧 / 返回体里那两条 save 字段（没有即「这一条压根不存在」，如 `hidden`）。"""
+    return frame.get("user_save"), frame.get("char_save")
 
 
 def _done_frame(frames: list[dict]) -> dict:
@@ -320,8 +355,12 @@ def _assert_no_error_frame(frames: list[dict]) -> None:
     assert errors == [], f"失败升级成了 error 帧（本轮回复被中断）：{errors}"
 
 
-def test_C1_stream_char_save_failure_reports_only_that_one(monkeypatch):
-    """流式：角色那条存失败 → `char_saved=false`，用户那条照存，回复照常流完。"""
+def test_stream_char_save_failure_reports_only_that_one(monkeypatch):
+    """流式：角色那条写不进去 → 只它报 `failed` 并进 `dropped`，用户那条照存。
+
+    `failed` 是「重试过一次、还是写不进去，这条放弃了」—— 与「库不可达所以留着
+    `pending`」是两回事，两者的前端动作也不同（一个没有重试按钮，一个有）。
+    """
     _wire(monkeypatch)
     st = _RoleFailingStorage(fail_role="char")
     frames = asyncio.run(_drive_stream(st))
@@ -329,57 +368,67 @@ def test_C1_stream_char_save_failure_reports_only_that_one(monkeypatch):
     _assert_no_error_frame(frames)
     assert "".join(f.get("token", "") for f in frames) == "回复", "正文没流出来"
     done = _done_frame(frames)
-    assert done["char_saved"] is False, "角色那条没存上，done 帧却报成功 —— 前端无从标「未保存」"
+    user_save, char_save = _save_pair(done)
+    assert char_save["state"] == "failed", "角色那条没存上，done 帧却报成功 —— 前端无从标「保存失败」"
+    assert char_save["key"] in done["dropped"], "判死了却没进 dropped —— 前端找不到是哪一条"
     assert done["char_msg_id"] is None
-    assert done["user_saved"] is True and done["user_msg_id"] is not None, \
+    assert user_save is None, "用户那条存上了却还带着 save 字段 —— 前端会误标「未保存」"
+    assert done["user_msg_id"] is not None, \
         "角色那条失败把用户那条也连坐了（改前三笔共用一个 nonfatal 的形态）"
+    assert [f["id"] for f in done["flushed"]] == [done["user_msg_id"]], \
+        f"用户那条补上后应出现在 flushed 里，实得 {done['flushed']}"
 
 
-def test_C2_stream_user_save_failure_does_not_take_the_reply_down(monkeypatch):
-    """流式：用户那条存失败 → `user_saved=false`，角色那条照存。"""
+def test_stream_user_save_failure_does_not_take_the_reply_down(monkeypatch):
+    """流式：用户那条写不进去 → 只它报 `failed`，角色那条照存。"""
     _wire(monkeypatch)
     st = _RoleFailingStorage(fail_role="user")
     frames = asyncio.run(_drive_stream(st))
 
     _assert_no_error_frame(frames)
     done = _done_frame(frames)
-    assert done["user_saved"] is False, "用户那条没存上，done 帧却报成功"
+    user_save, char_save = _save_pair(done)
+    assert user_save["state"] == "failed", "用户那条没存上，done 帧却报成功"
+    assert user_save["key"] in done["dropped"]
     assert done["user_msg_id"] is None
-    assert done["char_saved"] is True and done["char_msg_id"] is not None, \
+    assert char_save is None and done["char_msg_id"] is not None, \
         "用户那条失败后角色那条根本没执行"
     assert st.saved == ["char"], f"实际写进库的 role 不对：{st.saved}"
 
 
-def test_C3_nonstream_char_save_failure_reports_only_that_one(monkeypatch):
-    """非流式同 C1：三笔各自一个 nonfatal，返回值逐条上报。"""
+def test_nonstream_char_save_failure_reports_only_that_one(monkeypatch):
+    """非流式同上：三笔各自入队，返回值逐条上报。"""
     _wire(monkeypatch)
     st = _RoleFailingStorage(fail_role="char")
     result = asyncio.run(
         chat_router_mod._do_chat("s1", "hi", storage=st, sessions={}, user_id="u1")
     )
     assert result["reply"] == "回复"
-    assert result["char_saved"] is False and result["char_msg_id"] is None
-    assert result["user_saved"] is True and result["user_msg_id"] is not None
+    assert result["char_save"]["state"] == "failed" and result["char_msg_id"] is None
+    assert result["char_save"]["key"] in result["dropped"]
+    assert "user_save" not in result and result["user_msg_id"] is not None
 
 
-def test_C4_nonstream_user_save_failure_reports_only_that_one(monkeypatch):
-    """非流式同 C2。"""
+def test_nonstream_user_save_failure_reports_only_that_one(monkeypatch):
+    """非流式同流式的用户那条失败。"""
     _wire(monkeypatch)
     st = _RoleFailingStorage(fail_role="user")
     result = asyncio.run(
         chat_router_mod._do_chat("s1", "hi", storage=st, sessions={}, user_id="u1")
     )
     assert result["reply"] == "回复"
-    assert result["user_saved"] is False and result["user_msg_id"] is None
-    assert result["char_saved"] is True and result["char_msg_id"] is not None
+    assert result["user_save"]["state"] == "failed" and result["user_msg_id"] is None
+    assert result["user_save"]["key"] in result["dropped"]
+    assert "char_save" not in result and result["char_msg_id"] is not None
     assert st.saved == ["char"], f"实际写进库的 role 不对：{st.saved}"
 
 
-def test_C5_hidden_reports_user_saved_true(monkeypatch):
-    """`hidden` 时压根没有用户消息要存，报 `false` 会让前端给**上一条**真消息误标。
+def test_hidden_has_no_user_save_field(monkeypatch):
+    """`hidden` 时压根没有用户消息要存，报个 save 字段会让前端给**上一条**真消息误标。
 
-    判据不能用「id 为 None」推：`hidden` 时 id 本来就是 None。所以这里连保存都让它
-    失败，`user_saved` 仍须为 true —— 假判据在这条上必红。
+    判据不能用「id 为 None」推：`hidden` 时 id 本来就是 None（缺陷 98）。所以这里让
+    用户那条的保存**必定失败**（`fail_role="user"`），`user_save` 仍须缺席 —— 假判据
+    在这条上必红。
     """
     _wire(monkeypatch)
     st = _RoleFailingStorage(fail_role="user")
@@ -387,14 +436,16 @@ def test_C5_hidden_reports_user_saved_true(monkeypatch):
 
     _assert_no_error_frame(frames)
     done = _done_frame(frames)
-    assert done["user_saved"] is True, "hidden 没有用户消息可存，不该报未保存"
+    user_save, _char_save = _save_pair(done)
+    assert user_save is None, "hidden 没有用户消息可存，不该报未保存"
     assert st.saved == ["char"], f"hidden 却写了用户消息：{st.saved}"
 
 
-def test_C6_stream_summary_read_failure_does_not_break_the_turn(monkeypatch):
+def test_stream_summary_read_failure_does_not_break_the_turn(monkeypatch):
     """摘要那段的**读**失败也不能打断已流完的回复（改前 `get_messages` 裸露在块外）。
 
     改前形态：读抛在大 try 里 → 正文已整段流给用户，收尾却发 error 帧、没有 done 帧。
+    读没进队列（它不产生行 id），所以仍是一次失败一条日志。
     """
     _wire(monkeypatch, last_summary="新摘要")
     frames = asyncio.run(_drive_stream(_RoleFailingStorage(fail_get_messages=True)))
@@ -406,12 +457,16 @@ def test_C6_stream_summary_read_failure_does_not_break_the_turn(monkeypatch):
     assert len(errs) == 1, f"摘要读失败没上日志面板，实得 {len(errs)} 条"
 
 
-def test_C7_stream_summary_save_failure_does_not_break_the_turn(monkeypatch):
-    """摘要**写**失败：不中断、不上屏，但必须留痕（吞掉 ≠ 沉默，本文件的主题）。"""
+def test_stream_summary_save_failure_does_not_break_the_turn(monkeypatch):
+    """摘要**写**失败：不中断、不上屏，但必须留痕（吞掉 ≠ 沉默，本文件的主题）。
+
+    这里**是两条**：队列对「库可达、这一条写不进去」重试一次才判死，两次都留痕。
+    数成一条就会把「重试过」这件事从日志里抹掉。
+    """
     _wire(monkeypatch, last_summary="新摘要")
     frames = asyncio.run(_drive_stream(_RoleFailingStorage(fail_role="summary")))
 
     _assert_no_error_frame(frames)
     _done_frame(frames)
     errs = _panel_errors("summary save down")
-    assert len(errs) == 1, f"摘要写失败没上日志面板，实得 {len(errs)} 条"
+    assert len(errs) == 2, f"摘要写失败（首写 + 重试）应留 2 条，实得 {len(errs)} 条"

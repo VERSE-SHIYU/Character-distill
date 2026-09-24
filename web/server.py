@@ -122,6 +122,9 @@ async def _lifespan(app: FastAPI):
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
     resync_task = asyncio.create_task(_cross_border_resync_loop())
     yield
+    # 顺序：先停清理循环并**等它退出**，再补写队列。反过来的话两边会同时 flush 同一把
+    # 队列 —— 清理循环可能正把会话出队，而这里正拿着它补写；也会让「谁在写」这件事
+    # 在关停期间变得说不清。
     cleanup_task.cancel()
     resync_task.cancel()
     try:
@@ -132,6 +135,15 @@ async def _lifespan(app: FastAPI):
         await resync_task
     except asyncio.CancelledError:
         pass
+    # 正常关停不该丢消息：队列在内存里，进程一走就没了。异常退出（崩溃）丢队列是已知
+    # 边界，台账 94 写了。
+    from deps import flush_outboxes, get_group_sessions, get_sessions
+    try:
+        flushed = await flush_outboxes(get_sessions()) + await flush_outboxes(get_group_sessions())
+        if flushed:
+            print(f"[shutdown] flushed {flushed} queued message(s)")
+    except Exception as exc:
+        print(f"[shutdown] flush outboxes failed (non-fatal): {exc}")
 
 
 app = FastAPI(title="Character Simulator API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=_lifespan)

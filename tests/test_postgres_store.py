@@ -64,7 +64,7 @@ _ENGINE_INTERNAL_TABLES = frozenset({"schema_migrations"})
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _dsn() -> str:
-    return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+    return os.environ["DATABASE_URL"]
 
 
 # 需要真 PG 的用例统一挂这个 mark（含可见原因）。挂在**类**上而非模块级 `pytestmark`：
@@ -118,13 +118,13 @@ def _referenced_tables(src: str, vocabulary: set[str]) -> set[str]:
 #     DROP COLUMN  9 处        （migrations_pg/005_data_residency.sql 4：users 的
 #                              password_hash / api_key / base_url / model；
 #                              migrations_pg/025_retire_is_admin.sql 1：users.is_admin；
-#                              migrations_pg/026_retire_coref_columns.sql 2 +
-#                              migrations/092_retire_coref_columns.sql 2：texts 的两列）
+#                              migrations_pg/027_retire_coref_columns.sql 2 +
+#                              migrations/094_retire_coref_columns.sql 2：texts 的两列）
 #
 # 而且同一个删除在两侧可以由**两套完全不同的机制**完成，`users` 的四列就是范例：
 # PG 是那四条声明式 `ALTER TABLE users DROP COLUMN IF EXISTS`；SQLite 是
 # `storage/sqlite_store.py` 里的 Python 表重建（`if "password_hash" in all_cols` 触发），
-# `.sql` 文本里**根本没有这条语句**。**但这不是通则** —— 092 就是反例：它也走 SQLite，
+# `.sql` 文本里**根本没有这条语句**。**但这不是通则** —— 094 就是反例：它也走 SQLite，
 # 却是 .sql 里的裸 `DROP COLUMN`，因为执行器（`_apply_migration`）对 DROP 支也做了
 # 「读现状判已生效」的剥除，不需要靠 Python 重建。故断言不能建立在「SQLite 侧一定没有
 # .sql DROP」这个前提上。
@@ -548,6 +548,50 @@ class TestMessageCrud:
         assert len(msgs) == 1
         assert msgs[0]["content"] == "keep"
 
+    async def test_client_key_is_idempotent(self, store, text_id, card_id, session_id):
+        """K2：同 key 写两次 → 同一行（与 SQLite 侧
+        `tests/test_client_key_idempotency.py` 同形同判据）。"""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "Char", json.dumps({"name": "Char"}))
+        await store.save_session(session_id, card_id, "", "")
+
+        first = await store.save_message(session_id, "user", "第一条", "", client_key="k1")
+        second = await store.save_message(session_id, "user", "重放的内容", "", client_key="k1")
+
+        assert second["id"] == first["id"]
+        assert second["content"] == "第一条"
+        assert len(await store.get_messages(session_id)) == 1
+
+    async def test_client_key_unique_index_backstops(self, store, text_id, card_id, session_id):
+        """绕过查重直接插同 key，部分唯一索引必须拦下（SQLite 侧同形见
+        `tests/test_client_key_idempotency.py`）。"""
+        import asyncpg
+
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "Char", json.dumps({"name": "Char"}))
+        await store.save_session(session_id, card_id, "", "")
+
+        async with await store._connect() as conn:
+            await conn.execute(
+                "INSERT INTO messages (session_id, role, content, client_key) VALUES ($1, $2, $3, $4)",
+                session_id, "user", "第一条", "k1",
+            )
+            with pytest.raises(asyncpg.UniqueViolationError):
+                await conn.execute(
+                    "INSERT INTO messages (session_id, role, content, client_key) VALUES ($1, $2, $3, $4)",
+                    session_id, "user", "重放的内容", "k1",
+                )
+
+    async def test_client_key_null_rows_are_unconstrained(self, store, text_id, card_id, session_id):
+        """partial index：NULL key 的行不受约束（老调用点连着写两条相同内容是对的）。"""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "Char", json.dumps({"name": "Char"}))
+        await store.save_session(session_id, card_id, "", "")
+
+        await store.save_message(session_id, "user", "同样的内容", "")
+        await store.save_message(session_id, "user", "同样的内容", "")
+        assert len(await store.get_messages(session_id)) == 2
+
 
 # ── User CRUD ────────────────────────────────────────────────────────────────
 
@@ -692,6 +736,18 @@ class TestGroupSessionCrud:
         await store.create_group_session(gid, "Group A", [], user_id=uid)
         sessions = await store.list_group_sessions(uid)
         assert any(s["id"] == gid for s in sessions)
+
+    async def test_group_message_client_key_is_idempotent(self, store):
+        gid = f"grp_{uuid.uuid4().hex}"
+        first = await store.save_group_message(
+            gid, "张三", "assistant", "第一条", client_key="k1")
+        second = await store.save_group_message(
+            gid, "张三", "assistant", "重放的内容", client_key="k1")
+
+        assert second == first
+        rows = await store.get_group_messages(gid)
+        assert len(rows) == 1
+        assert rows[0]["content"] == "第一条"
 
 
 # ── Follow / DM ──────────────────────────────────────────────────────────────
@@ -1122,7 +1178,7 @@ class TestPgFreshSchemaClosure:
     列级**不能**套这个形状 —— 全文理由写在下面 `_sqlite_columns` / `_pg_columns` 那段
     注释里，一句话版：`DROP TABLE` 0 处、`DROP COLUMN` 9 处（2026-09-23 现跑现数），
     删列在本仓是既有事实，而声明列提取器**只认 CREATE TABLE + ADD COLUMN**、DROP 不认
-    （PG 的 DROP 语句不认，SQLite 除了 092 那种裸 DROP 之外还有 Python 表重建、`.sql`
+    （PG 的 DROP 语句不认，SQLite 除了 094 那种裸 DROP 之外还有 Python 表重建、`.sql`
     里根本没有），两侧盲区互相抵消。故列级改比**另一侧真库**：
     `test_fresh_sqlite_and_fresh_pg_have_the_same_columns`。
     """

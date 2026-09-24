@@ -90,12 +90,20 @@ vi.mock('../PageHeader', () => ({ default: () => null }))
 // ChatBubble 不 mock —— 提示就渲染在它里面，mock 掉等于把被测的东西一起去掉了。
 
 describe('UnsavedHint', () => {
-  it('V3 文案只有这一句，且用自己那个类名（不借 danger 红，那是「发送失败可重试」的）', () => {
-    const { container } = render(<UnsavedHint />)
+  it('V3 pending 是「未保存」+ 重试按钮（还留在队里，点了真能补上）', () => {
+    const { container } = render(<UnsavedHint state="pending" onRetry={() => {}} />)
 
     const hint = container.querySelector('.unsaved-hint')
     expect(hint).not.toBeNull()
-    expect(hint.textContent).toBe('未保存，刷新后会丢失')
+    expect(hint.textContent).toBe('未保存，刷新后会丢失重试')
+    expect(container.querySelector('.unsaved-retry')).not.toBeNull()
+  })
+
+  it('V3 failed 是「保存失败」且不给按钮（重试过一次仍写不进去，给按钮是骗人）', () => {
+    const { container } = render(<UnsavedHint state="failed" />)
+
+    expect(container.querySelector('.unsaved-hint-text').textContent).toBe('保存失败，刷新后会丢失')
+    expect(container.querySelector('.unsaved-retry')).toBeNull()
   })
 
   it('V3 样式表里 .unsaved-hint 是次要色小号字，且不是 display:none', () => {
@@ -107,10 +115,10 @@ describe('UnsavedHint', () => {
     expect(block[1]).not.toMatch(/display\s*:\s*none/)
   })
 
-  it('V3 一对一气泡：unsaved 的那条渲染提示，普通那条不渲染', () => {
+  it('V3 一对一气泡：标了「未保存」的那条渲染提示，普通那条不渲染', () => {
     mutate({
       messages: [
-        { _cid: 'm1', role: 'user', content: '没存上的那条', unsaved: true },
+        { _cid: 'm1', role: 'user', content: '没存上的那条', saveState: 'pending' },
         { _cid: 'm2', role: 'user', content: '存上了的那条' },
       ],
     })
@@ -118,7 +126,7 @@ describe('UnsavedHint', () => {
 
     const hints = container.querySelectorAll('.unsaved-hint')
     expect(hints.length).toBe(1)
-    expect(hints[0].textContent).toBe('未保存，刷新后会丢失')
+    expect(hints[0].textContent).toBe('未保存，刷新后会丢失重试')
     expect(hints[0].closest('.chat-msg').textContent).toContain('没存上的那条')
   })
 })

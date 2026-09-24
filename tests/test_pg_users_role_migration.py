@@ -25,7 +25,7 @@ _pg = PG_ENV.skipif("PG 角色迁移用例")
 
 
 def _base_dsn() -> str:
-    return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+    return os.environ["DATABASE_URL"]
 
 
 def _with_db(dsn: str, name: str) -> str:
