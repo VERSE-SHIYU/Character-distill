@@ -347,6 +347,8 @@ async def pg_card(pg_store):
     yield _CARD
     async with await pg_store._connect() as conn:
         await conn.execute("DELETE FROM cards WHERE id = $1", _CARD)
+        await conn.execute(
+            "DELETE FROM cross_border_delete_outbox WHERE target_id = $1", _CARD)
 
 
 async def _queued_card_deletes(store) -> list[dict]:

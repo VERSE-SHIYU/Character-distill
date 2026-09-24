@@ -1150,16 +1150,13 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 async with conn.transaction():
                     await conn.execute(
-                        "UPDATE cards SET deleted_at = NULL WHERE id = $1",
+                        """UPDATE cards SET deleted_at = NULL, cross_border_synced = 0
+                           WHERE id = $1""",
                         card_id,
                     )
                     await conn.execute(
                         """DELETE FROM cross_border_delete_outbox
                            WHERE op_type = 'card_delete' AND target_id = $1""",
-                        card_id,
-                    )
-                    await conn.execute(
-                        "UPDATE cards SET cross_border_synced = 0 WHERE id = $1",
                         card_id,
                     )
             return True
