@@ -542,13 +542,33 @@ class Distiller:
         return t.count("{") != t.count("}") or t.count("[") != t.count("]")
 
     @staticmethod
+    def _unfinished_kind(exc: BaseException) -> tuple[str, str]:
+        """未完成终态的**唯一**判据 —— ``(kind, content)``，``kind`` ∈ ``{"", "truncated", "fatal"}``。
+
+        全仓只此一处读 `incomplete_response_info`、也只此一处把 finish_reason 与
+        ``length`` 比。下游两个问题都从这一个结果派生，判法不会在两处分叉：
+        `_truncation_evidence` 问「有没有可修的截断证据」，`_unfinished_disposition`
+        问「重修环该不该上抛」。``content`` 只在 ``"truncated"`` 时可能非空。
+
+        - ``"truncated"``：``length`` 终态（含空正文那一格）；
+        - ``"fatal"``：其余未完成终态（``content_filter`` 要改输入、资源不足可稍后重试）；
+        - ``""``：不是未完成终态（网络 / 超时这类瞬时硬失败）。
+        """
+        info = incomplete_response_info(exc)
+        if info is None:
+            return "", ""
+        if info[0] == "length":
+            return "truncated", info[1]
+        return "fatal", ""
+
+    @staticmethod
     def _truncation_evidence(exc: BaseException, partial: str = "") -> str | None:
         """截断证据：上游以 ``length`` 终态结束**且**有非空正文时，返回那半截正文。
 
-        这里是全仓唯一一处判「是不是截断」——`_collect_stream` 与 `_chat_accounted`
-        两处的 ``except`` 都调它。重修环两处 ``except`` 问的**不是**这个问题（是
-        「确定性终态还是瞬时失败」），问的是 `_unfinished_disposition` —— 与这里同守
-        一处判据、读同一个 `incomplete_response_info`。两个条件都必要：
+        判据在 `_unfinished_kind`（全仓唯一一处读 finish_reason），这里只把它的
+        ``"truncated"`` 那一档翻译成证据。`_collect_stream` 与 `_chat_accounted` 两处
+        的 ``except`` 都调它。重修环两处 ``except`` 问的**不是**这个问题（是「确定性
+        终态还是瞬时失败」），问的是 `_unfinished_disposition`。两个条件都必要：
 
         - 不是 ``length`` 的未完成终态（``content_filter`` 要改输入、资源不足可稍后
           重试）不是截断，重修无用；
@@ -561,18 +581,14 @@ class Distiller:
         ``partial`` 是本级手里已收到的正文：流式支的正文在 ``_collect_stream`` 的累积
         里（异常上的 content 反而是空的），非流式支挂在异常上（传空串即可）。
         """
-        info = incomplete_response_info(exc)
-        if info is None or info[0] != "length":
+        kind, content = Distiller._unfinished_kind(exc)
+        if kind != "truncated":
             return None
-        return info[1] or partial or None
+        return content or partial or None
 
     @staticmethod
     def _unfinished_disposition(exc: BaseException) -> str:
-        """未完成终态在**重修环**里的处置分档；与 `_truncation_evidence` 同守一处判据。
-
-        `_truncation_evidence` 回答「有没有可修的截断证据」，这里回答「该不该上抛」——
-        两者读同一个 `incomplete_response_info`、按同一个 ``length`` 分流，只是各自的
-        半问不同。三档：
+        """未完成终态在**重修环**里的处置分档 —— `_unfinished_kind` 的 ``kind`` 半边。
 
         - ``"fatal"``：非 ``length`` 的未完成终态（``content_filter`` 要改输入、资源
           不足可稍后重试）——上游的确定性结论，重修无用，原样上抛，由 `web/server.py`
@@ -583,10 +599,7 @@ class Distiller:
           都要留下，调用方据此置 ``truncated``，免得三次用尽后报成「格式异常」；
         - ``""``：不是未完成终态（网络 / 超时这类瞬时硬失败）。
         """
-        info = incomplete_response_info(exc)
-        if info is None:
-            return ""
-        return "truncated" if info[0] == "length" else "fatal"
+        return Distiller._unfinished_kind(exc)[0]
 
     @staticmethod
     def _prompt_chars(system_prompt: str, messages: list[dict[str, Any]]) -> int:
