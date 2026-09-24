@@ -3,8 +3,9 @@
 
 原先本文件锁的是「路由自己的 `_http_error_from` 映射」。缺陷 38 收口后那张表**搬到了**
 ``web/server.py`` 的统一出口（`_LLM_ERROR_STATUS`，按判别键 `kind` 查）—— 路由层不再知道
-「哪个 finish_reason 配哪个码」。所以本文件只剩一件事：**`_do_chat` 必须把 LLM 侧未完成终态
-原样放行出去**（放行了才轮得到统一出口配码；就地吞成 500 就是回到修复前的样子）。
+「哪个 finish_reason 配哪个码」。本文件锁两件事，都是「`_do_chat` 一个异常都不吞」：
+**LLM 侧未完成终态原样放行**（放行了才轮得到统一出口配码，就地吞成 500 就是回到修复前的
+样子），**普通失败也原样上抛**（改后由统一出口记带堆栈的 ERROR 并告警）。
 
 码本身的契约（400/502/503 + 未登记兜 502）随表搬家 → ``tests/test_domain_exception_exit.py
 ::test_b2_llm_incomplete_maps_by_finish_reason``，此处不重复断言。
@@ -13,7 +14,6 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
 
 import routers.chat as chat
 from adapters.llm_adapter import IncompleteResponseError
@@ -53,17 +53,20 @@ def _wire(monkeypatch, exc):
 def test_do_chat_lets_llm_incomplete_propagate(monkeypatch):
     """未完成终态必须**向外传播**（不是包成 HTTPException）—— 统一出口才配得了码。
 
-    变异：把 `_do_chat` 里那句 `if llm_error_payload(exc) is not None: raise` 删掉 →
-    这里会看到 HTTPException(500)，红。
+    变异：把 `_do_chat` 的 `try/except Exception` 加回来（`engine.chat` 外面恢复到删除包装
+    前的样子）→ 这里看到的是 HTTPException(500) 而不是 IncompleteResponseError，红。
     """
     _wire(monkeypatch, _err("insufficient_system_resource"))
     with pytest.raises(IncompleteResponseError):
         asyncio.run(chat._do_chat("s1", "hi", storage=None, sessions={}, user_id="u1"))
 
 
-def test_do_chat_still_500s_on_plain_failure(monkeypatch):
-    """非 LLM 失败仍就地 500 —— 别把整圈 `except Exception` 都放行。"""
+def test_do_chat_lets_plain_failure_reach_the_unified_exit(monkeypatch):
+    """普通失败（非 LLM 侧）也**原样上抛** —— 就地 500 会绕过全局处理器的日志与告警。
+
+    变异：在 `_do_chat` 加回 `except Exception: raise HTTPException(500, …)` →
+    这里看到的是 HTTPException 而不是 RuntimeError，红。
+    """
     _wire(monkeypatch, RuntimeError("boom"))
-    with pytest.raises(HTTPException) as ei:
+    with pytest.raises(RuntimeError):
         asyncio.run(chat._do_chat("s1", "hi", storage=None, sessions={}, user_id="u1"))
-    assert ei.value.status_code == 500

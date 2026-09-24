@@ -49,10 +49,10 @@ def _stream_error_payload(exc: Exception) -> dict[str, Any]:
 # 非流式：上游返回不完整响应不是「服务端出错」——content_filter 更是用户输入问题，
 # 用 500 会让用户当 bug 反复重试。
 #
-# 「失败种类 → 状态码」那张表已**搬到 web/server.py 的 `_LLM_ERROR_STATUS`**（统一出口，
+# 「失败种类 → 状态码」那张表在 web/server.py 的 `_LLM_ERROR_STATUS`（统一出口，
 # 按判别键 `kind` 查：未完成终态 `incomplete:<finish_reason>`、调用点门拒绝 `call_refused`）：
-# 同一个异常类型下码不同，但「怎么配码」不该散在路由里。此处只放行（见 `_do_chat`），
-# 文案仍走同一份口径链，与 SSE 帧同文案。
+# 同一个异常类型下码不同，但「怎么配码」不该散在路由里。本文件**不捕获**：异常原样上抛，
+# 由统一出口配码并记带堆栈的 ERROR；文案仍走同一份口径链，与 SSE 帧同文案。
 
 # Retraction state machine
 RETRACT_COOLDOWN_TURNS = 4      # 距上次撤回至少间隔的轮数
@@ -167,10 +167,7 @@ async def _ensure_session(
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
-    try:
-        card = CharacterCard.model_validate_json(card_rec["card_json"])
-    except Exception as exc:
-        raise HTTPException(500, "Card data is corrupted") from exc
+    card = CharacterCard.model_validate_json(card_rec["card_json"])
 
     existing_cards = await storage.list_cards(card_rec["text_id"], user_id)
     all_characters = await text_manager._build_all_characters(card_rec["text_id"], existing_cards, user_id)
@@ -311,29 +308,20 @@ async def _do_chat(
             except Exception as exc:
                 logger.warning("Save user_role failed (non-fatal): %s", exc, exc_info=True)
 
-    try:
-        engine = session.get("engine")
-        if engine:
-            engine._ctx_engine.web_search_enabled = web_search
-            engine.affinity_enabled = affinity_enabled
-            engine.agent_mode = agent_mode
-            engine._main_loop = asyncio.get_running_loop()
-        # Prepend quote context for LLM if replying
-        llm_msg = f'[引用: "{reply_to_preview}"]\n{msg}' if reply_to_preview else msg
-        print(f"[chat] _do_chat session={session_id} history={len(engine.history) if engine else 0} messages")
-        async with session["lock"]:
-            import time as _t; _t0 = _t.time()
-            resp = await asyncio.to_thread(engine.chat, llm_msg, voice_mode=voice_mode)
-            print(f"[perf] _do_chat total took {_t.time()-_t0:.2f}s")
-            rag_ctx = getattr(engine, '_last_rag_context', '') or ''
-    except Exception as exc:
-        # LLM 侧未完成终态放行到统一出口（web/server.py 按 finish_reason 配 400/502/503）；
-        # 其余仍就地 500。判据走 llm_error_payload，不 import 异常类（边界锁）。
-        if llm_error_payload(exc) is not None:
-            raise  # 原样上抛 —— 由全局处理器记录（web/server.py）
-        # HTTPException 不经全局处理器，就地记一条；否则这条路的失败不留痕。
-        logger.error("Chat failed: %s", exc, exc_info=True)
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    engine = session.get("engine")
+    if engine:
+        engine._ctx_engine.web_search_enabled = web_search
+        engine.affinity_enabled = affinity_enabled
+        engine.agent_mode = agent_mode
+        engine._main_loop = asyncio.get_running_loop()
+    # Prepend quote context for LLM if replying
+    llm_msg = f'[引用: "{reply_to_preview}"]\n{msg}' if reply_to_preview else msg
+    print(f"[chat] _do_chat session={session_id} history={len(engine.history) if engine else 0} messages")
+    async with session["lock"]:
+        import time as _t; _t0 = _t.time()
+        resp = await asyncio.to_thread(engine.chat, llm_msg, voice_mode=voice_mode)
+        print(f"[perf] _do_chat total took {_t.time()-_t0:.2f}s")
+        rag_ctx = getattr(engine, '_last_rag_context', '') or ''
 
     # Determine retraction before persisting (session-level state machine)
     retracted = await _decide_retraction(session.get("engine"), session, resp)
@@ -707,11 +695,7 @@ async def revoke_messages(
     session["outbox"].clear()
 
     # Delete from SQLite first
-    try:
-        count = await storage.delete_messages_after(req.session_id, req.message_id)
-    except Exception as exc:
-        print(f"[chat] Revoke messages failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    count = await storage.delete_messages_after(req.session_id, req.message_id)
 
     # Rebuild in-memory engine.history from remaining DB rows
     try:
