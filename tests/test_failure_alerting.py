@@ -30,6 +30,10 @@ def alerts(monkeypatch) -> list[tuple[str, str, str]]:
 
     装真 handler 而不是手搓一条 `if level >= ERROR` —— 后者测的是本文件里的复制品，
     生产那档门槛（`ALERT_LEVEL`）改了也照绿。
+
+    先把 root 上**已存在**的 AlertHandler 摘下来（`install_alert_handler` 是进程级装配，
+    别的用例可能已经装过）：留着它同一封会被两个 handler 各发一次，「发了几封」就不再
+    是本用例的事实。
     """
     sent: list[tuple[str, str, str]] = []
     monkeypatch.setattr(alerting, "_dispatch", lambda fn: fn())
@@ -38,12 +42,17 @@ def alerts(monkeypatch) -> list[tuple[str, str, str]]:
         lambda to, subject, body: sent.append((to, subject, body)),
     )
     root = logging.getLogger()
+    existing = [h for h in root.handlers if isinstance(h, alerting.AlertHandler)]
+    for h in existing:
+        root.removeHandler(h)
     handler = alerting.AlertHandler("ops@example.com")
     root.addHandler(handler)
     try:
         yield sent
     finally:
         root.removeHandler(handler)
+        for h in existing:
+            root.addHandler(h)
 
 
 def _levels_for(caplog, marker: str) -> list[int]:
@@ -91,3 +100,62 @@ def test_nonfatal_default_level_is_unchanged(alerts, caplog):
     assert _levels_for(caplog, marker) == [logging.ERROR], \
         f"不传 level 时必须是 ERROR，实得 {_levels_for(caplog, marker)}"
     assert len(alerts) == 1, "默认档（数据没存进去 / 请求失败）必须发得出告警"
+
+
+# ── 2. 全局异常处理器：往上抛的错误必须留痕（并触发告警） ─────────────────────
+#
+# 这一处是「约 300 处打印后抛出」的统一接住点：那些 print 已经足够定位，不值得逐处改，
+# 但它们**也只落在 stdout 里**。全局处理器记一条，整条路才上面板、才会发信。
+#
+# 用**生产 app 本身**（不是另搭一个最小 app）：处理器是 `web/server.py` 里注册的那一个，
+# 另搭一个等于把「生产这一份装配真的生效了」这件事测成「我照着又注册了一遍」。
+
+@pytest.fixture
+def probe_app():
+    """在生产 app 上临时挂一条会抛的路由；用完摘掉。
+
+    「摘掉」不是洁癖：仓里有若干**枚举路由**的锁（route_facts 的对账、演示门禁的射程），
+    多出来的路由会让它们按另一份现场判事。`openapi_schema` 缓存一并清 —— 那个缓存按
+    首次求值冻结，带着探针路由的 schema 会留给后面的用例。
+    """
+    from starlette.routing import Route
+
+    import server
+
+    async def _boom(request):
+        raise RuntimeError("spec119-boom")
+
+    route = Route("/__spec119_boom__", _boom, methods=["GET"])
+    server.app.router.routes.insert(0, route)
+    try:
+        yield server.app
+    finally:
+        server.app.router.routes.remove(route)
+        server.app.openapi_schema = None
+
+
+def test_unhandled_exception_is_logged_and_alerts_while_response_is_unchanged(
+    probe_app, alerts, caplog,
+):
+    """未捕获的异常 → 500、响应**一字不改**、一条带堆栈的 ERROR、告警 1 封。
+
+    「响应不变」与「必须留痕」是同一处的两条相反约束：这一改动的诱惑正是顺手把异常
+    原文端给前端（那既改了契约，又把内部细节漏出去）。所以两者钉在一起。
+    """
+    from fastapi.testclient import TestClient
+
+    client = TestClient(probe_app, raise_server_exceptions=False)
+    with caplog.at_level(logging.ERROR):
+        resp = client.get("/__spec119_boom__")
+
+    assert (resp.status_code, resp.json()) == (
+        500, {"detail": "服务器内部错误，请稍后重试"},
+    ), f"返回给前端的响应变了：{resp.status_code} {resp.text!r}"
+
+    recs = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert [(r.levelno, bool(r.exc_info)) for r in recs] == [(logging.ERROR, True)], \
+        f"未捕获的异常必须留一条带堆栈的 ERROR，实得 {[(r.levelno, bool(r.exc_info)) for r in recs]}"
+    assert "GET" in recs[0].getMessage() and "/__spec119_boom__" in recs[0].getMessage(), \
+        f"日志没说是哪个请求挂的，排障只剩堆栈：{recs[0].getMessage()!r}"
+
+    assert len(alerts) == 1, "线上 500 却没发告警 —— 这正是本份要修的事"

@@ -265,8 +265,10 @@ register_domain_error_handlers(app)
 
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    import traceback
-    traceback.print_exc()
+    # 往上抛的错误统一在这里落一条带堆栈的 ERROR：约 300 处 `print + raise` 会走到这儿，
+    # 它们本身不改成日志（错误已由此处记录），但在此之前它们只落在 stdout 里 —— 面板
+    # （RingBufferHandler，收 WARNING+）和告警邮件（收 ERROR）都看不见。
+    logger.exception("%s %s 未捕获的异常", request.method, request.url.path)
     return JSONResponse(
         status_code=500,
         content={"detail": "服务器内部错误，请稍后重试"},
