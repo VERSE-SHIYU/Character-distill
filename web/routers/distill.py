@@ -35,6 +35,7 @@ from limiter import limiter
 from routers.auth import get_current_user
 from web.llm_resolution import resolve_embedding
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/distill", tags=["distill"])
 legacy_router = APIRouter(tags=["legacy-distill"])
