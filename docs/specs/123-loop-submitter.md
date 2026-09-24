@@ -73,3 +73,44 @@
 - 合并门：分支 CI；报告附 CI 日志中 `never awaited`、`No loop submitter`、`Event loop is closed` 三项计数
 - 推送分支、开 PR；**审计通过前不合 main**
 - 报告：每步 commit 与 `--stat`、S0 逐条复核结果、先红后绿记录、变异表、测试末行、CI 链接；不报本地全量数字
+
+---
+
+## 补充 1：审计返工（基线：PR #15 头 `d1f8be8`；main 已到 `63a12e4`）
+
+### 已查实的约束（审计方在本地 PG 上对 `d1f8be8` 现跑）
+- R1 仍有测试借「未注册」路径过关：在 `submit_to_main_loop` 未注册分支打点跑全量 → 共 34 次，其中 `test_llm_access_gate.py` 2 次是 l14 断言本身（合法），其余 32 次全被宽 `except` 吞掉、用例照常通过：
+  - `tests/test_reunion_greeting.py` 20 次：全部来自 `TestDailyVisitAwareness`（:316 起）的 6 条用例 —— 它们经 `_make_engine()`（:35 `storage=MagicMock()`）建引擎后跑 `engine.chat()`，轮后评估投递被拒、被吞；这 6 条只测「到访觉察」注入，不测存储。同文件其余用例把 `session_data` 直接传给 `generate_reunion_greeting`，不投递（实测 0 次），但需要存储为真才进得了该路径
+  - `tests/test_secret_never_plaintext.py` 12 次：`_turn`（:85–94）在 async 用例里直接调同步的 `engine._evaluate_affinity`，再手工 `await store.save_affinity_state(...)` 绕开（:88–90 注释自认是缺陷 123 的绕行）；日志里是 `Fetch reactions failed` / `Save affinity state failed (non-fatal): 未注册投递实现`
+  - 成因：spec 约束 8 的「21 次 / 4 个文件」是在 C9 残留注册仍生效时测的 —— 排在 C9 之后的用例当时投进了死 loop 而不是走退路，所以没被计入。报告 §5 把 secret_never_plaintext 的 4 条 never awaited 记作「改前即有、同源」不成立：改前源自 C9 残留，改后源自未注册抛错
+- R2 拒绝投递时协程没关：`core/scheduling.py` 未注册分支、`web/deps.py::_submit_to_main_loop` 自等分支都在 `raise` 前丢下调用方已经建好的协程，每次拒绝都飘一条 `coroutine ... was never awaited`（上面 secret_never_plaintext 的 4 条即此）
+- R3 测试 app 的 lifespan 有两份：`tests/test_message_backfill.py:194–228` 与 `tests/test_ownership_404.py` 各自定义了 `_test_lifespan` + `_OPEN_CLIENTS` ExitStack + autouse 退出夹具，形状相同
+- R4 main 已合入 96（`63a12e4`）：`git merge-tree` 预演本分支与 main 在 `AGENTS.md`、`tests/test_initial_affinity.py` 两处冲突
+
+**S0**：逐条复核 R1–R4，不成立就停下报告。
+
+### 约束
+- 不改 spec 已完成部分的设计；只补以上四处
+- R3 收口后，测试 app 的 lifespan 只在 `tests/conftest.py` 有一份（与 `registered_globals` 放在一起），两个文件改用它
+- 引擎单元测试的处理与步骤 2 同一套：不测存储传 `None`，测存储交互用 `AsyncMock` + 显式测试投递实现
+
+### 步骤（每步独立 commit）
+5. [core+web] 拒绝投递前先 `coro.close()`：`core/scheduling.py` 未注册分支、`web/deps.py` 自等分支。测试：l14 两条用例追加断言「被拒的协程已关闭」（`inspect.getcoroutinestate(coro) == CORO_CLOSED`）。先红后绿
+   commit：`fix(scheduling): close the coroutine it refuses to submit`
+6. [tests] 测试 app 的 lifespan 挪进 conftest：`_test_lifespan` + 客户端退出夹具只留 conftest 一份；backfill、ownership_404 改用
+   commit：`test(lifespan): one test-app lifespan in conftest`
+7. [tests] R1 两个文件改成生产形状：
+   - `test_reunion_greeting.py`：只在 `TestDailyVisitAwareness` 的 6 条用例里把引擎存储设为 `None`；`_make_engine` 本身不改（改成 `None` 会让重逢问候用例在 :1376 直接返回空串、4 条变红 —— 已实测）
+   - `test_secret_never_plaintext.py::_turn`：在 `registered_globals()` 内 `deps.set_main_loop(当前运行 loop)`，`_evaluate_affinity` 改经 `await asyncio.to_thread(...)`，删掉手工 `save_affinity_state` 绕行与 :88–90 注释；链路靠生产代码自己落库，:133 的断言保持
+   commit：`test: stop riding the unregistered path in reunion and the secret canary`
+8. [merge] `git merge origin/main`，解两处冲突：`AGENTS.md` 两边条目都留；`test_initial_affinity.py` 以 main 上 96 的构造方式为准，叠加本 spec 步骤 2 的存储改法
+   commit：merge 提交本身
+
+### 验证
+- 打点复测（在未注册分支临时记录 `PYTEST_CURRENT_TEST`，跑完还原）：**每个测试文件单独起一个进程跑**（排除用例间的进程级串扰 —— 本 spec 约束 8 的计数就是被串扰污染的），覆盖 `tests/test_*.py` 全部文件；未注册命中只剩 l14 的 2 次，自等拒绝只剩 l14 自等用例 1 次
+- 审计方已按上述方式在 `d1f8be8` 上测过（131 个文件逐个单独跑）：未注册命中 34 次 = reunion 20 + secret 12 + l14 2，自等拒绝 1 次（l14）；与 R1 完全一致，无其他文件
+- 审计方已原型验证步骤 5、7：`coro.close()` 后 never awaited 为 0；reunion 按上面改法 25 passed、命中 0；secret canary 改走 `to_thread` + `registered_globals` 后 2 passed、命中 0
+- 变异：删掉步骤 5 的 `coro.close()` → l14 新断言变红；`test_secret_never_plaintext` 改回直接调 `_evaluate_affinity` → 用例变红（未注册抛错不再被绕行掩盖，断言 :134 失败）
+- 本地只跑（Docker PG）：原 spec 的 8 个文件 + `test_reunion_greeting.py`（已在内）+ `test_secret_never_plaintext.py`（已在内）+ `test_ownership_404.py`
+- 分支 CI；报告附 `never awaited`、`未注册投递实现` 两项计数（前者应为 0）
+- 审计通过前不合 main
