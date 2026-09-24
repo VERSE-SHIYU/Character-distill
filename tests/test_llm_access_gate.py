@@ -27,6 +27,7 @@ spec 在库：`docs/specs/llm-access-gate.md`（v5 全量取代 v1–v4）。命
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import inspect
 import threading
@@ -1139,37 +1140,64 @@ def test_l14_submit_delegates_when_registered():
 
 
 def test_l14_unregistered_fallback_semantics():
+    """未注册投递实现时**当场报错**，不留退路（名字沿用旧称：本用例锁的正是「没有退路」）。
+
+    退路（`wait=True` → `asyncio.run`、`wait=False` → `create_task`）在独立进程里看着
+    无害，但它让测试**借退路过关**：引擎单元测试拿 `MagicMock` 当存储，退路就在当前
+    线程另起一个 loop 把活干了，于是那些用例测的不是生产形状 —— 实测 22 次命中里有
+    21 次被宽 `except` 吞掉而显示通过。拿掉退路后这些用例只能显式注册投递实现，
+    或者把存储换成 `None`。
+
+    两种 `wait` 都要抛：只挡住一边，另一边照样能绕过生产形状。
+    """
     S = _mod("core.scheduling")
 
     async def _value():
         return "RAN"
 
     with _snapshot(S.get_loop_submitter, S.set_loop_submitter, None):
-        # wait=True：阻塞取结果，且响亮（发 warning）
-        with pytest.warns(Warning):
-            assert S.submit_to_main_loop(_value()) == "RAN"
+        for wait in (True, False):
+            coro = _value()
+            try:
+                with pytest.raises(RuntimeError):
+                    S.submit_to_main_loop(coro, wait=wait)
+            finally:
+                # 旧代码在这条路径上会真的把协程跑掉（退路）—— 那时 close 会报
+                # 「cannot reuse already awaited coroutine」，与本用例的判据无关。
+                with contextlib.suppress(RuntimeError):
+                    coro.close()
 
-        # wait=False：当前线程有运行中的 loop → 不阻塞，但要真的跑起来
-        order: list[str] = []
 
-        async def _probe():
-            await asyncio.sleep(0)  # 让出一次：只要「返回」发生在协程跑完之前
-            order.append("CORO")
+async def test_l14_registered_submitter_refuses_to_block_on_its_own_loop():
+    """主 loop 线程上 `wait=True` 自等 = 死锁，必须在投递**之前**报错。
 
-        async def _driver():
-            task = S.submit_to_main_loop(_probe(), wait=False)
-            order.append("RETURNED")
-            # 拿到什么就 await 什么 —— 回退有两种合法实现（create_task / asyncio.run），
-            # 直接裸调会让「协程根本没排上」也过关。
-            if task is not None:
-                await task
+    `web/deps._submit_to_main_loop` 的守卫。生产上原有两个裸调点（`chat.py:221` /
+    `history.py:313`）会走到这里：`run_coroutine_threadsafe` 把协程丢给当前 loop、
+    自己再等结果 —— 主 loop 被自己堵住，满超时后抛 `TimeoutError`，而
+    `_save_affinity_state` 的宽 `except` 把它吞成一行 warning。症状是「保存静默不生效」。
 
-        asyncio.run(_driver())
+    `timeout` 给短值：这条要红的**理由必须是不对的异常类型**，不能靠用例被超时杀掉。
+    """
+    import core.scheduling as S
+    import web.deps as deps
 
-    # 两条都要：丢了协程（order 缺 CORO）、或阻塞到跑完才返回（顺序颠倒）都算错。
-    assert order == ["RETURNED", "CORO"], (
-        f"wait=False 的回退语义不对（期望先返回后跑完，实得 {order}）："
-        "要么协程被丢了，要么它其实阻塞了")
+    async def _noop():
+        return "RAN"
+
+    prev_loop = deps.get_main_loop()
+    prev_submitter = S.get_loop_submitter()
+    deps.set_main_loop(asyncio.get_running_loop())
+    try:
+        coro = _noop()
+        try:
+            with pytest.raises(RuntimeError):
+                S.submit_to_main_loop(coro, wait=True, timeout=0.5)
+        finally:
+            with contextlib.suppress(RuntimeError):
+                coro.close()
+    finally:
+        deps.set_main_loop(prev_loop)
+        S.set_loop_submitter(prev_submitter)
 
 
 def test_l14_usage_recording_goes_through_the_primitive():

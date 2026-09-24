@@ -219,7 +219,19 @@ def _submit_to_main_loop(coro, *, wait: bool = True, timeout: float = 600):
     wait=True 时取结果并抛出协程的异常（调用方原本就在等，串行语义不变）；
     wait=False 时不取结果、不阻塞，异常交给 done-callback 落日志 —— 那正是
     「记账/审计不该拖住请求」的写法。
+
+    主 loop 线程上 `wait=True` 是**自等**：`run_coroutine_threadsafe` 把协程排回当前
+    loop，而当前 loop 正卡在这句 `result()` 上 —— 堵满 timeout（生产上 15 秒），异常
+    还会被调用方的宽 `except` 吞成一行 warning，症状是「保存静默不生效且不报错」。
+    必须在投递**之前**报错：async 路由里该写成 `await asyncio.to_thread(...)`。
     """
+    if wait and _main_loop is not None:
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is _main_loop:
+            raise RuntimeError("主 loop 线程上不得阻塞等主 loop")
     fut = asyncio.run_coroutine_threadsafe(coro, _main_loop)
     if wait:
         return fut.result(timeout=timeout)
