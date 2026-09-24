@@ -623,7 +623,6 @@ class TextManager:
         user_id: str = "",
         user_role: str = "",
         session_id: str | None = None,
-        is_new_session: bool = True,
     ) -> str:
         """Build ChatEngine in memory; rag=None means no retrieval (pure card prompt). (sync)
 
@@ -641,9 +640,18 @@ class TextManager:
         `TypeError`，不会有地方可落。**先问这个参数有没有人用，再问怎么传。**
 
         `session_id` 给了就用（续接 / 恢复：把原 id 交给构造函数），不给就在**造引擎
-        之前**生成 —— 引擎出生即知道自己在哪个会话，不再「先造后改名」。`is_new_session`
-        与它成对：续接的引擎不该重算初始好感度，那是显式说的，不由 id 有无去推。
+        之前**生成 —— 引擎出生即知道自己在哪个会话，不再「先造后改名」。
+
+        **新旧由 id 的有无唯一决定，本层不再单收 `is_new_session`。** 本层只有两条路
+        （新建 / 续接），六个调用点里给了 id 的两个都传 False，两个参数在这一层等价 ——
+        并存只是多开一个能编译、能跑、静默错的组合：「传了原 id 却按新会话处理」。
+        续接的引擎会重算初始好感度，把库里恢复出来的状态盖掉。判据在下面显式算出后
+        照旧传给 `ChatEngine`。
+
+        `ChatEngine` 那边**仍要显式收**这个参数：群引擎有真 `group_id`、`session_id`
+        为空但仍属新建，id 有无在那一层不是判据。
         """
+        is_new_session = session_id is None
         if session_id is None:
             session_id = uuid.uuid4().hex[:12]
         engine = ChatEngine(

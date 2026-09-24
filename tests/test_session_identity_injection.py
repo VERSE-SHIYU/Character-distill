@@ -26,6 +26,7 @@ Run: pytest tests/test_session_identity_injection.py -v
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import uuid
 
@@ -134,6 +135,20 @@ def test_a_new_engine_is_born_with_its_session_id(store, user_id):
         f"引擎出生时不知道自己的会话 id：库里是 {sid}，引擎里是 {engine._session_id!r}")
 
 
+def test_create_session_derives_new_or_resumed_from_the_id_alone():
+    """F1：`_create_session` 不再收 `is_new_session` —— 给了原 id 就是续接。
+
+    改前签名里两个参数并存，`session_id=<原 id>` + 默认的 `is_new_session=True` 是一个
+    能编译、能跑、**静默错**的组合：续接的引擎重算初值，盖掉库里恢复出来的状态。
+    这一层只有新建 / 续接两条路，id 有无即判据；显式参数留在 `ChatEngine` 那边 ——
+    群引擎有真 `group_id`、`session_id` 为空但仍属新建，id 有无在那一层不是判据。
+    """
+    params = inspect.signature(TextManager._create_session).parameters
+    assert "is_new_session" not in params, (
+        "`is_new_session` 又回到 `_create_session` 签名里了 —— 它与 `session_id` 并存时，"
+        "「传了原 id 却按新会话处理」这个错组合就有了落脚点")
+
+
 def test_lazy_rebuild_constructs_the_engine_under_the_original_id(store, user_id, monkeypatch):
     """续接 / 恢复：原 id 进构造，不再「新 id → `sessions.pop` 改名」。
 
@@ -143,17 +158,24 @@ def test_lazy_rebuild_constructs_the_engine_under_the_original_id(store, user_id
     sid, _cid = _seed(store, user_id)
     sessions: dict = {}
     seen: dict = {}
+    born: dict = {}
 
     real = TextManager._create_session
+    real_init = ChatEngine.__init__
 
     def _spy(self, card, **kw):
         seen.update(kw)
         return real(self, card, **kw)
 
+    def _spy_init(self, *a, **kw):
+        born.update(kw)
+        return real_init(self, *a, **kw)
+
     async def _fake_user_llm(*_a, **_kw):
         return _StubLLM()
 
     monkeypatch.setattr(TextManager, "_create_session", _spy)
+    monkeypatch.setattr(ChatEngine, "__init__", _spy_init)
     monkeypatch.setattr(deps, "_storage", store)
     monkeypatch.setattr(deps, "get_user_llm", _fake_user_llm)
     monkeypatch.setattr(
@@ -165,8 +187,11 @@ def test_lazy_rebuild_constructs_the_engine_under_the_original_id(store, user_id
     assert seen.get("session_id") == sid, (
         f"重建时没有把原会话 id 交给构造函数（收到 {seen.get('session_id')!r}）—— "
         "还是「先造后改名」那条路")
-    assert seen.get("is_new_session") is False, (
-        f"续接的引擎被判成了新会话（is_new_session={seen.get('is_new_session')!r}）—— "
+    # 观测点从「调用点传了什么」下移到「构造引擎时喂了什么」：`_create_session` 已经
+    # 不收 `is_new_session`（F1），它由 `session_id is None` 现算 —— 这条仍在咬
+    # 「续接的引擎被判成新会话」，只是换到值真正生效的那一层看。
+    assert born.get("is_new_session") is False, (
+        f"续接的引擎被判成了新会话（is_new_session={born.get('is_new_session')!r}）—— "
         "它会重算初始好感度，把库里恢复出来的状态盖掉")
     assert set(sessions) == {sid}, (
         f"重建后内存里出现了别的会话 id：{sorted(sessions)} —— 临时的那个没搬走")
