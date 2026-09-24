@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from core.nonfatal import nonfatal
 from cross_border_sync import forward_dm_to_peer
 from deps import get_storage
 from limiter import limiter
 from storage.base import StorageBase
 from routers.auth import get_current_user
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class SendMessageRequest(BaseModel):
@@ -111,10 +116,8 @@ async def send_message(
         # Forward to peer node (shared function, single source of truth for signing)
         ok = await forward_dm_to_peer(msg, storage)
         if ok:
-            try:
+            async with nonfatal("message", f"mark synced for {msg['id']}"):
                 await storage.mark_message_synced(msg["id"])
-            except Exception as exc:
-                print(f"[message] Mark synced failed for {msg['id']}: {exc}")
 
         return {"message": msg}
 

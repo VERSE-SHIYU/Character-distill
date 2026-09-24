@@ -7,6 +7,7 @@ network calls are made.
 
 from __future__ import annotations
 
+import logging
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -208,48 +209,51 @@ def _mock_httpx(monkeypatch, response=None, error=None):
     return patch("httpx.AsyncClient", return_value=mock_client)
 
 
-async def test_forward_delete_to_peer_logs_status_on_non_200(monkeypatch, capsys):
-    """对端回非 200 时，输出里必须留下 op_type / target_id / 状态码。
+async def test_forward_delete_to_peer_logs_status_on_non_200(monkeypatch, caplog):
+    """对端回非 200 时，日志里必须留下 op_type / target_id / 状态码。
 
     只返回 False 而不留痕的话，线上「删不掉、也传不出去」这件事在日志里完全不可见 ——
     运维只能看到对端数据没被删，查不出是哪一条、卡在哪个状态码上。
+
+    断言走 `caplog` 而不是 stdout（spec-119）：这条要求的意义正是「面板上看得见」，
+    而容器 stdout 到不了面板。
     """
     from cross_border_sync import forward_delete_to_peer
 
     monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
-    capsys.readouterr()  # 丢掉更早的输出
+    caplog.set_level(logging.ERROR)
 
     with _mock_httpx(monkeypatch, response=MockResponse(503)):
         ok = await forward_delete_to_peer("card_delete", "card-xyz", "", MagicMock())
 
     assert ok is False
-    out = capsys.readouterr().out
-    assert "card_delete" in out, f"输出里没有 op_type：{out!r}"
-    assert "card-xyz" in out, f"输出里没有 target_id：{out!r}"
-    assert "503" in out, f"输出里没有状态码：{out!r}"
+    out = "\n".join(r.getMessage() for r in caplog.records)
+    assert "card_delete" in out, f"日志里没有 op_type：{out!r}"
+    assert "card-xyz" in out, f"日志里没有 target_id：{out!r}"
+    assert "503" in out, f"日志里没有状态码：{out!r}"
 
 
-async def test_forward_delete_to_peer_logs_exception(monkeypatch, capsys):
+async def test_forward_delete_to_peer_logs_exception(monkeypatch, caplog):
     """连不上对端时，同样要留下 op_type / target_id（异常本身另附）。"""
     from cross_border_sync import forward_delete_to_peer
 
     monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
-    capsys.readouterr()
+    caplog.set_level(logging.ERROR)
 
     with _mock_httpx(monkeypatch, error=RuntimeError("boom-unreachable")):
         ok = await forward_delete_to_peer("user_purge", "usr-abc", "", MagicMock())
 
     assert ok is False
-    out = capsys.readouterr().out
-    assert "user_purge" in out, f"输出里没有 op_type：{out!r}"
-    assert "usr-abc" in out, f"输出里没有 target_id：{out!r}"
-    assert "boom-unreachable" in out, f"输出里没有异常信息：{out!r}"
+    out = "\n".join(r.getMessage() for r in caplog.records)
+    assert "user_purge" in out, f"日志里没有 op_type：{out!r}"
+    assert "usr-abc" in out, f"日志里没有 target_id：{out!r}"
+    assert "boom-unreachable" in out, f"日志里没有异常信息：{out!r}"
 
 
 # ── _resync_once：一轮补发的边界 ─────────────────────────────────────────
 
 def _dsn() -> str:
-    return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+    return os.environ["DATABASE_URL"]
 
 
 @pytest.fixture
@@ -326,3 +330,100 @@ async def test_delete_resync_survives_card_query_failure(pg_store, monkeypatch):
     assert await _outbox_row(pg_store, row_id) is None, (
         "卡片查询失败把删除补发一起带走了 —— 删除那段被嵌在卡片的 else 里，"
         "卡片查不出来时整段不执行")
+
+
+# ── restore_card：恢复时的跨境撤销 ──────────────────────────────────────
+
+_CARD = "card-81b-restore"
+
+
+@pytest.fixture
+async def pg_card(pg_store):
+    """一张公开、已同步的卡；用例结束后删掉，免得下次跑带着上一轮的残骸。"""
+    async with await pg_store._connect() as conn:
+        await conn.execute(
+            """INSERT INTO cards (id, name, card_json, user_id, visibility, cross_border_synced)
+               VALUES ($1, 'restore-target', '{}', 'user-81b', 'public', 1)
+               ON CONFLICT (id) DO UPDATE
+                   SET deleted_at = NULL, cross_border_synced = 1, visibility = 'public'""",
+            _CARD,
+        )
+    yield _CARD
+    async with await pg_store._connect() as conn:
+        await conn.execute("DELETE FROM cards WHERE id = $1", _CARD)
+        await conn.execute(
+            "DELETE FROM cross_border_delete_outbox WHERE target_id = $1", _CARD)
+
+
+async def _queued_card_deletes(store) -> list[dict]:
+    """直读 outbox 里这张卡的 `card_delete` 行 —— 不经 pending 视图，见文件头说明。"""
+    async with await store._connect() as conn:
+        rows = await conn.fetch(
+            """SELECT id, synced FROM cross_border_delete_outbox
+               WHERE op_type = 'card_delete' AND target_id = $1""",
+            _CARD,
+        )
+    return [dict(r) for r in rows]
+
+
+@_pg
+async def test_restore_card_drops_queued_delete(pg_card, pg_store):
+    """恢复一张还在排队等删除的公开卡，那条删除必须被撤销。
+
+    不撤的话，60 秒后的那一轮补发会照发不误 —— 对端把用户刚刚恢复的卡删掉，
+    而且对端的删除是硬删，用户看不到任何回退的迹象。
+    """
+    await pg_store.delete_card(_CARD)
+    assert len(await _queued_card_deletes(pg_store)) == 1, "种子没入队，用例测不到东西"
+
+    await pg_store.restore_card(_CARD)
+
+    assert await _queued_card_deletes(pg_store) == [], (
+        "恢复后那条 card_delete 还在 outbox 里 —— 下一轮补发会把刚恢复的卡删到对端去")
+    pending = await pg_store.get_pending_delete_propagations()
+    assert not any(r["target_id"] == _CARD for r in pending), (
+        f"待发队列里还有这张卡的删除：{pending}")
+
+
+@_pg
+async def test_restore_card_requeues_card_for_forwarding(pg_card, pg_store):
+    """恢复一张 already-synced 的公开卡后，它必须重新进入待转发队列。
+
+    同步标记不归零的话，补发查询（只挑 `cross_border_synced = 0`）永远选不中它 ——
+    对端那边的副本被删掉之后就再也回不来了。
+    """
+    assert _CARD not in {c["id"] for c in
+                         await pg_store.get_unsynced_cross_border_cards_unscoped()}, (
+        "种子必须是已同步的（cross_border_synced = 1），否则本条测的不是恢复的功劳")
+
+    await pg_store.delete_card(_CARD)
+    await pg_store.restore_card(_CARD)
+
+    unsynced = {c["id"] for c in await pg_store.get_unsynced_cross_border_cards_unscoped()}
+    assert _CARD in unsynced, (
+        "恢复后的公开卡没回到待转发队列 —— cross_border_synced 还停在 1，"
+        "对端的副本删了就永远建不回来")
+
+
+@_pg
+async def test_delete_requeues_after_ack_and_restore(pg_card, pg_store):
+    """同一目标传播出去、又恢复过之后，再次删除仍要能入队。
+
+    outbox 的唯一键是 `(op_type, target_id)`，所以「已确认」必须真的把行删掉；
+    只是标成 `synced = 1` 的话，槽位仍被占着，第二次删除的 INSERT 会被
+    `ON CONFLICT DO NOTHING` 吃掉 —— 这一次删除永远发不出去。
+    """
+    await pg_store.delete_card(_CARD)
+    rows = await _queued_card_deletes(pg_store)
+    assert len(rows) == 1, "种子没入队，用例测不到东西"
+
+    await pg_store.remove_delete_propagation(rows[0]["id"])
+    assert await _queued_card_deletes(pg_store) == [], (
+        "对端已确认，这一行必须真的从表里消失 —— 留着（哪怕标了 synced = 1）"
+        "就还占着 (op_type, target_id) 这个唯一键，同一张卡再也删不掉")
+
+    await pg_store.restore_card(_CARD)
+    await pg_store.delete_card(_CARD)
+
+    assert len(await _queued_card_deletes(pg_store)) == 1, (
+        "恢复后再删除，这条删除没能重新入队 —— 对端会一直留着这张已删的卡")

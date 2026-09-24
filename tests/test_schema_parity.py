@@ -1,12 +1,27 @@
-"""Schema parity: PG and SQLite migration schemas must not drift.
+"""Schema parity: PG and SQLite 的迁移文本不得漂移 —— **只比本锁读得准的两件事**。
 
 Production backend is PostgreSQL. SQLite is only for local unit tests.
-This test enforces that any migration adding a table/column to one backend
-must also add it to the other, preventing silent schema drift.
+
+1. **表集合** —— 来自 `CREATE TABLE` 文本。两目录都不含 `DROP TABLE`（现跑现数 0 处），
+   故「文件里写了」= 「库里会有」，可靠。
+2. **共有列的可空性** —— 只在两边都出现过的列上比；可空性就写在列定义那一行里。
+
+**列集合故意不比**（2026-09-23 收窄，缺陷 87 的收尾）。文本提取器只认 `CREATE TABLE` +
+`ALTER … ADD COLUMN`，**看不见 `DROP COLUMN`、也看不见 Python 侧的表重建/删列**，而两个
+后端的退役手段并不同构：`users` 的 5 列（`password_hash` / `api_key` / `base_url` /
+`model` / `is_admin`）PG 走 `.sql` 的 `DROP COLUMN`，SQLite 走 `_USERS_RETIRED_COLUMNS`
+的 Python 重建。于是任何「一边用文本退役、另一边用 Python 退役」的列，在本锁眼里都成了
+假漂移 —— 实测：把提取器改成 DROP 感知只会把红点从 `texts` 平移到 `users`（5 列），
+永远修不干净。
+
+列级权威判据在**真库比真库**：`tests/test_postgres_store.py::TestPgFreshSchemaClosure::
+test_fresh_sqlite_and_fresh_pg_have_the_same_columns`（表级同族：
+`tests/test_sqlite_fresh_schema.py::TestExemptionClosedLoop::test_fresh_db_covers_every_table_pg_declares`）。
+CI 起真 PG 且置 `REQUIRE_PG_TESTS=1`（`.github/workflows/build.yml`），那条闭环每次 CI
+都被强制执行 —— 而本文件不需要 PG 就能跑，是它的前置粗筛。
 
 Type-level differences (SMALLINT vs INTEGER, TIMESTAMPTZ vs TEXT) are
-allowed because each dialect uses its native types.  What matters is that
-every table and every column exists in both schemas with matching nullability.
+allowed because each dialect uses its native types.
 
 Usage:
     pytest tests/test_schema_parity.py -v
@@ -139,26 +154,13 @@ def test_schema_parity():
     if only_sqlite:
         errors.append(f"Tables in SQLite but missing in PG: {sorted(only_sqlite)}")
 
-    # 2) Column-level parity for shared tables
+    # 2) 共有列的可空性。**列名集合故意不比** —— 文本提取器看不见 DROP COLUMN、也看不见
+    #    Python 侧退役，比出来的是假漂移；列级权威判据在真库闭环（见模块 docstring）。
     for table in sorted(pg_tables & sqlite_tables):
         pg_cols = pg_schema[table]
         sqlite_cols = sqlite_schema[table]
 
-        missing_in_sqlite = set(pg_cols) - set(sqlite_cols)
-        missing_in_pg = set(sqlite_cols) - set(pg_cols)
-
-        if missing_in_sqlite:
-            errors.append(
-                f"[{table}] columns in PG but missing in SQLite: "
-                f"{sorted(missing_in_sqlite)}"
-            )
-        if missing_in_pg:
-            errors.append(
-                f"[{table}] columns in SQLite but missing in PG: "
-                f"{sorted(missing_in_pg)}"
-            )
-
-        # 3) Nullability parity —— 模块 docstring 一直声称校验这一条，但此前只比了列名集合，
+        # Nullability parity —— 模块 docstring 一直声称校验这一条，但此前只比了列名集合，
         # 可空性在 `_extract_column_names` 返回 set[str] 的那一刻就被丢掉了，无从比较。
         # 缺陷 78 的 `cards.text_id`（SQLite NOT NULL / PG 可空）正是从这道缝里漏过去的。
         for col in sorted(set(pg_cols) & set(sqlite_cols)):
@@ -172,7 +174,7 @@ def test_schema_parity():
                 f"[{table}.{col}] 可空性不一致：PG {pg_decl} / SQLite {sq_decl}"
             )
 
-    # 4) 豁免名单不得腐烂：每条豁免都必须仍然对得上一个**真实存在且真的分叉**的列。
+    # 3) 豁免名单不得腐烂：每条豁免都必须仍然对得上一个**真实存在且真的分叉**的列。
     for (table, col), reason in sorted(_NULLABILITY_EXEMPT.items()):
         if table not in pg_tables or table not in sqlite_tables:
             errors.append(
@@ -197,5 +199,8 @@ def test_schema_parity():
             "Fix: add the corresponding migration to the other backend.\n"
             "PG  → storage/migrations_pg/\n"
             "SQLite → storage/migrations/\n"
+            "\n"
+            "（本锁只判表集合与共有列的可空性；**列集合不在此判** —— 见模块 docstring，\n"
+            " 列级权威判据是 test_postgres_store.py::TestPgFreshSchemaClosure 的真库闭环。）\n"
         )
         assert False, msg

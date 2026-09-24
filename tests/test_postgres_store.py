@@ -20,6 +20,7 @@ Skip: export SKIP_PG_TESTS=1 to skip all PostgresStore tests（显式退出，�
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -27,6 +28,7 @@ import sys
 import uuid
 from pathlib import Path
 
+import asyncpg
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -37,6 +39,7 @@ from conftest import PG_ENV, pg_reachable, pg_required
 # sys.path 上，与 `conftest` 走同一个导入路径。
 from test_published_from_backfill import run_old_shape_scenario, seed_old_shape_copies
 
+from storage import postgres_store as pg_store_module
 from storage.postgres_store import PostgresStore
 from storage.sqlite_store import SQLiteStore
 
@@ -51,11 +54,17 @@ _CREATE_TABLE_RE = re.compile(
 _COMMENT_RE = re.compile(r"--[^\n]*")
 _TABLE_REF_RE = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_][a-z0-9_]*)", re.IGNORECASE)
 
+# 执行器**内部**表：不属应用 schema，由 store 自己就地建（`PostgresStore._LEDGER_DDL`），
+# 两份迁移目录里都不声明它。SQLite 半（缺陷 99）落地前它只在 PG 侧存在，列级闭环会把它
+# 报成「单侧多出来的表」。`test_column_probe_has_teeth` 里有一条守卫：名单里的名字一旦
+# 出现在任一迁移目录，本名单当场红 —— 免得它变成藏漂移的口袋。
+_ENGINE_INTERNAL_TABLES = frozenset({"schema_migrations"})
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _dsn() -> str:
-    return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+    return os.environ["DATABASE_URL"]
 
 
 # 需要真 PG 的用例统一挂这个 mark（含可见原因）。挂在**类**上而非模块级 `pytestmark`：
@@ -104,20 +113,28 @@ def _referenced_tables(src: str, vocabulary: set[str]) -> set[str]:
 # **为什么不复用表级那个形状**（「真库 ⊇ 文本声明」）：那个形状在表级成立，靠的是一个
 # 从没被写下来过的前提 —— **没有任何东西删过表**。本仓实测这个前提的边界：
 #
+# （2026-09-23 现跑现数，只数真语句、不数注释）
 #     DROP TABLE   0 处        （两侧迁移目录全扫）
-#     DROP COLUMN  4 处        （migrations_pg/005_data_residency.sql 删 users 的
-#                              password_hash / api_key / base_url / model）
+#     DROP COLUMN  9 处        （migrations_pg/005_data_residency.sql 4：users 的
+#                              password_hash / api_key / base_url / model；
+#                              migrations_pg/025_retire_is_admin.sql 1：users.is_admin；
+#                              migrations_pg/027_retire_coref_columns.sql 2 +
+#                              migrations/094_retire_coref_columns.sql 2：texts 的两列）
 #
-# 而且同一个删除在两侧由**两套完全不同的机制**完成：PG 是那四条声明式
-# `ALTER TABLE users DROP COLUMN IF EXISTS`；SQLite 是 `storage/sqlite_store.py` 里
-# 的 Python 表重建（`if "password_hash" in all_cols` 触发），`.sql` 文本里**根本没有
-# 这条语句**。
+# 而且同一个删除在两侧可以由**两套完全不同的机制**完成，`users` 的四列就是范例：
+# PG 是那四条声明式 `ALTER TABLE users DROP COLUMN IF EXISTS`；SQLite 是
+# `storage/sqlite_store.py` 里的 Python 表重建（`if "password_hash" in all_cols` 触发），
+# `.sql` 文本里**根本没有这条语句**。**但这不是通则** —— 094 就是反例：它也走 SQLite，
+# 却是 .sql 里的裸 `DROP COLUMN`，因为执行器（`_apply_migration`）对 DROP 支也做了
+# 「读现状判已生效」的剥除，不需要靠 Python 重建。故断言不能建立在「SQLite 侧一定没有
+# .sql DROP」这个前提上。
 #
 # 把表级形状套到列级会这样断：`test_schema_parity` 的提取器只认 CREATE TABLE +
-# `ALTER ... ADD COLUMN` —— DROP 不认、Python 更不认，于是 `users` 的**声明列**比真库
-# 多这 4 个 → 锁当场红；要它绿只剩加豁免清单一条路，而「豁免即永久放行」（§四），
-# 且豁免理由（「运行期被删」）没有任何第二条断言闭环。两个盲区（PG 的 DROP、SQLite 的
-# Python 重建）在两侧**互相抵消**，这正是一直没人发现的原因 —— 文本 parity 是绿的。
+# `ALTER ... ADD COLUMN` —— **DROP 不认**、Python 更不认，于是被删过的列仍留在「声明列」
+# 标尺里、比真库多（`users` 那 5 列、`texts` 那 2 列都算数）→ 锁当场红；要它绿只剩加
+# 豁免清单一条路，而「豁免即永久放行」（§四），且豁免理由（「运行期被删」）没有任何
+# 第二条断言闭环。**PG 与 SQLite 两侧的盲区互相抵消**（一边 DROP 语句不认、一边 Python
+# 重建不认），这正是一直没人发现的原因 —— 文本 parity 是绿的。
 #
 # 所以列级不比文本，比**另一侧真库**：两侧都是事实，直接对事实。不需要声明列标尺、
 # 不需要 SQL 解析器、不需要任何豁免清单。将来谁想「顺手统一成表级那个形状」，
@@ -160,7 +177,12 @@ def _sqlite_columns(db_path: str) -> dict[str, set[str]]:
 
 
 async def _pg_columns() -> dict[str, set[str]]:
-    """真 PG 库 public schema 的 {表: {列}}（跑懒初始化 → 迁移已应用）。"""
+    """真 PG 库 public schema 的 {表: {列}}（跑懒初始化 → 迁移已应用）。
+
+    `_ENGINE_INTERNAL_TABLES` 排除掉，与 `_sqlite_columns` 排掉 `sqlite_%` 是同一类：
+    **执行器的内部表不是应用 schema**，它由 store 就地建、两份迁移目录里都没有它，
+    故它只出现在一侧不代表任何列级漂移（没有任何应用代码在另一侧读它）。
+    """
     store = PostgresStore(_dsn())
     await store._ensure_initialized()
     try:
@@ -170,6 +192,8 @@ async def _pg_columns() -> dict[str, set[str]]:
                 "WHERE table_schema='public'")
         out: dict[str, set[str]] = {}
         for r in rows:
+            if r["table_name"] in _ENGINE_INTERNAL_TABLES:
+                continue
             out.setdefault(r["table_name"], set()).add(r["column_name"])
         return out
     finally:
@@ -612,10 +636,10 @@ class TestUserPurgeDistillCascade:
         await store.create_user(other, f"pg_u2_{uuid.uuid4().hex[:8]}", "h")
         await store.save_text(text_id, "src.txt", "source")
 
-        await store.create_distill_task("dt_pg1", user_id, text_id, "张三")
+        await store.create_distill_task("dt_pg1", user_id, text_id, character="张三")
         await store.save_distill_chunk("dt_pg1", 0, json.dumps({"r": "零"}))
         await store.save_distill_chunk("dt_pg1", 1, json.dumps({"r": "一"}))
-        await store.create_distill_task("dt_pg2", other, text_id, "李四")
+        await store.create_distill_task("dt_pg2", other, text_id, character="李四")
         await store.save_distill_chunk("dt_pg2", 0, json.dumps({"r": "零"}))
 
         counts = await store.delete_user(user_id)
@@ -631,7 +655,7 @@ class TestUserPurgeDistillCascade:
     async def test_text_deletion_impact_counts_distill_rows(self, store, text_id, user_id):
         """永久删除会连带清蒸馏行，impact 必须如实计入（F2）。"""
         await store.save_text(text_id, "src.txt", "source")
-        await store.create_distill_task("dt_imp", user_id, text_id, "张三")
+        await store.create_distill_task("dt_imp", user_id, text_id, character="张三")
         await store.save_distill_chunk("dt_imp", 0, json.dumps({"r": "零"}))
         await store.save_distill_chunk("dt_imp", 1, json.dumps({"r": "一"}))
 
@@ -662,7 +686,7 @@ class TestUserPurgeDistillRace:
             tid = f"txt_{uuid.uuid4().hex}"
             task_id = f"dt_{uuid.uuid4().hex}"
             await store.save_text(tid, "src.txt", "角色说的话" * 20, user_id=uid)
-            await store.create_distill_task(task_id, uid, tid, "甲", status="running")
+            await store.create_distill_task(task_id, uid, tid, character="甲", status="running")
 
             stop = _aio.Event()
             ready = _aio.Event()
@@ -1011,7 +1035,7 @@ class TestDistillRaceStaleWriteAfterDelete:
             tid = f"txt_{uuid.uuid4().hex}"
             task_id = f"dt_{uuid.uuid4().hex}"
             await store.save_text(tid, "src.txt", "角色说的话" * 20, user_id=user_id)
-            await store.create_distill_task(task_id, user_id, tid, "甲", status="running")
+            await store.create_distill_task(task_id, user_id, tid, character="甲", status="running")
 
             stop = _aio.Event()
             ready = _aio.Event()
@@ -1067,7 +1091,7 @@ class TestDistillLockContention:
         tid = f"txt_{uuid.uuid4().hex}"
         task_id = f"dt_{uuid.uuid4().hex}"
         await store.save_text(tid, "src.txt", "角色说的话" * 20, user_id=user_id)
-        await store.create_distill_task(task_id, user_id, tid, "甲", status="running")
+        await store.create_distill_task(task_id, user_id, tid, character="甲", status="running")
 
         shared = {"chunks_done": 0, "first_sample_at_chunks": -1, "samples": 0}
         progress_rows: list = []
@@ -1152,9 +1176,10 @@ class TestPgFreshSchemaClosure:
     **列级是另一种粒度，用的是另一种形状**：上面两条（以及 SQLite 侧的镜像
     `tests/test_sqlite_fresh_schema.py::TestExemptionClosedLoop`）都是「真库 ⊇ **文本声明**」。
     列级**不能**套这个形状 —— 全文理由写在下面 `_sqlite_columns` / `_pg_columns` 那段
-    注释里，一句话版：`DROP TABLE` 0 处、`DROP COLUMN` 4 处，删列在本仓是既有事实，
-    而声明列提取器看不见 DROP（PG 的声明式 DROP 不认，SQLite 的 Python 表重建更是
-    `.sql` 里没有），两侧盲区互相抵消。故列级改比**另一侧真库**：
+    注释里，一句话版：`DROP TABLE` 0 处、`DROP COLUMN` 9 处（2026-09-23 现跑现数），
+    删列在本仓是既有事实，而声明列提取器**只认 CREATE TABLE + ADD COLUMN**、DROP 不认
+    （PG 的 DROP 语句不认，SQLite 除了 094 那种裸 DROP 之外还有 Python 表重建、`.sql`
+    里根本没有），两侧盲区互相抵消。故列级改比**另一侧真库**：
     `test_fresh_sqlite_and_fresh_pg_have_the_same_columns`。
     """
 
@@ -1217,6 +1242,14 @@ class TestPgFreshSchemaClosure:
         # 表不存在于另一侧也要报
         assert _column_drift({"ghost": {"a"}}, {"t": {"a"}}), "只在单侧的表没被报出来"
 
+        # 排除名单只能装**真内部表**：两份迁移目录都不声明它。这条挡住「把应用 schema 的
+        # 表塞进 `_ENGINE_INTERNAL_TABLES` 让漂移消失」—— 那正是「加豁免清单重新开洞」。
+        declared = _declared_tables(_PG_DIR) | _declared_tables(_SQLITE_DIR)
+        leaked = _ENGINE_INTERNAL_TABLES & declared
+        assert not leaked, (
+            f"{sorted(leaked)} 是迁移目录声明过的应用表，不该出现在 "
+            "_ENGINE_INTERNAL_TABLES 里。")
+
     @_pg
     async def test_fresh_sqlite_and_fresh_pg_have_the_same_columns(self, tmp_path: Path):
         """两侧**真库**逐表列集合必须相等，双向 —— 列级闭环（缺陷 23）。
@@ -1241,8 +1274,9 @@ class TestPgFreshSchemaClosure:
             + "\n".join(f"  - {d}" for d in drift)
             + "\n\n列级漂移 = 某一侧运行期炸 `no column named X`。"
             "修法：把缺的列补到缺的那一侧的迁移里。"
-            "**不要在本测试里开豁免** —— 列级的真源是「另一侧真库」，没有文本标尺，"
-            "也就没有需要豁免的对象；加豁免清单等于把洞重新打开。")
+            "**不要在本测试里开豁免** —— 列级的真源是「另一侧真库」，没有文本标尺。"
+            "唯一的例外是 `_ENGINE_INTERNAL_TABLES`（执行器内部表，两份迁移目录都不"
+            "声明；守卫在 `test_column_probe_has_teeth`），加别的豁免清单等于把洞重新打开。")
 
     @_pg
     async def test_restarted_sqlite_matches_fresh_pg(self, tmp_path: Path):
@@ -1270,7 +1304,7 @@ class TestPgFreshSchemaClosure:
             + "\n".join(f"  - {d}" for d in drift)
             + "\n\n这类漂移的特征是**第二次 init 才出现** —— 执行器按「列在不在」判断迁移"
             "是否已应用，于是「迁移加过、后来被有意删掉」的列每轮都会被加回来。"
-            "修法：让删除的**触发条件**与不变量同口径（本仓是 `_USERS_LEGACY_COLUMNS`），"
+            "修法：让删除的**触发条件**与不变量同口径（本仓是 `_USERS_RETIRED_COLUMNS`），"
             "别用一个「删一次就再也不出现」的列当哨兵。**不要在本测试里开豁免**。")
 
     @_pg
@@ -1311,6 +1345,181 @@ class TestPgFreshSchemaClosure:
         assert dropped, "SQLite 单侧删了一列，列级锁没红 —— 锁瞎了"
         assert any("users" in m and "embedding_region" in m for m in dropped), (
             f"红了但没点名表+列：{dropped}")
+
+
+# ── 迁移账本（缺陷 90/99）：跑过的不再跑，跑一半的不记账 ───────────────────────
+#
+# 三条都拿**一次性迁移目录**当输入（monkeypatch `_MIGRATIONS_DIR`），不往
+# `storage/migrations_pg/` 里塞探针文件 —— 真目录是生产清单。
+#
+# 每条开头先 `_baseline()`：在真目录上跑一遍初始化。这一下有两用 —— 一是保证「无论用例
+# 顺序如何，真库结构都已就绪」（若某条在 fresh 库上先跑，它只看得见临时目录，真迁移一份
+# 都不会跑）；二是留下一个**已初始化**的实例当查询通道，它在 monkeypatch 之后
+# `_initialized=True`，`_connect()` 不会再跑一次迁移。
+#
+# 探针文件名/表名都带 uuid：这些用例往真库里写 `schema_migrations` 行，用固定名字的话
+# 第二次跑同一个库（比如对着长期存在的 `charsim_test`）就会「上次已记账 → 这次一份不跑」
+# 而红得莫名其妙。
+
+
+async def _baseline() -> PostgresStore:
+    """真目录上完成一次初始化，返回仍连着池的实例（调用方负责 close）。"""
+    st = PostgresStore(_dsn())
+    await st._ensure_initialized()
+    return st
+
+
+async def _start_once() -> None:
+    """模拟一次进程启动：新实例 + 完成初始化。"""
+    st = PostgresStore(_dsn())
+    try:
+        await st._ensure_initialized()
+    finally:
+        await st.close()
+
+
+class TestPgMigrationLedger:
+
+    @staticmethod
+    async def _drop_residue(store: PostgresStore, *, tables=(), files=()) -> None:
+        """删掉本用例在长期库上造出的探针表与账本行 —— 只清自己造的那几个名字。
+
+        探针表只长在 PG 一侧，`TestPgFreshSchemaClosure` 的列级闭环把它报成「单侧多出来
+        的表」，于是**第二次**跑同一个库时那三条锁红，红得与改动无关。账本行（`777_*` /
+        `779_*`）同样是残留，只是跑整份文件时恰好被 `TestPgPublishedFromBackfill` 的
+        `DROP TABLE schema_migrations` 冲掉 —— 别把清理挂在那个巧合上：只跑本类、或换了
+        顺序，行就留下了。
+
+        用例名与主语都是「长期库」（`_pg` 那批统一连 `charsim_test`，不是一次性容器），
+        不清理即每次运行都在给同一个库加残留。
+        """
+        async with await store._connect() as conn:
+            for name in tables:
+                await conn.execute(f"DROP TABLE IF EXISTS {name}")
+            for name in files:
+                await conn.execute(
+                    "DELETE FROM schema_migrations WHERE filename = $1", name)
+
+    @_pg
+    async def test_recorded_file_is_not_executed_again(self, tmp_path: Path, monkeypatch):
+        """重启不再执行已记录文件。
+
+        探针正文**不带 `IF NOT EXISTS`** —— 同一条语句跑第二次必然报 duplicate table，
+        于是「账本生效」与「账本失效」在这条上表现截然不同，不用另配探针去分辨。
+        计数同时挡住反方向的假绿：一份也不跑的实现会让第二遍安然无事、也照样绿。
+        """
+        base = await _baseline()
+        tag = uuid.uuid4().hex
+        try:
+            d = tmp_path / "m"
+            d.mkdir()
+            body = f"CREATE TABLE ledger_probe_once_{tag} (id TEXT);\n"
+            (d / f"777_probe_once_{tag}.sql").write_text(body, encoding="utf-8")
+            monkeypatch.setattr(pg_store_module, "_MIGRATIONS_DIR", d)
+
+            sent: list[str] = []
+            real_execute = asyncpg.Connection.execute
+
+            async def spy(conn_self, query, *args, **kwargs):
+                sent.append(query)
+                return await real_execute(conn_self, query, *args, **kwargs)
+
+            monkeypatch.setattr(asyncpg.Connection, "execute", spy)
+
+            await _start_once()
+            assert sent.count(body) == 1, (
+                f"第一次启动没跑探针（跑了 {sent.count(body)} 次）—— 本条用例下面会恒绿")
+
+            await _start_once()
+            assert sent.count(body) == 1, (
+                f"重启后又执行了已记账的迁移（共 {sent.count(body)} 次）：账本没生效，"
+                "或「已记录即跳过」的判定写歪了。")
+        finally:
+            await self._drop_residue(
+                base,
+                tables=(f"ledger_probe_once_{tag}",),
+                files=(f"777_probe_once_{tag}.sql",),
+            )
+            await base.close()
+
+    @_pg
+    async def test_failed_migration_leaves_no_ledger_row(self, tmp_path: Path, monkeypatch):
+        """迁移中途失败 → 账本无该行，且库回到执行前。
+
+        探针先建一张表、再打一句必错的 SQL。整份文件一个事务，故那张表不该留下 ——
+        留下了就说明正文与记账没跑在同一事务里（或根本没包事务）。
+        """
+        base = await _baseline()
+        try:
+            tag = uuid.uuid4().hex
+            table = f"ledger_probe_rollback_{tag}"
+            name = f"778_probe_boom_{tag}.sql"
+            d = tmp_path / "m"
+            d.mkdir()
+            (d / name).write_text(
+                f"CREATE TABLE {table} (id TEXT);\n"
+                "SELECT 1 FROM definitely_no_such_table;\n",
+                encoding="utf-8")
+            monkeypatch.setattr(pg_store_module, "_MIGRATIONS_DIR", d)
+
+            with pytest.raises(asyncpg.UndefinedTableError):
+                await _start_once()
+
+            async with await base._connect() as conn:
+                assert await conn.fetchval(
+                    f"SELECT to_regclass('public.{table}')::text") is None, (
+                    "迁移中途失败，但它前面建的表留下来了 —— 这份文件没跑在一个事务里")
+                assert await conn.fetchval(
+                    "SELECT count(*) FROM schema_migrations WHERE filename = $1", name) == 0, (
+                    "失败的迁移被记了账 —— 下次启动不会再重试，这份迁移永远不生效")
+        finally:
+            await base.close()
+
+    @_pg
+    async def test_changed_recorded_file_is_logged_and_startup_succeeds(
+        self, tmp_path: Path, monkeypatch, caplog
+    ):
+        """已记账的文件被改了内容 → 记一条 ERROR，启动照常成功。
+
+        判据不止「没抛异常」——它本来就不该重跑。还要**账本里的摘要没被改写**：否则
+        「报了错但偷偷重跑并覆盖记账」与「跳过」在日志上长得一模一样。
+        """
+        base = await _baseline()
+        tag = uuid.uuid4().hex
+        try:
+            name = f"779_probe_drift_{tag}.sql"
+            d = tmp_path / "m"
+            d.mkdir()
+            f = d / name
+            f.write_text(f"-- {tag}\nSELECT 1;\n", encoding="utf-8")
+            monkeypatch.setattr(pg_store_module, "_MIGRATIONS_DIR", d)
+            await _start_once()
+
+            async with await base._connect() as conn:
+                before = await conn.fetchval(
+                    "SELECT sha256 FROM schema_migrations WHERE filename = $1", name)
+            assert before, "第一次启动没给探针记账 —— 本条用例下面会恒绿"
+
+            f.write_text(f"-- {tag}\nSELECT 2;\n", encoding="utf-8")
+            caplog.set_level(logging.ERROR, logger="storage.postgres_store")
+            await _start_once()  # 不抛 = 启动成功
+
+            hits = [r for r in caplog.records if name in r.getMessage()]
+            assert len(hits) == 1, (
+                f"应记且只记一条日志，实得 {len(hits)} 条："
+                f"{[r.getMessage() for r in caplog.records]}")
+            assert hits[0].levelno == logging.ERROR, (
+                f"记的是 {logging.getLevelName(hits[0].levelno)}，不是 ERROR —— "
+                "复用不到 ERROR 邮件告警就等于没有判据")
+
+            async with await base._connect() as conn:
+                after = await conn.fetchval(
+                    "SELECT sha256 FROM schema_migrations WHERE filename = $1", name)
+            assert after == before, "账本摘要被改写了 —— 内容不符时不该重跑，更不该覆盖记账"
+        finally:
+            # 本用例只留下账本行（正文是 `SELECT 1`，没有表）。
+            await self._drop_residue(base, files=(f"779_probe_drift_{tag}.sql",))
+            await base.close()
 
 
 # ── `*_owned` 的身份谓词在 PG 侧真的生效（运行期层）──────────────────────────
@@ -1755,8 +1964,13 @@ async def _revert_cards_to_pre_021(store: PostgresStore) -> None:
     PG 比 SQLite 省事：`DROP COLUMN` 能直接跑，不用重建表（SQLite 那边被表级复合外键
     挡住了，见 SQLite 侧同名助手的 docstring）。`cards_id_user_id_key` 得一起删 ——
     它是 021 的 IF 分支里建的，留着的话重放会在「加约束」那步报重复。
+
+    **账本表一起删**（缺陷 90/99 之后）：这一版生产库存在的年代还没有账本，所以它本来
+    就没有这张表。留着的话「新实例启动」会因为 021 已记账而整份跳过，`published_from`
+    再也回不来 —— 回填一次都不会跑，这几条锁全成空转。
     """
     async with await store._connect() as conn:
+        await conn.execute("DROP TABLE IF EXISTS schema_migrations")
         await conn.execute("DROP INDEX IF EXISTS cards_published_from_live_uniq")
         await conn.execute("ALTER TABLE cards DROP CONSTRAINT IF EXISTS cards_published_from_fkey")
         await conn.execute("ALTER TABLE cards DROP CONSTRAINT IF EXISTS cards_id_user_id_key")

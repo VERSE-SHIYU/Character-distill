@@ -1,8 +1,9 @@
-"""Pytest configuration: add project root + web to sys.path, set default storage backend."""
+"""Pytest configuration: sys.path bootstrap + 把测试钉在独立的测试 PG 上。"""
 
 import functools
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,75 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "web"))   # web 模块（deps/routers/...）
 
-# 测试默认用 SQLite；若外部已显式设 postgres 则尊重（避免覆盖 PG 测试）
-os.environ.setdefault("STORAGE_BACKEND", "sqlite")
+# ── 测试一律连独立的测试 PG，护住开发库 ────────────────────────────────────
+#
+# 测试连哪个库，不能由「这台机器恰好有一份 .env」决定：工作树里的 `.env` 把
+# DATABASE_URL 指向开发库 `charsim`，一旦被测试用上，跑一次测试就可能改掉开发数据。
+# 三件事把这条路钉死（都在任何业务模块被导入之前完成）：
+#
+#   1. 连接串只在这一处定义，缺省指向 docker-compose.test.yml 起的容器；
+#   2. STORAGE_BACKEND / DATABASE_URL 用**强制赋值**而不是 setdefault —— `web/deps.py`
+#      的 load_dotenv 不覆盖已存在的变量（`override` 缺省为 False），所以这里先设的值
+#      对工作树里的 .env 稳赢；外部显式给的 TEST_DATABASE_URL 仍然生效（本行读它）;
+#   3. DB_PATH 指向临时目录：万一还有代码走了 SQLite，也写不进仓库的 data/。
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql://charsim:ci_test_password@localhost:55432/charsim_test",
+)
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+os.environ["STORAGE_BACKEND"] = "postgres"
+os.environ["DB_PATH"] = os.path.join(
+    tempfile.mkdtemp(prefix="charsim-test-db-"), "charsim.db"
+)
+
+
+def is_test_database(name: str) -> bool:
+    """库名是不是测试库 —— 判据只有一条：以 `_test` 结尾。
+
+    写成纯函数是为了能单独测（会话检查是 `pytest.exit`，没法在会话内断言）。
+    `charsim_testx` 必须是 False：只查前缀会把开发库的邻居放进来。
+    """
+    return bool(name) and name.endswith("_test")
+
+
+def _current_database() -> str | None:
+    """真连一次 TEST_DATABASE_URL，取 `SELECT current_database()`；连不上返回 None。"""
+    import asyncio
+
+    import asyncpg
+
+    async def _query() -> str:
+        conn = await asyncpg.connect(TEST_DATABASE_URL, timeout=5)
+        try:
+            return await conn.fetchval("SELECT current_database()")
+        finally:
+            await conn.close()
+
+    try:
+        return asyncio.run(_query())
+    except Exception:
+        return None
+
+
+def pytest_sessionstart(session):
+    """会话开始时核一次「连的真是测试库」—— 不成立就整场中止。
+
+    整场中止而不是逐条 skip：连错库时每一条用例的通过条件都不可信，跑出来的绿也是假的。
+    """
+    name = _current_database()
+    if name is None:
+        pytest.exit(
+            "测试库连不上（TEST_DATABASE_URL 指向的 PG 不可达）。"
+            "先运行 `docker compose -f docker-compose.test.yml up -d --wait` 再跑测试。",
+            returncode=1,
+        )
+    if not is_test_database(name):
+        pytest.exit(
+            f"你连的不是测试库（库名 {name!r} 不以 _test 结尾）。"
+            "测试一律连 docker-compose.test.yml 的 charsim_test，别拿开发库跑。",
+            returncode=1,
+        )
+
 
 # 测试用的固定 JWT_SECRET。与上面 STORAGE_BACKEND 同一个理由：这个值由**仓库**提供，
 # 不能由「这台机器恰好有没有 .env」决定。
@@ -106,7 +174,7 @@ def requirement(name, probe, **kwargs) -> EnvironmentRequirement:
 
 @functools.lru_cache(maxsize=1)
 def _probe_pg() -> bool:
-    """当前 `DATABASE_URL` 能否真连上 PG（进程内只探一次，不打印凭据）。
+    """`TEST_DATABASE_URL` 指向的库能否真连上 PG（进程内只探一次，不打印凭据）。
 
     用「真连一次」而不是「读 STORAGE_BACKEND 猜」—— 后者是代理指标：变量写成 postgres
     而库连不上时，用例会以 TypeError/连接错恒红，正是缺陷 25 那类「用代理代替事实」。
@@ -115,7 +183,7 @@ def _probe_pg() -> bool:
 
     import asyncpg
 
-    dsn = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+    dsn = TEST_DATABASE_URL
 
     async def _probe() -> bool:
         try:
@@ -136,9 +204,9 @@ PG_ENV = requirement(
     _probe_pg,
     dependency="PostgreSQL",
     short="PG",
-    why_unavailable="DATABASE_URL 指向的库连不上",
+    why_unavailable="TEST_DATABASE_URL 指向的库连不上",
     local_hint="没跑 PG 时",
-    enable_hint="起 PG 并设 DATABASE_URL",
+    enable_hint="起 docker-compose.test.yml 并设 TEST_DATABASE_URL",
 )
 
 
@@ -152,7 +220,7 @@ def pg_required() -> bool:
 
 
 def pg_reachable() -> bool:
-    """当前 `DATABASE_URL` 能否真连上 PG（进程内只探一次，不打印凭据）。"""
+    """`TEST_DATABASE_URL` 指向的库能否真连上 PG（进程内只探一次，不打印凭据）。"""
     return PG_ENV.available()
 
 

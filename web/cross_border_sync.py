@@ -8,9 +8,13 @@ single source of truth per domain.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 
+from core.nonfatal import nonfatal
 from storage.base import StorageBase
+
+logger = logging.getLogger(__name__)
 
 
 async def forward_dm_to_peer(msg: dict, storage: StorageBase) -> bool:
@@ -129,7 +133,7 @@ async def forward_delete_to_peer(op_type: str, target_id: str, payload: str, sto
 
     endpoint = _ENDPOINT_MAP.get(op_type)
     if not endpoint:
-        print(f"[cross_border_sync] Unknown delete op_type: {op_type}")
+        logger.error("Unknown delete op_type: %s", op_type)
         return False
 
     from inter_node_auth import create_auth_header
@@ -151,16 +155,16 @@ async def forward_delete_to_peer(op_type: str, target_id: str, payload: str, sto
                 headers=headers,
             )
         if resp.status_code != 200:
-            print(
-                f"[cross_border_sync] Delete forward rejected: op_type={op_type} "
-                f"target_id={target_id} status={resp.status_code}"
+            logger.error(
+                "Delete forward rejected: op_type=%s target_id=%s status=%s",
+                op_type, target_id, resp.status_code,
             )
             return False
         return True
     except Exception as exc:
-        print(
-            f"[cross_border_sync] Delete forward failed: op_type={op_type} "
-            f"target_id={target_id} error={exc!r}"
+        logger.error(
+            "Delete forward failed: op_type=%s target_id=%s error=%r",
+            op_type, target_id, exc, exc_info=True,
         )
         return False
 
@@ -277,52 +281,45 @@ async def _resync_once(storage: StorageBase) -> None:
     try:
         msgs = await storage.get_unsynced_cross_border_messages_unscoped(limit=100)
     except Exception as exc:
-        print(f"[cross_border_resync] DM query failed: {exc}")
+        logger.error("DM query failed: %s", exc, exc_info=True)
     else:
         for msg in msgs:
             ok = await forward_dm_to_peer(msg, storage)
             if ok:
-                try:
+                async with nonfatal(
+                    "cross_border_resync", f"mark DM synced for {msg['id']}",
+                ):
                     await storage.mark_message_synced(msg["id"])
-                except Exception as exc:
-                    print(
-                        f"[cross_border_resync] Mark DM synced failed for {msg['id']}: {exc}"
-                    )
 
     # ── Card resync ──
     try:
         cards = await storage.get_unsynced_cross_border_cards_unscoped(limit=100)
     except Exception as exc:
-        print(f"[cross_border_resync] Card query failed: {exc}")
+        logger.error("Card query failed: %s", exc, exc_info=True)
     else:
         for card in cards:
             ok = await forward_card_to_peer(card, storage)
             if ok:
-                try:
+                async with nonfatal(
+                    "cross_border_resync", f"mark card synced for {card['id']}",
+                ):
                     await storage.mark_card_synced(card["id"])
-                except Exception as exc:
-                    print(
-                        f"[cross_border_resync] Mark card synced failed for {card['id']}: {exc}"
-                    )
 
     # ── Delete propagation resync ──
     try:
         pending = await storage.get_pending_delete_propagations(limit=100)
     except Exception as exc:
-        print(f"[cross_border_resync] Delete outbox query failed: {exc}")
+        logger.error("Delete outbox query failed: %s", exc, exc_info=True)
     else:
         for row in pending:
             ok = await forward_delete_to_peer(
                 row["op_type"], row["target_id"], row.get("payload", ""), storage,
             )
             if ok:
-                try:
+                async with nonfatal(
+                    "cross_border_resync", f"remove delete propagation {row['id']}",
+                ):
                     await storage.remove_delete_propagation(row["id"])
-                except Exception as exc:
-                    print(
-                        f"[cross_border_resync] Remove delete propagation failed "
-                        f"for {row['id']}: {exc}"
-                    )
 
 
 async def _cross_border_resync_loop() -> None:

@@ -119,7 +119,7 @@ def _seed(store, uid) -> tuple[str, str]:
             "status": "running", "progress_pct": 30, "user_id": uid,
             "text_id": tid, "character": "张三", "message": "蒸馏中…",
         }
-    _run(store.create_distill_task(DISTILL_TASK, uid, tid, "张三", status="running"))
+    _run(store.create_distill_task(DISTILL_TASK, uid, tid, character="张三", status="running"))
     return tid, cid
 
 

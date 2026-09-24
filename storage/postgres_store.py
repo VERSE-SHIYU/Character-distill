@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,8 +14,23 @@ import asyncpg  # type: ignore[import-not-found]
 
 from core.roles import ROLES
 from .base import StorageBase, StoreError
+from .migration_ledger import file_sha256, pending_files
 from .pg_identity_sync import align_identity_sequences
 from .secret_box import decrypt_secret, encrypt_secret
+
+logger = logging.getLogger(__name__)
+
+_MIGRATIONS_DIR = Path(__file__).with_name("migrations_pg")
+
+# 账本表**就地建**（不是一份迁移文件）：要记「哪份迁移跑过」，得先有这张表 —— 表本身写成
+# 迁移文件就成了先有鸡还是先有蛋。`IF NOT EXISTS` 让这句每轮启动都幂等。
+_LEDGER_DDL = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    filename   TEXT PRIMARY KEY,
+    sha256     TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
 
 # ── 「X 是草稿 D 的发布副本」的唯一权威定义 ─────────────────────────────────
 #
@@ -78,7 +94,7 @@ class _PoolContext:
             except Exception as release_exc:
                 # store-empty-ok: 归还失败不改变本次操作的结果 —— 同 sqlite 侧 __aexit__：
                 # 上抛会顶替调用方真正的异常。
-                print(f"[PostgresStore] Release connection failed: {release_exc}")
+                logger.warning("Release connection failed: %s", release_exc, exc_info=True)
                 # 但**只记一行日志就放手**会把池一格一格吃光：归还失败的连接既不会自己
                 # 消失，也不会被复用 —— 它卡在「另一个操作进行中」那类状态里（SQL 已写进
                 # socket、服务端那笔事务没人结算），`_release` 永远等不到它。槽位不回收，
@@ -90,7 +106,7 @@ class _PoolContext:
                 except Exception as term_exc:
                     # store-empty-ok: 断开也失败同样不改变本次操作的结果（连接已被判死，
                     # 最坏情况是 socket 随对象被 GC 收掉）；上抛仍会顶替调用方的真异常。
-                    print(f"[PostgresStore] Terminate connection failed: {term_exc}")
+                    logger.warning("Terminate connection failed: %s", term_exc, exc_info=True)
             self.conn = None
 
 
@@ -137,12 +153,8 @@ class PostgresStore(StorageBase):
                     min_size=2,
                     max_size=30,
                 )
-                # Run migrations
-                migrations_dir = Path(__file__).with_name("migrations_pg")
                 async with self._pool.acquire() as conn:
-                    for migration_path in sorted(migrations_dir.glob("*.sql")):
-                        sql = migration_path.read_text(encoding="utf-8")
-                        await conn.execute(sql)
+                    await self._run_migrations(conn)
                     # 迁移只管结构；identity 序列与表数据的对齐是数据侧的事，结构就绪之后
                     # 单独跑一次。放在这里而不是 `migrations_pg/` 里：对齐要读表里的 max(id)，
                     # 每张空表的读数都不同，写成迁移文件就成了对存量数据的假设。
@@ -152,6 +164,49 @@ class PostgresStore(StorageBase):
             except Exception as exc:
                 print(f"[PostgresStore] Initialize database failed: {exc}")
                 raise
+
+    async def _run_migrations(self, conn: asyncpg.Connection) -> None:
+        """把 `migrations_pg/` 里没记过账的文件跑掉，逐份记账（缺陷 90/99）。
+
+        账本回答「哪些文件跑过」，执行器不再靠「正文写得幂等」去猜 —— 那是假设，不是
+        判据：`CREATE TABLE IF NOT EXISTS` 幂等，但 `024_users_role.sql` 那种
+        `DO $$ ... $$` 加回填、`021_published_from.sql` 那种约束变更都不保证重跑无害。
+
+        每份文件跑在**自己的事务**里，正文与记账同一事务：正文中途失败时账本不留该行，
+        库也回到执行前（PG 简单查询协议的多语句本就在隐式事务里，显式包一层是让「记账
+        一行」也在同一个事务内）。下次启动重跑这一份。
+
+        账本表为空 = 存量库首次上账本：没有 skip，全量跑一遍并逐份记账。这正是想要的
+        —— 迁移正文对已有库幂等（`IF NOT EXISTS` / `IF EXISTS` / information_schema
+        判断），跑一遍不改变什么，只为把账补齐。
+        """
+        await conn.execute(_LEDGER_DDL)
+        rows = await conn.fetch("SELECT filename, sha256 FROM schema_migrations")
+        recorded = {r["filename"]: r["sha256"] for r in rows}
+
+        bodies = {p.name: p.read_text(encoding="utf-8")
+                  for p in sorted(_MIGRATIONS_DIR.glob("*.sql"))}
+        order = sorted(bodies)
+        for name in pending_files(recorded, bodies, order):
+            sql = bodies[name]
+            async with conn.transaction():
+                await conn.execute(sql)
+                await conn.execute(
+                    "INSERT INTO schema_migrations (filename, sha256) VALUES ($1, $2)",
+                    name, file_sha256(sql),
+                )
+
+        # 记过账的文件又被改了内容：**不重跑**（存量库里它已经生效，重跑未必无害），
+        # 只报一声。ERROR 级是为了复用现有 ERROR 邮件告警 —— 这是「有人动了已应用的
+        # 迁移」这件事的唯一出口，静默就等于没有判据。
+        for name in order:
+            digest = file_sha256(bodies[name])
+            if name in recorded and recorded[name] != digest:
+                logger.error(
+                    "[PostgresStore] 迁移文件已记账但内容不符，跳过不重跑: %s"
+                    "（记账 %s ≠ 磁盘 %s）",
+                    name, recorded[name], digest,
+                )
 
     async def _connect(self):
         """Acquire a pool connection and return a managed context wrapper."""
@@ -216,15 +271,20 @@ class PostgresStore(StorageBase):
 
     # ── Texts ────────────────────────────────────────────────────
 
-    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "", content_resolved: str = "", coref_resolved: int = 0) -> dict:
+    async def save_text(
+        self, id: str, filename: str, content: str,
+        *,
+        title: str = "", description: str = "", text_type: str = "story",
+        original_char_count: int | None = None, user_id: str = "",
+    ) -> dict:
         """Save or update one text record."""
         try:
             char_count = len(content)
             async with await self._connect() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count, user_id, content_resolved, coref_resolved)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count, user_id)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     ON CONFLICT(id) DO UPDATE SET
                         filename = EXCLUDED.filename,
                         content = EXCLUDED.content,
@@ -233,27 +293,13 @@ class PostgresStore(StorageBase):
                         description = EXCLUDED.description,
                         text_type = EXCLUDED.text_type,
                         original_char_count = EXCLUDED.original_char_count,
-                        user_id = EXCLUDED.user_id,
-                        content_resolved = EXCLUDED.content_resolved,
-                        coref_resolved = EXCLUDED.coref_resolved
+                        user_id = EXCLUDED.user_id
                     """,
-                    id, filename, content, char_count, title, description, text_type, original_char_count, user_id, content_resolved, coref_resolved,
+                    id, filename, content, char_count, title, description, text_type, original_char_count, user_id,
                 )
             return await self.get_text_owned(id, user_id) or {}
         except Exception as exc:
             print(f"[PostgresStore] Save text failed: {exc}")
-            raise
-
-    async def update_text_resolved(self, text_id: str, content_resolved: str) -> None:
-        """Write back coref-resolved content and mark coref_resolved=1."""
-        try:
-            async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE texts SET content_resolved=$1, coref_resolved=1 WHERE id=$2",
-                    content_resolved, text_id,
-                )
-        except Exception as exc:
-            print(f"[PostgresStore] update_text_resolved failed: {exc}")
             raise
 
     async def update_text_cover(self, text_id: str, cover_data: str) -> None:
@@ -273,7 +319,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at, content_resolved, coref_resolved FROM texts WHERE id = $1",
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at FROM texts WHERE id = $1",
                     id,
                 )
             return self._row_to_dict(row)
@@ -286,7 +332,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at, content_resolved, coref_resolved FROM texts WHERE id = $1 AND user_id = $2",
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at FROM texts WHERE id = $1 AND user_id = $2",
                     id, user_id,
                 )
             return self._row_to_dict(row)
@@ -1134,13 +1180,31 @@ class PostgresStore(StorageBase):
             raise StoreError("delete_card", exc) from exc
 
     async def restore_card(self, card_id: str) -> bool:
-        """Restore a soft-deleted card."""
+        """Restore a soft-deleted card, undoing its cross-border delete in the same transaction.
+
+        Two halves of the undo, both required for the peer to end up with the card:
+          - a `card_delete` outbox row may still be queued (a resync tick is 60s
+            apart); left in place, the peer deletes the card we just restored;
+          - `cross_border_synced` is still 1 from the earlier publish, and the card
+            resync only picks `= 0` rows — so a replica the peer already deleted
+            can never be rebuilt without resetting the flag.
+
+        No `visibility` branch: a private card has no queued delete, and resetting
+        the flag on one is harmless since the resync query is public-only anyway.
+        """
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE cards SET deleted_at = NULL WHERE id = $1",
-                    card_id,
-                )
+                async with conn.transaction():
+                    await conn.execute(
+                        """UPDATE cards SET deleted_at = NULL, cross_border_synced = 0
+                           WHERE id = $1""",
+                        card_id,
+                    )
+                    await conn.execute(
+                        """DELETE FROM cross_border_delete_outbox
+                           WHERE op_type = 'card_delete' AND target_id = $1""",
+                        card_id,
+                    )
             return True
         except Exception as exc:
             print(f"[PostgresStore] Restore card failed: {exc}")
@@ -1740,10 +1804,12 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Hard delete group session failed: {exc}")
             raise
 
-    async def save_group_message(self, group_id: str, speaker: str, role: str, content: str,
-                                 speaker_card_id: str = "", reply_to_id: int | None = None,
-                                 reply_to_preview: str = "", *,
-                                 client_key: str | None = None) -> int:
+    async def save_group_message(
+        self, group_id: str, speaker: str, role: str, content: str,
+        *,
+        speaker_card_id: str = "", reply_to_id: int | None = None,
+        reply_to_preview: str = "", client_key: str | None = None,
+    ) -> int:
         """`client_key` 非空时幂等，语义与 `save_message` 同一份（见那里的 docstring）。
 
         去重范围是 `(group_id, client_key)`：不同群用同一个 key 各写一行。
@@ -2052,7 +2118,7 @@ class PostgresStore(StorageBase):
                 # store-empty-ok: 这不是「查询失败」而是「单张卡的存量数据损坏」。导出仍完整
                 # 产出，且降级在载荷里显式可见（{"raw": <原始串>} 取代解析后的卡对象）。
                 # 上抛会让一张坏卡毁掉整次导出。
-                print(f"[PostgresStore] Parse card_json failed: {exc}")
+                logger.warning("Parse card_json failed: %s", exc, exc_info=True)
                 card_parsed = {"raw": card["card_json"]}
         if fmt == "json":
             payload = {"session": session, "card": card_parsed, "messages": messages}
@@ -3219,7 +3285,14 @@ class PostgresStore(StorageBase):
 
     # ── Distill task persistence ────────────────
 
-    async def create_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
+    async def create_distill_task(
+        self, task_id: str, user_id: str, text_id: str,
+        *,
+        character: str = "", status: str = "queued", progress_pct: int = 0,
+        message: str = "", card_id: str = "", awakening: str = "",
+        chunk_size: int | None = None, overlap: int | None = None,
+        text_fingerprint: str = "",
+    ) -> dict | None:
         """Insert a NEW distillation task row (INSERT-only, no upsert). Returns the stored row.
 
         重复 task_id 抛异常：这里是新铸的 id，冲突是真 bug，不是"请更新已有行"。
@@ -4102,7 +4175,7 @@ class PostgresStore(StorageBase):
                 except Exception as exc:
                     # store-empty-ok: 本条评论已经写入；头像只是回包里的装饰字段，查不到就留空。
                     # 上抛会把「评论已创建」变成「创建失败」，让调用方误以为没写进去。
-                    print(f"[PostgresStore] Avatar data query failed: {exc}")
+                    logger.warning("Avatar data query failed: %s", exc, exc_info=True)
             return {"id": cid, "post_id": post_id, "user_id": user_id, "username": username, "content": content, "created_at": now, "ip_location": ip_location, "avatar_data": avatar_data}
         except Exception as exc:
             print(f"[PostgresStore] Add post comment failed: {exc}")
@@ -4652,7 +4725,7 @@ class PostgresStore(StorageBase):
 
     async def update_text_visibility(self, text_id: str, user_id: str, visibility: str) -> bool:
         if visibility not in ("public", "private"):
-            print(f"[PostgresStore] Invalid visibility value: {visibility}")
+            logger.warning("Invalid visibility value: %r", visibility)
             return False
         try:
             async with await self._connect() as conn:
@@ -5048,18 +5121,4 @@ class PostgresStore(StorageBase):
         except Exception as exc:
             print(f"[PostgresStore] Get all reading progress failed: {exc}")
             raise StoreError("get_all_reading_progress", exc) from exc
-
-    async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
-        """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
-        try:
-            now = datetime.now(timezone.utc).isoformat()
-            async with await self._connect() as conn:
-                tag = await conn.execute(
-                    "UPDATE cards SET deleted_at = $3 WHERE text_id = $1 AND user_id = $2 AND (card_json IS NULL OR card_json = '' OR card_json = '{}')",
-                    text_id, user_id, now,
-                )
-                return self._parse_rowcount(tag)
-        except Exception as exc:
-            print(f"[PostgresStore] Cleanup empty cards failed: {exc}")
-            raise StoreError("cleanup_empty_cards", exc) from exc
 

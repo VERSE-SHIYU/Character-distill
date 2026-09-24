@@ -39,7 +39,7 @@ pytestmark = [
 async def store():
     from storage.postgres_store import PostgresStore
 
-    dsn = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+    dsn = os.environ["DATABASE_URL"]
     st = PostgresStore(dsn)
     await st._ensure_initialized()
     # Clean all tables
@@ -216,27 +216,6 @@ class TestFullUserFlow:
         assert purged >= 1
         trash2 = await store.list_trash_sessions()
         assert not any(s["id"] == session_id for s in trash2)
-
-    async def test_06_cleanup_empty_cards(self, store):
-        """Cleanup empty cards (distillation failure path)."""
-        uid = f"usr_{uuid.uuid4().hex}"
-        await store.create_user(uid, f"cleanup_{uuid.uuid4().hex[:8]}", "hash")
-
-        text_id = f"txt_{uuid.uuid4().hex}"
-        await store.save_text(text_id, "src.txt", "Src", user_id=uid)
-
-        # Valid card
-        await store.save_card(f"card_{uuid.uuid4().hex}", text_id, "Valid",
-                               json.dumps({"name": "Valid"}), user_id=uid)
-        # Empty card (distillation failure)
-        empty_id = f"card_{uuid.uuid4().hex}"
-        await store.save_card(empty_id, text_id, "Empty", json.dumps({}), user_id=uid)
-
-        cleaned = await store.cleanup_empty_cards(text_id, uid)
-        assert cleaned >= 1
-
-        cards = await store.list_cards(text_id)
-        assert all(c["name"] != "Empty" for c in cards)
 
     async def test_07_full_integration_story(self, store):
         """Complete end-to-end story: one continuous flow."""

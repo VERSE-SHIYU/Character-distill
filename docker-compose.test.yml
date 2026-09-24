@@ -1,0 +1,35 @@
+# ============================================================
+# 测试专用 PG —— 测试一律连这个库，护住开发库
+#
+# 启动：docker compose -f docker-compose.test.yml up -d --wait
+# 关闭并清空：docker compose -f docker-compose.test.yml down
+#
+# 与 docker-compose.local.yml 的关键区别（不是「另一份开发编排」）：
+#   1. 端口 55432，与开发库的 5432 错开 —— 跑测试时开发库可以照常在跑；
+#   2. 库名 charsim_test，以 `_test` 结尾，conftest 的会话检查据此判定「你连的是测试库」；
+#   3. 数据目录挂 tmpfs：容器一停数据即清空，测试之间不留残骸；
+#   4. 用户名/口令写死为一次性测试值，**不读 .env** —— 测试连哪个库不由本机 .env 决定。
+#
+# **本文件里没有服务连这个库**（消费者是宿主机上的 pytest 进程），故它登记在
+# `tests/test_pg_gate.py` 的 `_NO_IN_FILE_CONSUMER` 里 —— 那份名单由锁强制与现场对账。
+# ============================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: charsim
+      POSTGRES_PASSWORD: ci_test_password
+      POSTGRES_DB: charsim_test
+    ports:
+      - "55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    # 与 docker-compose.local.yml / prod.yml **逐字相同** —— 三份定义必须一致，由
+    # `tests/test_pg_gate.py::test_every_db_healthcheck_is_verbatim_identical` 强制。
+    # 它也让 `up -d --wait` 真的等到「拿凭据连得上」而不是「服务器在应答」。
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRES_PASSWORD\" PGCONNECT_TIMEOUT=3 psql -h postgres -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -tAc 'select 1' > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

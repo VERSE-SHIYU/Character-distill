@@ -53,6 +53,10 @@ _REGISTRY = {
         "core.distiller",
         lambda cls: cls("用户可读消息", "ops 细节"),
     ),
+    ("core/character_roster.py", "NoTargetCharacter"): (
+        "core.character_roster",
+        lambda cls: cls("empty"),
+    ),
     ("core/rag.py", "CollectionUnusableError"): (
         "core.rag",
         lambda cls: cls("集合不可用", collection_name="cards", stored_dim=3, expected_dim=4),

@@ -179,7 +179,9 @@ def _snapshot(read, write, value) -> _Restored:
 def _set_var(var, value) -> _Restored:
     """ContextVar 的载体：写口是 `var.set`，它返回的 token 就是撤销句柄 —— 不必读快照。
 
-    名字避开 `_token` —— 那个已是本文件的 JWT 编码辅助。
+    名字避开 `_token` —— 那个已是本文件的 JWT 编码辅助。token 与快照式的差别正是
+    「本来没设过」那一格，由 `test_set_var_restores_the_unset_fact_not_a_none_value`
+    看住（台账 64）。
     """
     def _enter():
         token = var.set(value)
@@ -1402,3 +1404,38 @@ def test_l15_otel_context_still_propagates_into_a_derived_thread(monkeypatch):
         otel_ctx.detach(token)
 
     assert box == ["propagated"], f"OTEL 开启时上下文没跟过派生线程：{box}"
+
+
+# ── 还原器自身的锁（台账 64） ──────────────────────────────────────────────
+
+def test_set_var_restores_the_unset_fact_not_a_none_value():
+    """`_set_var` 的还原要把「本来没设过」这个**事实**一并还原，不是写回一个 `None`。
+
+    ContextVar 与普通全局只差这一处，而这一处是判据：全局的「没装」就是 `None`，
+    写回 `None` 与写回入场快照同义；ContextVar 的「没设过」不是 `None` —— `get()` 抛
+    `LookupError`，只有 `get(None)` 才返回 `None`。token 还原（`var.reset(token)`）
+    两种入场都还原得了；快照式的 `var.set(None)` 只能表达「本来设的是 None」。
+
+    前提由用例自建：在**空上下文** `contextvars.Context()` 里跑，入场必然是「没设过」，
+    不依赖同线程上一条用例留下了什么 —— 本文件其他用例也都用 `_set_var` 还原，但那是
+    另一件事，当不了这条的前提。
+
+    变异：把 `_set_var` 的撤销改成 `return lambda: var.set(None)`（快照式）→ 块后的
+    `LLM_CALLER.get()` 不再抛 `LookupError`，本用例红。现有 48 条用例对这种变异**全绿**
+    （实测），即这一格此前无人看住。
+    """
+    import contextvars
+
+    ctx = _ctx()
+    box = contextvars.Context()   # 空上下文：入场即「本来没设过」
+
+    def body() -> None:
+        with pytest.raises(LookupError):
+            ctx.LLM_CALLER.get()
+        with _set_var(ctx.LLM_CALLER, ctx.Caller(_ALLOWED_IP, "u_restorer")):
+            assert ctx.LLM_CALLER.get().user_id == "u_restorer"
+        with pytest.raises(LookupError):
+            ctx.LLM_CALLER.get()
+
+    box.run(body)
+

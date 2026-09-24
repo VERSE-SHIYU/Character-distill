@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import os
 import sys
@@ -28,6 +30,8 @@ from core.text_manager import TextManager
 from storage import get_store
 from storage.base import StorageBase
 from web.llm_resolution import Source, resolve_llm
+
+logger = logging.getLogger(__name__)
 
 _CFG_PATH = _REPO_ROOT / "config.yaml"
 if not _CFG_PATH.exists():
@@ -229,7 +233,7 @@ def _log_loop_error(fut: asyncio.Future) -> None:
         return
     exc = fut.exception()
     if exc is not None:
-        print(f"[deps] Submitted coroutine failed (non-fatal): {type(exc).__name__}: {exc}")
+        logger.error("Submitted coroutine failed (non-fatal): %s: %s", type(exc).__name__, exc, exc_info=exc)
 
 
 def _make_global_llm() -> LLMAdapter | None:
@@ -241,7 +245,7 @@ def _make_global_llm() -> LLMAdapter | None:
     try:
         return LLMAdapter()
     except Exception as exc:
-        print(f"[deps] LLMAdapter init failed (API not configured?): {exc}")
+        logger.warning("LLMAdapter init failed (API not configured?): %s", exc, exc_info=True)
         return None
 
 
@@ -270,14 +274,15 @@ def get_distiller(llm: LLMAdapter | None = None) -> Distiller | None:
     return Distiller(llm, storage=get_storage())
 
 
-def get_rag_config(embedding_key: str = "", embedding_region: str = "") -> dict[str, Any]:
-    """Return RAG configuration dict with optional embedding overrides."""
-    cfg = dict(_rag_config)
-    if embedding_key:
-        cfg["embedding_key"] = embedding_key
-    if embedding_region:
-        cfg["embedding_region"] = embedding_region
-    return cfg
+def get_rag_config() -> dict[str, Any]:
+    """Return RAG configuration dict.
+
+    嵌入凭据**不从这里注入**：per-user 的 (key, region) 由调用方经
+    `web/llm_resolution.resolve_embedding` 归一后再并进来。原先这两个覆盖参数
+    （`embedding_key` / `embedding_region`）从加进来起就没有一个生产调用点传过值 ——
+    死参数，只给按位置传参多留两格错位空间（与缺陷 111 的 `text` 同形）。
+    """
+    return dict(_rag_config)
 
 
 def get_sessions() -> dict[str, dict[str, Any]]:
@@ -422,7 +427,7 @@ def patch_config(key: str, value: Any) -> dict[str, Any]:
         with open(_CFG_PATH, "w", encoding="utf-8") as f:
             yaml.dump(_config, f, allow_unicode=True, default_flow_style=False)
     except Exception as exc:
-        print(f"[deps] Failed to persist config: {exc}")
+        logger.error("Failed to persist config: %s", exc, exc_info=True)
     return dict(_config)
 
 

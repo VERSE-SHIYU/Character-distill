@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import json
 import os
 import re
@@ -17,6 +19,8 @@ from speech.edge_tts_client import EdgeTTSEngine, VOICES
 from speech.voice_clone import VoiceCloneClient
 from limiter import limiter
 from routers.auth import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
 
@@ -263,7 +267,7 @@ async def voice_synthesize(
                     else:
                         print("[voice] GPT-SoVITS not available, falling back to Edge TTS")
         except Exception as exc:
-            print(f"[voice] GPT-SoVITS synthesis failed, falling back to Edge TTS: {exc}")
+            logger.warning("GPT-SoVITS synthesis failed, falling back to Edge TTS: %s", exc, exc_info=True)
 
     # Fallback: Edge TTS
     voice_name = VOICES.get(voice_key, VOICES["xiaoxiao"])
@@ -330,7 +334,7 @@ async def get_ref_audio(
                 return JSONResponse(ref_data)
         return JSONResponse({"exists": False})
     except Exception as exc:
-        print(f"[voice] Get ref audio failed: {exc}")
+        logger.error("Get ref audio failed: %s", exc, exc_info=True)
         return JSONResponse({"exists": False})
 
 
@@ -377,7 +381,10 @@ async def upload_ref_audio(
         )
         if result.returncode != 0:
             # ffmpeg 的 stderr 含服务器路径，只进日志不上屏（缺陷 38 同形态）。
-            print(f"[voice] ffmpeg extract failed: {result.stderr.decode()[:400] if result.stderr else 'unknown'}")
+            logger.error(
+                "ffmpeg extract failed: %s",
+                result.stderr.decode()[:400] if result.stderr else "unknown",
+            )
             filepath.unlink(missing_ok=True)
             raise HTTPException(400, "视频音频提取失败，请换成音频文件或换一个视频重试")
         filepath.unlink()  # Remove video, keep audio
@@ -394,7 +401,7 @@ async def upload_ref_audio(
     try:
         await storage.update_session_voice_ref(card_id, ref_json)
     except Exception as exc:
-        print(f"[voice] Save ref audio metadata failed: {exc}")
+        logger.error("Save ref audio metadata failed: %s", exc, exc_info=True)
 
     return JSONResponse({"ok": True, "path": str(filepath), "ref_text": ref_text, "exists": True})
 

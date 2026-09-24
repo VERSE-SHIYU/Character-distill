@@ -2,7 +2,7 @@
 
 通过环境变量 STORAGE_BACKEND 选择存储后端（必须显式设置）：
   - STORAGE_BACKEND=postgres  -> 使用 PostgresStore（生产，需 DATABASE_URL）
-  - STORAGE_BACKEND=sqlite    -> 使用 SQLiteStore（本地/测试）
+  - STORAGE_BACKEND=sqlite    -> 使用 SQLiteStore（仅本地备用；已放下，见 get_store）
   - 未设置或空字符串           -> fail-fast，拒绝启动以防写错库
 
 get_store() 是工厂函数，返回一个 StorageBase 实例。
@@ -48,7 +48,13 @@ def get_store() -> StorageBase:
         return PostgresStore(dsn)
 
     if backend == "sqlite":
+        # 已放下（2026-09-24）：SQLite 仅作本地备用后端，不再测试、不再维护；生产、CI、
+        # 测试一律用 PG。选中它就打一行警告，免得「本机恰好走的是没人维护的那条路」无声无息。
         db_path = os.getenv("DB_PATH", "data/charsim.db").strip()
+        print(
+            f"[storage] STORAGE_BACKEND=sqlite —— 已放下、不再维护的备用后端"
+            f"（库文件 {db_path}）。生产/CI/测试一律用 postgres。"
+        )
         return SQLiteStore(db_path)
 
     raise RuntimeError(

@@ -10,12 +10,22 @@
         "tests/test_pg_gate.py",
         "_reject(f\"{where} 的 healthcheck 用 pg_isready：它不验证凭据，凭据错时照样 exit 0，\" \"这道门会退化成装饰\")",
         0
+      ],
+      [
+        "tests/test_pg_gate.py",
+        "assert len(by_hc) == 1, ( \"postgres 的 healthcheck 出现了多份不一致的定义（或一份都没有），\" f\"「改一处、另一处漂移」的代价已经发生：{by_hc}\")",
+        0
       ]
     ],
     "G-2  两个文件的 -h 都改为环回 127.0.0.1": [
       [
         "tests/test_pg_gate.py",
         "_reject(f\"{where} 的 healthcheck 拿环回地址 {parse['-h']!r} 当 -h：官方镜像里环回走 \" \"trust 认证，探针又会「永远成功」\")",
+        0
+      ],
+      [
+        "tests/test_pg_gate.py",
+        "assert len(by_hc) == 1, ( \"postgres 的 healthcheck 出现了多份不一致的定义（或一份都没有），\" f\"「改一处、另一处漂移」的代价已经发生：{by_hc}\")",
         0
       ]
     ],
@@ -24,12 +34,22 @@
         "tests/test_pg_gate.py",
         "_reject(f\"{where} 的探针命令不是那个闭形状：{bad} 允许的形状是 {_GOOD_CMD!r}\")",
         0
+      ],
+      [
+        "tests/test_pg_gate.py",
+        "assert len(by_hc) == 1, ( \"postgres 的 healthcheck 出现了多份不一致的定义（或一份都没有），\" f\"「改一处、另一处漂移」的代价已经发生：{by_hc}\")",
+        0
       ]
     ],
     "G-4  两个文件的末尾都加 `|| true`": [
       [
         "tests/test_pg_gate.py",
         "_reject(f\"{where} 的 healthcheck 多出语法外的 token {t!r}：只允许这一条命令；\" \"它后面接的第二条命令（`; exit 0` / `|| true` 一类）会让探针恒成功，\" ",
+        0
+      ],
+      [
+        "tests/test_pg_gate.py",
+        "assert len(by_hc) == 1, ( \"postgres 的 healthcheck 出现了多份不一致的定义（或一份都没有），\" f\"「改一处、另一处漂移」的代价已经发生：{by_hc}\")",
         0
       ]
     ],
@@ -38,12 +58,22 @@
         "tests/test_pg_gate.py",
         "_reject(f\"{where} 的 healthcheck 里出现了宿主机插值的结果 {hit!r}：写 `${{...}}` 是\" \"**宿主机展开**，值会固化进容器配置（`docker inspect` 就能读",
         0
+      ],
+      [
+        "tests/test_pg_gate.py",
+        "assert len(by_hc) == 1, ( \"postgres 的 healthcheck 出现了多份不一致的定义（或一份都没有），\" f\"「改一处、另一处漂移」的代价已经发生：{by_hc}\")",
+        0
       ]
     ],
     "G-6  两个文件的 healthcheck 都加 disable: true": [
       [
         "tests/test_pg_gate.py",
         "raise AssertionError( f\"{where} 多出键 {extra}：只允许 {sorted(allowed)} —— 多出来的键不会被忽略，\" \"而是被点名。`disable: true` 一类能悄悄",
+        0
+      ],
+      [
+        "tests/test_pg_gate.py",
+        "assert len(by_hc) == 1, ( \"postgres 的 healthcheck 出现了多份不一致的定义（或一份都没有），\" f\"「改一处、另一处漂移」的代价已经发生：{by_hc}\")",
         0
       ]
     ],
@@ -52,6 +82,11 @@
         "tests/test_pg_gate.py",
         "raise AssertionError( f\"{where} 多出键 {extra}：只允许 {sorted(allowed)} —— 多出来的键不会被忽略，\" \"而是被点名。`disable: true` 一类能悄悄",
         0
+      ],
+      [
+        "tests/test_pg_gate.py",
+        "assert len(by_hc) == 1, ( \"postgres 的 healthcheck 出现了多份不一致的定义（或一份都没有），\" f\"「改一处、另一处漂移」的代价已经发生：{by_hc}\")",
+        0
       ]
     ],
     "G-8  两个文件的 timeout 都写成 2s（小于 PGCONNECT_TIMEOUT=3）": [
@@ -59,9 +94,14 @@
         "tests/test_pg_gate.py",
         "_reject(f\"{where} 的 PGCONNECT_TIMEOUT={connect} 不小于 healthcheck timeout={timeout}\" \" —— 连接超时会被 Docker 的探针超时顶掉，",
         0
+      ],
+      [
+        "tests/test_pg_gate.py",
+        "assert len(by_hc) == 1, ( \"postgres 的 healthcheck 出现了多份不一致的定义（或一份都没有），\" f\"「改一处、另一处漂移」的代价已经发生：{by_hc}\")",
+        0
       ]
     ],
-    "G-9  只改 local 一份的 interval（两份定义漂移）": [
+    "G-9  只改 local 一份的 interval（多份定义漂移）": [
       [
         "tests/test_pg_gate.py",
         "assert len(by_hc) == 1, ( \"postgres 的 healthcheck 出现了多份不一致的定义（或一份都没有），\" f\"「改一处、另一处漂移」的代价已经发生：{by_hc}\")",
@@ -203,6 +243,20 @@
       [
         "tests/test_pg_gate.py",
         "assert any(how != _HARD_BY_DEP for how in hard.values()), ( f\"{path.name}:{db} 的硬消费者全靠 depends_on 认出来 —— 连接串识别",
+        0
+      ]
+    ],
+    "G-24 `_NO_IN_FILE_CONSUMER` 加一条现场不存在的 (文件, 库服务)（陈旧条目）": [
+      [
+        "tests/test_pg_gate.py",
+        "assert stale == [], ( f\"这些 (文件, 库服务) 现场对不上，却还挂在 `_NO_IN_FILE_CONSUMER` 里：{stale} —— \" \"要么这份文件已经长出了本文件内的硬消费者（那它",
+        0
+      ]
+    ],
+    "G-25 `_NO_IN_FILE_CONSUMER` 那条理由改成空串": [
+      [
+        "tests/test_pg_gate.py",
+        "assert blank == [], ( f\"`_NO_IN_FILE_CONSUMER` 里这些条目没写理由（或理由不是字符串）：{blank} —— \" \"「这份文件里为什么没有消费者」是判据 3 唯一的依据，写不",
         0
       ]
     ]

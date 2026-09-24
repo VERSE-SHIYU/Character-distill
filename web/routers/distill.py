@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import json
 import os
@@ -21,7 +23,7 @@ from core.nonfatal import nonfatal
 from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
 from adapters.llm_adapter import user_facing_error
-from core.character_roster import aliases_for, resolve_characters
+from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core.export import export_tavern_json
 from core.schema import CharacterCard
@@ -31,16 +33,9 @@ from core import concurrency as C  # 派生与上下文传播
 from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
+from web.llm_resolution import resolve_embedding
 
-
-def _get_distill_content(text_rec: dict) -> str:
-    """默认返回原文蒸馏，仅当 DISTILL_USE_COREF=1 时走共指消解版。"""
-    if os.getenv("DISTILL_USE_COREF") == "1":
-        resolved = text_rec.get("content_resolved", "")
-        if resolved and text_rec.get("coref_resolved"):
-            return resolved
-    return text_rec["content"]
-
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/distill", tags=["distill"])
 legacy_router = APIRouter(tags=["legacy-distill"])
@@ -172,7 +167,7 @@ def _dispatch_persist(task_id: str, snap: dict[str, Any]) -> None:
         submit_to_main_loop(_persist_snap(task_id, snap), timeout=10)
     except Exception as exc:
         # 进度记录写失败不致命：蒸馏照常，下次状态变更再追上
-        print(f"[distill] Persist task {task_id} state failed (non-fatal): {exc}")
+        logger.warning("Persist task %s state failed (non-fatal): %s", task_id, exc, exc_info=True)
 
 
 def _set_task(task_id: str, updates: dict[str, Any]) -> None:
@@ -238,8 +233,11 @@ def _confirm_terminal_persist(task_id: str) -> None:
     except Exception as exc:
         # 区别于普通 non-fatal：这是终态确认的第二次失败，DB 行可能滞留 running 占
         # count_running 槽，只能靠下次 boot reconcile 置 interrupted。
-        print(f"[distill] Task {task_id} TERMINAL persist failed in final confirm: {exc}. "
-              f"DB row may stay running; boot reconcile will flip it to interrupted.")
+        logger.error(
+            "Task %s TERMINAL persist failed in final confirm: %s. "
+            "DB row may stay running; boot reconcile will flip it to interrupted.",
+            task_id, exc, exc_info=True,
+        )
 
 
 class DistillTaskRequest(BaseModel):
@@ -263,7 +261,7 @@ async def cancel_distill_tasks_by_text_id(text_id: str) -> int:
     try:
         return await get_storage().cancel_distills_by_text_id(text_id, "文本已删除，任务已取消")
     except Exception as exc:
-        print(f"[distill] DB cancel by text failed (non-fatal): {exc}")
+        logger.error("DB cancel by text failed (non-fatal): %s", exc, exc_info=True)
         return 0
 
 
@@ -308,13 +306,13 @@ def _generate_awakening(llm, card: CharacterCard, storage=None) -> str:
             f"不是重写开场白，而是原口吻的变形。只输出这句话本身，不要引号，不要解释，不超过50个字。"
         )
         result = llm.chat(prompt, [{"role": "user", "content": "请说苏醒台词"}])
-        try_record_usage(storage, llm, "chat_awakening", source="distill")
+        try_record_usage(storage, llm, action="chat_awakening", source="distill")
         result = result.strip().strip('"').strip("'").strip("「」").strip("《》")
         if not result or len(result) > 100:
             return ""
         return result
     except Exception as exc:
-        print(f"[distill] Generate awakening failed (non-fatal): {exc}")
+        logger.warning("Generate awakening failed (non-fatal): %s", exc, exc_info=True)
         return ""
 
 
@@ -370,19 +368,14 @@ def _run_distill_task(
         # 身份靠 `run_coroutine_threadsafe` 传递：它在**调用线程**里 copy_context，
         # 所以本线程经 `C.ctx_thread` 带来的 LLM_CALLER 会一路传到识别调用里，
         # 记账不丢人（与 `_persist_snap` 走的是同一条投递）。
-        try:
-            chars = submit_to_main_loop(
-                resolve_characters(get_storage(), distiller, text_id, user_id, content))
-        except Exception:
-            chars = []
+        # 识别失败与「挑不出目标角色」都不在此捕获：两者都是 DistillError 家族，
+        # 冒泡到本函数外层 except，走 `user_facing_error` 那条唯一的渲染路径。
+        # 原先这里的宽捕获把上游故障（网络 / DB / 额度）渲染成了「没识别到角色」；
+        # 两段手抄的「空名单 / 缺 name」分支也一并收进 character_roster 的判据。
+        chars = submit_to_main_loop(
+            resolve_characters(get_storage(), distiller, text_id, user_id, content))
         if not name:
-            if not chars:
-                _set_task(task_id, {"status": "error", "message": "No characters identified"})
-                return
-            name = chars[0].get("name", "")
-            if not name:
-                _set_task(task_id, {"status": "error", "message": "Identified result missing name"})
-                return
+            name = target_character_name(chars)
         aliases = aliases_for(chars, name)
 
         _set_task(task_id, {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
@@ -403,10 +396,12 @@ def _run_distill_task(
             try:
                 submit_to_main_loop(_save(), timeout=10)
             except Exception as exc:
-                print(f"[distill] Persist chunk {index} of {task_id} failed (non-fatal): {exc}")
+                logger.warning("Persist chunk %s of %s failed (non-fatal): %s",
+                               index, task_id, exc, exc_info=True)
 
         stream = distiller.distill_incremental_stream(
-            content, name, aliases, text_type,
+            content, name,
+            aliases=aliases, text_type=text_type,
             on_chunk_done=_persist_chunk, resume_candidates=resume_candidates,
         )
         for piece in stream:
@@ -495,10 +490,10 @@ def _run_distill_task(
 
         if data is None:
             if not stripped:
-                print(f"[distill] Empty format output for {name} — Map/Reduce likely failed upstream")
+                logger.error("Empty format output for %s - Map/Reduce likely failed upstream", name)
                 _set_task(task_id, {"status": "error", "message": "蒸馏失败：服务内部异常，请重试", "character": name})
             else:
-                print(f"[distill] JSON parse failed for {name}. First 200 chars: {stripped[:200]}")
+                logger.error("JSON parse failed for %s (first 200 chars): %r", name, stripped[:200])
                 _set_task(task_id, {"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
             return
 
@@ -507,7 +502,7 @@ def _run_distill_task(
             card = CharacterCard.model_validate(data)
         except Exception as exc:
             # ValidationError 的 str() 带字段名与输入值（可能含原文片段），只进日志
-            print(f"[distill] Card validation failed for {name}: {exc}")
+            logger.error("Card validation failed for %s: %s", name, exc, exc_info=True)
             _set_task(task_id, {"status": "error", "message": "蒸馏失败：数据校验错误，请重试", "character": name})
             return
 
@@ -519,7 +514,7 @@ def _run_distill_task(
                 card_dict["tags"] = tags
                 card = CharacterCard.model_validate(card_dict)
         except Exception as exc:
-            print(f"[distill] Auto-tagging failed (silent): {exc}")
+            logger.warning("Auto-tagging failed (silent): %s", exc, exc_info=True)
 
         # Step 4: persist via the main event loop (run_coroutine_threadsafe)
         # so the asyncpg pool stays on its home loop.
@@ -567,7 +562,7 @@ def _run_distill_task(
                 )
                 print(f"[distill] Persisted awakening_message to card {result['card_id']}")
             except Exception as exc:
-                print(f"[distill] Persist awakening_message to card failed (non-fatal): {exc}")
+                logger.warning("Persist awakening_message to card failed (non-fatal): %s", exc, exc_info=True)
 
         update_dict = {
             "status": "done",
@@ -581,19 +576,10 @@ def _run_distill_task(
         _set_task(task_id, update_dict)
 
     except Exception as exc:
-        import traceback
-        print(f"[distill] Background task {task_id} failed: {exc}\n{traceback.format_exc()}")
+        logger.error("Background distill task %s failed: %s", task_id, exc, exc_info=True)
         # 上屏走唯一出口，**此处不再拼「蒸馏失败：」前缀** —— 前缀在异常自带的
         # user_message 里已经有了，两边各拼一次就是缺陷 17 的双重前缀。
         _set_task(task_id, {"status": "error", "message": user_facing_error(exc), "text_id": text_id, "character": char_name})
-        # Clean up half-done cards (empty card_json)
-        try:
-            async def _cleanup():
-                store = get_storage()
-                await store.cleanup_empty_cards(text_id, user_id)
-            submit_to_main_loop(_cleanup())
-        except Exception as cleanup_err:
-            print(f"[distill] Cleanup half-done cards failed (non-fatal): {cleanup_err}")
     finally:
         # 终态确认在 release 之前：若刚才的终态 _set_task 落库失败，这里补最后一次
         # 写，否则 DB 行会永久停 running 占 count_running 槽（release 了 DB 没跟上）。
@@ -609,22 +595,21 @@ async def _do_identify(text: str, distiller: Distiller) -> dict[str, Any]:
     """Core identify logic shared by new and legacy routes."""
     if not text.strip():
         raise HTTPException(400, "Text cannot be empty")
-    try:
-        chars = await asyncio.to_thread(distiller.identify_characters, text)
-    except Exception as exc:
-        print(f"[distill] Identify characters failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    chars = await asyncio.to_thread(distiller.identify_characters, text)
     return {"characters": chars}
 
 
-def _first_character_name(chars: list[dict[str, Any]]) -> str:
-    """名单里的第一个角色名；空名单 / 缺 name 都是 400（同一处判据）。"""
-    if not chars:
-        raise HTTPException(400, "No characters identified")
-    name = chars[0].get("name", "")
-    if not name:
-        raise HTTPException(400, "Identified result missing name")
-    return name
+# 识别族的三条 HTTP 路由（本函数、`_resolve_character_name`、`reindex_rag`）**不设
+# 就地捕获**：`web/server.py` 那三条统一出口已覆盖全部情形 —— `DistillError` 及子类
+# 走 `_domain_error_status`（400 + `user_message`）、LLM 侧已知失败走 `_llm_error_handler`、
+# 其余意外异常走全局处理器（500 + traceback）。就地包 `HTTPException(500)` 会**拦下
+# `DistillError`**：用户看不到「上游限流 / 名单无法解析」这类真实原因，单分片解析失败
+# 也从 400 变成 500（缺陷 38 同族）。同文件的 `/identify`（带 text_id）本来就没 try，
+# 是现成先例。原先那两行 `print` 也不必留 —— 全局出口会打 traceback。
+#
+# 「挑不出目标角色」同理不在这里渲染：`NoTargetCharacter` 是 `DistillError` 的子类，
+# 文案在 core/character_roster.py 一处定义，上行出口与本文件的识别失败同一条
+# （HTTP 走 web/server.py 的领域异常出口、bg 与 SSE 走 user_facing_error）。
 
 
 async def _resolve_character_name(
@@ -638,12 +623,10 @@ async def _resolve_character_name(
     name = character_name.strip()
     if name:
         return name
-    try:
-        chars = await asyncio.to_thread(distiller.identify_characters, text)
-    except Exception as exc:
-        print(f"[distill] Auto-identify failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
-    return _first_character_name(chars)
+    # 不设就地捕获（理由见 `_do_identify` 上方的块注释）：识别失败冒泡到统一出口。
+    chars = await asyncio.to_thread(distiller.identify_characters, text)
+    # 挑不出角色就抛 NoTargetCharacter（DistillError 子类）→ 400，不再在这里配码。
+    return target_character_name(chars)
 
 
 # ---- New routes (storage-backed, via TextManager) ----
@@ -690,29 +673,28 @@ async def distill_by_text_id(
         raise HTTPException(404, "Text not found")
 
     # Fetch user's embedding key so RAGEngine can initialize DashScope embedding
-    _api_config = await storage.get_user_api_config(user_id)
-    _ek = (_api_config or {}).get("embedding_key", "")
-    _er = (_api_config or {}).get("embedding_region", "")
+    _api_config = await storage.get_user_api_config(user_id) or {}
+    emb = resolve_embedding(_api_config)
 
-    content = _get_distill_content(text_rec)
+    content = text_rec["content"]
     # 空 character_name 才需要名单；非空时用户已点名，不必读名单。
     char_name = req.character_name.strip()
     if not char_name:
         chars = await resolve_characters(
             storage, distiller, req.text_id, user_id, content)
-        char_name = _first_character_name(chars)
+        char_name = target_character_name(chars)
 
     try:
         result = await text_manager.get_or_distill(
             req.text_id, char_name, force=req.force, user_id=user_id,
-            embedding_key=_ek, embedding_region=_er,
+            embedding_key=emb.key, embedding_region=emb.region,
         )
         # Fire-and-forget scene index via isolated service
         indexing_service = get_indexing_service()
         if indexing_service:
             indexing_service.schedule_scene_index(
                 req.text_id, result.get("card_id", ""), content, char_name,
-                all_characters=[], embedding_key=_ek, embedding_region=_er,
+                all_characters=[], embedding_key=emb.key, embedding_region=emb.region,
             )
         return result
     except DistillError:
@@ -783,11 +765,10 @@ async def _distill_start_impl(
         raise HTTPException(503, "请先在设置页配置 API Key")
     distiller = get_distiller(llm=llm)
 
-    # embedding 二元组在这里取**一次**，随线程入参传下去：后台线程不再回头读配置
-    # （它连 storage 都不该碰，那是请求线程的账）。
-    api_config = await storage.get_user_api_config(user_id)
-    embedding_key = (api_config or {}).get("embedding_key", "")
-    embedding_region = (api_config or {}).get("embedding_region", "")
+    # embedding 二元组在这里取**一次**（经唯一归一出口），随线程入参传下去：后台线程
+    # 不再回头读配置（它连 storage 都不该碰，那是请求线程的账）。
+    api_config = await storage.get_user_api_config(user_id) or {}
+    emb = resolve_embedding(api_config)
 
     # Read text content in the async endpoint so the background thread
     # doesn't need to call asyncio storage methods (cross-thread safe).
@@ -796,7 +777,7 @@ async def _distill_start_impl(
         raise HTTPException(404, "Text not found")
 
     text_type = text_rec.get("text_type", "story")
-    content = _get_distill_content(text_rec)
+    content = text_rec["content"]
     text_fp = text_fingerprint(content)
     chunk_size = distiller.effective_chunk_size(text_type)
 
@@ -812,7 +793,7 @@ async def _distill_start_impl(
             existing = await storage.find_interrupted_distill(user_id, req.text_id, req.character_name)
         except Exception as exc:
             # 发现失败当新任务：宁可整跑，不因发现环节拒启动
-            print(f"[distill] Resume discovery failed (non-fatal, start fresh): {exc}")
+            logger.warning("Resume discovery failed (non-fatal, start fresh): %s", exc, exc_info=True)
 
     if existing is not None:
         task_id = existing["task_id"]
@@ -857,7 +838,7 @@ async def _distill_start_impl(
         else:
             # 新任务：纯 INSERT。主键冲突是真异常（新铸 uuid），由下面 except 兜成 503。
             await storage.create_distill_task(
-                task_id, user_id, req.text_id, req.character_name,
+                task_id, user_id, req.text_id, character=req.character_name,
                 status="running", progress_pct=0, message=_queued_msg,
                 card_id="", awakening="",
                 chunk_size=chunk_size, text_fingerprint=text_fp,
@@ -877,7 +858,7 @@ async def _distill_start_impl(
     thread = C.ctx_thread(  # context 传播点：蒸馏后台线程挂到发起请求 trace
         _run_distill_task,
         args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type,
-              llm, embedding_key, embedding_region, resume_candidates),
+              llm, emb.key, emb.region, resume_candidates),
         daemon=True,
     )
     thread.start()
@@ -996,7 +977,7 @@ async def cancel_distill_task(
         await storage.update_distill_task(task_id, status="error", message="已取消")
     except Exception as exc:
         # DB 写失败仍有内存停止信号，bg 线程 abort 时还会再补一次终态落库
-        print(f"[distill] Cancel task {task_id} DB update failed (non-fatal): {exc}")
+        logger.warning("Cancel task %s DB update failed (non-fatal): %s", task_id, exc, exc_info=True)
     return {"ok": True}
 
 
@@ -1048,15 +1029,14 @@ async def distill_stream(
         raise HTTPException(503, "请先在设置页配置 API Key")
 
     # Fetch user's embedding key so RAGEngine can initialize DashScope embedding
-    _api_config = await storage.get_user_api_config(user_id)
-    _ek = (_api_config or {}).get("embedding_key", "")
-    _er = (_api_config or {}).get("embedding_region", "")
+    _api_config = await storage.get_user_api_config(user_id) or {}
+    emb = resolve_embedding(_api_config)
 
     text_rec = await storage.get_text_owned(req.text_id, user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
-    content = _get_distill_content(text_rec)
+    content = text_rec["content"]
     text_type = text_rec.get("text_type", "story")
     char_name = req.character_name.strip()
 
@@ -1065,30 +1045,29 @@ async def distill_stream(
 
         # 名单走唯一入口：命中缓存即不发 LLM，未命中才识别一次并写回
         nonlocal char_name
+        # 识别失败与「挑不出目标角色」两类结果都在这一个 except 里渲染：本生成器
+        # 在下面 chat 那圈 try 之外，靠冒泡会变成未处理的生成器异常而不是错误帧，
+        # 故就地 yield —— 与本生成器蒸馏段的 except 同形、共用 user_facing_error 这一份口径链。
         try:
             chars = await resolve_characters(
                 storage, distiller, req.text_id, user_id, content)
-        except Exception as exc:
-            print(f"[distill] Identify failed: {exc}")
-            chars = []
-        if not char_name:
-            if not chars:
-                yield f"data: {json.dumps({'error': '未识别到任何角色'}, ensure_ascii=False, default=str)}\n\n"
-                return
-            char_name = chars[0].get("name", "")
             if not char_name:
-                yield f"data: {json.dumps({'error': '识别结果缺少角色名'}, ensure_ascii=False, default=str)}\n\n"
-                return
+                char_name = target_character_name(chars)
+        except Exception as exc:
+            logger.error("Identify failed: %s", exc, exc_info=True)
+            yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
+            return
         aliases = aliases_for(chars, char_name)
 
         # Incremental distillation with aliases for broader chunk matching
         full = ""
-        stream = distiller.distill_incremental_stream(content, char_name, aliases, text_type)
+        stream = distiller.distill_incremental_stream(
+            content, char_name, aliases=aliases, text_type=text_type)
         while True:
             try:
                 piece, done = await asyncio.to_thread(_next_piece, stream)
             except Exception as exc:
-                print(f"[distill] Stream failed: {exc}")
+                logger.error("Distill stream failed: %s", exc, exc_info=True)
                 # 上屏唯一出口（adapters.llm_adapter.user_facing_error）：已知 LLM 失败取上屏表、
                 # 自带话术的异常取 user_message、其余给通用文案。裸 str(exc) 会把
                 # finish_reason / max_tokens / 分片计数带上屏。**不要在 web/ 里 import 异常类** ——
@@ -1128,7 +1107,7 @@ async def distill_stream(
         try:
             card = CharacterCard.model_validate(data)
         except Exception as exc:
-            print(f"[distill] Card validation failed: {exc}")
+            logger.error("Card validation failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': '蒸馏失败：数据校验错误，请重试'}, ensure_ascii=False, default=str)}\n\n"
             return
 
@@ -1136,10 +1115,10 @@ async def distill_stream(
         try:
             result = await text_manager.save_distilled_card(
                 req.text_id, card, user_id,
-                embedding_key=_ek, embedding_region=_er,
+                embedding_key=emb.key, embedding_region=emb.region,
             )
         except Exception as exc:
-            print(f"[distill] Save card failed: {exc}")
+            logger.error("Save card failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
 
@@ -1158,7 +1137,7 @@ async def distill_stream(
                 await get_storage().update_card(result.get("card_id", ""), card.model_dump())
                 print(f"[distill] Persisted awakening_message to card {result.get('card_id', '')}")
             except Exception as exc:
-                print(f"[distill] Persist awakening_message to card failed (non-fatal): {exc}")
+                logger.warning("Persist awakening_message to card failed (non-fatal): %s", exc, exc_info=True)
 
         # 注意：这里的 done 是 SSE **流结束标记**，与任务契约里 _task_affordances 的
         # done（任务终态判据）只是撞名。本流不建 DB 任务行、不产任务状态对象，故不带
@@ -1197,13 +1176,10 @@ async def reindex_rag(
     text_rec = await storage.get_text_owned(text_id, user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
-    content = _get_distill_content(text_rec)
+    content = text_rec["content"]
 
-    try:
-        chars = await resolve_characters(storage, distiller, text_id, user_id, content)
-    except Exception as exc:
-        print(f"[distill] Reindex identify failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    # 不设就地捕获（理由见 `_do_identify` 上方的块注释）：识别失败冒泡到统一出口。
+    chars = await resolve_characters(storage, distiller, text_id, user_id, content)
 
     count = 0
     for sid, session in sessions.items():
@@ -1215,7 +1191,7 @@ async def reindex_rag(
             engine._all_characters = chars
             count += 1
         except Exception as exc:
-            print(f"[distill] Reindex session {sid} failed: {exc}")
+            logger.error("Reindex session %s failed: %s", sid, exc, exc_info=True)
 
     return {"reindexed_sessions": count, "characters_found": len(chars)}
 
@@ -1372,18 +1348,14 @@ async def start_session(
             text_rec = await storage.get_text_owned(req.text_id, user_id)
             if not text_rec:
                 raise HTTPException(404, "Text not found")
-            content = _get_distill_content(text_rec)
+            content = text_rec["content"]
             existing_cards = await storage.list_cards(req.text_id, user_id)
             all_characters = await text_manager._build_all_characters(req.text_id, existing_cards, user_id)
-            emb_key = ""
-            emb_region = ""
             try:
-                user_cfg = await storage.get_user_api_config(user_id)
-                if user_cfg.get("embedding_key"):
-                    emb_key = user_cfg["embedding_key"]
-                    emb_region = user_cfg.get("embedding_region", "cn")
+                user_cfg = await storage.get_user_api_config(user_id) or {}
             except Exception:
-                pass
+                user_cfg = {}
+            emb = resolve_embedding(user_cfg)
             session_id = await asyncio.to_thread(
                 text_manager._create_session, card,
                 all_characters=all_characters, rag=None,
@@ -1394,8 +1366,9 @@ async def start_session(
             indexing_service = get_indexing_service()
             if indexing_service:
                 indexing_service.schedule_scene_index(
-                    req.text_id, req.card_id, content, card.name, all_characters,
-                    embedding_key=emb_key, embedding_region=emb_region,
+                    req.text_id, req.card_id, content, card.name,
+                    all_characters=all_characters,
+                    embedding_key=emb.key, embedding_region=emb.region,
                 )
         else:
             # 独立卡片模式：不加载原文、不构建 RAG。走**唯一**的建会话点（rag=None 即纯
@@ -1420,7 +1393,7 @@ async def start_session(
     try:
         await storage.save_session(session_id, req.card_id, req.user_role, user.get("avatar_data", ""), user_id)
     except Exception as exc:
-        print(f"[distill] Persist session failed (non-fatal): {exc}")
+        logger.warning("Persist session failed (non-fatal): %s", exc, exc_info=True)
 
     # ── Inject opening line ──
     # 本函数开头的 503 门保证 `per_user_llm` 不为 None（`get_text_manager(llm=None)` 恒返
@@ -1450,14 +1423,14 @@ async def start_session(
         opening = await asyncio.to_thread(
             per_user_llm.chat, prompt, [{"role": "user", "content": "请说开场白"}]
         )
-        try_record_usage(storage, per_user_llm, "chat_session_opening", source="distill")
+        try_record_usage(storage, per_user_llm, action="chat_session_opening", source="distill")
         opening = opening.strip().strip('"').strip("'").strip("「」")
         if opening and len(opening) <= 100:
             print(f"[start_session] Generated opening: {opening}")
         else:
             opening = card.first_message or ""
     except Exception as exc:
-        print(f"[start_session] Generate opening line failed (non-fatal): {exc}")
+        logger.warning("Generate opening line failed (non-fatal): %s", exc, exc_info=True)
         opening = card.first_message or ""
 
     # Save opening to DB + engine.history (seed only, no backfill to card)
@@ -1534,9 +1507,8 @@ async def legacy_distill(
         raise HTTPException(503, "请先在设置页配置 API Key")
 
     # Fetch user's embedding key so RAGEngine can initialize DashScope embedding
-    _api_config = await storage.get_user_api_config(user_id)
-    _ek = (_api_config or {}).get("embedding_key", "")
-    _er = (_api_config or {}).get("embedding_region", "")
+    _api_config = await storage.get_user_api_config(user_id) or {}
+    emb = resolve_embedding(_api_config)
 
     text = req.text.strip()
     if not text:
@@ -1553,7 +1525,7 @@ async def legacy_distill(
     try:
         return await text_manager.get_or_distill(
             text_id, char_name, user_id=user_id,
-            embedding_key=_ek, embedding_region=_er,
+            embedding_key=emb.key, embedding_region=emb.region,
         )
     except DistillError:
         raise      # 放行到统一出口（web/server.py）：配码取文案，路由不碰（缺陷 38）

@@ -6,9 +6,10 @@
 --
 -- NULL = 没带幂等键（老调用点、老数据）；唯一性只在非空 key 上成立（partial index）。
 --
--- **为什么这里加列与建索引可以同文件，SQLite 侧却要拆两份**：PG 每轮 init 全量重放全部迁移
--- （无「已应用」账本），`IF NOT EXISTS` 使两句都可重跑；SQLite 侧被 `_apply_migration` 的
--- 「整份跳过」规则波及，拆文件的理由写在 093 里，与本文件无关。
+-- **为什么这里加列与建索引可以同文件，SQLite 侧却要拆两份**：PG 侧一份文件只跑一次
+-- （`schema_migrations` 账本），加列与建索引必然在同一趟里都执行到，不存在「加列让整份
+-- 被跳过、索引再没机会」那种形态；`IF NOT EXISTS` 只是没账本时的兜底。SQLite 侧被
+-- `_apply_migration` 的「整份跳过」规则波及，拆文件的理由写在 093 里，与本文件无关。
 -- ============================================================
 
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS client_key TEXT DEFAULT NULL;

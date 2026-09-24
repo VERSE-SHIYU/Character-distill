@@ -58,8 +58,11 @@ _TM_PATH = _ROOT / "core" / "text_manager.py"
 _TM_SRC = _TM_PATH.read_text(encoding="utf-8")
 _TM_TREE = ast.parse(_TM_SRC)
 
-# 期望的 raise 条数下限：16 条 raise ValueError（4 组同文案合并成 12 键）+ 6 条裸 re-raise。
-_MIN_TABLE_RAISES = 16
+# 期望的 raise 条数下限：15 条 `_MSG[...]` 形态的 raise（合并后 12 键）+ 6 条裸 re-raise。
+# 2026-09-22 由 16 降为 15：`TextManager.distill_all` 整段删除（全仓零调用方，见 AGENTS.md
+# 的 86 条目），它带着的那条 `raise ValueError(_MSG["text_not_found"])` 随之消失 ——
+# 本下限的用途是「扫描面塌没塌」，不是「不许减少」，故跟着实测数走；但每次下调都要写明原因。
+_MIN_TABLE_RAISES = 15
 
 
 def _table_alias(tree: ast.Module) -> str:

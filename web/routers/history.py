@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import json
 from typing import Any
@@ -19,6 +21,9 @@ from core.message_outbox import SaveState, save_field
 from core.nonfatal import nonfatal
 from storage.base import StorageBase
 from routers.auth import get_current_user
+from web.llm_resolution import resolve_embedding
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/history", tags=["history"])
 
@@ -233,20 +238,17 @@ async def resume_session(
     ]
 
     # 4. Fetch embedding config for this user
-    emb_key = ""
-    emb_region = ""
     try:
-        user_cfg = await storage.get_user_api_config(user_id)
-        if user_cfg.get("embedding_key"):
-            emb_key = user_cfg["embedding_key"]
-            emb_region = user_cfg.get("embedding_region", "cn")
+        user_cfg = await storage.get_user_api_config(user_id) or {}
     except Exception:
-        pass
+        user_cfg = {}
+    emb = resolve_embedding(user_cfg)
 
     # 5. Rebuild RAG + ChatEngine via _create_session (with timeout)
     try:
         rag = text_manager._indexing_service.get_rag_for_session(
-            card_rec["text_id"], text_rec["content"], all_characters, emb_key, emb_region
+            card_rec["text_id"], text_rec["content"],
+            all_characters=all_characters, embedding_key=emb.key, embedding_region=emb.region,
         )
         new_session_id = await asyncio.wait_for(
             asyncio.to_thread(
@@ -310,7 +312,7 @@ async def resume_session(
             # legacy（已评估旧格式）或全新默认行 → load_affinity 自行判定升级/初值计算
             engine.load_affinity(data)
     except Exception as exc:
-        print(f"[history] Restore affinity failed (non-fatal): {exc}")
+        logger.warning("Restore affinity failed (non-fatal): %s", exc, exc_info=True)
 
     # 9. Generate reunion greeting (before any save_message — updated_at must not be polluted)
     if _body.client_tz:

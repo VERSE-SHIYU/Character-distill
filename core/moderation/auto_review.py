@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+
 from typing import Any
 
 from adapters.llm_adapter import LLMAdapter
 from core.utils import try_record_usage
+
+logger = logging.getLogger(__name__)
 
 _REVIEW_SYSTEM_PROMPT = (
     "你是一个内容审核助手。你收到的内容是角色卡 JSON，包含角色的设定、性格、背景等信息。"
@@ -43,7 +47,7 @@ async def auto_review_card(card_json: dict[str, Any], llm: LLMAdapter | None,
 
     try:
         result = await llm.achat(_REVIEW_SYSTEM_PROMPT, [{"role": "user", "content": review_text}])
-        try_record_usage(storage, llm, "moderation_card_review", source="auto_review")
+        try_record_usage(storage, llm, action="moderation_card_review", source="auto_review")
         import json as _json
         parsed = _json.loads(result.strip())
         return {
@@ -51,7 +55,7 @@ async def auto_review_card(card_json: dict[str, Any], llm: LLMAdapter | None,
             "reason": str(parsed.get("reason", "")),
         }
     except Exception as exc:
-        print(f"[auto_review] LLM review failed, defaulting to pass: {exc}")
+        logger.warning("LLM review failed, defaulting to pass: %s", exc, exc_info=True)
         return {"pass": True, "reason": ""}
 
 
@@ -97,7 +101,7 @@ async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None,
     review_text = _flatten_card(card_json)
     try:
         result = await llm.achat(_SPLIT_REVIEW_SYSTEM_PROMPT, [{"role": "user", "content": review_text}])
-        try_record_usage(storage, llm, "moderation_publish_review", source="auto_review")
+        try_record_usage(storage, llm, action="moderation_publish_review", source="auto_review")
         import json as _json
 
         parsed = _json.loads(result.strip())
@@ -113,7 +117,7 @@ async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None,
             },
         }
     except Exception as exc:
-        print(f"[auto_review] Split review failed (content fail-open, injection flag): {exc}")
+        logger.warning("Split review failed (content fail-open, injection flagged): %s", exc, exc_info=True)
         return {
             "content": {"pass": True, "reason": ""},
             "injection": {"pass": False, "reason": f"审核调用失败：{exc}", "error": True},

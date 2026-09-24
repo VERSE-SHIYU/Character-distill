@@ -233,7 +233,18 @@ def get_call_guard() -> Callable[[str], str | None] | None:
     return _call_guard
 
 
-class LLMCallRefused(RuntimeError):
+class OutboundRefused(RuntimeError):
+    """出站**之前**被门拦下 —— 请求根本没发出去。
+
+    门有两种拦法：判定给出理由（`LLMCallRefused`）、上下文里没有身份（`web.llm_gate`
+    的 `LLMCallerMissing`，fail-closed）。两者的共同点才是调用方要判的：「这不是一次
+    失败的请求，是一次没发生的请求」。故在这层给一个共同基类，**唯一**的作用就是让
+    下游（如 `core/embeddings.py` 的批处理）能用一句 `except` 把两者一并放行 ——
+    否则得在 core 里 import `web`，撞 L13。
+    """
+
+
+class LLMCallRefused(OutboundRefused):
     """调用点门拒绝：守卫给出理由 → 出站**之前**抛，请求根本没发出去。
 
     ``reason`` 是守卫给的、已审的上屏口径（geo 那条就是 geo_guard 的文案），
@@ -253,6 +264,21 @@ class LLMCallRefused(RuntimeError):
     @property
     def user_message(self) -> str:
         return self.reason
+
+
+def check_outbound_guard(base_url: str) -> None:
+    """出站前守卫的**唯一**实现：守卫给理由就抛，没注册守卫就放行。
+
+    `LLMAdapter._before_call` 与嵌入出站（`core/embeddings.py` 的 `_call_api`）共用
+    这一处 —— 两处各存一份判定，改一处漏一处时两边的放行口径会悄悄分叉。读的是模块级
+    全局、每次现读，故测试临时换守卫、生产启动时注册都不必重建调用方实例。
+    """
+    guard = _call_guard
+    if guard is None:
+        return
+    reason = guard(base_url)
+    if reason:
+        raise LLMCallRefused(reason, base_url)
 
 
 def _infer_finalize(sp, self, result, exc) -> None:
@@ -620,18 +646,12 @@ class LLMAdapter:
         return self._base_url
 
     def _before_call(self) -> None:
-        """出站前的唯一检查点：守卫给理由就抛，没注册守卫就放行。
+        """出站前的唯一检查点：转调 ``check_outbound_guard``。
 
-        所有出站方法都在出站**之前**调它（流式方法在建流之前）。读的是模块级全局，
-        每次现读 —— 测试临时换守卫、生产启动时注册，都不需要重建适配器实例
-        （活会话手里那个陈旧实例因此同样被拦，见 L4）。
+        所有出站方法都在出站**之前**调它（流式方法在建流之前）。实现只有那一处 ——
+        嵌入出站走的是同一个函数，两边的放行口径不会分叉。
         """
-        guard = _call_guard
-        if guard is None:
-            return
-        reason = guard(self._base_url)
-        if reason:
-            raise LLMCallRefused(reason, self._base_url)
+        check_outbound_guard(self._base_url)
 
     def preflight(self) -> None:
         """与 ``_before_call()`` **同一实现**，公开给解析出口（§2.8）用。

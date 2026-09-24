@@ -210,20 +210,40 @@ def test_decision_429_backoff_clamped_to_deadline(monkeypatch):
     assert elapsed < 5.0, f"backoff must be clamped to deadline, took {elapsed:.2f}s"
 
 
+class _FakeClock:
+    """可注入的单调时钟 + sleep：把「等 1s」变成「记账 + 拨表」，不再真等墙钟。
+
+    adapter 没有可注入的时钟（`time.sleep` / `time.monotonic` 都是直调），故替换模块里
+    的 `time` 绑定 —— 只影响 `adapters.llm_adapter` 这一份引用，比打 `time` 模块本身干净。
+    """
+
+    def __init__(self):
+        self.now = 1000.0
+        self.slept: list = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, s):
+        self.slept.append(s)
+        self.now += s
+
+
 def test_decision_429_has_own_attempt_cap(monkeypatch):
     # 必修2：429 不计入非429 attempts，但有独立次数上限（_RATE_LIMIT_ATTEMPTS）。
     # Retry-After=1s 若只受 deadline(6s) 约束最多打 6 次；cap=3 → 3 次即抛、不再高频重打。
     # （真实 Retry-After 是整秒；isdigit 不认小数，故用整数秒走 _classify_retry 解析路径。）
+    # 断言的是「打了几次」与「每次按 Retry-After 等了多久」，不是墙钟时长。
     monkeypatch.setattr(M, "_RATE_LIMIT_ATTEMPTS", 3)
+    clock = _FakeClock()
+    monkeypatch.setattr(M, "time", SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep))
     llm = _make_llm()
     fake = _SyncClient(_storm(_RateLimitError429("1")))
     llm._client = fake
-    t0 = time.monotonic()
     with pytest.raises(RuntimeError, match=r"rate limited \(429\) after 3 attempts"):
         llm.chat_with_tools("sys", [{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
-    elapsed = time.monotonic() - t0
     assert fake.chat.completions.calls == 3
-    assert elapsed < 5.0
+    assert clock.slept == [1.0, 1.0], f"每次退避都应取 Retry-After=1s，实得 {clock.slept}"
 
 
 def _status_error(code: int) -> Exception:

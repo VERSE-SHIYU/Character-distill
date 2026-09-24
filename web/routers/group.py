@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import hashlib
 import json
@@ -23,6 +25,8 @@ from routers.auth import get_current_user
 from core.chat_engine import calc_stage
 from core.message_outbox import FlushReport, save_field, terminal_frame
 from core.nonfatal import nonfatal
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/group", tags=["group"])
 
@@ -74,6 +78,7 @@ async def _rebuild_group_session(
     from core.rag import CollectionUnusableError, RAGEngine
     from core.group_session import GroupSession
     from deps import get_rag_config, get_memory_manager
+    from web.llm_resolution import resolve_embedding
 
     session = await storage.get_group_session_owned(group_id, user_id)
     if not session:
@@ -86,12 +91,12 @@ async def _rebuild_group_session(
     rag_config = get_rag_config()
     # Inject per-user embedding config
     try:
-        user_cfg = await storage.get_user_api_config(user_id)
-        if user_cfg.get("embedding_key"):
-            rag_config["embedding_key"] = user_cfg["embedding_key"]
-            rag_config["embedding_region"] = user_cfg.get("embedding_region", "cn")
+        user_cfg = await storage.get_user_api_config(user_id) or {}
     except Exception:
-        pass
+        user_cfg = {}
+    emb = resolve_embedding(user_cfg)
+    if emb.key:
+        rag_config["embedding_key"], rag_config["embedding_region"] = emb.key, emb.region
 
     memory_manager = get_memory_manager()
 
@@ -183,7 +188,7 @@ async def _rebuild_group_session(
             for m in history
         ]
     except Exception as exc:
-        print(f"[Group] Session rebuild failed: {exc}")
+        logger.error("Session rebuild failed: %s", exc, exc_info=True)
 
     return group
 
@@ -214,7 +219,7 @@ async def _run_group_affinity(
     try:
         new_reactions = await storage.get_group_reactions_after_unscoped(group_id, cursor)
     except Exception as exc:
-        print(f"[Group Affinity] Fetch reactions failed (non-fatal): {exc}")
+        logger.warning("Fetch reactions failed (non-fatal): %s", exc, exc_info=True)
         return
 
     if not new_reactions:
@@ -287,16 +292,17 @@ async def create_group(
     from core.chat_engine import ChatEngine
     from core.rag import CollectionUnusableError, RAGEngine
     from deps import get_rag_config, get_memory_manager
+    from web.llm_resolution import resolve_embedding
 
     rag_config = get_rag_config()
     # Inject per-user embedding config
     try:
-        user_cfg = await storage.get_user_api_config(user_id)
-        if user_cfg.get("embedding_key"):
-            rag_config["embedding_key"] = user_cfg["embedding_key"]
-            rag_config["embedding_region"] = user_cfg.get("embedding_region", "cn")
+        user_cfg = await storage.get_user_api_config(user_id) or {}
     except Exception:
-        pass
+        user_cfg = {}
+    emb = resolve_embedding(user_cfg)
+    if emb.key:
+        rag_config["embedding_key"], rag_config["embedding_region"] = emb.key, emb.region
 
     memory_manager = get_memory_manager()
 
@@ -336,12 +342,16 @@ async def create_group(
                 rag.load_existing(f"text_{text_id}")
             except CollectionUnusableError as exc:
                 # 维度不符的旧集合（如迁移前 384 维）：确定性不可用，降级不重建。
-                print(f"[GroupCreate WARN] card_id={card_id} text_id={text_id} "
-                      f"text 集合不可用（向量维度不符/损坏），降级跳过场景检索、不自动重建：{exc}")
+                logger.warning(
+                    "card_id=%s text_id=%s text 集合不可用（向量维度不符/损坏），"
+                    "降级跳过场景检索、不自动重建：%s",
+                    card_id, text_id, exc,
+                )
             except Exception:
-                import traceback
-                print(f"[GroupCreate WARN] card_id={card_id} text_id={text_id} RAG load_existing failed, falling back to index")
-                traceback.print_exc()
+                logger.warning(
+                    "card_id=%s text_id=%s RAG load_existing failed, falling back to index",
+                    card_id, text_id, exc_info=True,
+                )
                 rag.index(text_rec["content"])
             text_rag_cache[text_id] = rag
 
@@ -470,7 +480,7 @@ async def cleanup_orphan_card_ids(
             try:
                 await storage.update_group_card_ids(g["id"], cleaned)
             except Exception as exc:
-                print(f"[Group] cleanup-orphan-cards failed for {g['id']}: {exc}")
+                logger.error("cleanup-orphan-cards failed for %s: %s", g['id'], exc, exc_info=True)
 
     return {"ok": True, **stats}
 
@@ -526,14 +536,15 @@ async def send_message(
 
     async def _save_user_message(key: str) -> int:
         return await storage.save_group_message(
-            group_id, user_speaker, "user", req.message, user_speaker_card_id,
+            group_id, user_speaker, "user", req.message,
+            speaker_card_id=user_speaker_card_id,
             reply_to_id=req.reply_to_id, reply_to_preview=reply_preview, client_key=key,
         )
 
     async def _save_char_message(key: str) -> int:
         return await storage.save_group_message(
             group_id, group.engines[req.target_card_id].card.name,
-            "assistant", resp, req.target_card_id, client_key=key,
+            "assistant", resp, speaker_card_id=req.target_card_id, client_key=key,
         )
 
     user_save, rep = await group.outbox.write(_save_user_message, ping=storage.ping)
@@ -628,7 +639,8 @@ async def broadcast_message(
             if not req.auto_mode:
                 async def _save_user_message(key: str) -> int:
                     return await storage.save_group_message(
-                        group_id, user_speaker, "user", req.message, user_speaker_card_id,
+                        group_id, user_speaker, "user", req.message,
+                        speaker_card_id=user_speaker_card_id,
                         reply_to_id=req.reply_to_id, reply_to_preview=reply_preview, client_key=key,
                     )
 
@@ -661,7 +673,8 @@ async def broadcast_message(
                             # await 的，等它回来时 r 已经是下一轮那个角色了。
                             async def _save_silent(key: str, r=r) -> int:
                                 return await storage.save_group_message(
-                                    group_id, r["speaker"], "silent", "", r["card_id"], client_key=key,
+                                    group_id, r["speaker"], "silent", "",
+                                    speaker_card_id=r["card_id"], client_key=key,
                                 )
 
                             silent_save, rep = await outbox.write(_save_silent, ping=ping)
@@ -681,8 +694,8 @@ async def broadcast_message(
 
                         async def _save_char(key: str, r=r) -> int:
                             return await storage.save_group_message(
-                                group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
-                                client_key=key,
+                                group_id, r["speaker"], "assistant", r["reply"],
+                                speaker_card_id=r["card_id"], client_key=key,
                             )
 
                         char_save, rep = await outbox.write(_save_char, ping=ping)
@@ -710,7 +723,7 @@ async def broadcast_message(
         except HTTPException:
             raise
         except Exception as exc:
-            print(f"[group] Broadcast stream failed: {exc}")
+            logger.error("Broadcast stream failed: %s", exc, exc_info=True)
             yield terminal_frame({'error': user_facing_error(exc)}, report)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

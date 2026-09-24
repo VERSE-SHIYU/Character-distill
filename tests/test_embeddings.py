@@ -60,6 +60,77 @@ def mock_openai_client():
         yield mock_client
 
 
+# ── OutboundCallGuard：嵌入出站过门（缺陷 73）────────────────
+
+
+class TestOutboundCallGuard:
+    """`_call_api` 每次出站前过门；门拒 → 出站根本没发生。
+
+    门的判定对象是**这个实例生效的** base_url（`EMBEDDING_BASE_URL` 覆盖后那个），与 LLM
+    侧判「用户配置里那个 URL」同一口径。用覆盖值当锚是为了把「判定看 region 表」这条错法
+    也一并钉住：那样判的是 `DASHSCOPE_BASE_URLS[region]`，与这个锚不等。
+    """
+
+    def test_egress_is_judged_per_call_on_the_effective_base_url(
+        self, mock_openai_client, monkeypatch
+    ):
+        import adapters.llm_adapter as la
+
+        override = "http://mock-embed.invalid:9/v1"
+        monkeypatch.setenv("EMBEDDING_BASE_URL", override)
+        verdict: dict = {"fn": lambda url: None}
+        monkeypatch.setattr(la, "_call_guard", lambda url: verdict["fn"](url))
+
+        emb = DashScopeEmbedding(api_key="test_key")
+        assert emb(["放行时真出站"])  # 正控：守卫放行时确实走到了客户端
+        assert mock_openai_client.embeddings.create.call_count == 1
+
+        class _Poison:
+            def __getattr__(self, name):
+                raise AssertionError(f"出站客户端被触碰了：.{name} —— 门没挡住")
+
+        # 实例是缓存的：**判定**不能跟着构造期一起被缓存。构造已过去，现在换答案。
+        emb._client = _Poison()
+        emb._client_no_retry = _Poison()
+        verdict["fn"] = lambda url: "当前网络环境（中国大陆）暂不支持境外模型"
+
+        with pytest.raises(la.LLMCallRefused) as ei:
+            emb(["被拦的文本"])
+
+        assert ei.value.base_url == override, (
+            f"门判的不是这个实例生效的 base_url：{ei.value.base_url!r}")
+        assert ei.value.reason.strip()
+        assert mock_openai_client.embeddings.create.call_count == 1, "被拦的调用仍出了网"
+
+    def test_no_caller_identity_fails_closed_and_system_context_opens_it(
+        self, mock_openai_client, monkeypatch
+    ):
+        """请求外（MCP／运维脚本）的嵌入出站：没有身份 → fail-closed；声明 SYSTEM → 通。
+
+        那两处（`mcp_server/server.py`、`scripts/rebuild_384_collections.py`）包的就是
+        `system_llm_context()`。声明的效果在这里钉住：有身份时照样出网；没身份时
+        `LLMCallerMissing` 必须**原样**冒出来 —— 被包成「百炼 embedding 失败」就等于
+        把「少写了一行声明」混进了「上游不通」，那正是这次要根除的不可辨。
+        """
+        import adapters.llm_adapter as la
+        import core.request_context as ctx
+        import web.llm_gate as gate
+
+        monkeypatch.setattr(la, "_call_guard", gate.geo_call_guard)
+        emb = DashScopeEmbedding(api_key="test_key")
+
+        token = ctx.LLM_CALLER.set(None)
+        try:
+            with pytest.raises(gate.LLMCallerMissing):
+                emb(["没有身份的文本"])
+            with ctx.system_llm_context():
+                assert emb(["SYSTEM 放行的文本"])
+        finally:
+            ctx.LLM_CALLER.reset(token)
+
+        assert mock_openai_client.embeddings.create.call_count == 1, "门没在出站前拦下"
+
+
 # ── IsModerationError ────────────────────────────────────────
 
 

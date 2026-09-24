@@ -1,6 +1,8 @@
 """P5 Context Engine — 统一 token 预算调度器。"""
 from __future__ import annotations
 
+import logging
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal, NamedTuple
@@ -19,6 +21,8 @@ from core.scene_indexer import _detect_emotion
 from core.utils import try_record_usage
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 from core import concurrency as C  # 派生与上下文传播
+
+logger = logging.getLogger(__name__)
 
 
 def _count_tokens(text: str) -> int:
@@ -442,7 +446,7 @@ class ContextEngine:
         try:
             items, body = produce()
         except Exception as exc:
-            print(f"[ContextEngine] {name} failed: {exc}")
+            logger.warning("Retrieval source %s failed: %s", name, exc, exc_info=True)
             return RetrievalResult(source=source, block="", items=[], status="failed")
         if not items:
             return RetrievalResult(source=source, block="", items=[], status="empty")
@@ -545,9 +549,9 @@ class ContextEngine:
         )
         try:
             filtered = self._llm.chat(filter_prompt, [{"role": "user", "content": "请过滤"}])
-            try_record_usage(self._storage, self._llm, "chat_web_filter", source="ContextEngine")
+            try_record_usage(self._storage, self._llm, action="chat_web_filter", source="ContextEngine")
         except Exception as exc:
-            print(f"[ContextEngine] Character filter failed: {exc}")
+            logger.warning("Character filter failed: %s", exc, exc_info=True)
             return items, ""
         # 过滤器判定「全不适合」→ prompt 侧无输出、块为空，但来源确实检索到了：items
         # 照出（这一态的上层表达是 commit 3 的事，这里只保证不丢）。

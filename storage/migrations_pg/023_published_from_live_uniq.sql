@@ -12,12 +12,16 @@
 --   · 回填先、再建索引 → 回填成功，建索引报同一个错
 -- 两种顺序都让 init 失败，只是炸在不同语句；**光换顺序不解决，收敛才是解**。故顺序排成
 -- 加列 + 回填并收敛(021) → 建唯一索引(本文件)。收敛不走独立文件，是为了让「只跑一次」
--- 与加列共用同一个谓词（列已存在则整块跳过），不引入迁移账本。实测「回填 → 收敛
--- （只留一张拿 published_from，其余落回普通 fork）→ 建索引」三步全通过，存活副本 1 张。
+-- 与加列共用同一个谓词（列已存在则整块跳过）—— 当时两侧都还没有迁移账本，这是不用账本
+-- 也能成立的做法；账本（`schema_migrations`）是后来才加的，两侧的整块跳过/账本判据至今
+-- 并存。实测「回填 → 收敛（只留一张拿 published_from，其余落回普通 fork）→ 建索引」
+-- 三步全通过，存活副本 1 张。
 --
--- 幂等：PG 侧每轮 init 全量重放（无「已应用」账本，见交接台账），`IF NOT EXISTS` 使本句
--- 可直接重跑。SQLite 侧同序见 `storage/migrations/090_published_from_live_uniq.sql`；
--- 那一侧还多一条成因（`_apply_migration` 的整份跳过规则），与 PG 无关。
+-- 幂等：执行器按 `schema_migrations` 账本只跑未记账的文件，本句正常只会跑一次；
+-- `IF NOT EXISTS` 是**没有账本时**的兜底（账本落地前的老库、以及任何把
+-- `schema_migrations` 删掉的重放），使本句重跑时仍可直接执行。SQLite 侧同序见
+-- `storage/migrations/090_published_from_live_uniq.sql`；那一侧还多一条成因
+-- （`_apply_migration` 的整份跳过规则），与 PG 无关。
 -- ============================================================
 
 CREATE UNIQUE INDEX IF NOT EXISTS cards_published_from_live_uniq

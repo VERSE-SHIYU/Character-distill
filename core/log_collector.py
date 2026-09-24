@@ -38,10 +38,13 @@ _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(m
 
 
 def install_log_collector() -> None:
-    """Attach the ring buffer handler to the root logger."""
-    root = logging.getLogger()
-    if _handler not in root.handlers:
-        root.addHandler(_handler)
+    """Attach the ring buffer handler to the root logger.
+
+    幂等由 `logging.Logger.addHandler` 自己保证 —— 它的实现就是
+    ``if not (hdlr in self.handlers)``，且在 ``_acquireLock()`` 之下。本函数不重复
+    这一层：写在外面既冗余，又不是原子的（两个线程可以同时通过守卫）。
+    """
+    logging.getLogger().addHandler(_handler)
 
 
 def get_recent_logs(limit: int = 100) -> list[dict[str, Any]]:

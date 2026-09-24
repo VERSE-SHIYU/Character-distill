@@ -29,7 +29,7 @@ from storage.postgres_store import PostgresStore  # noqa: E402
 
 
 def _dsn() -> str:
-    return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+    return os.environ["DATABASE_URL"]
 
 
 _pg = PG_ENV.skipif("身份序列对齐用例")

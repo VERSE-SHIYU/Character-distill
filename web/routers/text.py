@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import os
 import threading
@@ -27,8 +29,10 @@ from limiter import limiter
 from routers.auth import get_current_user
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
 
-# ── Upload task store (background identify + coref with progress) ─────
+
+# ── Upload task store (background upload progress) ─────
 _upload_tasks: dict[str, dict[str, Any]] = {}
 _upload_task_lock = threading.Lock()
 
@@ -54,7 +58,7 @@ def _check_upload_cancelled(task_id: str) -> bool:
 
 
 def _run_upload_task(task_id: str, text_id: str, user_id: str) -> None:
-    """Background: identify characters + coref resolve, update task progress."""
+    """Background: finish the upload task, update task progress."""
     try:
         from deps import get_distiller
 
@@ -82,7 +86,7 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str) -> None:
 
         submit_to_main_loop(_do())
     except Exception as exc:
-        print(f"[text] Upload task {task_id} failed: {exc}")
+        logger.error("Upload task %s failed: %s", task_id, exc, exc_info=True)
         with _upload_task_lock:
             _upload_tasks[task_id] = {
                 "status": "error", "message": user_facing_error(exc), "user_id": user_id}
@@ -187,7 +191,7 @@ async def upload_text(
     else:
         raise HTTPException(400, "Must provide file")
 
-    # Start background upload task for story/classic (coref resolution with progress)
+    # Start background upload task for story/classic (progress polling)
     upload_task_id = ""
     if text_type in ("story", "classic"):
         upload_task_id = uuid.uuid4().hex[:12]
@@ -223,7 +227,7 @@ async def get_upload_task_status(
     task_id: str,
     user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Poll upload preprocessing task status (identify + coref)."""
+    """Poll upload preprocessing task status."""
     with _upload_task_lock:
         task = _upload_tasks.get(task_id)
     # 不存在与非属主同判 404、同一条文案（fail closed：条目缺 user_id 也拒）。此前非属主返

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import secrets
 import time
 from enum import Enum
@@ -19,6 +21,8 @@ from core.memory_manager import MemoryManager
 from core import roles
 from core.log_collector import get_recent_logs
 from limiter import limiter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -251,7 +255,7 @@ async def delete_user(
             for cid in card_ids:
                 memory_manager.delete_all(cid)
     except Exception as exc:
-        print(f"[admin] Mem0 cleanup for user {user_id} failed (non-fatal): {exc}")
+        logger.warning("Mem0 cleanup for user %s failed: %s", user_id, exc, exc_info=True)
 
     # 停掉该用户正在跑的蒸馏线程，再删行。反序的话：行被删、线程还在烧 LLM 额度，
     # 且收尾的 save_card 会给已删除的用户建出孤儿卡（cards.user_id 无外键，
@@ -314,7 +318,7 @@ async def batch_delete_users(
             await storage.delete_user(user_id)
             deleted += 1
         except Exception as exc:
-            print(f"[admin] Batch delete user {user_id} failed: {exc}")
+            logger.error("Batch delete user %s failed: %s", user_id, exc, exc_info=True)
             failed += 1
 
     return {"ok": True, "deleted": deleted, "failed": failed}

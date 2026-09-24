@@ -20,6 +20,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel, field_validator
 
+from adapters.llm_adapter import LLMCallRefused
 from core import roles
 from core.email_service import send_verification_code
 from core.nonfatal import nonfatal
@@ -450,14 +451,14 @@ async def register(
         from cross_border_sync import forward_user_profile_to_peer
         await forward_user_profile_to_peer(user["id"], user.get("username", ""), node_region, user.get("avatar_data", ""))
     except Exception as exc:
-        print(f"[auth] Forward user profile to peer failed: {exc}")
+        logger.error("Forward user profile to peer failed: %s", exc, exc_info=True)
 
     # Record consent
     try:
         client_ip = get_client_ip(request)
         await storage.record_user_consent(user["id"], CURRENT_TERMS_VERSION, CURRENT_PRIVACY_VERSION, client_ip)
     except Exception as exc:
-        print(f"[auth] Failed to record consent for {user_id}: {exc}")
+        logger.error("Failed to record consent for %s: %s", user_id, exc, exc_info=True)
 
     # First user with seed code becomes admin
     admin_seed = os.getenv("ADMIN_INVITE_CODE", "")
@@ -646,12 +647,21 @@ async def update_api_config(
     # 判定与审计都走门的两个单点（geo_refusal / emit_geo_block_audit）—— 这里不再
     # 自带一份策略、也不再设例外，否则保存路径与出站路径会各有一套口径。
     client_ip = get_client_ip(request)
-    reason = geo_refusal(client_ip, req.base_url)
-    if reason:
-        # 审计写入失败不得改写判定：emit_geo_block_audit 自己吞（非致命只记日志），
-        # 故下面必须仍然回 403。
-        emit_geo_block_audit(user["id"], client_ip, req.base_url, reason)
-        raise HTTPException(403, detail=reason)
+    # `embedding_region` 也要判（缺陷 73）：它决定嵌入出站的端点，国内 IP 存成 `intl`
+    # 就是一条出境的嵌入路。空串是「这次不改这个字段」（`_known_region_or_blank`），
+    # 与「没填」同义，故不判。判的是**同一个** `geo_refusal`，不另写一套。
+    targets = [req.base_url]
+    if req.embedding_region:
+        from core.embeddings import DASHSCOPE_BASE_URLS
+
+        targets.append(DASHSCOPE_BASE_URLS[req.embedding_region])
+    for base_url in targets:
+        reason = geo_refusal(client_ip, base_url)
+        if reason:
+            # 审计写入失败不得改写判定：emit_geo_block_audit 自己吞（非致命只记日志），
+            # 故下面必须仍然回 403。
+            emit_geo_block_audit(user["id"], client_ip, base_url, reason)
+            raise HTTPException(403, detail=reason)
 
     try:
         await storage.update_user_api_config(
@@ -715,9 +725,13 @@ async def test_embedding(
         emb = DashScopeEmbedding(api_key=key, region=region)
         emb(["测试"])
         return {"ok": True}
+    except LLMCallRefused:
+        # 门拒了就不吞：请求根本没发出去，把理由当「嵌入失败」上屏是在说谎。交统一出口
+        # （`web/server.py` 的 `_llm_error_handler` → `call_refused` → 403 + 理由）。
+        raise
     except Exception as exc:
         # 日志只放 user id 与异常，绝不放 key。
-        print(f"[auth] Embedding test failed for user {user['id']}: {exc!r}")
+        logger.warning("Embedding test failed for user %s: %r", user["id"], exc)
         return {"ok": False, "error": describe_embedding_failure(exc), "detail": str(exc)}
 
 
