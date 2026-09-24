@@ -1639,7 +1639,8 @@ PROBE_IMAGE         false
 - **收口（2026-09-24，Spec 123）**：修法与上面「为什么记而不修」预告的路径完全一致 —— 拿掉的是**回退到新建 loop** 这条路本身，不是把这两处 `except` 收窄。`core/scheduling.py::submit_to_main_loop` 未注册时抛 `RuntimeError`（`1e6be37`：删掉 `asyncio.run` / `create_task` 两条分支与那条 `warnings.warn`）；`web/deps.py::_submit_to_main_loop` 在主 loop 线程上 `wait=True` 时于**投递之前**抛 `RuntimeError`（同 commit，治的是 `chat.py:221` / `history.py:313` 那两处「主 loop 等自己」卡满 15 秒、「保存静默不生效」）；这两处路由改走 `await asyncio.to_thread(...)`。测试侧不再借退路过关：引擎单测的存储改 `None` / `AsyncMock` + 显式注册测试投递实现（`33984c4`），进程级注册收敛到一个会还原的入口（`12268e0`）。
 - **这两处 `except` 按原裁定不动**（`core/chat_engine.py` 的 `_save_affinity_state` 与 `fetch reactions` 两条）。理由不是「改不动了」，而是**本条的成立条件已经不存在**：跨 loop 报错唯一的产生机制是「回退新建一个 loop」，该机制已删；此后能流经这两处的，只剩「这一次读/写没成功」这类真的可以非致命的错误。
 - **判据命令订正**（原判据已随 119 的 `print` → `logging` 落地而失效：那两处现在是 `logger.warning(..., exc_info=True)`，不再是 `print`）：
-  - `git grep -n "asyncio.run\|create_task" -- core/scheduling.py` → **0**（本条的红源：退路一旦被恢复，这条路就会重新在本线程造 loop）；
+  - `git grep -nE "asyncio\.run\(coro\)|\.create_task\(coro\)" -- core/scheduling.py` → **0**（本条的红源：退路一旦被恢复，这条路就会重新在本线程造 loop）。**判据只认调用形态，不认裸标识符**：`asyncio.run` / `create_task` 这两个名字仍在该模块 docstring 里各出现一次（描述**被删掉的**旧退路），按名字查会命中注释而与代码现状无关 —— 与本仓「历史注释要描述被删机制、判据 grep 覆盖注释」那条同形；
+  - `git grep -n "No loop submitter" -- core` → **0**（退路那条 `warnings.warn` 的文案已随 `1e6be37` 删除；全仓仅 `AGENTS.md` 与本 spec 引述它）；
   - `git grep -c "主 loop 线程上不得阻塞等主 loop" -- web/deps.py` → **1**。
 - **分支 CI 对照（现跑，2026-09-24）**：基线 run `35941780534`（`990b7dcc`）→ 本分支 run `35993735059`（`12268e0`），同一 job 口径：`No loop submitter` **每 job 1 → 0**（退路的 `warnings.warn` 随分支删除而消失）、`never awaited` **每 job 8 → 4**。两个 job 都绿。
 
