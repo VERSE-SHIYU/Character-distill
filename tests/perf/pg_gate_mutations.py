@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""缺陷 41 G 轮变异矩阵驱动 —— 一组共 23 条
+"""缺陷 41 G 轮变异矩阵驱动 —— 一组共 25 条
 （G-1、G-2、G-3、G-4、G-5、G-6、G-7、G-8、G-9、G-10、G-11、G-12、G-13、
-G-14、G-15、G-16、G-17、G-18、G-19、G-20、G-21、G-22、G-23）。
+G-14、G-15、G-16、G-17、G-18、G-19、G-20、G-21、G-22、G-23、G-24、G-25）。
 
 **G 轮取代了 A 轮。** A 轮打的是「原始 YAML + 按字面量认消费者」那版锁 —— 那版锁对着
 两处**代理**判据，三条实测变异（Y-1 `extends` 继承连接串、Y-2 `PGHOST: postgres`、
@@ -28,7 +28,8 @@ Y-3 `@postgres/db`）全部绿着从它底下穿过去。G 轮打的锁一律问
   - **I3 两份定义逐字一致**：G-9 —— 只改一份是唯一在逐条检查里静默的漂移。
   - **I4 门的消费者闭包**：(a) 消费者必须等 G-10/G-11；(b) 新服务必须被复核
     G-12～G-16；(c) 豁免表不得陈旧 G-17；(d) 理由不得为空 G-18；(e) 不得与识别器
-    自相矛盾 G-19。
+    自相矛盾 G-19；(f) **文件级**豁免表（`_NO_IN_FILE_CONSUMER` —— 判据 3 唯一的例外口）
+    不得陈旧、不得缺理由 G-24/G-25。
   - **I5 不得有隐式自动加载**：G-20。
   - **事实层自己的契约**：G-21（求值失败不得退化成 `{}`）、G-22（不得退回原始 YAML）——
     这两条的靶子是事实层自己的锁 `tests/test_compose_model.py`，红源在那份文件里。
@@ -66,7 +67,7 @@ G-7 用 YAML 合并键 `<<` 从顶层锚点注入 `disable: true`（原始 YAML 
 期间的编辑会被静默覆盖（这条已记进 AGENTS.md 缺陷 41 的记账）。
 
 **用法**
-    python tests/perf/pg_gate_mutations.py            # 全部 23 条
+    python tests/perf/pg_gate_mutations.py            # 全部 25 条
     python tests/perf/pg_gate_mutations.py --group G  # 同上（本驱动只有 G 组）
 """
 from __future__ import annotations
@@ -138,6 +139,12 @@ _WORKER_ANCHOR = "\n  nginx:\n"
 _LAST_REASON = '        "只读 nginx 日志做封禁，无 depends_on、无连接串、无 env_file",'
 _LAST_KEY = '    ("docker-compose.prod.yml", "fail2ban"):'
 _TABLE_TAIL = _LAST_REASON + "\n}\n"
+
+# G-24 / G-25 打的是**另一张**表：文件级豁免 `_NO_IN_FILE_CONSUMER`（判据 3 唯一的例外口，
+# T1 起随 `docker-compose.test.yml` 建起来）。锚点取表头与唯一那条理由 —— 两处各恰一命中。
+_NIC_TABLE_HEAD = "_NO_IN_FILE_CONSUMER: dict[tuple[str, str], str] = {\n"
+_NIC_REASON = ('        "单服务编排：只起一个 PG 给测试用，消费者是宿主机上的 pytest 进程，不在本文件里；"\n'
+               '        "本文件里没有可判的服务，判据 3（消费者必须等门）在此无从判断",\n')
 
 # 事实层两处：G-21 打「求值失败不得退化成 {}」，G-22 打「不得退回原始 YAML」。
 _G21_OLD = "    return _effective_model(str(Path(path).resolve()))"
@@ -320,6 +327,28 @@ G_GROUP = [
      [("repl", LOCAL, [(_SERVICE_KEY, "\n  db:\n"),
                        (_SERVICE_KEY_REF, "\n      db:\n")])],
      "RED", "本服务的键名"),
+
+    # ── I4(f)：**文件级**豁免表与现场对账（G-24 / G-25）────────────────────────
+    # 与 G-17/G-18 同形，靶子换成 `_NO_IN_FILE_CONSUMER`。它非有不可的理由：那张表是判据 3
+    # 唯一的例外口，而判据 3 **只在「现场没有消费者却未登记」时红** —— 反方向（表里挂着、
+    # 现场已经不用它了）谁都不管，于是表会退化成只增不减的手工清单，而判据 3 会继续跳过
+    # 一个**已经有消费者**的库（那条消费者于是谁也没等门，锁全绿）。两条各打一个方向。
+    #
+    # 陈旧那一条故意用「现场不存在的服务名」而不是「删掉现成的那条」：**两条表的陈旧成因
+    # 分开打**——本条的键现场压根不存在（服务改名/写错名），而删掉现成条目会同时让判据 3
+    # 自己的 `assert hard` 亮（那是已登记的缺口，见 `tests/lock_coverage_gaps.py`），
+    # 红源就不唯一了。
+    ("G-24 `_NO_IN_FILE_CONSUMER` 加一条现场不存在的 (文件, 库服务)（陈旧条目）",
+     LOCK_PATH,
+     [("repl", LOCK, [(_NIC_TABLE_HEAD,
+                       _NIC_TABLE_HEAD
+                       + '    ("docker-compose.test.yml", "ghost-db"): "现场不存在的库服务名",\n')])],
+     "RED", "test_no_in_file_consumer_table_is_current"),
+
+    ("G-25 `_NO_IN_FILE_CONSUMER` 那条理由改成空串",
+     LOCK_PATH,
+     [("repl", LOCK, [(_NIC_REASON, '        "",\n')])],
+     "RED", "test_no_in_file_consumer_table_is_current"),
 ]
 
 GROUPS = {"G": G_GROUP}

@@ -630,13 +630,14 @@ def test_lock_is_not_vacuous():
         assert dbs, (f"{path.name} 里解析不出任何「镜像为 postgres」的服务 —— "
                      "该文件的判据在空转")
         for db in dbs:
+            # 「本文件里确实没有服务会连它」（例如只给测试用的单服务编排）时，登记进
+            # `_NO_IN_FILE_CONSUMER` 并写清凭什么 —— 那是要写下来的事实，不是默认通过的
+            # 空白。**下面这句的文案别改**：它今天没有任何变异撞得到，身份登记在
+            # `tests/lock_coverage_gaps.py` 里；改写文本会让那份名单对不上而红。
             if (path.name, db) in _NO_IN_FILE_CONSUMER:
                 continue
             hard = _hard_consumers(model, db)
-            assert hard, (
-                f"{path.name}:{db} 解析不出任何硬消费者 —— 判据 3 在空转。本文件里确实没有"
-                "服务会连它（例如只给测试用的单服务编排）时，登记进 `_NO_IN_FILE_CONSUMER` "
-                "并写清凭什么 —— 「没有消费者」是要写下来的事实，不是默认通过的空白")
+            assert hard, f"{path.name}:{db} 解析不出任何硬消费者 —— 判据 3 在空转"
             assert any(how != _HARD_BY_DEP for how in hard.values()), (
                 f"{path.name}:{db} 的硬消费者全靠 depends_on 认出来 —— 连接串识别器可能是"
                 "瞎的。Y-2/Y-3 正是从「只认 `@<服务名>:` 字面量」底下穿过去的两种写法，"
@@ -802,8 +803,9 @@ def test_no_in_file_consumer_table_is_current():
     observed = _dbs_without_in_file_consumer()
     stale = sorted(policy_table.stale_keys(_NO_IN_FILE_CONSUMER, observed))
     assert stale == [], (
-        f"这些 (文件, 库服务) 现场已经有本文件内的硬消费者了，却还挂在 `_NO_IN_FILE_CONSUMER` "
-        f"里：{stale} —— 它现在有消费者可判，该等门，不该被豁免")
+        f"这些 (文件, 库服务) 现场对不上，却还挂在 `_NO_IN_FILE_CONSUMER` 里：{stale} —— "
+        "要么这份文件已经长出了本文件内的硬消费者（那它就该等门，不该被豁免），要么这个"
+        "(文件, 库服务) 现场压根不存在（服务改名/写错名字）")
     blank = sorted(policy_table.empty_reasons(_NO_IN_FILE_CONSUMER))
     assert blank == [], (
         f"`_NO_IN_FILE_CONSUMER` 里这些条目没写理由（或理由不是字符串）：{blank} —— "
