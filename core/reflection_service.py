@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class ReflectionService:
@@ -60,7 +64,7 @@ class ReflectionService:
         try:
             all_memories = self._memory.get_all(self._card_id)
         except Exception as exc:
-            print(f"[Reflection] get_all failed: {exc}")
+            logger.warning("Reflection get_all failed: %s", exc, exc_info=True)
             return False
 
         # 过滤：排除已有反思记忆，低可信不计入

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import hashlib
 import json
@@ -23,6 +25,8 @@ from routers.auth import get_current_user
 from core.chat_engine import calc_stage
 from core.message_outbox import FlushReport, save_field, terminal_frame
 from core.nonfatal import nonfatal
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/group", tags=["group"])
 
@@ -184,7 +188,7 @@ async def _rebuild_group_session(
             for m in history
         ]
     except Exception as exc:
-        print(f"[Group] Session rebuild failed: {exc}")
+        logger.error("Session rebuild failed: %s", exc, exc_info=True)
 
     return group
 
@@ -215,7 +219,7 @@ async def _run_group_affinity(
     try:
         new_reactions = await storage.get_group_reactions_after_unscoped(group_id, cursor)
     except Exception as exc:
-        print(f"[Group Affinity] Fetch reactions failed (non-fatal): {exc}")
+        logger.warning("Fetch reactions failed (non-fatal): %s", exc, exc_info=True)
         return
 
     if not new_reactions:
@@ -338,12 +342,16 @@ async def create_group(
                 rag.load_existing(f"text_{text_id}")
             except CollectionUnusableError as exc:
                 # 维度不符的旧集合（如迁移前 384 维）：确定性不可用，降级不重建。
-                print(f"[GroupCreate WARN] card_id={card_id} text_id={text_id} "
-                      f"text 集合不可用（向量维度不符/损坏），降级跳过场景检索、不自动重建：{exc}")
+                logger.warning(
+                    "card_id=%s text_id=%s text 集合不可用（向量维度不符/损坏），"
+                    "降级跳过场景检索、不自动重建：%s",
+                    card_id, text_id, exc,
+                )
             except Exception:
-                import traceback
-                print(f"[GroupCreate WARN] card_id={card_id} text_id={text_id} RAG load_existing failed, falling back to index")
-                traceback.print_exc()
+                logger.warning(
+                    "card_id=%s text_id=%s RAG load_existing failed, falling back to index",
+                    card_id, text_id, exc_info=True,
+                )
                 rag.index(text_rec["content"])
             text_rag_cache[text_id] = rag
 
@@ -472,7 +480,7 @@ async def cleanup_orphan_card_ids(
             try:
                 await storage.update_group_card_ids(g["id"], cleaned)
             except Exception as exc:
-                print(f"[Group] cleanup-orphan-cards failed for {g['id']}: {exc}")
+                logger.error("cleanup-orphan-cards failed for %s: %s", g['id'], exc, exc_info=True)
 
     return {"ok": True, **stats}
 
@@ -715,7 +723,7 @@ async def broadcast_message(
         except HTTPException:
             raise
         except Exception as exc:
-            print(f"[group] Broadcast stream failed: {exc}")
+            logger.error("Broadcast stream failed: %s", exc, exc_info=True)
             yield terminal_frame({'error': user_facing_error(exc)}, report)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

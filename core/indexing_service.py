@@ -6,11 +6,15 @@ This module is the ONLY place that imports SceneIndexer.
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 from typing import Any
 
 from core.rag import CollectionUnusableError, RAGEngine
 from core.scene_indexer import SceneIndexer
+
+logger = logging.getLogger(__name__)
 
 # Dedup: prevent multiple concurrent scene-index tasks for the same card
 _scene_index_in_flight: set[str] = set()
@@ -79,11 +83,13 @@ class IndexingService:
             # 集合维度与当前 embedder 不符（如迁移前 384 旧集合）：确定性不可用，
             # 只降级记日志、不 index() 重建 —— 与 group.py / mcp_server 同语义。
             # 不吞进上面宽 except：否则会和瞬时 build 故障混成一个误导性日志。
-            print(f"[IndexingService] text_{text_id} 集合维度不符不可用，"
-                  f"降级返回 None（不自动重建）：{exc}")
+            logger.warning(
+                "text_%s 集合维度不符不可用，降级返回 None（不自动重建）：%s",
+                text_id, exc,
+            )
             return None
         except Exception as exc:
-            print(f"[IndexingService] RAG build failed (degraded): {exc}")
+            logger.warning("RAG build failed (degraded): %s", exc, exc_info=True)
             return None
 
     def schedule_scene_index(
@@ -124,10 +130,12 @@ class IndexingService:
                     )
             except CollectionUnusableError as exc:
                 # 维度不符集合：确定性不可用，跳过场景预索引（非致命），同样不 index() 重建。
-                print(f"[IndexingService] text_{text_id} 集合维度不符不可用，"
-                      f"跳过场景预索引（非致命，不重建）：{exc}")
+                logger.warning(
+                    "text_%s 集合维度不符不可用，跳过场景预索引（非致命，不重建）：%s",
+                    text_id, exc,
+                )
             except Exception as exc:
-                print(f"[IndexingService] Scene index failed (non-fatal): {exc}")
+                logger.warning("Scene index failed (non-fatal): %s", exc, exc_info=True)
             finally:
                 _scene_index_in_flight.discard(dedup_key)
 

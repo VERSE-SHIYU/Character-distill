@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 from datetime import datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class EventService:
@@ -72,7 +76,7 @@ class EventService:
                     }
             return best
         except Exception as exc:
-            print(f"[ChatEngine] _get_due_event failed: {exc}")
+            logger.warning("Get due event failed: %s", exc, exc_info=True)
             return None
 
     def build_candidate_block(self) -> str:
@@ -108,4 +112,4 @@ class EventService:
                 )
                 print(f"[ChatEngine] Marked event {eid} as asked")
             except Exception as exc:
-                print(f"[ChatEngine] Mark event asked failed: {exc}")
+                logger.warning("Mark event asked failed: %s", exc, exc_info=True)

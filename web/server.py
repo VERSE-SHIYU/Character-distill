@@ -143,7 +143,7 @@ async def _lifespan(app: FastAPI):
         if flushed:
             print(f"[shutdown] flushed {flushed} queued message(s)")
     except Exception as exc:
-        print(f"[shutdown] flush outboxes failed (non-fatal): {exc}")
+        logger.error("flush outboxes failed (non-fatal): %s", exc, exc_info=True)
 
 
 app = FastAPI(title="Character Simulator API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=_lifespan)
@@ -175,7 +175,7 @@ async def _reconcile_distill_tasks():
             print(f"[distill] Boot reconcile: {n} orphan running task(s) → interrupted")
     except Exception as exc:
         # 启动期 DB 未就绪等不可致命：任务以 running 留存，下次启动再仲裁
-        print(f"[distill] Boot reconcile failed (non-fatal): {exc}")
+        logger.warning("Boot reconcile failed (non-fatal): %s", exc, exc_info=True)
 
 
 async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
@@ -532,7 +532,7 @@ async def update_settings_config(
                         field, old_val, new_val,
                     )
                 except Exception as exc:
-                    print(f"[admin] Save config change failed (non-fatal): {exc}")
+                    logger.error("Save config change failed (non-fatal): %s", exc, exc_info=True)
 
         # 先持久化到 config.yaml，再调用 reset_llm_and_dependents()
         reset_llm_and_dependents()
@@ -567,7 +567,7 @@ async def test_gptsovits_connection(req: Request, _admin: dict = Depends(require
         ok = await vc.health_check()
         return {"ok": ok, "url": url}
     except Exception as exc:
-        print(f"[server] Test GPT-SoVITS failed: {exc}")
+        logger.warning("Test GPT-SoVITS failed: %s", exc, exc_info=True)
         return {"ok": False, "url": "", "error": str(exc)}
 
 
@@ -584,7 +584,7 @@ async def test_funasr_connection(req: Request, _admin: dict = Depends(require_ad
         ok = await client.is_available()
         return {"ok": ok, "url": url}
     except Exception as exc:
-        print(f"[server] Test FunASR failed: {exc}")
+        logger.warning("Test FunASR failed: %s", exc, exc_info=True)
         return {"ok": False, "url": "", "error": str(exc)}
 
 

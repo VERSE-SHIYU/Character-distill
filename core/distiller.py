@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import hashlib
 import json
@@ -25,6 +27,9 @@ from core.schema import CharacterCard, PRESET_TAGS
 from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
 from core import telemetry as T  # OTel 埋点
 from core import concurrency as C  # 派生与上下文传播
+from core.nonfatal import nonfatal
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from storage.base import StorageBase
@@ -1073,7 +1078,7 @@ class Distiller:
             try:
                 items = self._parse_identify_list(raw)
             except Exception as exc:
-                print(f"[distiller] identify chunk parse failed: {exc}")
+                logger.warning("Identify chunk parse failed: %s", exc, exc_info=True)
                 parse_failed += 1
                 continue
             if items:
@@ -1093,7 +1098,7 @@ class Distiller:
                 f"{failed}/{total} 个分片识别失败；最后错误：{last_error}",
             )
         if failed:
-            print(f"[distiller] {failed}/{total} identify chunks failed (within tolerance), continuing")
+            logger.warning("%s/%s identify chunks failed (within tolerance), continuing", failed, total)
 
         if not parts:
             # 每一片都解析成空名单（且失败率未越线）→ 真空名单，不是失败。
@@ -1397,7 +1402,7 @@ class Distiller:
                     return [t for t in tags if t in PRESET_TAGS][:3]
             return []
         except Exception as exc:
-            print(f"[distiller] Auto-tagging failed (silent): {exc}")
+            logger.warning("Auto-tagging failed (silent): %s", exc, exc_info=True)
             return []
 
     # ── MapReduce internals ────────────────────────────────────────────
@@ -1422,11 +1427,8 @@ class Distiller:
                     chunks, build_prompt, usage_action, on_chunk_done, client=run_client,
                 )
             finally:
-                try:
+                async with nonfatal("distiller", "close map client", level=logging.WARNING):
                     await run_client.close()
-                except Exception as exc:
-                    print(f"[distiller] Map client close failed (non-fatal): "
-                          f"{type(exc).__name__}: {exc}")
 
         return _run_async_in_ctx_thread(_run)
 
@@ -1465,7 +1467,7 @@ class Distiller:
                         system, [{"role": "user", "content": user}], client=client
                     )
                 except Exception as exc:
-                    print(f"[distiller] Map chunk {i} failed: {exc}")
+                    logger.warning("Map chunk %s failed: %s", i, exc, exc_info=True)
                     # 失败分片照样烧了 token（重试墙下空烧 26–100s）—— prompt 侧按字符
                     # 估算补记，completion 未知记 0 并标 estimated。只记成功 = 统计系统性偏低。
                     usage = estimate_usage_from_chars(len(system) + len(user))
@@ -1507,7 +1509,7 @@ class Distiller:
                 try:
                     result = await self._single_reduce_async(batch, character_name, client=client)
                 except Exception as exc:
-                    print(f"[distiller] Reduce batch {i} failed: {exc}")
+                    logger.warning("Reduce batch %s failed: %s", i, exc, exc_info=True)
                     result = ""
             async with lock:
                 done_count[0] += 1
@@ -1697,7 +1699,7 @@ class Distiller:
                 f"{failed}/{total_chunks} 个分片失败；最后错误：{map_failures[-1][1]}",
             )
         if failed > 0:
-            print(f"[distiller] {failed}/{total_chunks} map chunks failed (within tolerance), continuing")
+            logger.warning("%s/%s map chunks failed (within tolerance), continuing", failed, total_chunks)
 
         raw_analyses = [
             r[1] for r in map_results if r[1].strip() and r[1].strip() != "无"
@@ -1728,7 +1730,7 @@ class Distiller:
                 )
                 compress_usage = self._llm.last_usage or compress_usage
             except Exception as exc:
-                print(f"[distiller] Profile compression failed: {exc}")
+                logger.warning("Profile compression failed: %s", exc, exc_info=True)
             self._try_record_usage("distill_compress", compress_usage)
 
         # Phase 3: Format — produce CharacterCard JSON
@@ -1771,7 +1773,7 @@ class Distiller:
                 # Re-validate so tags are included in model_dump()
                 card = CharacterCard.model_validate(card_dict)
         except Exception as exc:
-            print(f"[distiller] Auto-tagging failed (silent): {exc}")
+            logger.warning("Auto-tagging failed (silent): %s", exc, exc_info=True)
 
         return card
 
@@ -1912,8 +1914,9 @@ class Distiller:
                 elif on_chunk_done:
                     # 失败片不落 checkpoint：写进去的是空串 + 合法指纹，续跑时只有门 2
                     # 拦得住。静默的 checkpoint 失效是最贵的那种 —— 点名该片本轮不入库、下轮重跑。
-                    print(f"[distiller] Chunk {idx} not checkpointed (Map failed); "
-                          f"resume will re-run it")
+                    logger.warning(
+                        "Chunk %s not checkpointed (Map failed); resume will re-run it", idx,
+                    )
                 current += 1
                 yield {"status": "analyzing", "current": current, "total": total}
 
@@ -1929,15 +1932,17 @@ class Distiller:
         if _map_failure_exceeds_tolerance(failed, total_chunks):
             err_text = str(map_failures[-1][1])
             if "rate limited (429)" in err_text or "429" in err_text:
-                print(f"[distiller] aborting stream: API 429；{failed}/{total_chunks} 个分片失败")
+                logger.error("Aborting stream: API 429; %s/%s chunks failed", failed, total_chunks)
                 yield {"error": "蒸馏失败：上游接口限流，请稍后重试"}
             else:
-                print(f"[distiller] aborting stream: {failed}/{total_chunks} 个分片失败；"
-                      f"最后错误：{map_failures[-1][1]}")
+                logger.error(
+                    "Aborting stream: %s/%s map chunks failed; last error: %s",
+                    failed, total_chunks, map_failures[-1][1],
+                )
                 yield {"error": "蒸馏失败：部分片段处理失败，请重试"}
             return
         if failed > 0:
-            print(f"[distiller] {failed}/{total_chunks} map chunks failed (within tolerance), continuing")
+            logger.warning("%s/%s map chunks failed (within tolerance), continuing", failed, total_chunks)
 
         raw_analyses = [
             r[1] for r in map_results if r[1].strip() and r[1].strip() != "无"

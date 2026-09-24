@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import sys
 
@@ -261,7 +262,8 @@ class TestFailedChunkNotCheckpointed:
                 events.append(piece)
         return done, pieces, events
 
-    def test_failed_chunk_is_not_checkpointed(self, capsys):
+    def test_failed_chunk_is_not_checkpointed(self, caplog):
+        caplog.set_level(logging.WARNING)
         llm = _FailingLLM("角色第2段")
         done, _pieces, _events = self._run3(llm)
 
@@ -281,10 +283,12 @@ class TestFailedChunkNotCheckpointed:
             "reduce 只该见到 2 段分析（失败片不产出可用分析）"
 
         # 3) failures 仍记录该片：失败率判断不受影响（1/3 在容忍范围内 → 继续）
-        out = capsys.readouterr().out
-        assert "1/3 map chunks failed" in out
         # 4) 跳过落库不静默：点名该片未入 checkpoint、下轮重跑
-        assert "Chunk 2 not checkpointed" in out
+        #    两处都走模块 logger（spec-119），断言移到这里 —— 「不静默」的载体不再是
+        #    stdout：容器 stdout 不进日志面板、不发告警，这正是本份要修的形态。
+        logs = "\n".join(r.getMessage() for r in caplog.records)
+        assert "1/3 map chunks failed" in logs, logs
+        assert "Chunk 2 not checkpointed" in logs, logs
 
 
 # ── 4 主路径零回归 ───────────────────────────────────────────────────────────

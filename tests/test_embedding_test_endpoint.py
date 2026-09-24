@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 
 import httpx
@@ -171,10 +172,11 @@ def test_E5_unregistered_error_keeps_raw_text_after_hint(client, embedder):
     assert body["detail"] == raw, "排障按钮的原话是结果的一半，不能被收走"
 
 
-def test_E6_failure_is_logged_without_the_key(client, embedder, capsys):
+def test_E6_failure_is_logged_without_the_key(client, embedder, caplog):
+    caplog.set_level(logging.WARNING)
     embedder.exc = _status_error(401, _error_body("invalid_api_key"))
     _post(client)
-    out = capsys.readouterr().out
+    out = "\n".join(r.getMessage() for r in caplog.records)
     assert USER_ID in out, "失败没有写日志，owner 不翻容器日志就无从得知"
     assert "invalid_api_key" in out, "日志里要有异常本身，否则排障无据"
     assert TEST_KEY not in out, "凭据进了日志"

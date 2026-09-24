@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import os
 import sys
@@ -28,6 +30,8 @@ from core.text_manager import TextManager
 from storage import get_store
 from storage.base import StorageBase
 from web.llm_resolution import Source, resolve_llm
+
+logger = logging.getLogger(__name__)
 
 _CFG_PATH = _REPO_ROOT / "config.yaml"
 if not _CFG_PATH.exists():
@@ -229,7 +233,7 @@ def _log_loop_error(fut: asyncio.Future) -> None:
         return
     exc = fut.exception()
     if exc is not None:
-        print(f"[deps] Submitted coroutine failed (non-fatal): {type(exc).__name__}: {exc}")
+        logger.error("Submitted coroutine failed (non-fatal): %s: %s", type(exc).__name__, exc, exc_info=exc)
 
 
 def _make_global_llm() -> LLMAdapter | None:
@@ -241,7 +245,7 @@ def _make_global_llm() -> LLMAdapter | None:
     try:
         return LLMAdapter()
     except Exception as exc:
-        print(f"[deps] LLMAdapter init failed (API not configured?): {exc}")
+        logger.warning("LLMAdapter init failed (API not configured?): %s", exc, exc_info=True)
         return None
 
 
@@ -423,7 +427,7 @@ def patch_config(key: str, value: Any) -> dict[str, Any]:
         with open(_CFG_PATH, "w", encoding="utf-8") as f:
             yaml.dump(_config, f, allow_unicode=True, default_flow_style=False)
     except Exception as exc:
-        print(f"[deps] Failed to persist config: {exc}")
+        logger.error("Failed to persist config: %s", exc, exc_info=True)
     return dict(_config)
 
 
