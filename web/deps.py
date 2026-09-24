@@ -201,7 +201,7 @@ def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
 
     捕获与注册是同一件事的两半：本模块是**唯一**知道主 loop 的地方，故由它向下
     注册投递实现（`core.scheduling.set_loop_submitter`）。注册只发生在启动时捕获到
-    loop 之后 —— 那之前没有主 loop 可投，`core.scheduling` 的回退语义接管。
+    loop 之后 —— 那之前投递一律 `RuntimeError`：`core.scheduling` 不留退路。
     """
     global _main_loop
     _main_loop = loop
