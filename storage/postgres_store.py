@@ -94,7 +94,7 @@ class _PoolContext:
             except Exception as release_exc:
                 # store-empty-ok: 归还失败不改变本次操作的结果 —— 同 sqlite 侧 __aexit__：
                 # 上抛会顶替调用方真正的异常。
-                print(f"[PostgresStore] Release connection failed: {release_exc}")
+                logger.warning("Release connection failed: %s", release_exc, exc_info=True)
                 # 但**只记一行日志就放手**会把池一格一格吃光：归还失败的连接既不会自己
                 # 消失，也不会被复用 —— 它卡在「另一个操作进行中」那类状态里（SQL 已写进
                 # socket、服务端那笔事务没人结算），`_release` 永远等不到它。槽位不回收，
@@ -106,7 +106,7 @@ class _PoolContext:
                 except Exception as term_exc:
                     # store-empty-ok: 断开也失败同样不改变本次操作的结果（连接已被判死，
                     # 最坏情况是 socket 随对象被 GC 收掉）；上抛仍会顶替调用方的真异常。
-                    print(f"[PostgresStore] Terminate connection failed: {term_exc}")
+                    logger.warning("Terminate connection failed: %s", term_exc, exc_info=True)
             self.conn = None
 
 
@@ -2118,7 +2118,7 @@ class PostgresStore(StorageBase):
                 # store-empty-ok: 这不是「查询失败」而是「单张卡的存量数据损坏」。导出仍完整
                 # 产出，且降级在载荷里显式可见（{"raw": <原始串>} 取代解析后的卡对象）。
                 # 上抛会让一张坏卡毁掉整次导出。
-                print(f"[PostgresStore] Parse card_json failed: {exc}")
+                logger.warning("Parse card_json failed: %s", exc, exc_info=True)
                 card_parsed = {"raw": card["card_json"]}
         if fmt == "json":
             payload = {"session": session, "card": card_parsed, "messages": messages}
@@ -4175,7 +4175,7 @@ class PostgresStore(StorageBase):
                 except Exception as exc:
                     # store-empty-ok: 本条评论已经写入；头像只是回包里的装饰字段，查不到就留空。
                     # 上抛会把「评论已创建」变成「创建失败」，让调用方误以为没写进去。
-                    print(f"[PostgresStore] Avatar data query failed: {exc}")
+                    logger.warning("Avatar data query failed: %s", exc, exc_info=True)
             return {"id": cid, "post_id": post_id, "user_id": user_id, "username": username, "content": content, "created_at": now, "ip_location": ip_location, "avatar_data": avatar_data}
         except Exception as exc:
             print(f"[PostgresStore] Add post comment failed: {exc}")
@@ -4725,7 +4725,7 @@ class PostgresStore(StorageBase):
 
     async def update_text_visibility(self, text_id: str, user_id: str, visibility: str) -> bool:
         if visibility not in ("public", "private"):
-            print(f"[PostgresStore] Invalid visibility value: {visibility}")
+            logger.warning("Invalid visibility value: %r", visibility)
             return False
         try:
             async with await self._connect() as conn:
