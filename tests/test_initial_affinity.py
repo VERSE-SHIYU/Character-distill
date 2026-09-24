@@ -5,10 +5,21 @@ so _compute_initial_affinity fell into the "if not user" stranger branch even
 when the caller had selected a role present in the card's relationships.
 """
 
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import AsyncMock
 
 from core.chat_engine import ChatEngine
 from core.schema import CharacterCard, Relationship
+import core.scheduling as scheduling
+
+
+def _run_await(coro, *, wait: bool = True, timeout: float = 600):
+    """测试投递实现：本文件的用例是同步函数，直接在本线程跑完协程。
+
+    形状照 `scripts/smoke_eval_e2e.py::_run_await`。退路已从 `core.scheduling` 拿掉，
+    要投递就得由用例显式注册、用完还原。
+    """
+    return asyncio.run(coro)
 
 
 class _StubLLM:
@@ -147,23 +158,30 @@ def test_load_affinity_legacy_upgrade():
     """旧格式已评估数据（affinity=72, reason 含 inner_voice）→ 加载 + 升级写入。
 
     存量行 affinity_initialized=0 但实际有评估 → 启发式判断+load → _save_affinity_state 升级。
+    断言的是「写入被 **await**」：`assert_called` 只说明调用表达式执行过，在退路/吞异常下
+    也成立，说不了任何话。
     """
     card = _make_card(CLOSE_REL)
-    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=MagicMock())
+    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=AsyncMock())
     engine._session_id = "legacy_upgrade"
 
     old_data = {
         "affinity": 72, "trust": 55, "mood": "开心", "guard": 28,
         "reason": '{"inner_voice":"测试","mood_emoji":"😊","user_catchwords":[]}',
     }
-    engine.load_affinity(old_data)
+    prev = scheduling.get_loop_submitter()
+    scheduling.set_loop_submitter(_run_await)
+    try:
+        engine.load_affinity(old_data)
+    finally:
+        scheduling.set_loop_submitter(prev)
 
     assert engine._affinity == 72
     assert engine._trust == 55
     assert engine._mood == "开心"
     assert engine._inner_voice == "测试"
-    # 升级落库被调用
-    engine._storage.save_affinity_state.assert_called_once()
+    # 升级落库被 await（不只是被调用）
+    engine._storage.save_affinity_state.assert_awaited_once()
     # state_json 包含关键字段
     state_json = engine._storage.save_affinity_state.call_args[0][1]
     assert '"inner_voice"' in state_json
@@ -173,10 +191,10 @@ def test_load_affinity_legacy_upgrade():
 def test_load_affinity_uninitialized_computes_and_saves():
     """load_affinity(默认数据) → 计算初始值并落库。
 
-    纯默认值行 → _compute_initial_affinity 被调用一次。
+    纯默认值行 → _compute_initial_affinity 被调用一次，且算出的初值真写进了存储。
     """
     card = _make_card(CLOSE_REL)
-    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=MagicMock())
+    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=AsyncMock())
     engine._session_id = "test_sesh"
 
     called = False
@@ -188,9 +206,15 @@ def test_load_affinity_uninitialized_computes_and_saves():
         return original(*args, **kwargs)
 
     engine._compute_initial_affinity = _spy
-    engine.load_affinity({"affinity": 50, "trust": 30, "mood": "平静", "guard": 70})
+    prev = scheduling.get_loop_submitter()
+    scheduling.set_loop_submitter(_run_await)
+    try:
+        engine.load_affinity({"affinity": 50, "trust": 30, "mood": "平静", "guard": 70})
+    finally:
+        scheduling.set_loop_submitter(prev)
 
     assert called, "_compute_initial_affinity SHOULD be called on default data"
+    engine._storage.save_affinity_state.assert_awaited_once()
 
 
 # ── D. Roundtrip: to_persist → from_persist → load（新格式）────────
@@ -262,7 +286,7 @@ def test_affinity_engine_roundtrip():
     from core.affinity_service import AffinityService
 
     card = _make_card(CLOSE_REL)
-    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=MagicMock())
+    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=AsyncMock())
     engine._session_id = "roundtrip_engine"
 
     # 设非默认值
@@ -277,16 +301,22 @@ def test_affinity_engine_roundtrip():
     # 保存前快照
     before = engine.get_affinity()
 
-    # 模拟持久化
-    engine._save_affinity_state()
-    assert engine._storage.save_affinity_state.called
+    # 模拟持久化 —— 真跑完投递，断言写入被 await
+    prev = scheduling.get_loop_submitter()
+    scheduling.set_loop_submitter(_run_await)
+    try:
+        engine._save_affinity_state()
+    finally:
+        scheduling.set_loop_submitter(prev)
+    engine._storage.save_affinity_state.assert_awaited_once()
     state_json = engine._storage.save_affinity_state.call_args[0][1]
 
     # 新引擎加载
     parsed = AffinityService.from_persist(state_json)
     assert parsed is not None
 
-    engine2 = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=MagicMock())
+    # 只读恢复：新引擎不需要存储，也就不注册投递实现
+    engine2 = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=None)
     engine2._session_id = "roundtrip_engine"
     engine2.load_affinity(parsed, initialized=True)
 
