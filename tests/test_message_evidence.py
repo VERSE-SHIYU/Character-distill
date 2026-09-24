@@ -307,7 +307,7 @@ _pg = PG_ENV.skipif(
 
 
 def _dsn() -> str:
-    return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+    return os.environ["DATABASE_URL"]
 
 
 async def _pg_session(store) -> str:

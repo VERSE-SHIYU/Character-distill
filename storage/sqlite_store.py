@@ -1,4 +1,9 @@
-"""SQLite implementation for StorageBase."""
+"""SQLite implementation for StorageBase.
+
+**已放下（2026-09-24，main `a3a0526` 之后）**：SQLite 仅作本地备用后端，不再测试、
+不再维护。生产、CI、测试一律用 PG（测试连 docker-compose.test.yml 起的 `charsim_test`）。
+SQLite 独有的问题只记录、不修复；新迁移只写 `storage/migrations_pg/`。计划择期退役。
+"""
 
 from __future__ import annotations
 

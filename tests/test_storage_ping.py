@@ -37,7 +37,7 @@ from storage.sqlite_store import SQLiteStore
 
 
 def _dsn() -> str:
-    return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+    return os.environ["DATABASE_URL"]
 
 
 _pg = PG_ENV.skipif(

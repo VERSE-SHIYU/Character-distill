@@ -249,7 +249,7 @@ async def test_forward_delete_to_peer_logs_exception(monkeypatch, capsys):
 # ── _resync_once：一轮补发的边界 ─────────────────────────────────────────
 
 def _dsn() -> str:
-    return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+    return os.environ["DATABASE_URL"]
 
 
 @pytest.fixture

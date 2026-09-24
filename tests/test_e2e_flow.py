@@ -39,7 +39,7 @@ pytestmark = [
 async def store():
     from storage.postgres_store import PostgresStore
 
-    dsn = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+    dsn = os.environ["DATABASE_URL"]
     st = PostgresStore(dsn)
     await st._ensure_initialized()
     # Clean all tables
