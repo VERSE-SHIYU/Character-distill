@@ -15,21 +15,24 @@ import sys
 
 
 class _StdoutHandler(logging.StreamHandler):
-    """每次 emit 现取 `sys.stdout`。
+    """读时现取 `sys.stdout`，写法照抄标准库 `logging._StderrHandler`。
 
     `logging.StreamHandler` 在**构造时**就把 stream 绑死了，而本 handler 是模块级
     单例 —— 构造发生在导入期，那一刻的 stdout 只是「导入时恰好是哪个对象」。宿主换过
     流（pytest 的捕获、`contextlib.redirect_stdout`、嵌进别的 runner）之后，绑死的那
-    个对象就不再是当前 stdout 了。现取让「当前谁是 stdout」说了算。
+    个对象就不再是当前 stdout 了。
+
+    标准库给同一问题（它用于 `logging.lastResort`）的答案是：不走
+    `StreamHandler.__init__` 绑流，改调 `Handler.__init__` 只取级别，再把 `stream`
+    做成只读 property。这里照抄，只把 `sys.stderr` 换成 `sys.stdout`。
     """
 
     def __init__(self) -> None:
-        super().__init__(sys.stdout)
-        self.setLevel(logging.WARNING)
+        logging.Handler.__init__(self, logging.WARNING)
 
-    def emit(self, record: logging.LogRecord) -> None:
-        self.stream = sys.stdout
-        super().emit(record)
+    @property
+    def stream(self):  # type: ignore[override]
+        return sys.stdout
 
 
 _handler = _StdoutHandler()
