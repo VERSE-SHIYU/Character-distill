@@ -622,6 +622,8 @@ class TextManager:
         card_id: str = "",
         user_id: str = "",
         user_role: str = "",
+        session_id: str | None = None,
+        is_new_session: bool = True,
     ) -> str:
         """Build ChatEngine in memory; rag=None means no retrieval (pure card prompt). (sync)
 
@@ -637,7 +639,13 @@ class TextManager:
         原先本函数还有「嵌入凭据」与「所在区域」两个参数，函数体里从未引用过 ——
         它们正是那次错位的落脚点：没有这两格，调用点多出来的两个实参只会得到
         `TypeError`，不会有地方可落。**先问这个参数有没有人用，再问怎么传。**
+
+        `session_id` 给了就用（续接 / 恢复：把原 id 交给构造函数），不给就在**造引擎
+        之前**生成 —— 引擎出生即知道自己在哪个会话，不再「先造后改名」。`is_new_session`
+        与它成对：续接的引擎不该重算初始好感度，那是显式说的，不由 id 有无去推。
         """
+        if session_id is None:
+            session_id = uuid.uuid4().hex[:12]
         engine = ChatEngine(
             self._llm, rag, card,
             all_characters=all_characters,
@@ -645,7 +653,8 @@ class TextManager:
             card_id=card_id,
             user_role=user_role,
             storage=self._storage,
+            session_id=session_id,
+            is_new_session=is_new_session,
         )
-        session_id = uuid.uuid4().hex[:12]
         self._sessions[session_id] = new_session_entry(engine, card, user_id)
         return session_id

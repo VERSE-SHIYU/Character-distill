@@ -17,8 +17,8 @@ def _make_engine() -> ChatEngine:
     llm.chat.return_value = "好的。"
     llm.last_usage = {}
     rag = MagicMock()
-    engine = ChatEngine(llm=llm, rag=rag, card=card, storage=MagicMock())
-    engine._session_id = "test-session"
+    engine = ChatEngine(llm=llm, rag=rag, card=card, storage=MagicMock(),
+                        session_id="test-session", is_new_session=True)
     return engine
 
 

@@ -185,16 +185,15 @@ async def _ensure_session(
         card_rec["text_id"], text_rec["content"],
         all_characters=all_characters, embedding_key=emb.key, embedding_region=emb.region,
     )
-    new_id = await asyncio.to_thread(
+    # 原会话 id 直接进构造：引擎一出生就在原 id 名下，不再「新 id 造好再搬过来」。
+    await asyncio.to_thread(
         text_manager._create_session, card,
         all_characters=all_characters, rag=rag,
         card_id=card_id, user_id=user_id,
+        session_id=session_id, is_new_session=False,
     )
 
-    # Steal engine into the original session_id
-    if new_id != session_id:
-        sessions[session_id] = sessions.pop(new_id, {})
-    engine = sessions[session_id].get("engine")
+    engine = sessions.get(session_id, {}).get("engine")
     if engine is None:
         raise HTTPException(500, "Engine not found after rebuild")
 
@@ -211,7 +210,6 @@ async def _ensure_session(
     if db_session.get("user_role"):
         engine.user_role = db_session["user_role"]
     # Restore affinity from DB
-    engine._session_id = session_id
     try:
         data, source = await read_persisted_affinity(session_id, storage)
         if source == 'state':
@@ -221,7 +219,7 @@ async def _ensure_session(
             engine.load_affinity(data)
     except Exception as exc:
         logger.warning("Restore affinity failed (non-fatal): %s", exc, exc_info=True)
-    # 条目整份来自 `new_session_entry`（上面那句把新 id 下的条目搬到原 id 名下），
+    # 条目整份来自 `new_session_entry`（`_create_session` 登记的就是原 id），
     # `lock` / `retract_state` / `outbox` 都随条目一起过来 —— 不在这里补默认值。
 
     print(f"[chat] Auto-resumed session {session_id}: history={len(engine.history) if engine else 0} messages")
@@ -241,7 +239,6 @@ class ChatRequest(BaseModel):
     web_search: bool = False
     voice_mode: bool = False
     affinity_enabled: bool = True
-    client_tz: str = ""
     reply_to_id: int | None = None
     reply_to_preview: str = ""
     agent_mode: bool = False
@@ -288,7 +285,6 @@ async def _do_chat(
     web_search: bool = False,
     voice_mode: bool = False,
     affinity_enabled: bool = True,
-    client_tz: str = "",
     reply_to_id: int | None = None,
     reply_to_preview: str = "",
     agent_mode: bool = False,
@@ -314,13 +310,10 @@ async def _do_chat(
                     )
             except Exception as exc:
                 logger.warning("Save user_role failed (non-fatal): %s", exc, exc_info=True)
-    if client_tz and session.get("engine"):
-        session["engine"]._user_tz = client_tz
 
     try:
         engine = session.get("engine")
         if engine:
-            engine._session_id = session_id
             engine._ctx_engine.web_search_enabled = web_search
             engine.affinity_enabled = affinity_enabled
             engine.agent_mode = agent_mode
@@ -447,7 +440,6 @@ async def _do_chat_stream(
     web_search: bool = False,
     voice_mode: bool = False,
     affinity_enabled: bool = True,
-    client_tz: str = "",
     reply_to_id: int | None = None,
     reply_to_preview: str = "",
     agent_mode: bool = False,
@@ -473,12 +465,9 @@ async def _do_chat_stream(
                     )
             except Exception as exc:
                 logger.warning("Save user_role failed (non-fatal): %s", exc, exc_info=True)
-    if client_tz and session.get("engine"):
-        session["engine"]._user_tz = client_tz
 
     engine = session.get("engine")
     if engine:
-        engine._session_id = session_id
         engine._ctx_engine.web_search_enabled = web_search
         engine.affinity_enabled = affinity_enabled
         engine.agent_mode = agent_mode
@@ -684,12 +673,12 @@ async def send_message(
     if await get_user_llm(user_id, storage) is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     if req.stream:
-        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled, req.client_tz, req.reply_to_id, req.reply_to_preview, req.agent_mode)
+        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled, req.reply_to_id, req.reply_to_preview, req.agent_mode)
     return await _do_chat(
         req.session_id, req.message, storage, sessions,
         user_role=req.user_role, hidden=req.hidden, user_id=user_id,
         web_search=req.web_search, voice_mode=req.voice_mode,
-        affinity_enabled=req.affinity_enabled, client_tz=req.client_tz,
+        affinity_enabled=req.affinity_enabled,
         reply_to_id=req.reply_to_id, reply_to_preview=req.reply_to_preview,
         agent_mode=req.agent_mode,
     )
@@ -846,7 +835,7 @@ async def legacy_chat(
         req.session_id, req.message, storage, sessions,
         user_role=req.user_role, hidden=req.hidden, user_id=user_id,
         web_search=req.web_search, voice_mode=False,
-        affinity_enabled=req.affinity_enabled, client_tz=req.client_tz,
+        affinity_enabled=req.affinity_enabled,
         agent_mode=req.agent_mode,
     )
 

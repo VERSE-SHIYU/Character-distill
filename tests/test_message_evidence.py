@@ -608,7 +608,6 @@ class _StubEngine:
         self.history: list[dict] = []
         self.last_summary = ""
         self.user_role = ""
-        self._user_tz = "UTC"
         self._storage = None
 
     def load_affinity(self, data, initialized=False):
@@ -642,9 +641,11 @@ class TestResumeCarriesEvidence:
         class _StubTextManager:
             _indexing_service = _StubIndexing()
 
-            def _create_session(self, *_a, **_kw):
-                sessions["ses_rebuilt"] = new_session_entry(engine, None, "")
-                return "ses_rebuilt"
+            def _create_session(self, *_a, **kw):
+                # 重建路径把原 id 交给构造函数了，替身照它登记（不再自编 id 等路由改名）。
+                sid = kw["session_id"]
+                sessions[sid] = new_session_entry(engine, None, "")
+                return sid
 
         async def _fake_user_llm(*_a, **_kw):
             return object()
@@ -677,9 +678,11 @@ class TestResumeCarriesEvidence:
         class _StubTextManager:
             _indexing_service = _StubIndexing()
 
-            def _create_session(self, *_a, **_kw):
-                sessions["ses_rebuilt"] = new_session_entry(engine, None, "")
-                return "ses_rebuilt"
+            def _create_session(self, *_a, **kw):
+                # 重建路径把原 id 交给构造函数了，替身照它登记（不再自编 id 等路由改名）。
+                sid = kw["session_id"]
+                sessions[sid] = new_session_entry(engine, None, "")
+                return sid
 
         async def _fake_user_llm(*_a, **_kw):
             return object()

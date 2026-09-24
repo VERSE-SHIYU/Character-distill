@@ -32,8 +32,8 @@ def _make_engine(
 
     rag = MagicMock()
 
-    engine = ChatEngine(llm=llm, rag=rag, card=card, storage=MagicMock())
-    engine._session_id = session_id
+    engine = ChatEngine(llm=llm, rag=rag, card=card, storage=MagicMock(),
+                        session_id=session_id, is_new_session=True)
 
     if history_len > 0:
         engine.history = [{"role": "user", "content": "你好"}, {"role": "assistant", "content": "嗨"}]

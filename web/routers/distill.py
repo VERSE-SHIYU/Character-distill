@@ -60,7 +60,6 @@ class StartSessionRequest(BaseModel):
     text_id: str = ""
     card_id: str
     user_role: str = ""
-    client_tz: str = ""
 
 
 class IdentifyRequest(BaseModel):
@@ -1405,7 +1404,7 @@ async def start_session(
         seed = card.first_message or ""
         user_context = f"对「{req.user_role}」" if req.user_role else "对初次见面的陌生人"
         from core.clock import UserClock, describe_time_period
-        _now = UserClock.now(req.client_tz)
+        _now = UserClock.now()
         _period = describe_time_period(_now.hour)
         seed_line = f"惯常开场白参考：「{seed}」\n" if seed else ""
         prompt = (

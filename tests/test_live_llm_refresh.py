@@ -93,7 +93,8 @@ class _FakeStorage:
 
 def _engine(llm: _StubLLM) -> ChatEngine:
     """最小可用引擎：`rag=None` 让检索降级成空块，`storage=None` 关掉落库那条下游。"""
-    return ChatEngine(llm=llm, rag=None, card=CARD, card_id="c1", storage=None)
+    return ChatEngine(llm=llm, rag=None, card=CARD, card_id="c1", storage=None,
+                      session_id="c1", is_new_session=True)
 
 
 # ── 夹具 ──────────────────────────────────────────────────────────────────────
