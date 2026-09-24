@@ -12,7 +12,6 @@ vi.mock('../api/client', () => ({
   removeToken: vi.fn(),
   setRefreshToken: vi.fn(),
   removeAuth: vi.fn(),
-  clientTz: vi.fn(() => 'UTC'),
 }))
 
 const affinityData = (label) => ({ affinity: label })

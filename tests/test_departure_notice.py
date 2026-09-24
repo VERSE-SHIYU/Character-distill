@@ -32,7 +32,6 @@ class TestGapLogic:
         engine.llm = MagicMock()
         engine.rag = MagicMock()
         engine._session_id = "test-session"
-        engine._user_tz = "Asia/Shanghai"
         engine._memory = None
         engine._storage = MagicMock()
         engine._card_id = "test-card"

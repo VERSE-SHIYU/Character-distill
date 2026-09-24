@@ -608,7 +608,6 @@ class _StubEngine:
         self.history: list[dict] = []
         self.last_summary = ""
         self.user_role = ""
-        self._user_tz = "UTC"
         self._storage = None
 
     def load_affinity(self, data, initialized=False):

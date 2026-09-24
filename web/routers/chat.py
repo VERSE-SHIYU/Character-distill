@@ -241,7 +241,6 @@ class ChatRequest(BaseModel):
     web_search: bool = False
     voice_mode: bool = False
     affinity_enabled: bool = True
-    client_tz: str = ""
     reply_to_id: int | None = None
     reply_to_preview: str = ""
     agent_mode: bool = False
@@ -288,7 +287,6 @@ async def _do_chat(
     web_search: bool = False,
     voice_mode: bool = False,
     affinity_enabled: bool = True,
-    client_tz: str = "",
     reply_to_id: int | None = None,
     reply_to_preview: str = "",
     agent_mode: bool = False,
@@ -314,8 +312,6 @@ async def _do_chat(
                     )
             except Exception as exc:
                 logger.warning("Save user_role failed (non-fatal): %s", exc, exc_info=True)
-    if client_tz and session.get("engine"):
-        session["engine"]._user_tz = client_tz
 
     try:
         engine = session.get("engine")
@@ -447,7 +443,6 @@ async def _do_chat_stream(
     web_search: bool = False,
     voice_mode: bool = False,
     affinity_enabled: bool = True,
-    client_tz: str = "",
     reply_to_id: int | None = None,
     reply_to_preview: str = "",
     agent_mode: bool = False,
@@ -473,8 +468,6 @@ async def _do_chat_stream(
                     )
             except Exception as exc:
                 logger.warning("Save user_role failed (non-fatal): %s", exc, exc_info=True)
-    if client_tz and session.get("engine"):
-        session["engine"]._user_tz = client_tz
 
     engine = session.get("engine")
     if engine:
@@ -684,12 +677,12 @@ async def send_message(
     if await get_user_llm(user_id, storage) is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     if req.stream:
-        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled, req.client_tz, req.reply_to_id, req.reply_to_preview, req.agent_mode)
+        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled, req.reply_to_id, req.reply_to_preview, req.agent_mode)
     return await _do_chat(
         req.session_id, req.message, storage, sessions,
         user_role=req.user_role, hidden=req.hidden, user_id=user_id,
         web_search=req.web_search, voice_mode=req.voice_mode,
-        affinity_enabled=req.affinity_enabled, client_tz=req.client_tz,
+        affinity_enabled=req.affinity_enabled,
         reply_to_id=req.reply_to_id, reply_to_preview=req.reply_to_preview,
         agent_mode=req.agent_mode,
     )
@@ -846,7 +839,7 @@ async def legacy_chat(
         req.session_id, req.message, storage, sessions,
         user_role=req.user_role, hidden=req.hidden, user_id=user_id,
         web_search=req.web_search, voice_mode=False,
-        affinity_enabled=req.affinity_enabled, client_tz=req.client_tz,
+        affinity_enabled=req.affinity_enabled,
         agent_mode=req.agent_mode,
     )
 

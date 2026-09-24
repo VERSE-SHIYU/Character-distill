@@ -161,51 +161,37 @@ class TestDescribeTimePeriod:
         assert describe_time_period(3) == "深夜"
 
 
-# ── C. Regression: _build_time_awareness_block uses _user_tz ─────────────────
+# ── C. Regression: _build_time_awareness_block reads the request timezone ────
 
 
 class TestBuildTimeAwarenessBlock:
-    """If someone reverts _build_time_awareness_block to bare datetime.now()
-    (server timezone), these tests will fail."""
+    """引擎自己**不再存**时区（缺陷 96 步骤 4）：`_build_time_awareness_block` 读的是
+    请求入口设的那个上下文。
+
+    两条配一对才咬得住：第一条要求它听上下文的（写死默认时区的实现会红），第二条要求
+    上下文没设时回退 `DEFAULT_TZ`（写死某个具体时区的实现会红）。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_request_tz(self):
+        yield
+        set_current_timezone("")
 
     def _make_engine(self) -> ChatEngine:
         card = CharacterCard(name="测试角色")
         return ChatEngine(_StubLLM(), None, card, card_id="t", storage=None)
 
-    def test_sydney_tz_hour_in_output(self):
-        """Output contains the correct hour for Sydney."""
-        engine = self._make_engine()
-        engine._user_tz = "Australia/Sydney"
-        block = engine._build_time_awareness_block()
+    def test_hour_follows_the_request_timezone(self):
+        set_current_timezone("Australia/Sydney")
+        block = self._make_engine()._build_time_awareness_block()
         expected_hour = UserClock.now("Australia/Sydney").hour
         assert f"{expected_hour:02d}:" in block, (
             f"Sydney hour {expected_hour:02d} not found in output:\n{block}"
         )
 
-    def test_shanghai_tz_hour_in_output(self):
-        """Output contains the correct hour for Shanghai."""
-        engine = self._make_engine()
-        engine._user_tz = "Asia/Shanghai"
-        block = engine._build_time_awareness_block()
-        expected_hour = UserClock.now("Asia/Shanghai").hour
+    def test_falls_back_to_default_when_request_timezone_unset(self):
+        block = self._make_engine()._build_time_awareness_block()
+        expected_hour = UserClock.now(DEFAULT_TZ).hour
         assert f"{expected_hour:02d}:" in block, (
-            f"Shanghai hour {expected_hour:02d} not found in output:\n{block}"
+            f"{DEFAULT_TZ} hour {expected_hour:02d} not found in output:\n{block}"
         )
-
-    def test_sydney_and_shanghai_differ(self):
-        """Sydney and Shanghai engines produce different hour strings."""
-        e1 = self._make_engine()
-        e1._user_tz = "Australia/Sydney"
-        e2 = self._make_engine()
-        e2._user_tz = "Asia/Shanghai"
-
-        syd_hour = UserClock.now("Australia/Sydney").hour
-        sha_hour = UserClock.now("Asia/Shanghai").hour
-
-        # If both use the same tz or bare datetime.now(), hours would match
-        # (during the ~6h overlap window when both regions share the same
-        #  wall-clock hour number, we skip the equality assertion).
-        if syd_hour != sha_hour:
-            assert syd_hour != sha_hour, "timezones should differ"
-            assert f"{syd_hour:02d}:" in e1._build_time_awareness_block()
-            assert f"{sha_hour:02d}:" in e2._build_time_awareness_block()

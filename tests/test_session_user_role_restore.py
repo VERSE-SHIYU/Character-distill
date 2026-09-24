@@ -64,7 +64,6 @@ class _StubEngine:
         self.last_summary = ""
         self.user_role = ""
         self._session_id = ""
-        self._user_tz = "UTC"
 
     def load_affinity(self, data, initialized=False):
         pass
