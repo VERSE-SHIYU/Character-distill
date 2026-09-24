@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import useAppStore from './useAppStore'
 
 // 一轮以**错误帧**收尾时，本轮补写成功的更早消息也要在界面上翻正：后端已把本轮的
-// `flushed` / `dropped` 并进错误帧（`_terminal_frame` 是 done 与 error 的唯一出口），
+// `flushed` / `dropped` 并进错误帧（`terminal_frame` 是 done 与 error 的唯一出口），
 // 前端得把这条读数走完同一条路 —— `client.js` 把 payload 透传给 `onError`，store 的
 // 收尾函数调 `applyFlushReport`。任缺一处，那条消息就永远停在「未保存」（刷新才恢复）。
 //

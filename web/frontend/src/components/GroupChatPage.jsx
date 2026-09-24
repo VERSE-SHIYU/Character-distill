@@ -660,7 +660,7 @@ export default function GroupChatPage() {
     }])
     setMessageText('')
 
-    // done 与 error 两种帧共用一个收尾函数：后端两种帧都由 `_terminal_frame` 构造、都带
+    // done 与 error 两种帧共用一个收尾函数：后端两种帧都由 `terminal_frame` 构造、都带
     // 本轮的 `flushed` / `dropped`。这一轮里每一次写都顺带补写了队头，先前标了「未保存」
     // 的消息据此填回真 id、被判死的翻成「保存失败」。error 那条路漏掉它 = 永远停在未保存。
     const settle = (payload, err) => {
@@ -668,8 +668,13 @@ export default function GroupChatPage() {
       if (err) {
         // mark this send's optimistic message as failed so the draft isn't
         // silently lost; retry restores it into the input bar.
+        //
+        // 但**只在它还没有后端读数时**标：已经收到过 `{state: "pending"}` 的那条在后端队列里
+        // 排着等补写，这一轮报错与它无关（那是助手那笔/流本身挂了）。一并标成 failed，等于
+        // 把一条后端明确说「会补上」的消息判成死信 —— 与 `applyFlushReport` 的 dropped 冲突。
         setError(err.message)
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _status: 'failed' } : m))
+        setMessages(prev => prev.map(m => (m.id === tempId && !m.saveState)
+          ? { ...m, _status: 'failed' } : m))
       } else {
         setTargetCardIds([])
         setReplyTo(null)
