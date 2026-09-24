@@ -1170,7 +1170,7 @@ PROBE_IMAGE         false
 - **真实库副本读数**（只读副本，活库未动）：`refresh_tokens` **926 → 926**、`user_secrets` **4 → 4**、`users` 4、`cards` 23、`sessions` 18 全部不变；重建后 `users` 残留 legacy 列 **0**、`users_mig` 残留 **0**。（副本上需先清掉下述 82 条的残骸，否则卡在 `table users_mig already exists`。）
 - **全量**：SQLite 形态 **1384 passed / 69 skipped / 1 xfailed = 1454 collected**；PG 形态（一次性 `postgres:16-alpine` 起在 127.0.0.1:5455，跑完即删）**1451 passed / 2 skipped / 1 xfailed = 1454 collected**。基线 `e41b6a6` 现跑 `--collect-only` = **1452**（worktree 现测，用后即删），差量 **+2 / 消失 0**（新文件恰 2 条）。
 
-**80. 活库 25 行 `refresh_tokens` 孤儿 —— 用户已删、token 还在** —— 状态：**记账**（不修，2026-09-23）
+**80. 活库 25 行 `refresh_tokens` 孤儿 —— 用户已删、token 还在** —— 状态：**记账**（PG 不可达：外键级联 + 同事务显式删除；SQLite 专属，按主次不修）
 - **读数（2026-09-21，本地 SQLite）**：`PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe e2e/scratch/probe_residue_readings.py` 的 §2 遍历全库每张表的每个 FK 子句，唯一的孤儿类是 `refresh_tokens.user_id → users.id：25 行孤儿`；同库 `users` 4 行、`refresh_tokens` 926 行。§1 另证四个验收 id 在这张表里没有残留。
 - **PG 不可达（基线 `cc9f231` 核实，两条独立保证）**：① `migrations_pg/001_init.sql` 给 `refresh_tokens.user_id` 建了外键 `REFERENCES users(id) ON DELETE CASCADE`，PG 总是强制外键 —— 删用户时这些行由库自己级联清掉；② 即便没有级联，`postgres_store.py:2718` 的 `delete_user` 在**同一个事务**里显式执行了 `DELETE FROM refresh_tokens WHERE user_id = $1`。**线上用 PG，故这是 SQLite 专属现象**，按主次规则（PG 为准、SQLite 只保接口一致）不修、不补测试。
 - **生产只读核查**（预期 0）：`SELECT count(*) FROM refresh_tokens r LEFT JOIN users u ON u.id = r.user_id WHERE u.id IS NULL;`
@@ -1817,8 +1817,9 @@ PROBE_IMAGE         false
 - 6 个调用点同步去掉首个位置实参；`tests/test_create_session_kwonly_lock.py` 的 `_POSITIONAL_OK` 收成 `("self", "card")`，并把 `text` 加进「死参数不许回来」的签名断言（**不放松锁的命题**）。
 - 红源：把 `text` 加回签名 → `test_dead_params_that_gave_the_overrun_somewhere_to_land_stay_deleted` / `test_optional_params_are_keyword_only` / `test_keyword_call_binds_each_name_to_its_own_value` 三条红。
 
-**112. 全量里约 20 条 `PytestUnhandledThreadExceptionWarning`（aiosqlite `Event loop is closed`），条数与命中用例每次不同** —— 状态：**记账**
+**112. 全量里约 20 条 `PytestUnhandledThreadExceptionWarning`（aiosqlite `Event loop is closed`），条数与命中用例每次不同** —— 状态：**记账**（SQLite 专属，按主次不修）
 - 本轮未引入、本轮不修：需要单独查线程 / loop 生命周期，与本轮「会话属主」议题**无共同成因**。记在此处，以免下次当成新问题重查。
+- **补充（2026-09-24，Spec T1）**：`aiosqlite` 只在 SQLite 后端下起线程；T1 之后测试一律连 PG，这条警告在常规全量里应当不再出现（只有直接构造 `SQLiteStore` 的那几个 SQLite 专属用例仍走 aiosqlite）。再出现就说明有新代码把测试引回了 SQLite，按新病例查，不是本条复发。
 
 **113. 全量跑时 T2 额外报 `coroutine ... was never awaited`（只跑 `tests/test_ownership_404.py` 不出现）** —— 状态：**已修**（`8dfb1f8`）
 - 成因：`tests/test_llm_access_gate.py::test_l11_app_installs_the_production_guard` 用 `with TestClient(server.app)` 触发真实 lifespan，以证明「生产经 lifespan 装上了门」。**启动同时也注册了 `core.scheduling` 的投递器**（`set_main_loop`），而该用例只还原了守卫 —— 退出后 loop 已被 `TestClient` 关掉，注册却还指着它。
