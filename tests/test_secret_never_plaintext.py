@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -28,7 +29,7 @@ import uuid
 import pytest
 from pwdlib import PasswordHash
 
-from conftest import PG_ENV
+from conftest import PG_ENV, registered_globals
 
 import deps
 from core.schema import CharacterCard
@@ -82,16 +83,19 @@ def _text_manager(store, llm, sessions) -> TextManager:
 # ── 链路 ─────────────────────────────────────────────────────────────────────
 
 
-async def _turn(store, engine, sid: str) -> None:
-    """一轮：好感度评估（同步，只改内存）→ 落库。
+async def _turn(engine, sid: str) -> None:
+    """一轮：好感度评估 —— 落库由生产代码自己完成，用例不替它写。
 
-    `_save_affinity_state()` 走 `submit_to_main_loop(wait=True)`，同一个 loop 里它退化成
-    `asyncio.run()`，起不来（缺陷 123，非致命、被吞掉）。故这里 await 它**最终调的那次**
-    落库 —— `storage.save_affinity_state` 才是真正写 affinity_state 的那一句。
+    `_evaluate_affinity` 是同步函数，其中几处 `submit_to_main_loop(wait=True)` 在主 loop
+    线程上调用即自等、必被拒（缺陷 123 的生产形态）。故经 `asyncio.to_thread` 让它站到
+    工作线程上 —— 这正是 async 路由该有的写法；投递实现由 `registered_globals` 作用域内
+    的 `set_main_loop` 注册。改前这里手工 `await store.save_affinity_state(...)` 绕开那条
+    链（退路一拿掉就绕不开了），那样测的是「用例自己会写库」，不是「链路会写库」。
     """
     engine._session_id = sid
-    engine._evaluate_affinity("你好", "……")
-    await store.save_affinity_state(sid, engine._affinity_service.to_persist())
+    async with registered_globals():
+        deps.set_main_loop(asyncio.get_running_loop())
+        await asyncio.to_thread(engine._evaluate_affinity, "你好", "……")
 
 
 async def _drive(store, uid: str, llm, api_key: str, embedding_key: str) -> str:
@@ -123,12 +127,12 @@ async def _drive(store, uid: str, llm, api_key: str, embedding_key: str) -> str:
         card, all_characters=[{"name": "张三", "aliases": []}],
         card_id=card_id, user_id=uid)
     await store.save_session(sid, card_id, "", "", uid)
-    await _turn(store, sessions[sid]["engine"], sid)
+    await _turn(sessions[sid]["engine"], sid)
 
     # 恢复会话：走生产代码 `_ensure_session`（路由里那段重建逻辑本身，不是镜像）
     sessions.pop(sid, None)
     session = await _ensure_session(sid, store, sessions, uid)
-    await _turn(store, session["engine"], sid)
+    await _turn(session["engine"], sid)
 
     state_json, initialized = await store.load_affinity_state_unscoped(sid)
     assert initialized and state_json, (

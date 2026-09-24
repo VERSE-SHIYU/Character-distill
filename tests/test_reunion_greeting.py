@@ -314,7 +314,14 @@ class TestReunionGreeting:
 
 
 class TestDailyVisitAwareness:
-    """今日到访觉察：engine._visit_count → system prompt 注入。"""
+    """今日到访觉察：engine._visit_count → system prompt 注入。
+
+    本类 6 条一律把引擎存储设为 `None`：它们测的是「到访觉察有没有注入」，不测存储。
+    `_make_engine()` 给的 `MagicMock` 存储会让轮后评估往主 loop 投递三次，而本类没注册
+    投递实现 —— 投递被拒、异常被宽 `except` 吞掉，用例照常显示通过，实际借的是「未注册
+    路径」（R1：实测本类 20 次命中）。存储没了这三处投递自然不发生。
+    `_make_engine()` 本身不改：别的类要靠那份存储才能进到被测量路径。
+    """
 
     @staticmethod
     def _set_stage(engine: ChatEngine, stage: str, affinity: int) -> None:
@@ -325,6 +332,7 @@ class TestDailyVisitAwareness:
     def test_visit_3_injects(self):
         """第3次到访 → system prompt 含觉察块。"""
         engine = _make_engine()
+        engine._storage = None
         self._set_stage(engine, "朋友", 60)
         engine._visit_count = 3
         engine.chat("你好")
@@ -335,6 +343,7 @@ class TestDailyVisitAwareness:
     def test_visit_4_injects(self):
         """第4次到访 → 同样注入。"""
         engine = _make_engine()
+        engine._storage = None
         self._set_stage(engine, "朋友", 60)
         engine._visit_count = 4
         engine.chat("你好")
@@ -345,6 +354,7 @@ class TestDailyVisitAwareness:
     def test_visit_2_does_not_inject(self):
         """第2次不到 3，不注入。"""
         engine = _make_engine()
+        engine._storage = None
         self._set_stage(engine, "朋友", 60)
         engine._visit_count = 2
         engine.chat("你好")
@@ -354,6 +364,7 @@ class TestDailyVisitAwareness:
     def test_visit_consumed_after_injection(self):
         """注入后 _visit_count 归零，第二条消息不再注入。"""
         engine = _make_engine()
+        engine._storage = None
         self._set_stage(engine, "朋友", 60)
         engine._visit_count = 3
         engine.chat("你好")
@@ -367,6 +378,7 @@ class TestDailyVisitAwareness:
     def test_low_stage_no_injection(self):
         """熟悉及以下即使 count>=3 也不注入。"""
         engine = _make_engine()
+        engine._storage = None
         self._set_stage(engine, "熟悉", 50)
         engine._visit_count = 3
         engine.chat("你好")
@@ -376,6 +388,7 @@ class TestDailyVisitAwareness:
     def test_visit_consumed_on_low_stage(self):
         """低档位时 count 仍然被消费（本轮 resume 机会用完）。"""
         engine = _make_engine()
+        engine._storage = None
         self._set_stage(engine, "陌生", 10)
         engine._visit_count = 3
         engine.chat("你好")
