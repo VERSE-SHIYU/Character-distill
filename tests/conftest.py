@@ -1,5 +1,6 @@
 """Pytest configuration: sys.path bootstrap + 把测试钉在独立的测试 PG 上。"""
 
+import contextlib
 import functools
 import os
 import sys
@@ -228,3 +229,48 @@ def pg_skip_reason(what: str) -> str:
     """PG 不可达时的可见 skip 原因（把「怎么让它真跑」写在原因里）。"""
     return PG_ENV.skip_reason(what)
 
+
+# ── 进程级注册的唯一入口 ──────────────────────────────────────────────────────
+#
+# 「投递实现」（`core.scheduling`）、「LLM 调用守卫」（`adapters.llm_adapter`）和它们
+# 指向的主 loop（`deps`）都是**进程级全局**，装它们的是装配代码（`server._lifespan`）。
+# 实测到的形态（缺陷 113）：`test_C9` 经 `_lifespan` 装上投递实现却不还原，注册留在了
+# 后面 —— 同会话里之后任何走 `submit_to_main_loop` 的用例都把协程投到**已经关掉**的
+# loop 上；`chat_engine` 的宽 `except` 把异常吞掉，只在别人的用例头上飘一句
+# `coroutine ... was never awaited`（最难查的那种串味）。
+#
+# 于是「装过就要还」只有这一处实现，两种用法共用：
+#   * 包住生产装配：``async with registered_globals(): async with server._lifespan(app)``
+#   * 作测试 app 的 lifespan，在其中 ``deps.set_main_loop(当前运行 loop)``
+@contextlib.asynccontextmanager
+async def registered_globals():
+    """作用域内对进程级注册的改动，退出时原样还回。
+
+    进入时快照三者并把两处注册清成「未注册」（起点因此与运行顺序无关：同会话里谁先跑
+    都一样）。退出时**先核再还原** —— 核的是「本作用域确实装上了东西」：一处都没变化的
+    话，这段代码根本没走到装配那一步，这条锁与被锁的东西脱钩（假锁），当场报错比留一条
+    恒真的锁好。核完按快照写回。
+
+    loop 与投递实现必须一起还：注册是同一个函数对象（`deps._submit_to_main_loop`），
+    光看投递实现分辨不出「还回没还回」，真正的差别在这个注册指向哪个 loop。
+    """
+    import adapters.llm_adapter as llm_adapter
+    import core.scheduling as scheduling
+    import deps
+
+    prev = (
+        deps.get_main_loop(),
+        scheduling.get_loop_submitter(),
+        llm_adapter.get_call_guard(),
+    )
+    scheduling.set_loop_submitter(None)
+    llm_adapter.set_call_guard(None)
+    yield
+    assert (scheduling.get_loop_submitter() is not None
+            or llm_adapter.get_call_guard() is not None), (
+        "作用域内两处进程级注册一处都没装上 —— 这段代码没走到装配那一步，本锁是空的")
+    # 写回 loop 走属性而不是 `deps.set_main_loop`：后者会顺带把投递实现注册上，
+    # 而这里要的是**还原**（下面一行才决定投递实现是谁）。
+    deps._main_loop = prev[0]
+    scheduling.set_loop_submitter(prev[1])
+    llm_adapter.set_call_guard(prev[2])

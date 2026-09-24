@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import uuid
 
@@ -33,6 +34,7 @@ from routers.distill import router as distill_router
 from routers.group import router as group_router
 from routers.history import router as history_router
 from storage.sqlite_store import SQLiteStore
+from conftest import registered_globals
 
 
 # ── 夹具 ──────────────────────────────────────────────────────────────────────
@@ -188,8 +190,33 @@ def _rate_limit_off(monkeypatch):
     monkeypatch.setattr(_lim_.limiter, "enabled", False)
 
 
+@contextlib.asynccontextmanager
+async def _test_lifespan(app):
+    """测试 app 的 lifespan：只做生产 lifespan 里与本文件相关的那一件事 —— 注册投递实现。
+
+    生产里这是 `web/server.py::_lifespan` 的 `set_main_loop(loop)`。改前 `_client` 返回裸
+    `TestClient(app)`，不进 `with` 就不跑 lifespan，投递实现始终未注册 —— 用例里的写盘全
+    经 `core.scheduling` 的退路跑掉：看着绿，测的不是生产形状（缺陷 123）。
+    """
+    async with registered_globals():
+        import deps
+
+        deps.set_main_loop(asyncio.get_running_loop())
+        yield
+
+
+_OPEN_CLIENTS = contextlib.ExitStack()
+
+
+@pytest.fixture(autouse=True)
+def _clients_run_their_lifespan():
+    """`_client` 建的 TestClient 统一在这里 `with` 退出（不退出就永远不跑 lifespan）。"""
+    yield
+    _OPEN_CLIENTS.close()
+
+
 def _client(st: _FlakyStore, user_id: str) -> TestClient:
-    app = FastAPI()
+    app = FastAPI(lifespan=_test_lifespan)
     for r in (chat_router, distill_router, history_router, group_router):
         app.include_router(r)
     app.state.limiter = limiter
@@ -198,11 +225,20 @@ def _client(st: _FlakyStore, user_id: str) -> TestClient:
         "id": user_id, "username": "testuser", "role": "user",
     }
     app.dependency_overrides[get_memory_manager] = lambda: _MemMgr()
-    return TestClient(app)
+    return _OPEN_CLIENTS.enter_context(TestClient(app))
 
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def _registrations() -> tuple:
+    """进程级注册的三件套（主 loop / 投递实现 / 调用守卫）—— 缺陷 113 的观测量。"""
+    import adapters.llm_adapter as llm_adapter
+    import core.scheduling as scheduling
+    import deps
+
+    return (deps.get_main_loop(), scheduling.get_loop_submitter(), llm_adapter.get_call_guard())
 
 
 # ── 被测对象的替身 ────────────────────────────────────────────────────────────
@@ -622,7 +658,15 @@ def test_C8b_idle_cleanup_keeps_a_session_whose_messages_have_not_landed(
 
 
 def test_C9_shutdown_backfills_the_queues(flaky, owner, monkeypatch):
-    """关停时补写（在取消清理循环之后）—— 队列在内存里，进程一走就没了。"""
+    """关停时补写（在取消清理循环之后）—— 队列在内存里，进程一走就没了。
+
+    同时是缺陷 113 的复现：`_lifespan` 装上进程级注册却不还原，注册就留在了后面。
+    注册是同一个函数对象（`deps._submit_to_main_loop`），所以「还回没还回」分辨不出，
+    真正的差别是它指向哪个 loop —— 留在后面的是 `_run(_drive())` 里那个**已经关掉**
+    的 loop：之后任何走 `submit_to_main_loop` 的用例都把协程投到死 loop 上，
+    `chat_engine` 的宽 `except` 把异常吞掉，只在**别的**用例头上飘一句
+    `coroutine ... was never awaited`。
+    """
     import server as server_mod
 
     sid = _new_sid()
@@ -648,13 +692,19 @@ def test_C9_shutdown_backfills_the_queues(flaky, owner, monkeypatch):
     class _App:
         state = type("S", (), {"limiter": limiter})()
 
+    before = _registrations()
+
     async def _drive():
-        async with server_mod._lifespan(_App()):
-            pass
+        async with registered_globals():
+            async with server_mod._lifespan(_App()):
+                pass
 
     _run(_drive())
 
     assert "char" in flaky.roles(), f"关停时没补写，那条消息永久丢了：{flaky.wrote}"
+    assert _registrations() == before, (
+        "关停那一段把进程级注册留在了后面（缺陷 113）：注册仍指着已经关掉的 loop，"
+        "后面任何投递都会落到死 loop 上")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -43,7 +43,7 @@ from fastapi.testclient import TestClient
 import deps
 import server
 from adapters.llm_adapter import LLMAdapter
-from conftest import TEST_JWT_SECRET
+from conftest import TEST_JWT_SECRET, registered_globals
 from core.text_manager import new_session_entry
 from deps import get_storage
 from routers.auth import get_current_user
@@ -169,11 +169,34 @@ class _Restored:
 
 
 def _snapshot(read, write, value) -> _Restored:
-    """普通全局的载体：读口 + 写口一对（`get_*` / `set_*` 那对）。"""
+    """普通全局的载体：读口 + 写口一对（`get_*` / `set_*` 那对）。
+
+    退出时**先核再还原**：还回之前读到的必须仍是自己装进去的那个。别人在这个作用域里
+    抢先改掉（或本作用域压根没装成）时，「谁负责还」这件事已经说不清 —— 这时静默把快照
+    写回去等于替那个改动擦屁股，把两个用例的边界糊在一起（台账 64）。
+
+    比对用 `==` 而不是 `is`：**读口可能返回副本**（载体登记表的读口明说返回副本，L15
+    正是这么锁的），`is` 会把那个正确实现判成违约。函数/None 这类标量上两者等价，
+    所以这处放宽只影响「读口是副本」的容器。
+
+    **本载体不适用于「本作用域指望别人来装」的作用域**（那样读回的必然不是入场时写的
+    那个）：那种作用域要的是「别人装上、退出时还回」，那是 `conftest.registered_globals()`
+    的事。若本作用域**自己**把要装的值写进去（如 L4/`_boom` 写入
+    `gate.geo_call_guard` 后再调 `install_llm_gate`），就在本载体的射程内 ——
+    装配若装了**别的**函数，退出时那条断言当场报错。
+    """
     def _enter():
         prev = read()
         write(value)
-        return lambda: write(prev)
+
+        def _restore():
+            current = read()
+            assert current == value, (
+                f"还原前读到的不是本作用域装进去的那个：当前 {current!r}，应为 {value!r}。"
+                "作用域里有人先改过这处全局，快照不该替它擦屁股")
+            write(prev)
+
+        return _restore
     return _Restored(_enter)
 
 
@@ -499,8 +522,10 @@ def test_l4_live_session_is_blocked_before_outbound(store, seed_user, monkeypatc
 
         # 装配由本用例自己声明（不靠 import 副作用），且**退出时还原** —— 守卫是
         # 进程级全局，装了不撤，本进程后面每条直接调适配器出站的用例都会凭空被门
-        # 管住。`_snapshot` 的入场快照就承担还原这一半。
-        with _snapshot(la.get_call_guard, la.set_call_guard, None):
+        # 管住。入场写的**就是**装配将要装的那一个（`install_llm_gate` → 只此一个），
+        # 于是退出时那条「读到的还是自己装进去的」照样成立，且装配若装了别的函数会
+        # 当场现形。「装配确实装上了」是 L11 的账 —— 这里门只是前提，不是被测对象。
+        with _snapshot(la.get_call_guard, la.set_call_guard, gate.geo_call_guard):
             gate.install_llm_gate(app)
             r = client.post(
                 "/api/chat/send",
@@ -803,12 +828,16 @@ def _boom(uid: str = "u9"):
     还原是必须的：本文件是全仓唯一装门的地方，装了不撤，同一进程里后面**每条**
     直接调适配器出站的用例（适配器单测、路由测试）都会凭空被门管住，报
     `LLMCallerMissing` 而不是它们自己那条断言 —— 那正是「import 期注册」被根除
-    掉的那个副作用，只是搬到了测试侧。`_snapshot` 的入场快照承担还原。
+    掉的那个副作用，只是搬到了测试侧。入场写的就是装配将要装的那一个（见 L4 同款
+    注释），`_snapshot` 的读回校验因此成立。
+
+    投递实现不在这里钉：三条用例各自把它包在外层（它们要的是「审计投了几次」，
+    与门是两件事）。
     """
     gate = _gate()
     la = _adapter()
     app = _audit_app(uid)
-    with _snapshot(la.get_call_guard, la.set_call_guard, None):
+    with _snapshot(la.get_call_guard, la.set_call_guard, gate.geo_call_guard):
         gate.install_llm_gate(app)
         return TestClient(app, raise_server_exceptions=False).get(
             "/boom", headers={"X-Real-IP": _BLOCKED_IP})
@@ -1003,34 +1032,30 @@ def test_l10_construction_points_are_confined():
 
 # ── L11：装配后守卫就是策略层那一个函数 ───────────────────────────────────
 
-def test_l11_app_installs_the_production_guard():
+async def test_l11_app_installs_the_production_guard():
     """锚点在**启动那一刻**，不在 import 那一刻。
 
     `import server` 只导入模块，不改变任何进程级策略 —— 装配（守卫、投递器、主 loop）
     都在 lifespan 里，`with TestClient(app)` 才跑它。用生产 app 本身触发，才证得了
     「生产经 lifespan 装上了门」；锚在 import 期只会证「模块被导入过」，而那个副作用
     本身就是本步要根除的东西（它让不启 app 的适配器单测凭空被门管住）。
+
+    还原交给 `registered_globals`（唯一入口）：本用例退出后 TestClient 关掉的 loop 已经
+    死了，注册却还指着它的话，同会话后面任何走 `submit_to_main_loop` 的用例都会把协程投到
+    死 loop 上 —— `chat_engine` 的宽 except 吞掉异常，表现为「coroutine ... was never
+    awaited」飘在**别的**用例头上（最难查的那种串味）。
     """
     gate = _gate()
     la = _adapter()
     getter = getattr(la, "get_call_guard", None)
     assert getter is not None, "adapters.llm_adapter 没发布与 set_call_guard 配对的读取口"
-    S = _mod("core.scheduling")
-    # 从「未注册」起步：守卫是进程级全局，同会话里别的用例可能已经装过 —— 不清空的话
-    # 这里读到的是**别人留下的**注册，删掉 lifespan 那一行也照样绿（恒真的假锁）。
-    with _snapshot(la.get_call_guard, la.set_call_guard, None):
+    # 作用域把两处注册清成「未注册」起步：同会话里别的用例可能已经装过 —— 不清空的话
+    # 读到的是**别人留下的**注册，删掉 lifespan 那一行也照样绿（恒真的假锁）。
+    async with registered_globals():
         assert getter() is None, "起点不是未注册 —— 前面有用例装过守卫"
-        # lifespan 注册的**投递器**也要一并还原：本用例退出后 TestClient 关掉的 loop 已经死了，
-        # 注册却还指着它。不还原的话，同会话后面任何走 `submit_to_main_loop` 的用例都会把协程
-        # 投到死 loop 上 —— `chat_engine` 的宽 except 吞掉异常，表现为
-        # 「coroutine ... was never awaited」飘在**别的**用例头上（最难查的那种串味）。
-        before = S.get_loop_submitter()
-        with _snapshot(S.get_loop_submitter, S.set_loop_submitter, before):
-            with TestClient(server.app):
-                assert getter() is gate.geo_call_guard, (
-                    "生产 app 启动后守卫不是策略层那一个 —— lifespan 没装门")
-        assert S.get_loop_submitter() is before, (
-            "lifespan 注册的投递器没被还原 —— 退出后 loop 已关，注册还在")
+        with TestClient(server.app):
+            assert getter() is gate.geo_call_guard, (
+                "生产 app 启动后守卫不是策略层那一个 —— lifespan 没装门")
 
 
 # ── L12：策略单点（②层） ──────────────────────────────────────────────────
@@ -1466,4 +1491,27 @@ def test_set_var_restores_the_unset_fact_not_a_none_value():
             ctx.LLM_CALLER.get()
 
     box.run(body)
+
+
+def test_snapshot_refuses_to_restore_a_value_someone_else_changed():
+    """`_snapshot` 的「先核再还原」：作用域里那处全局被改掉时，退出必须**报错**。
+
+    静默把入场快照写回去，等于替那个改动擦屁股：「轮到本用例时全局是什么」就不再只
+    由本用例决定，而是由文件内执行顺序决定（L1/L2 那条注解说的正是这件事）。报错则把
+    它变成一条响亮的红。
+
+    变异：删掉 `_snapshot._restore` 里那条断言 → 本用例红（`pytest.raises` 收不到异常），
+    其余用例不会察觉 —— 这格此前无人看住。
+    """
+    la = _adapter()
+    gate = _gate()
+    prev = la.get_call_guard()
+    try:
+        with pytest.raises(AssertionError, match="还原前读到的不是"):
+            with _snapshot(la.get_call_guard, la.set_call_guard, None):
+                la.set_call_guard(gate.geo_call_guard)   # 「别人」在本作用域里抢先改了
+    finally:
+        # 断言发生在写回**之前**，所以这里的收尾得自己做 —— 这正是「不替别人擦屁股」
+        # 的代价：报错的那一方不负责善后。
+        la.set_call_guard(prev)
 
