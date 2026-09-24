@@ -723,10 +723,12 @@ def test_closed_grammar_rejects_every_listed_shape():
 def test_every_db_healthcheck_is_verbatim_identical():
     """所有此类服务的**整个 healthcheck 映射**必须逐字相同。
 
-    这是「两份定义」这个取舍的兑现方式：prod 与 local 各写一份（部署只 scp prod 那一个
-    文件，抽共享会改动两区流程），代价是可能各自漂移。这条锁把漂移变成一次红 —— 只改一份
-    （例如只调一份的 interval）不会红在上面的逐条检查里，必须由这里接住。比的是整个映射而
-    不是只比 test：只调一份的 interval / retries 同样是漂移，而在只比 test 的锁里那样是静默的。
+    这是「多份定义」这个取舍的兑现方式：prod、local、test 各写一份（部署只 scp prod 那一个
+    文件，抽共享会改动两区流程；test 那份是测试自己起库用的），代价是可能各自漂移。这条锁把
+    漂移变成一次红 —— 只改一份（例如只调一份的 interval）不会红在上面的逐条检查里，必须由
+    这里接住。**test 这份也必须一致**：`up -d --wait` 等的正是这个 healthcheck。比的是整个
+    映射而不是只比 test：只调一份的 interval / retries 同样是漂移，而在只比 test 的锁里那样
+    是静默的。
     """
     by_hc: dict[str, list[str]] = {}
     for path in compose_model.project_files():
