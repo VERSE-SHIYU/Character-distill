@@ -50,9 +50,9 @@ services:
       #      scram 校验口令（实测）。故要走 TCP，且不能拿环回地址当 `-h`。
       #   3. 于是 `-h` 用**服务名** postgres：与 app 连库走同一条路径、同一套 pg_hba 规则；
       #      写 localhost / 127.0.0.1 会让探针退化成 trust，又能「永远成功」。
-      #   4. 为什么是两份定义而不是共享一份：部署只 scp docker-compose.prod.yml 这一个文件
+      #   4. 为什么是多份定义而不是共享一份：部署只 scp docker-compose.prod.yml 这一个文件
       #      到服务器，抽成共享脚本或共享 compose 文件会改动两区部署流程、并新增挂载依赖。
-      #      两份的一致性由 tests/test_pg_healthcheck.py 强制保证。
+      #      多份的一致性由 tests/test_pg_gate.py 强制保证。
       # `$$` 是 compose 的转义：容器配置里存下的是**变量名**，展开发生在容器内的 shell
       # （`docker inspect` 看到的是 `$POSTGRES_PASSWORD` 这个变量名，不是口令值）。
       # PGCONNECT_TIMEOUT(3s) 必须小于本 healthcheck 的 timeout(5s)，否则探针自己会挂到超时，
