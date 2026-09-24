@@ -15,8 +15,10 @@ Run: pytest tests/test_failure_alerting.py -v
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -159,3 +161,100 @@ def test_unhandled_exception_is_logged_and_alerts_while_response_is_unchanged(
         f"日志没说是哪个请求挂的，排障只剩堆栈：{recs[0].getMessage()!r}"
 
     assert len(alerts) == 1, "线上 500 却没发告警 —— 这正是本份要修的事"
+
+
+# ── 3. 线上不再有「打印后吞掉」的失败（spec §4 第 4 行）────────────────────────
+#
+# 这一类就是本份要消灭的形态：错误既不抛给全局处理器（没人接住它），也不进 logging
+# —— 面板（收 WARNING+）与告警邮件（收 ERROR）都看不见它。判据按 spec 给的字面来：
+# 扫 `postgres_store.py`、`web`、`core` 里「print 含 fail、下一条语句不是 raise」的地方，
+# 结果必须是 0。
+#
+# 比字面放宽一处：下一条语句是 `if`、但**两个分支都 raise** 的，算「下一条语句就是
+# raise」。全仓只有一处（`core/distiller.py` 的 JSON 解析失败打印，后跟
+# `if truncated: raise ... / raise ...`），它属于 §2.2 的「打印后抛出」，本份不动。
+# 这是判据的精化（"必然抛出"），不是按行号写死的例外清单 —— 后者一改文件就失效。
+#
+# 为什么不做成「只允许清单里的例外」：白名单要维护，而精化后的判据自己就能判。
+
+_SCAN_ROOTS = ("storage/postgres_store.py", "web", "core")
+_REPO = Path(__file__).resolve().parent.parent
+
+
+def _always_raises(stmts: list[ast.stmt]) -> bool:
+    """从语句列表开头执行下去，是否**每条路径都必然抛异常**。
+
+    只看列表里的控制流，够了：判据要回答的只是「`print` 之后还能不能回到调用方」。
+    `if` 的两个分支各自接上列表余下的语句再递归 —— 空分支代表「落到后面」，
+    于是 `if c: raise A` + `raise B` 这种（`core/distiller.py` 那一处）也判为必然抛出。
+    """
+    if not stmts:
+        return False
+    head, rest = stmts[0], stmts[1:]
+    if isinstance(head, ast.Raise):
+        return True
+    if isinstance(head, ast.If):
+        body = list(head.body) + rest
+        orelse = list(head.orelse) + rest if head.orelse else rest
+        return _always_raises(body) and _always_raises(orelse)
+    return False
+
+
+def _print_swallows_in(path: Path) -> list[str]:
+    """本文件里所有「print 含 fail、却不必然抛出」的语句，`相对路径:行` 列表。"""
+    src = path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as exc:            # 扫到语法坏的文件要当场炸，不能静默跳过
+        raise AssertionError(f"{path}: 扫描目标无法解析：{exc}") from exc
+
+    parent: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for _field, val in ast.iter_fields(node):
+            if isinstance(val, list):
+                for item in val:
+                    if isinstance(item, ast.AST):
+                        parent[item] = node
+            elif isinstance(val, ast.AST):
+                parent[val] = node
+
+    bad: list[str] = []
+    rel = path.relative_to(_REPO).as_posix()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "print"):
+            continue
+        if "fail" not in (ast.get_source_segment(src, node) or ""):
+            continue
+        stmt = node
+        while stmt is not None and not isinstance(stmt, ast.stmt):
+            stmt = parent.get(stmt)
+        siblings = getattr(parent.get(stmt), "body", None)
+        if not (isinstance(siblings, list) and stmt in siblings):
+            continue
+        i = siblings.index(stmt)
+        if _always_raises(siblings[i + 1:]):
+            continue                       # 打印后必然抛出 —— §2.2 不动
+        bad.append(f"{rel}:{stmt.lineno}")
+    return bad
+
+
+def _scan_files():
+    for root in _SCAN_ROOTS:
+        p = _REPO / root
+        if p.is_file():
+            yield p
+        else:
+            yield from sorted(
+                q for q in p.rglob("*.py") if "__pycache__" not in q.parts
+            )
+
+
+def test_no_print_swallowed_failures_left_in_production_code():
+    """`postgres_store.py` / `web` / `core` 里没有「打印后吞掉」的失败，结果为 0。"""
+    found = [site for p in _scan_files() for site in _print_swallows_in(p)]
+    assert found == [], (
+        "这些地方的失败只落在容器 stdout 里，面板与告警都看不见 —— "
+        f"改用 nonfatal 或模块 logger：{found}"
+    )
+
