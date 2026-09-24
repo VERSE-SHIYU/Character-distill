@@ -15,6 +15,7 @@ from core.clock import (
     DEFAULT_TZ,
     UserClock,
     describe_time_period,
+    is_valid_timezone,
     set_current_timezone,
 )
 from core.schema import CharacterCard
@@ -104,6 +105,28 @@ class TestRequestTimezoneContext:
         set_current_timezone("Mars/Base")
         assert UserClock.now().tzinfo == ZoneInfo(DEFAULT_TZ), (
             "非法时区名没有回退")
+
+
+# ── A3. is_valid_timezone ────────────────────────────────────────────────────
+
+
+class TestIsValidTimezone:
+    """入口拿它把「请求头 / 库里的名字能不能解析」判一次 —— 判不过就当没有。
+
+    与 `_safe_zone` 的区别是**问法**：`_safe_zone` 问「用哪个时区」（必有答案，兜底
+    DEFAULT_TZ），这里问「这个名字算不算数」（有真假）。入口要的是后者：写库前得先知道
+    该不该写。
+    """
+
+    def test_accepts_iana_name(self):
+        assert is_valid_timezone("Australia/Sydney") is True
+
+    def test_rejects_empty(self):
+        assert is_valid_timezone("") is False
+        assert is_valid_timezone(None) is False
+
+    def test_rejects_garbage(self):
+        assert is_valid_timezone("Mars/Base") is False
 
 
 # ── B. describe_time_period ──────────────────────────────────────────────────

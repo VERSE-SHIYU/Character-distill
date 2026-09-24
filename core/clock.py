@@ -26,6 +26,22 @@ def _safe_zone(tz: str | None) -> ZoneInfo:
         return ZoneInfo(DEFAULT_TZ)
 
 
+def is_valid_timezone(tz: str | None) -> bool:
+    """`tz` 是不是一个能被解析的 IANA 时区名（空串 / 非法名都算否）。
+
+    与 `_safe_zone` 问的不是同一件事：那个问「用哪个时区」（必有答案，兜底 DEFAULT_TZ），
+    这个问「这个名字算不算数」（有真假）。请求入口要的是后者 —— 头里是个垃圾值时
+    既不能用它，更不能把它写进用户资料。
+    """
+    if not tz:
+        return False
+    try:
+        ZoneInfo(tz)
+        return True
+    except Exception:
+        return False
+
+
 class UserClock:
     """面向用户/角色感知的现实时间唯一抽象来源。业务层只用本类，禁止裸 datetime.now()。"""
 

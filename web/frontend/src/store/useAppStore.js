@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { postJSON, streamSSE, fetchWithTimeout, getToken, setToken, removeToken, setRefreshToken, removeAuth } from '../api/client'
+import { postJSON, streamSSE, fetchWithTimeout, getToken, setToken, removeToken, setRefreshToken, removeAuth, clientTz } from '../api/client'
 import { parseCardJson } from '../utils/card'
 import { resolveOpeningMessages } from './openingMessage'
 import { TERMS_VERSION, PRIVACY_VERSION } from '../legal/versions'
@@ -7,11 +7,6 @@ import { checkRepeat } from '../utils/repeatGuard'
 import { applyFlushReport, withSaveResult } from '../utils/withSaveResult'
 import { FALLBACK } from '../config/navigation'
 import { scoped, bumpScope } from './scope'
-
-const clientTz = () => {
-  try { return Intl.DateTimeFormat().resolvedOptions().timeZone }
-  catch { return '' }
-}
 
 let _cidSeq = 0
 const withCid = (msg) => ({ ...msg, _cid: msg._cid ?? `m${++_cidSeq}` })

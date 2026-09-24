@@ -39,6 +39,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from limiter import get_client_ip, limiter
+from core.clock import is_valid_timezone, set_current_timezone
 from core.request_context import Caller, LLM_CALLER
 
 from security import SecurityHeadersMiddleware
@@ -288,7 +289,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "Time-Zone"],
 )
 
 # ---- Auth middleware ----
@@ -316,6 +317,24 @@ def _maybe_update_last_active(user_id: str) -> None:
     _last_active_ticks[user_id] = now
     import asyncio
     asyncio.ensure_future(get_storage().update_last_active(user_id))
+
+
+def _valid_tz(tz: object) -> str:
+    """头 / 库里的时区值：能被 `ZoneInfo` 解析才算数，否则当没有（空串）。
+
+    头里可能是伪造或旧客户端写的垃圾，库里可能是手改脏数据 —— 两处都得判一次，
+    不能拿「反正 `UserClock` 会兜底」当理由：兜底的是**用**，写库还得先判该不该写。
+    """
+    return tz if isinstance(tz, str) and is_valid_timezone(tz) else ""
+
+
+def _maybe_update_timezone(user_id: str, tz: str) -> None:
+    """把这次请求头里的时区落库 —— 与 `_maybe_update_last_active` 同一形态的顺手更新。
+
+    不需要节流表：写一次之后库值就等于头值了，下一次请求的 `header_tz != stored_tz`
+    自然不成立。只有用户真换了时区才会再写一次。
+    """
+    asyncio.ensure_future(get_storage().update_user_timezone(user_id, tz))
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -382,6 +401,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.identity_optional = public
         # 身份只设这一处：门的策略（geo）与记账的归属读的都是它（缺陷 35）
         LLM_CALLER.set(Caller(ip=get_client_ip(request), user_id=user_id))
+        # 时区也在这里**统一确定**（缺陷 96）：可解析的 `Time-Zone` 头 → 用户已存时区 →
+        # 不设（`UserClock` 回退 DEFAULT_TZ）。业务侧从此只认 `UserClock`，不再各处传时区。
+        # 无条件设一次而不是「有值才设」：contextvar 不设就可能留下上一个请求的值。
+        header_tz = _valid_tz(request.headers.get("Time-Zone"))
+        stored_tz = _valid_tz(user.get("timezone")) if user else ""
+        if header_tz and not public and user_id and header_tz != stored_tz:
+            _maybe_update_timezone(user_id, header_tz)
+        set_current_timezone(header_tz or stored_tz)
         return await call_next(request)
 
 
