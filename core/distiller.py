@@ -659,11 +659,11 @@ class Distiller:
         prompt_chars = self._prompt_chars(system_prompt, messages)
         parts: list[str] = []
         usage: dict | None = None
-        stream = self._llm.chat_stream_long(
-            system_prompt, messages,
-            max_tokens=self.CARD_MAX_TOKENS if max_tokens is None else max_tokens,
-        )
         try:
+            stream = self._llm.chat_stream_long(
+                system_prompt, messages,
+                max_tokens=self.CARD_MAX_TOKENS if max_tokens is None else max_tokens,
+            )
             while True:
                 try:
                     parts.append(next(stream))
