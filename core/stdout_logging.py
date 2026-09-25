@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Callable
 
 
 class _StdoutHandler(logging.StreamHandler):
@@ -41,11 +42,18 @@ _handler.setFormatter(
 )
 
 
-def install_stdout_logging() -> None:
-    """把 stdout handler 挂到根日志器上。
+def install_stdout_logging() -> Callable[[], None]:
+    """把 stdout handler 挂到根日志器上；返回撤销。
 
-    幂等由 `logging.Logger.addHandler` 自己保证 —— 它的实现就是
-    ``if not (hdlr in self.handlers)``，且在 ``_acquireLock()`` 之下。本函数不重复
-    这一层：写在外面既冗余，又不是原子的（两个线程可以同时通过守卫）。
+    去重仍由 `logging.Logger.addHandler` 自己保证 —— 它的实现就是
+    ``if not (hdlr in self.handlers)``，且在 ``_acquireLock()`` 之下。
+
+    外面这一次查询**不是为了去重**（那是上面那步的事），是为了知道这次是不是**我们**
+    装上的：不是我们装的就不能由我们撤掉，否则关停会把别人的 handler 摘了。
     """
-    logging.getLogger().addHandler(_handler)
+    root = logging.getLogger()
+    already = _handler in root.handlers
+    root.addHandler(_handler)
+    if already:
+        return lambda: None
+    return lambda: root.removeHandler(_handler)

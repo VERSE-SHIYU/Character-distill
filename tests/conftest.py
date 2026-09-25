@@ -112,29 +112,6 @@ def _jwt_secret_for_tests(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
 
 
-@pytest.fixture
-def restore_app_lifespan_globals():
-    """还原生产 app 的 lifespan 装上的**进程级全局**。
-
-    `with TestClient(server.app)` 会真跑 lifespan，它注册 LLM 守卫（`set_call_guard`）
-    与主 loop 投递器（`set_main_loop`，见 `web/server.py` 的 `_lifespan`）。两者都是进程
-    级全局、退出时不注销，投递器还指着**已经关掉的 loop** —— 同会话后面任何直接调适配器
-    出站的用例会凭空被门管住，在**自己那条断言之前**就报 `LLMCallerMissing`。症状只在
-    跨文件跑时出现（单文件绿），最难查的那种。
-
-    用生产 app 跑 lifespan 的用例都该声明它。`tests/test_llm_access_gate.py` 里那处没
-    改用它 —— 那条自带 `_snapshot` 并**顺带断言**启动后的守卫身份，是它判据的一半。
-    """
-    from adapters import llm_adapter
-    from core import scheduling
-
-    guard = llm_adapter.get_call_guard()
-    submitter = scheduling.get_loop_submitter()
-    yield
-    llm_adapter.set_call_guard(guard)
-    scheduling.set_loop_submitter(submitter)
-
-
 class EnvironmentRequirement:
     """一条「本用例需要某个外部环境」的声明，把三件事绑在同一处：
 
@@ -260,10 +237,12 @@ def pg_skip_reason(what: str) -> str:
 # 实测到的形态（缺陷 113）：`test_C9` 经 `_lifespan` 装上投递实现却不还原，注册留在了
 # 后面 —— 同会话里之后任何走 `submit_to_main_loop` 的用例都把协程投到**已经关掉**的
 # loop 上；`chat_engine` 的宽 `except` 把异常吞掉，只在别人的用例头上飘一句
-# `coroutine ... was never awaited`（最难查的那种串味）。
+# `coroutine ... was never awaited`（最难查的那种串味）。测试 app 的 lifespan 因此需要
+# 一个夹具来替它收尾。
 #
-# 于是「装过就要还」只有这一处实现，两种用法共用：
-#   * 包住生产装配：``async with registered_globals(): async with server._lifespan(app)``
+# 生产那边的「装过就要还」**不在这里**：`_lifespan` 从缺陷 113 之后自己撤销每一项
+# （见 `install_*` / `set_main_loop` 返回的撤销函数）。夹具要是也去兜生产 lifespan，
+# 那条回归锁就被架空了 —— 撤不撤销都绿。所以下面这份只剩**一种**用法：
 #   * 作测试 app 的 lifespan，在其中 ``deps.set_main_loop(当前运行 loop)``
 @contextlib.asynccontextmanager
 async def registered_globals():

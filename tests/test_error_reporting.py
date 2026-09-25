@@ -157,18 +157,17 @@ async def _boom(payload: _ProbeBody) -> None:
     raise RuntimeError(EXC_MARKER)
 
 
-def test_uncaught_route_error_reports_once_without_request_body(
-    recorder, monkeypatch, restore_app_lifespan_globals
-):
+def test_uncaught_route_error_reports_once_without_request_body(recorder, monkeypatch):
     """未捕获的路由异常 → 一条事件，且事件里没有请求正文。
 
     判据落在「带这个异常标记的事件恰好一条」上：装了 `[fastapi]` extra 或放开自动集成
     时，Starlette 集成会对同一个异常再报一条，两条都带这个标记 —— 单看总数会与启动期
     的其它事件混在一起，看不出重复。
 
-    `restore_app_lifespan_globals` 是必需的：本文件按字母序排在 `test_llm_access_gate.py`
-    **之前**，lifespan 装上的守卫会留在进程里，把那个文件里直接调适配器出站的用例在
-    自己那条断言之前就打红成 `LLMCallerMissing`（见 `tests/conftest.py`）。
+    不需要额外夹具收拾进程级全局：`with TestClient(server.app)` 退出后 lifespan 自己
+    撤销守卫与投递器（缺陷 113 的修法，见 `web/server.py::_lifespan`）。本文件按字母序
+    排在 `test_llm_access_gate.py` **之前**，撤不干净就会把那个文件里直接调适配器出站
+    的用例在**自己那条断言之前**打红成 `LLMCallerMissing`。
     """
     monkeypatch.setenv("SENTRY_DSN", DSN)
 

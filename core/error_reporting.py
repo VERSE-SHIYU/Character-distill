@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 
 from core.node import node_region
 
@@ -43,15 +44,20 @@ def _scrub_request(event: dict, hint: dict) -> dict:
     return event
 
 
-def init_error_reporting() -> None:
-    """按 `SENTRY_DSN` 起不起上报。**在 lifespan 首行调用。**
+def init_error_reporting() -> Callable[[], None]:
+    """按 `SENTRY_DSN` 起不起上报；返回撤销（flush 后关闭 client）。**在 lifespan 首行调用。**
 
     放首位不是因为它有什么前置依赖（它不发 LLM 调用），而是为了收到**启动期自身**
     抛出的错 —— 排后面的装配项一旦在启动时炸，这条出口还没接上。
+
+    DSN 为空时返回空操作：那时连 SDK 都没 import，没有东西可撤。
+
+    撤销排在**最后**执行（最先注册、逆序撤销）：关停动作与其它装配项的撤销都在它之前，
+    它们在关停途中产生的 ERROR 仍能被报出去。
     """
     dsn = os.environ.get(SENTRY_DSN_ENV, "").strip()
     if not dsn:
-        return
+        return lambda: None
 
     import sentry_sdk
 
@@ -70,3 +76,9 @@ def init_error_reporting() -> None:
         include_local_variables=False,
     )
     sentry_sdk.set_tag("region", node_region())
+
+    def _undo() -> None:
+        sentry_sdk.flush()
+        sentry_sdk.get_client().close()
+
+    return _undo

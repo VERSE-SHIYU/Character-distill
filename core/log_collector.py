@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections import deque
+from collections.abc import Callable
 from typing import Any
 
 
@@ -37,14 +38,21 @@ _handler = RingBufferHandler(capacity=500)
 _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S"))
 
 
-def install_log_collector() -> None:
-    """Attach the ring buffer handler to the root logger.
+def install_log_collector() -> Callable[[], None]:
+    """Attach the ring buffer handler to the root logger; return its undo.
 
-    幂等由 `logging.Logger.addHandler` 自己保证 —— 它的实现就是
-    ``if not (hdlr in self.handlers)``，且在 ``_acquireLock()`` 之下。本函数不重复
-    这一层：写在外面既冗余，又不是原子的（两个线程可以同时通过守卫）。
+    去重仍由 `logging.Logger.addHandler` 自己保证 —— 它的实现就是
+    ``if not (hdlr in self.handlers)``，且在 ``_acquireLock()`` 之下。
+
+    外面这一次查询**不是为了去重**（那是上面那步的事），是为了知道这次是不是**我们**
+    装上的：不是我们装的就不能由我们撤掉，否则关停会把别人的 handler 摘了。
     """
-    logging.getLogger().addHandler(_handler)
+    root = logging.getLogger()
+    already = _handler in root.handlers
+    root.addHandler(_handler)
+    if already:
+        return lambda: None
+    return lambda: root.removeHandler(_handler)
 
 
 def get_recent_logs(limit: int = 100) -> list[dict[str, Any]]:

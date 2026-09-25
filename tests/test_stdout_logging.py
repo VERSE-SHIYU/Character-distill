@@ -94,7 +94,7 @@ def test_below_warning_is_not_written(capsys):
     assert "stdout-probe-info" not in out, f"INFO 不该进 stdout：{out!r}"
 
 
-def test_the_lifespan_routes_error_to_stdout(capsys, restore_app_lifespan_globals):
+def test_the_lifespan_routes_error_to_stdout(capsys):
     """装配处（lifespan）负责装它 —— 走真 app 的启动流程，不直接调装配函数。
 
     判据落在「启动之后 ERROR 出现在 stdout」上，而不是「根日志器上多了某个对象」：
@@ -104,8 +104,8 @@ def test_the_lifespan_routes_error_to_stdout(capsys, restore_app_lifespan_global
     lifespan 早就装过一个了 —— 不剔的话，把 lifespan 里的装配调用删掉这条照样绿，
     「装配处负责装」就无从判起。
 
-    `restore_app_lifespan_globals` 还原本 lifespan 装上的守卫与投递器
-    （见 `tests/conftest.py`）—— 那是进程级全局，留着会串味到后面直接调适配器的用例。
+    lifespan 装上的守卫与投递器由它退出时自己撤销（缺陷 113 的修法，见
+    `web/server.py::_lifespan`），不需要夹具兜。
     """
     from fastapi.testclient import TestClient
 

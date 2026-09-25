@@ -33,7 +33,7 @@ from routers.distill import router as distill_router
 from routers.group import router as group_router
 from routers.history import router as history_router
 from storage.sqlite_store import SQLiteStore
-from conftest import open_test_client, registered_globals, app_lifespan
+from conftest import open_test_client, app_lifespan
 
 
 # ── 夹具 ──────────────────────────────────────────────────────────────────────
@@ -634,12 +634,15 @@ def test_C8b_idle_cleanup_keeps_a_session_whose_messages_have_not_landed(
 def test_C9_shutdown_backfills_the_queues(flaky, owner, monkeypatch):
     """关停时补写（在取消清理循环之后）—— 队列在内存里，进程一走就没了。
 
-    同时是缺陷 113 的复现：`_lifespan` 装上进程级注册却不还原，注册就留在了后面。
-    注册是同一个函数对象（`deps._submit_to_main_loop`），所以「还回没还回」分辨不出，
-    真正的差别是它指向哪个 loop —— 留在后面的是 `_run(_drive())` 里那个**已经关掉**
-    的 loop：之后任何走 `submit_to_main_loop` 的用例都把协程投到死 loop 上，
+    同时是缺陷 113 的回归锁：`_lifespan` 装上进程级注册**并自己还原**。注册是同一个
+    函数对象（`deps._submit_to_main_loop`），所以「还回没还回」分辨不出，真正的差别
+    是它指向哪个 loop —— 不还的话留在后面的是 `_run(_drive())` 里那个**已经关掉**的
+    loop：之后任何走 `submit_to_main_loop` 的用例都把协程投到死 loop 上，
     `chat_engine` 的宽 `except` 把异常吞掉，只在**别的**用例头上飘一句
     `coroutine ... was never awaited`。
+
+    这里**不**用 `registered_globals()` 兜着（那是给测试 app 的 lifespan 用的）：还原
+    该由生产 lifespan 自己做，夹具替它兜就把这条锁架空了 —— 撤不撤销都绿。
     """
     import server as server_mod
 
@@ -660,8 +663,10 @@ def test_C9_shutdown_backfills_the_queues(flaky, owner, monkeypatch):
     monkeypatch.setattr(server_mod, "validate_fernet_key", lambda: None)
     monkeypatch.setattr(server_mod, "validate_jwt_secret", lambda: None)
     monkeypatch.setattr(server_mod, "validate_inter_node_secret", lambda: None)
-    monkeypatch.setattr(server_mod, "install_llm_gate", lambda app: None)
-    monkeypatch.setattr(server_mod, "install_alert_handler", lambda: None)
+    # 两个都返回空撤销：装配本体现在把返回值交给 ExitStack 当撤销用，返回 `None`
+    # 会在关停时炸成 `'NoneType' object is not callable`。
+    monkeypatch.setattr(server_mod, "install_llm_gate", lambda app: (lambda: None))
+    monkeypatch.setattr(server_mod, "install_alert_handler", lambda: (lambda: None))
 
     class _App:
         state = type("S", (), {"limiter": limiter})()
@@ -669,9 +674,8 @@ def test_C9_shutdown_backfills_the_queues(flaky, owner, monkeypatch):
     before = _registrations()
 
     async def _drive():
-        async with registered_globals():
-            async with server_mod._lifespan(_App()):
-                pass
+        async with server_mod._lifespan(_App()):
+            pass
 
     _run(_drive())
 
