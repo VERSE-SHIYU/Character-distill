@@ -79,6 +79,7 @@ from core.log_collector import install_log_collector
 from core.stdout_logging import install_stdout_logging
 from core.alerting import install_alert_handler
 from core.error_reporting import init_error_reporting
+from web.client_config import router as client_config_router
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +321,7 @@ import time
 #: 语义不是「这里没有身份」——那会让带凭据的请求在这里被当成匿名，`/api/market/*` 的
 #: 写路由与 `request.state.user` 的读者都会拿到空身份。带有效凭据时身份就是真的；
 #: 没带、过期、无效，才退化成空身份放行。
-PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/send-code", "/api/auth/reset-password", "/api/health", "/api/health/ready", "/api/announcement/active"}
+PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/send-code", "/api/auth/reset-password", "/api/health", "/api/health/ready", "/api/announcement/active", "/api/client-config"}
 PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login", "/api/market/", "/api/inter-node/")
 
 # Throttle last_active updates to once per 60s per user
@@ -463,6 +464,12 @@ async def public_active_announcement(
 
 
 app.include_router(_announce_router)
+
+
+# ---- Public: client config router ----
+# 与 announce 同类：前端**登录前**就要读（`main.jsx` 起来第一件事就是取它），故登记进
+# `PUBLIC_PATHS`。装配与内容都在 `web/client_config.py`。
+app.include_router(client_config_router)
 
 
 @app.get("/api/health")
