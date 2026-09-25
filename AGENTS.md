@@ -1753,7 +1753,7 @@ PROBE_IMAGE         false
 
 > 与「缺陷」分开记账：**缺陷 = 有东西坏了**（有正确行为可对照）；**立项 = 有东西从来没建**（没有可对照的现状，做它就是加功能）。混在一起会让缺陷清单虚高、也让「还有几个真缺陷待修」失真。三、里的编号 10 只留占位，指向本节。
 
-**A. post / card 评论点赞特性整体缺失**（原缺陷 10，2026-09-12 重记并移出）
+**A. post / card 评论点赞特性整体缺失 → 已补（2026-09-25）**（原缺陷 10，2026-09-12 重记并移出）
 - **原记账被证伪**：原条目称「同类端点 `text.py` 的 `get_text_comments` 标了 `liked_by_me`、`list_post_comments` 没标，按 `text.py` 的写法对齐即可」。实读后前提不成立 —— 照做只会写死一个恒 `False` 的**假默认值**（本仓明令禁止，见 §四）
 - 证据（2026-09-12 现跑现查）：
   - **无表**：全仓没有 `post_comment_likes` / 卡评论点赞表；`_likes` 家族只有 `text_comment_likes`（`storage/migrations/031_text_comments.sql` 及 PG 等价物）与 `post_likes`（点赞**帖子**本身，`web/routers/market.py` 的 `like_post` → `toggle_post_like`）
@@ -1761,7 +1761,10 @@ PROBE_IMAGE         false
   - **无原语**：`storage/sqlite_store.py` 的 `get_liked_comment_ids` **硬编码** `text_comment_likes`（PG 侧同），拿 post 评论 id 去查恒返空集
   - **无消费**：前端 `web/frontend/src/components/common/PostCard.jsx` 渲染 post 评论（头像 / 用户名 / IP 属地 / 时间 / 正文）**没有点赞按钮**，从不读该字段；`post.liked_by_me` 是**帖子**的赞，不是评论的
 - 即：真缺口是**「post / card 评论点赞」这个特性从来不存在**，不是「某端点漏标一个字段」。对齐写法 ≠ 修 bug，是**加功能**（建表 + 双方言 migration + toggle 路由 + `get_liked_post_comment_ids` 原语 + 前端按钮），且要新增一张表
-- 处置裁定（用户，2026-09-12）：**不做**。`list_post_comments` 保持现状 —— 不返回该字段，比返回一个恒 `False` 更有信息量
+- 处置裁定（用户，2026-09-12）：**不做**。`list_post_comments` 保持现状 —— 不返回该字段，比返回一个恒 `False` 更有信息量（**2026-09-25 用户改判为「已做」，见下**）
+- **收口（用户，2026-09-25）：已做** —— 按「新功能」走完整流程（spec `docs/specs/spec-comment-likes.md`），四个 commit 依次落地：`00afba5` 迁移 → `43651dc` 共用存储函数 → `23b01af` 路由 → `97b3cd6` 前端按钮。
+- **新表 / 新列**：`post_comment_likes`、`card_comment_likes`（主键 `(comment_id, user_id)`；`comment_id` 外键 + `ON DELETE CASCADE`，`user_id` 不加外键 —— 删用户不删评论，带了级联会让「评论还在、赞没了、计数没减」漂掉）；`post_comments` / `card_comments` 各加 `likes INTEGER NOT NULL DEFAULT 0`。PG `029_comment_likes.sql` + SQLite 孪生 `096_comment_likes.sql`（编号按合并时 main 的最大号；2026-09-25 合并前复核 main 仍停在 PG `028` / SQLite `095`，故不变）。
+- **判据（区别于「对齐写法」）**：三处列表的 `liked_by_me` 由真表查询得出，`get_liked_comment_ids(kind, …)` 按评论类型选表 —— 写死一张表或写死 `False` 都会让 `tests/test_comment_likes.py` 的列表用例变红；游客侧是「不显示按钮」而非「返回假 `False`」。
 - 注：它仍留在第 9 条的扫描名单里（读 user 与否在该端点曾表现为「功能与否」而非「越权与否」），该扫描不受本条影响
 - 立项与否 = **产品决策**，不是待办欠账；将来要做，按「新功能」走完整流程，不挂在缺陷表下
 

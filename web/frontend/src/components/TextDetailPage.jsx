@@ -8,7 +8,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
-import { Heart } from './common/Icon'
+import CommentLikeButton from './common/CommentLikeButton'
 import { formatRelativeTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
 
@@ -146,6 +146,11 @@ export default function TextDetailPage() {
         method: 'POST',
         headers: { ...getAuthHeaders() },
       })
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}))
+        setError(detail.detail || '点赞失败')
+        return
+      }
       const data = await res.json()
       // Update both top-level and replies
       const update = (items) =>
@@ -345,14 +350,11 @@ function CommentItem({
           </p>
           {canWrite && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
-              <button
-                type="button"
-                className="btn-ghost"
-                style={{ padding: '2px 6px', fontSize: 12, color: comment.liked_by_me ? 'var(--danger)' : 'var(--text-dim)' }}
+              <CommentLikeButton
+                liked={comment.liked_by_me}
+                count={comment.likes}
                 onClick={() => onLike(comment.id)}
-              >
-                {comment.liked_by_me ? <Heart size={12} fill="currentColor" /> : <Heart size={12} />} {comment.likes || 0}
-              </button>
+              />
               <button
                 type="button"
                 className="btn-ghost"
@@ -420,14 +422,11 @@ function CommentItem({
                   </p>
                   {canWrite && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        style={{ padding: '1px 4px', fontSize: 12, color: reply.liked_by_me ? 'var(--danger)' : 'var(--text-dim)' }}
+                      <CommentLikeButton
+                        liked={reply.liked_by_me}
+                        count={reply.likes}
                         onClick={() => onLike(reply.id)}
-                      >
-                        {reply.liked_by_me ? <Heart size={12} fill="currentColor" /> : <Heart size={12} />} {reply.likes || 0}
-                      </button>
+                      />
                       {authUser?.id === reply.user_id && (
                         <button
                           type="button"

@@ -32,6 +32,17 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 )
 """
 
+# ── 评论点赞：`kind` → （评论表，点赞表）─────────────────────────────────────
+#
+# 三种评论共用一套切换代码，表名只在这里出现一次。**不给未知类型兜底**：`kind` 是代码里
+# 的字面量，写错就是写错了，静默回退到另一张表会让「帖子评论的赞记到文本评论上」这种错
+# 以「好像没坏」的样子活下去。
+_COMMENT_LIKE_TABLES = {
+    "text": ("text_comments", "text_comment_likes"),
+    "post": ("post_comments", "post_comment_likes"),
+    "card": ("card_comments", "card_comment_likes"),
+}
+
 # ── 「X 是草稿 D 的发布副本」的唯一权威定义 ─────────────────────────────────
 #
 #     关系：    X.published_from = D.id AND X.deleted_at IS NULL
@@ -3606,7 +3617,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    "SELECT c.id, c.user_id, c.username, c.content, c.created_at, "
+                    "SELECT c.id, c.user_id, c.username, c.content, c.likes, c.created_at, "
                     "COALESCE(u.avatar_data, '') AS avatar_data, "
                     "COALESCE(c.is_ai_reply, 0) AS is_ai_reply, "
                     "COALESCE(c.ai_card_id, '') AS ai_card_id, "
@@ -4155,7 +4166,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    """SELECT pc.id, pc.user_id, pc.username, pc.content, pc.created_at, pc.ip_location,
+                    """SELECT pc.id, pc.user_id, pc.username, pc.content, pc.likes, pc.created_at, pc.ip_location,
                               COALESCE(u.avatar_data, '') AS avatar_data
                        FROM post_comments pc JOIN user_posts p ON p.id = pc.post_id
                        LEFT JOIN users u ON pc.user_id = u.id
@@ -4275,41 +4286,47 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Add text comment failed: {exc}")
             raise
 
-    async def toggle_text_comment_like(self, comment_id: str, user_id: str) -> dict:
-        try:
-            async with await self._connect() as conn:
-                exists = await conn.fetchrow(
-                    "SELECT 1 FROM text_comment_likes WHERE comment_id = $1 AND user_id = $2",
+    async def toggle_comment_like(self, kind: str, comment_id: str, user_id: str) -> dict | None:
+        """Toggle one like on one comment（text / post / card 共用）。评论不存在 → `None`。
+
+        **先 `SELECT … FOR UPDATE` 锁住评论行，再动计数**：同一条评论上的并发点击在这里
+        排成队，「读计数 → 改 → 写回」不会交错出错（写法照 `toggle_post_like`）。
+
+        评论先锁、赞行后查：旧 `toggle_text_comment_like` 只看赞行不看评论，点一条不存在的
+        评论会插进一行孤儿记录并返回 0 —— 这里评论不存在就**一行都不写**，路由据此回 404。
+        """
+        comments, likes = _COMMENT_LIKE_TABLES[kind]
+        async with await self._connect() as conn:
+            async with conn.transaction():
+                locked = await conn.fetchrow(
+                    f"SELECT id FROM {comments} WHERE id = $1 FOR UPDATE", comment_id)
+                if locked is None:
+                    return None
+                liked = await conn.fetchrow(
+                    f"SELECT 1 FROM {likes} WHERE comment_id = $1 AND user_id = $2",
                     comment_id, user_id,
-                )
-                if exists:
+                ) is not None
+                if liked:
                     await conn.execute(
-                        "DELETE FROM text_comment_likes WHERE comment_id = $1 AND user_id = $2",
+                        f"DELETE FROM {likes} WHERE comment_id = $1 AND user_id = $2",
                         comment_id, user_id,
                     )
                     await conn.execute(
-                        "UPDATE text_comments SET likes = likes - 1 WHERE id = $1",
+                        f"UPDATE {comments} SET likes = GREATEST(0, likes - 1) WHERE id = $1",
                         comment_id,
                     )
-                    liked = False
                 else:
                     await conn.execute(
-                        "INSERT INTO text_comment_likes (comment_id, user_id) VALUES ($1, $2)",
+                        f"INSERT INTO {likes} (comment_id, user_id) VALUES ($1, $2)",
                         comment_id, user_id,
                     )
                     await conn.execute(
-                        "UPDATE text_comments SET likes = likes + 1 WHERE id = $1",
+                        f"UPDATE {comments} SET likes = likes + 1 WHERE id = $1",
                         comment_id,
                     )
-                    liked = True
                 count_row = await conn.fetchrow(
-                    "SELECT likes FROM text_comments WHERE id = $1",
-                    comment_id,
-                )
-            return {"liked": liked, "likes": count_row[0] if count_row else 0}
-        except Exception as exc:
-            print(f"[PostgresStore] Toggle text comment like failed: {exc}")
-            raise
+                    f"SELECT likes FROM {comments} WHERE id = $1", comment_id)
+            return {"liked": not liked, "likes": count_row[0] if count_row else 0}
 
     async def delete_text_comment(self, comment_id: str, user_id: str) -> bool:
         try:
@@ -4323,20 +4340,19 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Delete text comment failed: {exc}")
             raise StoreError("delete_text_comment", exc) from exc
 
-    async def get_liked_comment_ids(self, comment_ids: list[str], user_id: str) -> set[str]:
+    async def get_liked_comment_ids(self, kind: str, comment_ids: list[str],
+                                    user_id: str) -> set[str]:
+        """`comment_ids` 里这个用户赞过的那些 —— 点赞表按 `kind` 选。"""
+        _, likes = _COMMENT_LIKE_TABLES[kind]
         if not comment_ids:
             return set()
-        try:
-            placeholders = ",".join(f"${i+1}" for i in range(len(comment_ids)))
-            async with await self._connect() as conn:
-                rows = await conn.fetch(
-                    f"SELECT comment_id FROM text_comment_likes WHERE comment_id IN ({placeholders}) AND user_id = ${len(comment_ids) + 1}",
-                    *comment_ids, user_id,
-                )
-            return {r[0] for r in rows}
-        except Exception as exc:
-            print(f"[PostgresStore] Get liked comment ids failed: {exc}")
-            raise StoreError("get_liked_comment_ids", exc) from exc
+        placeholders = ",".join(f"${i+1}" for i in range(len(comment_ids)))
+        async with await self._connect() as conn:
+            rows = await conn.fetch(
+                f"SELECT comment_id FROM {likes} WHERE comment_id IN ({placeholders}) AND user_id = ${len(comment_ids) + 1}",
+                *comment_ids, user_id,
+            )
+        return {r[0] for r in rows}
 
     # ── Direct Messages ──
 

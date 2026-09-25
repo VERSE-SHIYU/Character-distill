@@ -9,6 +9,7 @@ import useCanWrite from '../hooks/useCanWrite'
 import { Eye, Heart, MessageSquare, Edit, Trash2, Clipboard, Sprout, CornerUpLeft, Book, Flag, Globe, Camera, Share, Sparkles, Clock, Lightbulb, Lock } from './common/Icon'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import CommentLikeButton from './common/CommentLikeButton'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
 import EditCardModal from './EditCardModal'
@@ -283,6 +284,26 @@ export default function MarketCardDetail() {
     try {
       await fetchWithTimeout(`/api/market/${cardId}/comments/${commentId}`, { method: 'DELETE' })
       await loadComments()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleCommentLike = async (commentId) => {
+    try {
+      const res = await fetchWithTimeout(`/api/market/comments/${commentId}/like`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders() },
+      })
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}))
+        setError(detail.detail || '点赞失败')
+        return
+      }
+      const data = await res.json()
+      setComments((prev) =>
+        prev.map((c) => (c.id === commentId ? { ...c, liked_by_me: data.liked, likes: data.likes } : c)),
+      )
     } catch (err) {
       setError(err.message)
     }
@@ -796,16 +817,22 @@ export default function MarketCardDetail() {
                           <span className="market-detail-comment-time">{formatRelativeTime(c.created_at)}</span>
                         </div>
                         <p className="market-detail-comment-text">{c.content}</p>
-                        {canWrite && (
-                          <div className="market-detail-comment-actions">
+                        <div className="market-detail-comment-actions">
+                          <CommentLikeButton
+                            liked={c.liked_by_me}
+                            count={c.likes}
+                            canWrite={canWrite}
+                            onClick={() => handleCommentLike(c.id)}
+                          />
+                          {canWrite && (<>
                             {(card.user_id === authUser?.id || c.user_id === authUser?.id || isAdmin(authUser)) && (
                               <button type="button" className="comment-action-btn danger" onClick={() => setDeleteCommentId(c.id)}>删除</button>
                             )}
                             {c.user_id !== authUser?.id && card.user_id !== authUser?.id && !isAdmin(authUser) && (
                               <button type="button" className="comment-action-btn" onClick={() => { setReportCommentId(c.id); setReportReason(''); setReportError('') }}>举报</button>
                             )}
-                          </div>
-                        )}
+                          </>)}
+                        </div>
                       </div>
                       </>)}
                     </div>
