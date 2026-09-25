@@ -13,7 +13,7 @@ import { Check, Theater, Users, Trash2, ChevronDown, Square, Play, Clock, MoreHo
 import ImageCropModal from './common/ImageCropModal'
 import { formatChatTime } from '../utils/time'
 import { checkRepeat } from '../utils/repeatGuard'
-import { applyFlushReport, withSaveResult } from '../utils/withSaveResult'
+import { applyFlushReport, pendingSaveKeys, withSaveResult } from '../utils/withSaveResult'
 import ChatInputBar from './common/ChatInputBar'
 import ChatBubble from './common/ChatBubble'
 import MessageReactions from './common/MessageReactions'
@@ -755,7 +755,7 @@ export default function GroupChatPage() {
   async function flushGroupMessages() {
     if (!currentGroup) return
     try {
-      const data = await postJSON(`/api/group/${currentGroup.id}/flush`, {})
+      const data = await postJSON(`/api/group/${currentGroup.id}/flush`, { keys: pendingSaveKeys(messages) })
       setMessages(prev => applyFlushReport(prev, data))
     } catch (err) {
       setError(err.message)

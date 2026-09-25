@@ -10,9 +10,17 @@
 #   3. 数据目录挂 tmpfs：容器一停数据即清空，测试之间不留残骸；
 #   4. 用户名/口令写死为一次性测试值，**不读 .env** —— 测试连哪个库不由本机 .env 决定。
 #
+# 顶层 `name:` 是**必须的**，不是美化。compose 的默认项目名取工作目录名，而本仓几份编排
+# 文件共用同一个目录，于是这份文件与 `docker-compose.local.yml` 的默认项目名都是 `cd-role`、
+# 服务名都是 `postgres` —— 容器名同为 `cd-role-postgres-1`。谁后起谁把对方的 postgres 顶掉：
+# 起了本地栈，测试库就没了（反之亦然）。独立项目名让两边可以同时跑。名字以 `-test` 结尾，
+# 与库名 `charsim_test` 的判据（`conftest.is_test_database`）同一个口径。
+#
 # **本文件里没有服务连这个库**（消费者是宿主机上的 pytest 进程），故它登记在
 # `tests/test_pg_gate.py` 的 `_NO_IN_FILE_CONSUMER` 里 —— 那份名单由锁强制与现场对账。
 # ============================================================
+
+name: character-distill-test
 
 services:
   postgres:

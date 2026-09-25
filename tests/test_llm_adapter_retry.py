@@ -13,12 +13,18 @@
      定（决策≈5 / 生成≈45，生成档证明非 deadline 裸奔）；紧 deadline 下被剩余窗夹逼（1.0 而非 30）；
      死亡窗（剩余−margin<min=0.25）由 _RetryBudget 直接判 exhausted，create 调用数不含那次。
 """
+import ast
 import asyncio
+import pathlib
 import time
 from types import SimpleNamespace
 
+import httpx2
 import pytest
+from conftest import cause_chain
 from openai import BadRequestError
+from openai import OpenAI as _REAL_OPENAI
+from openai import Timeout as _OpenAITimeout
 
 import adapters.llm_adapter as M
 from adapters.llm_adapter import LLMAdapter, ToolsNotSupportedError, user_facing_error
@@ -375,6 +381,8 @@ def test_env_timeout_s_default_override_and_floor(monkeypatch):
 def test_timeout_family_defaults_unchanged():
     assert (M._DECISION_DEADLINE_S, M._GEN_DEADLINE_S, M._STREAM_DEADLINE_S) == (6.0, 60.0, 8.0)
     assert (M._DECISION_ATTEMPT_S, M._GEN_ATTEMPT_S, M._STREAM_ATTEMPT_S) == (5.0, 45.0, 7.0)
+    # 长输出的读超时天花板（WP1）：不做 env 出口，故只在默认值这一处钉住。
+    assert M._BATCH_STREAM_READ_S == 300.0
 
 
 def _load_env_probe():
@@ -412,3 +420,93 @@ def test_timeout_family_constants_consume_env(monkeypatch):
     assert probe._STREAM_DEADLINE_S == probe._ATTEMPT_WINDOW_S
     assert probe._DECISION_DEADLINE_S == probe._ATTEMPT_WINDOW_S
     assert probe._GEN_ATTEMPT_S == probe._ATTEMPT_MIN_S
+
+
+# ── WP1 S1：长输出流放宽读超时（真 openai 客户端 + 真 socket）──────────
+# 桩客户端能记下 create() 收到的 timeout 形状（下面第三条），却不会真的在读上超时 ——
+# 「静默 1.0s 之后到底还活不活」只能对真 socket 判（缺陷：生产识别 500 于 7s 读超时）。
+# 本文件的 autouse `_no_real_openai` 把 M.OpenAI 换成了假构造，故这两条先换回真客户端。
+
+_LONG_MSGS = [{"role": "user", "content": "hi"}]
+
+
+def test_long_output_stream_survives_prefill_silence(fake_sse, monkeypatch):
+    """S1：长输出流容忍首字节前的静默（大 prefill 段无数据 ≠ 故障）。"""
+    monkeypatch.setattr(M, "OpenAI", _REAL_OPENAI)
+    monkeypatch.setattr(M, "_STREAM_ATTEMPT_S", 0.5)    # 不真等：只留 0.5s 的读窗
+    monkeypatch.setattr(M, "_STREAM_DEADLINE_S", 1.5)
+    fake_sse.plan.update(silent_ms=1000, tokens=["long-ok"])
+
+    got = list(fake_sse.adapter().chat_stream_long("sys", _LONG_MSGS))
+
+    assert got == ["long-ok"], f"1.0s 静默被当成故障了：{got!r}"
+
+
+def test_chat_stream_still_times_out_on_silence(fake_sse, monkeypatch):
+    """S1 的另一半：聊天流（走短路径 `chat_stream`）逐字维持现状 —— 同样的静默仍按读超时失败。"""
+    monkeypatch.setattr(M, "OpenAI", _REAL_OPENAI)
+    monkeypatch.setattr(M, "_STREAM_ATTEMPT_S", 0.5)
+    monkeypatch.setattr(M, "_STREAM_DEADLINE_S", 1.5)
+    fake_sse.plan.update(silent_ms=1000, tokens=["never"])
+
+    with pytest.raises(Exception) as ei:
+        list(fake_sse.adapter().chat_stream("sys", _LONG_MSGS))
+
+    assert any(isinstance(e, httpx2.ReadTimeout) for e in cause_chain(ei.value)), (
+        f"聊天流的静默必须仍是读超时（不然放宽就没作用在长输出这一侧）："
+        f"{[type(e).__name__ for e in cause_chain(ei.value)]}"
+    )
+
+
+def test_long_output_widens_read_timeout_only():
+    """S1 变异②：放宽只作用于 read；connect / write / pool 仍取本次 attempt 的 ceiling。
+
+    放宽成 `Timeout(_BATCH_STREAM_READ_S)`（整体放大）会让上游不可达时的连接等待从
+    7s 变成 5 分钟 —— 决策/生成两轮的 connect 口径不该被长输出读窗连坐。
+    """
+    llm = _make_llm()
+    fake = _SyncClient(lambda: iter([_StreamChunk("a")]))
+    llm._client = fake
+
+    assert list(llm.chat_stream_long("sys", _LONG_MSGS)) == ["a"]
+
+    t = fake.chat.completions.timeouts[0]
+    assert isinstance(t, _OpenAITimeout), f"长输出必须传分项 Timeout，实际 {t!r}"
+    assert t.read == M._BATCH_STREAM_READ_S == 300.0
+    assert t.connect == pytest.approx(M._STREAM_ATTEMPT_S, abs=0.2), "connect 不得被连坐放大"
+
+    fake2 = _SyncClient(lambda: iter([_StreamChunk("b")]))
+    llm._client = fake2
+    assert list(llm.chat_stream("sys", _LONG_MSGS)) == ["b"]
+    assert isinstance(fake2.chat.completions.timeouts[0], float), (
+        "聊天流必须逐字维持现状（标量超时），否则 default 之外的行为也变了"
+    )
+
+
+# ── WP1.4（路 D）：长输出流只有一个入口 ────────────────────────────────
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+def _llm_call_sites(src: str, rel: str) -> list[tuple[str, int]]:
+    """`self._llm.<name>(...)` 形态的调用点 → [(方法名, 行号)]。"""
+    sites = []
+    for n in ast.walk(ast.parse(src, filename=rel)):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and isinstance(n.func.value, ast.Attribute) and n.func.value.attr == "_llm"):
+            sites.append((n.func.attr, n.lineno))
+    return sites
+
+
+def test_long_output_has_exactly_one_entry():
+    """distiller 侧只许走长输出入口，不得直接调短路径。
+
+    短路径的读超时是本次 attempt 的 ceiling（7s），长输入一 prefill 就假失败；漏一处
+    就是一条会在生产上静默读超时的路，而它从调用点本身看不出来（变异：任一处改回
+    `self._llm.chat_stream(` → 本条红）。入口侧的「放宽只在一个函数里发生」由
+    `test_long_output_widens_read_timeout_only` 逐参数钉住，不在这里重复。
+    """
+    distiller = (_REPO_ROOT / "core/distiller.py").read_text(encoding="utf-8")
+    short = [ln for name, ln in _llm_call_sites(distiller, "core/distiller.py")
+             if name == "chat_stream"]
+    assert not short, f"core/distiller.py 仍有直接调短路径的调用点（漏改）：{short}"

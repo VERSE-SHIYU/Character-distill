@@ -19,6 +19,22 @@ export function withSaveResult(msg, save) {
 }
 
 /**
+ * 当前还没落库的那些消息的幂等键 —— 点「重试」时带回后端去对账。
+ *
+ * 只收 `pending`：`failed` 的那条后端已经放弃了，问也是白问。后端队列在内存里，
+ * 会话被空闲清理逐出后它就空了，而库里可能早就有这条消息（写成功了、只是响应没回到
+ * 前端）—— 带上 key，后端才答得上「它到底存没存」；不带的话那条消息永远停在
+ * 「未保存」。
+ *
+ * 没有未保存的消息时回空数组：空 keys 就是「只补写」，与加对账之前一字不差。
+ */
+export function pendingSaveKeys(messages) {
+  return (messages || [])
+    .filter((m) => m.saveState === 'pending' && m.saveKey)
+    .map((m) => m.saveKey)
+}
+
+/**
  * 把一次补写的读数落到消息列表上 —— 一对一与群聊共用这一份。
  *
  * 读数形状：`{flushed: [{key, id}], dropped: [key]}`。补上的按 key 填回真 id 并清掉

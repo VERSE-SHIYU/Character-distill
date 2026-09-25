@@ -19,7 +19,9 @@ from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
 from core.affinity_service import read_persisted_affinity, resolve_session_affinity
-from core.message_outbox import FlushReport, SaveState, save_field, terminal_frame
+from core.message_outbox import (
+    FlushReport, FlushRequest, SaveState, save_field, terminal_frame,
+)
 from core.nonfatal import nonfatal
 from core.schema import evidence_snapshots, evidence_to_json
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
@@ -691,13 +693,13 @@ async def revoke_messages(
     user_id = user["id"]
     session = await _ensure_session(req.session_id, storage, sessions, user_id)
 
-    # 撤回 = 这段历史整个不要了：队里还没落库的那几条也得摘掉。不清队的话补写会把它们
-    # 又写回来，用户看到的是「撤回之后它自己又冒出来了」。**先清队再删库** —— 顺序反过来
-    # 时，两步之间插进来的补写，正好就是删完之后又出现的那条。
-    session["outbox"].clear()
-
-    # Delete from SQLite first
-    count = await storage.delete_messages_after(req.session_id, req.message_id)
+    # 撤回 = 这段历史整个不要了：队里还没落库的那几条也得摘掉，否则补写会把它们又写回来，
+    # 用户看到的是「撤回之后它自己又冒出来了」。**删库成功之后才清队，且两步同持队列锁** ——
+    # 反过来（先清队再删库）或不持锁，删库那段 `await` 里插进来的补写就会把正在被撤回的
+    # 消息写进库，而且是在删完之后写的，于是留在库里。
+    count = await session["outbox"].clear_after(
+        lambda: storage.delete_messages_after(req.session_id, req.message_id)
+    )
 
     # Rebuild in-memory engine.history from remaining DB rows
     try:
@@ -716,6 +718,7 @@ async def revoke_messages(
 async def flush_session_messages(
     session_id: str,
     request: Request,
+    req: FlushRequest = FlushRequest(),
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
@@ -724,10 +727,17 @@ async def flush_session_messages(
 
     属主校验走 `_ensure_session`（与 `/send` 同一处）：非属主与不存在的会话同判 404，
     不给存在性枚举留信道。响应体与 done 帧同形（`flushed` / `dropped`）。
+
+    带 `keys` 时顺带回库对账（`outbox.reconcile`）：会话被空闲清理逐出后队列是空的，
+    而库里可能早就有那条消息 —— 只补写答不上来「它到底存没存」。`keys` 为空时对账在
+    `reconcile` 里退化成不查库，与只补写一字不差，所以这里不另开分支。
     """
     session = await _ensure_session(session_id, storage, sessions, user["id"])
     outbox = session["outbox"]
-    return (await outbox.flush(ping=storage.ping)).as_json()
+    return (await outbox.reconcile(
+        req.keys, scope=session_id, ping=storage.ping,
+        lookup=lambda keys: storage.find_message_ids_by_client_keys(session_id, keys),
+    )).as_json()
 
 
 @router.get("/affinity/{session_id}", response_model=None)

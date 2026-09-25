@@ -2,9 +2,13 @@
 
 import contextlib
 import functools
+import json
 import os
 import sys
 import tempfile
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -331,3 +335,134 @@ def _test_clients_run_their_lifespan():
     """
     yield
     _OPEN_TEST_CLIENTS.close()
+
+
+# ── 假 SSE 上游（真 socket）：墙钟 / 断连类用例共用 ────────────────────────────
+#
+# 「读超时放宽了没有」「流中断被归成哪一类」只能对真 socket 判：桩客户端能记下
+# create() 收到的 timeout，却不会真的在读上超时，也不会真的中途断连 —— 那两条都发生在
+# 传输层（openai 的字节迭代段没有任何 except，`httpx2` 的错原样上抛）。
+#
+# 与 `tests/perf/mock_llm_server.py` 的分工：那个是压测 rig（CFG 在 import 时读 env、
+# 由 perf 脚本以子进程拉起、5 个调用方），既不是 fixture，也表达不了「吐一片后断开」——
+# 它的断连造在任何字节之前；而 HTTP/1.0 无 Content-Length 的响应在中途断开会以 EOF
+# 干净收尾（实测），客户端读不到错。本文件里这份专供 pytest，那个文件不动。
+
+
+class _FakeSSEServer(ThreadingHTTPServer):
+    plan: dict
+    calls: int
+
+    def handle_error(self, request, client_address):
+        """吞掉 handler 线程里的异常。
+
+        用例故意触发读超时 / 断连之后，服务端仍会往一个已经走掉的连接写字节 ——
+        那是**预期**的，默认实现会把 traceback 打到 stderr，把真失败淹掉。
+        """
+
+
+class _FakeSSEHandler(BaseHTTPRequestHandler):
+    """一次 POST 回一帧 SSE：按 `server.plan` 决定静默多久、吐几片、要不要断。"""
+
+    protocol_version = "HTTP/1.0"      # 正常收尾靠连接关闭（body 以 EOF 结束）
+    _DISCONNECT_PROMISE = "1000000"    # 承诺远大于实发：中途 close 才是**可辨**的协议错
+
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        plan = self.server.plan
+        self.server.calls += 1
+        n = int(self.headers.get("Content-Length", 0))
+        if n:
+            self.rfile.read(n)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        if plan["disconnect_after"] is not None:
+            self.send_header("Content-Length", self._DISCONNECT_PROMISE)
+        self.end_headers()
+
+        time.sleep(plan["silent_ms"] / 1000.0)   # 首字节前的静默：模拟 prefill / 排队
+
+        base = {"id": "fake-sse", "object": "chat.completion.chunk", "created": 0,
+                "model": "fake-model"}
+        tokens = plan["tokens"]
+        for i, tok in enumerate(tokens):
+            last = i == len(tokens) - 1
+            self._sse({**base, "choices": [
+                {"index": 0, "delta": {"content": tok},
+                 "finish_reason": "stop" if last else None}]})
+            if plan["disconnect_after"] == i + 1:
+                self.connection.close()
+                return
+        if plan["usage"]:
+            self._sse({**base, "choices": [], "usage": {
+                "prompt_tokens": 1, "completion_tokens": len(tokens),
+                "total_tokens": len(tokens) + 1}})
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+
+    def _sse(self, obj: dict) -> None:
+        self.wfile.write(("data: " + json.dumps(obj, ensure_ascii=False) + "\n\n").encode("utf-8"))
+        self.wfile.flush()
+
+
+class FakeSSE:
+    """进程内假上游。用例先改 `plan` 再发请求（一个实例服务一个用例，无需并发防护）。
+
+    plan：
+      silent_ms        回 200 头之后、吐第一个 token 之前的静默时长（模拟 prefill）
+      tokens           逐 token 内容；每片一个 SSE content chunk，末片带 finish_reason=stop
+      disconnect_after 吐完第 N 片后断开连接（None = 正常收尾）
+      usage            末尾是否补一个 usage 尾块（不补则 adapter 走字符估算并打一行提示）
+    """
+
+    def __init__(self) -> None:
+        self.plan = {"silent_ms": 0, "tokens": ["mock-tok"], "disconnect_after": None,
+                     "usage": True}
+        self._srv = _FakeSSEServer(("127.0.0.1", 0), _FakeSSEHandler)
+        self._srv.plan = self.plan
+        self._srv.calls = 0
+        threading.Thread(target=self._srv.serve_forever, daemon=True).start()
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self._srv.server_address[1]}/v1"
+
+    @property
+    def calls(self) -> int:
+        return self._srv.calls
+
+    def adapter(self, **kwargs):
+        """一个指向本假上游的**真** LLMAdapter（真 client、真 socket）。"""
+        import adapters.llm_adapter as llm_adapter
+
+        kwargs.setdefault("api_key", "sk-fake-local")
+        return llm_adapter.LLMAdapter(base_url=self.base_url, **kwargs)
+
+    def close(self) -> None:
+        self._srv.shutdown()
+        self._srv.server_close()
+
+
+@pytest.fixture
+def fake_sse():
+    srv = FakeSSE()
+    yield srv
+    srv.close()
+
+
+def cause_chain(exc: BaseException) -> list[BaseException]:
+    """异常及其原因链（`__cause__` 优先，退回 `__context__`），含 `exc` 自身。
+
+    传输层的错往下有自己的链（`httpx2.ReadTimeout` ← `httpcore2.ReadTimeout` ←
+    `TimeoutError`），而包装后的错把它挂在 `__cause__` 上。判「根因是不是传输层」时
+    两头都要看 —— 只看 `__cause__` 会漏掉未包装态，只看顶层会漏掉包装态。
+    """
+    out: list[BaseException] = []
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        out.append(exc)
+        exc = exc.__cause__ or exc.__context__
+    return out

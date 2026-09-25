@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { applyFlushReport, withSaveResult } from './withSaveResult'
+import { applyFlushReport, pendingSaveKeys, withSaveResult } from './withSaveResult'
 
 const SRC = path.join(__dirname, '..')
 
@@ -55,6 +55,24 @@ describe('withSaveResult', () => {
       }
     }
     expect(offenders).toEqual([])
+  })
+})
+
+describe('pendingSaveKeys', () => {
+  it('只挑 pending 的 key —— failed 的那条后端已经放弃了，带去对账只会白问', () => {
+    const msgs = [
+      { id: 'tmp-1', saveState: 'pending', saveKey: 'k1' },
+      { id: 'tmp-2', saveState: 'failed', saveKey: 'k2' },
+      { id: 9, content: '落库了的' },
+      { id: 'tmp-3', saveState: 'pending', saveKey: 'k3' },
+    ]
+
+    expect(pendingSaveKeys(msgs)).toEqual(['k1', 'k3'])
+  })
+
+  it('没有未保存的消息时回空数组（空 keys = 只补写，与老行为一字不差）', () => {
+    expect(pendingSaveKeys([])).toEqual([])
+    expect(pendingSaveKeys(undefined)).toEqual([])
   })
 })
 

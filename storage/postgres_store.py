@@ -531,8 +531,8 @@ class PostgresStore(StorageBase):
                     # 不清理 delete_card / purge_card / detach_text_cards：断点行的生命周期
                     # **跟文本走、不跟卡走** —— 行身份是 (user, text, character)，card_id 只是
                     # 产物反向指针，删卡/解绑都不改变这个身份，故那些路径不产生孤儿行。
-                    # 别把它读成「保住断点省 API」：续跑发现 find_interrupted_distill 只认
-                    # status='interrupted'，删卡时行一般是 running/done/error，重蒸命不中、
+                    # 别把它读成「保住断点省 API」：续跑发现 find_resumable_distill 只认
+                    # status IN ('interrupted','error')，删卡时行一般是 running/done，重蒸命不中、
                     # 整批重跑。保留只是「不去动与文本无关的状态」的自然结果，不是收益论证。
                     # 证据（双 store 现跑现测，2026-09-12）：tests/perf/distill_resume_reachability.py
                     # 与 tests/perf/distill_orphan_matrix.py，产物 docs/evidence/distill-resume-reachability.json
@@ -1690,6 +1690,27 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get messages failed: {exc}")
             raise
 
+    async def find_message_ids_by_client_keys(
+        self, session_id: str, keys: list[str],
+    ) -> dict[str, int]:
+        """按幂等键查行 id。语义与返回形状见 `StorageBase` 上的同名声明。"""
+        if not keys:
+            return {}
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT client_key, id
+                    FROM messages
+                    WHERE session_id = $1 AND client_key = ANY($2::text[])
+                    """,
+                    session_id, keys,
+                )
+            return {row["client_key"]: row["id"] for row in rows}
+        except Exception as exc:
+            print(f"[PostgresStore] Find message ids by client keys failed: {exc}")
+            raise
+
     # ── group sessions ────────────────────────────────────────────────
 
     async def create_group_session(self, id: str, name: str, card_ids: list[str], user_id: str,
@@ -1863,6 +1884,27 @@ class PostgresStore(StorageBase):
             return messages
         except Exception as exc:
             print(f"[PostgresStore] Get group messages failed: {exc}")
+            raise
+
+    async def find_group_message_ids_by_client_keys(
+        self, group_id: str, keys: list[str],
+    ) -> dict[str, int]:
+        """按幂等键查群聊行 id。语义与返回形状见 `StorageBase` 上的同名声明。"""
+        if not keys:
+            return {}
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT client_key, id
+                    FROM group_messages
+                    WHERE group_id = $1 AND client_key = ANY($2::text[])
+                    """,
+                    group_id, keys,
+                )
+            return {row["client_key"]: row["id"] for row in rows}
+        except Exception as exc:
+            print(f"[PostgresStore] Find group message ids by client keys failed: {exc}")
             raise
 
     _REACTION_TABLES = frozenset({"message_reactions", "dm_reactions"})
@@ -3377,8 +3419,12 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get distill task (owned) failed: {exc}")
             raise
 
-    async def find_interrupted_distill(self, user_id: str, text_id: str, character: str) -> dict | None:
-        """Return the newest interrupted distill task for (user, text, character), or None."""
+    async def find_resumable_distill(self, user_id: str, text_id: str, character: str) -> dict | None:
+        """Return the newest resumable distill task for (user, text, character), or None.
+
+        Resumable = 'interrupted' or 'error'. 'done' is excluded on purpose: asking
+        to distill again means a fresh version, which reruns every chunk.
+        """
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
@@ -3386,13 +3432,14 @@ class PostgresStore(StorageBase):
                               card_id, awakening, chunk_size, overlap, text_fingerprint,
                               created_at, updated_at
                        FROM distill_tasks
-                       WHERE user_id = $1 AND text_id = $2 AND character = $3 AND status = 'interrupted'
+                       WHERE user_id = $1 AND text_id = $2 AND character = $3
+                         AND status IN ('interrupted', 'error')
                        ORDER BY updated_at DESC LIMIT 1""",
                     user_id, text_id, character,
                 )
             return self._row_to_dict(row)
         except Exception as exc:
-            print(f"[PostgresStore] Find interrupted distill failed: {exc}")
+            print(f"[PostgresStore] Find resumable distill failed: {exc}")
             raise
 
     async def list_distill_tasks(self, limit: int = 200) -> list[dict]:
@@ -4245,11 +4292,13 @@ class PostgresStore(StorageBase):
 
                 comment_ids = [c["id"] for c in comments]
                 if comment_ids:
+                    # `text_id` 是第一个参数（$1），SQL 里必须真的用到它：PG 不给没人用的
+                    # 参数推断类型，只传不写就是 IndeterminateDatatypeError。
                     placeholders = ",".join(f"${i+2}" for i in range(len(comment_ids)))
                     reply_rows = await conn.fetch(
                         f"""SELECT id, text_id, user_id, username, content, parent_id, likes, created_at
                             FROM text_comments
-                            WHERE parent_id IN ({placeholders})
+                            WHERE text_id = $1 AND parent_id IN ({placeholders})
                             ORDER BY created_at ASC""",
                         text_id, *comment_ids,
                     )

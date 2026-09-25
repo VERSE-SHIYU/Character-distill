@@ -22,6 +22,7 @@ from __future__ import annotations
 import inspect
 import os
 import sys
+import threading
 
 from collections.abc import Callable
 from unittest.mock import MagicMock
@@ -57,6 +58,11 @@ class _FakeLLM:
         self._replies = list(chat_replies)
         self.last_usage = {"prompt_tokens": 7, "completion_tokens": 3}
         self._model = "test-model"
+
+    @property
+    def model(self) -> str:
+        """真 adapter 的 `model` 是只读属性（分片断点键要带上它）。"""
+        return self._model
 
     def chat(self, system, messages, max_tokens=None):
         return self._replies.pop(0)
@@ -193,6 +199,9 @@ class _FakeStreamLLM(_FakeLLM):
         yield from self._pieces
         raise self._exc
 
+    # 长输出入口在生产里是 chat_stream 的薄委托（只放宽读超时）：桩共用同一份记录
+    chat_stream_long = chat_stream
+
 
 @pytest.fixture
 def records(monkeypatch) -> list[tuple[str, dict | None]]:
@@ -309,3 +318,133 @@ class TestIncrementalFormatAccounting:
 
         assert card.name == "角色"
         assert usage.count("distill_format") == 1, usage
+
+
+# ── R4：并发流式各记各的账（usage 随调用返回，不读共享属性） ────────────────────
+
+class _BarrierStreamLLM(_FakeLLM):
+    """三条流**几乎同时**结束：各自吐完末片后先在汇合点等齐，再交出本次 usage。
+
+    汇合点是这条用例的红源。三条流都过了 barrier 才算结束，故「流结束后读共享属性」
+    的实现必然读到同一份（最后写入者）—— 三行落成同一个数，就是缺陷 20 那条
+    300/300 串号的形状（三行全记成最后一条的 303）。`return` 的那一份才是本次调用的
+    真实用量，它按线程各自保管，不经过任何共享槽。
+    """
+
+    def __init__(self, barrier: threading.Barrier):
+        super().__init__([])
+        self._barrier = barrier
+        self._lock = threading.Lock()
+        self._next_ct = 101
+
+    def chat_stream_long(self, system, messages, max_tokens=None):
+        with self._lock:                      # 101 / 202 / 303，谁先到谁先领
+            ct = self._next_ct
+            self._next_ct += 101
+        yield "x"
+        self.last_usage = {"prompt_tokens": 1, "completion_tokens": ct, "estimated": False}
+        self._barrier.wait(timeout=10)
+        return {"prompt_tokens": 1, "completion_tokens": ct, "estimated": False}
+
+
+class TestConcurrentStreamAccounting:
+    def test_concurrent_streams_each_keep_their_own_usage(self, records):
+        """R4：三批并发，落账三行 == {101, 202, 303}，不是一个数写三遍。
+
+        变异：`_collect_stream` 改回读 `self._llm.last_usage`（即 `_try_record_usage`
+        不传 usage、落回 `core/utils.py:83` 的回退）→ 三行全等于最后写入者的那个数，
+        本用例红。
+        """
+        barrier = threading.Barrier(3)
+        d = Distiller(_BarrierStreamLLM(barrier), config_path=None)
+        outcomes: list[object] = [None] * 3
+
+        def run(i: int) -> None:
+            try:
+                outcomes[i] = d._chat_accounted(
+                    SYSTEM, [{"role": "user", "content": USER}],
+                    "角色蒸馏", "distill", stream=True,
+                )
+            except BaseException as exc:      # 记下来，别让线程里的异常静默消失
+                outcomes[i] = exc
+
+        threads = [threading.Thread(target=run, args=(i,)) for i in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+
+        assert not any(isinstance(o, BaseException) for o in outcomes), outcomes
+        assert [o[0] for o in outcomes] == ["x"] * 3, outcomes
+        assert [a for a, _ in records] == ["distill"] * 3, records
+        # (u or {})：改前那条路传的是 None，报 [None, None, None]；改成显式读共享属性
+        # 那条路报 [k, k, k]（同一个数三遍，缺陷 20 的形状）—— 两种错法都要读得出来。
+        got = sorted(((u or {}).get("completion_tokens") for _, u in records),
+                     key=lambda v: (v is None, v))
+        assert got == [101, 202, 303], (
+            f"三批并发记出了 {got} —— 记的是共享属性而不是各自调用返回的那一份")
+
+
+# ── R4b：`yield from` 的两处也记本次返回值 ─────────────────────────────────────
+
+class _ReturnUsageLLM(_FakeLLM):
+    """流吐完 `return` 404，同时把共享属性写成 999 —— 读的是哪一份一眼可分。"""
+
+    def chat_stream_long(self, system, messages, max_tokens=None):
+        yield "x"
+        self.last_usage = {"prompt_tokens": 1, "completion_tokens": 999, "estimated": False}
+        return {"prompt_tokens": 1, "completion_tokens": 404, "estimated": False}
+
+
+class TestStreamReturnValueAccounting:
+    """这三处的共同判据：账上的数取自 `yield from` / 迭代拿到的**返回值**。
+
+    变异（每条各自红）：该处改回读 `self._llm.last_usage` → 落账 999；
+    该处不传 usage → `records[i][1]` 为 None（落到 `core/utils.py:83` 的回退）。
+    """
+
+    def _assert_404(self, records, action: str) -> None:
+        assert [a for a, _ in records] == [action], records
+        assert records[0][1] is not None, "没把返回值交给 _try_record_usage，落回了共享属性"
+        assert records[0][1]["completion_tokens"] == 404, (
+            f"记的是共享属性（999）而不是本次调用返回的那一份：{records[0][1]}")
+
+    def test_distill_stream_accounts_returned_usage(self, records):
+        """`distill_stream`：`yield from` 之后记账，账取返回值。"""
+        d = Distiller(_ReturnUsageLLM([]), config_path=None)
+        assert list(d.distill_stream("文本", "角色")) == ["x"]
+        self._assert_404(records, "distill_stream")
+
+    def test_longcontext_stream_accounts_returned_usage(self, records):
+        """`_distill_longcontext_stream`：滤思考态的是显式 `next()` 环，值照样要接住。"""
+        d = Distiller(_ReturnUsageLLM([]), config_path=None)
+        tokens = [t for t in d._distill_longcontext_stream("全文", "角色") if isinstance(t, str)]
+        assert tokens == ["x"], tokens
+        self._assert_404(records, "distill_longcontext")
+
+    def test_single_reduce_stream_accounts_returned_usage(self, records):
+        """`_single_reduce_stream`：归并流式版，账取返回值。"""
+        d = Distiller(_ReturnUsageLLM([]), config_path=None)
+        assert list(d._single_reduce_stream(["分析一"], "角色")) == ["x"]
+        self._assert_404(records, "distill_reduce")
+
+    def test_incremental_format_stream_accounts_returned_usage(self, records):
+        """流式格式化（第 5 个流式记账点）：账取 `yield from` 的返回值。
+
+        `distill_incremental_stream` 要整条跑完才到得了 Phase 3 —— 这条同时当「那一处确实
+        跑到了」的仪器：`fmt` 为空即说明本轮根本没走到格式化，红的是覆盖面而不是取值。
+        Reduce 那一段（`_single_reduce_stream`）也落一条 `distill_reduce`，两个站点在本轮
+        都不许读共享属性，故两处变异各自会红一条：断言只挑 `distill_format`，免得一个站点的
+        变异把另一站点的用例也染色（那就分不清是谁坏了）。
+        """
+        d = Distiller(_ReturnUsageLLM([]), config_path=None)
+        d._longctx_threshold = 1          # 强制落到 MapReduce 分支，否则短文本路由去长上下文
+        d._chunk_size = 200
+
+        list(d.distill_incremental_stream(TEXT, "角色", text_type="story"))
+
+        fmt = [u for a, u in records if a == "distill_format"]
+        assert len(fmt) == 1, f"没跑到流式格式化，或记了 {len(fmt)} 条：{records}"
+        assert fmt[0] is not None, "没把返回值交给 _try_record_usage，落回了共享属性"
+        assert fmt[0]["completion_tokens"] == 404, (
+            f"记的是共享属性（999）而不是本次调用返回的那一份：{fmt[0]}")

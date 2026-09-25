@@ -9,6 +9,7 @@
 5 失败片不落 checkpoint：Map 分片抛异常 → 不进 on_chunk_done，门 2 不再是唯一屏障
 6 改原文后旧片收敛（缺陷 4）：落库是 upsert 而非 DO NOTHING → 第二次续跑命中复用
 7 失败率分母是全书相关片数：续跑命中片不进 Map 但仍计入分母（缺陷 88）
+8 缓存键覆盖整个 Map 请求（C2 换模型、C3 改提示词 → 都不复用）
 
 任务级门（改 chunk_size / 改原文 → 整批重跑）落在 /start，见
 tests/test_distill_task_api.py::TestEResumeGate（同一提交）。
@@ -47,6 +48,8 @@ class _FakeClient:
 class _FakeLLM:
     """任何输出都是输入的纯函数 —— 便于逐字节比对，且不烧真 API。"""
 
+    model = "fake-model"     # chunk_cache_key 要读它（与 identify 缓存键同口径）
+
     def __init__(self):
         self.map_calls = 0
         self.stream_inputs: list[str] = []
@@ -62,6 +65,10 @@ class _FakeLLM:
         # reduce 与 format 都走这里；输出 = f(输入)
         self.stream_inputs.append(messages[0]["content"])
         yield '{"name": "角色", "identity": "' + self._digest(messages[0]["content"]) + '"}'
+        return {"prompt_tokens": 1, "completion_tokens": 1, "estimated": False}
+
+    # 长输出入口在生产里是 chat_stream 的薄委托（只放宽读超时）：桩共用同一份记录
+    chat_stream_long = chat_stream
 
     @staticmethod
     def _digest(text: str) -> str:
@@ -77,9 +84,12 @@ def _make_distiller(llm) -> Distiller:
     return d
 
 
-def _run(llm, candidates, text=None):
-    """消费 stream，返回 (on_chunk_done 记录, format 产出的 token 拼接)。"""
-    d = _make_distiller(llm)
+def _run(llm, candidates, text=None, distiller=None):
+    """消费 stream，返回 (on_chunk_done 记录, format 产出的 token 拼接)。
+
+    `distiller` 给「要在实例上先做手脚」的用例（如换掉 `_map_system_prompt`）。
+    """
+    d = distiller if distiller is not None else _make_distiller(llm)
     done: list[tuple[int, str, str]] = []
     tokens: list[str] = []
     for piece in d.distill_incremental_stream(
@@ -124,16 +134,22 @@ def _candidates_from(store, task_id) -> dict:
 # ── 分片三重门纯逻辑 ─────────────────────────────────────────────────────────
 
 class TestResumeHitDoors:
+    """第 3 道门比的是**本次渲染出的 Map 请求**的缓存键（`chunk_cache_key`）。
+
+    键长什么样由 C2/C3 的用例钉；本类只钉门的**形状**，故用一个任意字符串当键。
+    """
+
+    KEY = "cache-key-abc"
+
     def test_three_doors(self):
-        chunk = "某片原文"
-        ok = {"result": "分析", "fingerprint": text_fingerprint(chunk)}
-        assert _resume_hit(0, chunk, {0: ok}) == "分析"
-        assert _resume_hit(0, chunk, None) is None                       # 无候选
-        assert _resume_hit(0, chunk, {1: ok}) is None                    # index 不命中
-        assert _resume_hit(0, chunk, {0: {"result": "分析"}}) is None     # 形状缺 fingerprint
-        assert _resume_hit(0, chunk, {0: {"result": "", "fingerprint": text_fingerprint(chunk)}}) is None
-        assert _resume_hit(0, chunk, {0: {"result": "分析", "fingerprint": "stale"}}) is None
-        assert _resume_hit(0, chunk, {0: {"result": None, "fingerprint": text_fingerprint(chunk)}}) is None
+        ok = {"result": "分析", "fingerprint": self.KEY}
+        assert _resume_hit(0, self.KEY, {0: ok}) == "分析"
+        assert _resume_hit(0, self.KEY, None) is None                    # 无候选
+        assert _resume_hit(0, self.KEY, {1: ok}) is None                 # index 不命中
+        assert _resume_hit(0, self.KEY, {0: {"result": "分析"}}) is None  # 形状缺 fingerprint
+        assert _resume_hit(0, self.KEY, {0: {"result": "", "fingerprint": self.KEY}}) is None
+        assert _resume_hit(0, self.KEY, {0: {"result": "分析", "fingerprint": "stale"}}) is None
+        assert _resume_hit(0, self.KEY, {0: {"result": None, "fingerprint": self.KEY}}) is None
 
     def test_truncated_nonempty_result_passes_second_gate(self):
         """门的**范围**锁：第 2 道只挡空串，不承诺结构校验（纵深防御，见 docstring）。
@@ -141,10 +157,9 @@ class TestResumeHitDoors:
         非空但被截断的自由文本必须**穿过去**，不是被拦（实测依据：A 阶段 v3，52 字节
         半截内容被复用未重发）。将来若有人给这道门加结构校验，本用例必须变红。
         """
-        chunk = "某片原文"
         truncated = "角色第 3 段：角色的性格是"     # 非空、被截断的自由文本
-        cand = {0: {"result": truncated, "fingerprint": text_fingerprint(chunk)}}
-        assert _resume_hit(0, chunk, cand) == truncated
+        cand = {0: {"result": truncated, "fingerprint": self.KEY}}
+        assert _resume_hit(0, self.KEY, cand) == truncated
 
     def test_truncated_nonempty_result_reaches_downstream(self):
         """另一半：穿过门之后确实进了下游（reduce/format 的输入），不是被静默丢弃。"""
@@ -160,6 +175,59 @@ class TestResumeHitDoors:
         assert victim not in [i for i, _r, _f in done2], "复用片不重复落库"
         assert any(truncated in s for s in llm2.stream_inputs), \
             "截断结果应原样进到下游，而不是被静默丢弃"
+
+
+# ── WP8 / C2、C3：缓存键必须覆盖「发出去的那对提示词 + 模型」──────────────────
+#
+# 续跑窗口原本只有「崩溃到重启」几分钟，键只含原文够用；WP8 把失败任务也纳入续跑后，
+# 可能隔几天才重试，期间换了模型或改了 Map 提示词 —— 只按原文比分会复用错的结果。
+# 键因此改成 `chunk_cache_key(渲染后的 system, 渲染后的 user, 模型)`：模板改动、
+# 角色名、chat/story 两套提示词、原文都自动进了键，不靠「记得 +1 的版本常量」。
+
+
+class TestCacheKeyCoversTheRequest:
+    def test_same_model_and_prompt_still_reuses(self):
+        """正向对照：键的组成没变 → 仍全命中、零 Map 调用（防下面两条门测试空过）。"""
+        llm1 = _FakeLLM()
+        done1, _out1 = _run(llm1, None)
+        assert done1, "首轮应有分片落库"
+
+        llm2 = _FakeLLM()
+        done2, _out2 = _run(llm2, _candidates(done1))
+        assert llm2.map_calls == 0, "同模型同提示词该全命中"
+        assert done2 == [], "命中片不该重复落库"
+
+    def test_model_change_reruns_every_chunk(self):
+        """C2：断点以 m1 写入、改用 m2 重蒸 → 这些片全部重跑。"""
+        llm1 = _FakeLLM()
+        llm1.model = "m1"
+        done1, _out1 = _run(llm1, None)
+        n = len(done1)
+        assert n > 1, f"分片太少，用例无判别力（{n}）"
+
+        llm2 = _FakeLLM()
+        llm2.model = "m2"
+        done2, _out2 = _run(llm2, _candidates(done1))
+        assert llm2.map_calls == n, "换模型后旧断点一律不该复用"
+        assert len(done2) == n, "每片都重跑 → 每片都重落库"
+
+    def test_map_prompt_change_reruns_every_chunk(self):
+        """C3：Map 系统提示词多一个字 → 这些片全部重跑。
+
+        改的是**渲染后**的系统提示词，不是原文 —— 旧键只含原文时这条必红。
+        """
+        llm1 = _FakeLLM()
+        done1, _out1 = _run(llm1, None)
+        n = len(done1)
+        assert n > 1, f"分片太少，用例无判别力（{n}）"
+
+        llm2 = _FakeLLM()
+        d2 = _make_distiller(llm2)
+        base = d2._map_system_prompt
+        d2._map_system_prompt = lambda name: base(name) + "多"
+        done2, _out2 = _run(llm2, _candidates(done1), distiller=d2)
+        assert llm2.map_calls == n, "Map 提示词变了，旧断点一律不该复用"
+        assert len(done2) == n, "每片都重跑 → 每片都重落库"
 
 
 # ── 1 续跑省调用 + 2 幂等 ────────────────────────────────────────────────────

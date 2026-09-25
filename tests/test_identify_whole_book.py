@@ -62,6 +62,9 @@ def _make_llm(async_chat=None, chat_stream=None, chat=None) -> MagicMock:
     llm.chat_stream = MagicMock(
         side_effect=chat_stream if chat_stream is not None else (lambda *a, **kw: iter([]))
     )
+    # 长输出入口在生产里是 chat_stream 的薄委托（只放宽读超时）：桩共用同一份记录，
+    # 调用计数/参数断言因此对两条入口都成立。
+    llm.chat_stream_long = llm.chat_stream
     llm.chat = MagicMock(side_effect=chat)
     return llm
 
