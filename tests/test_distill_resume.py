@@ -65,6 +65,7 @@ class _FakeLLM:
         # reduce 与 format 都走这里；输出 = f(输入)
         self.stream_inputs.append(messages[0]["content"])
         yield '{"name": "角色", "identity": "' + self._digest(messages[0]["content"]) + '"}'
+        return {"prompt_tokens": 1, "completion_tokens": 1, "estimated": False}
 
     # 长输出入口在生产里是 chat_stream 的薄委托（只放宽读超时）：桩共用同一份记录
     chat_stream_long = chat_stream

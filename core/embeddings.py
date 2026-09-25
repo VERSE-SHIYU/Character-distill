@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import threading
@@ -84,7 +85,20 @@ def _is_retryable_embed(exc: Exception) -> bool:
         return name in ("APIConnectionError", "APITimeoutError")
     return name in ("TimeoutError", "ConnectionError")
 
-# ── Factory cache: region:api_key → DashScopeEmbedding singleton ──
+
+def key_fingerprint(key: str) -> str:
+    """凭据的不可逆指纹（SHA-256 前 16 位十六进制）：既能当缓存身份，也能进日志。
+
+    缓存身份与日志是同一件事的两面 —— 身份要用整个 key 才区分得开，日志又不能让 key
+    露面，于是只留这个指纹。空串是「没配 key」的显式语义，原样返回，调用方的身份表示
+    不变（`f"{text_id}:"`）。
+    """
+    if not key:
+        return ""
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
+# ── Factory cache: region:key_fingerprint → DashScopeEmbedding singleton ──
 _cache: dict[str, "DashScopeEmbedding"] = {}
 
 # ── Module-level shared embedding cache (thread-safe) ─────────
@@ -435,7 +449,7 @@ def create_safe_embedding_fn(
         raise RuntimeError(
             "未配置向量检索 API Key，请在设置页填写阿里云百炼 API Key"
         )
-    cache_key = f"dashscope:{region}:{api_key[:8]}"
+    cache_key = f"dashscope:{region}:{key_fingerprint(api_key)}"
     if cache_key not in _cache:
         _cache[cache_key] = DashScopeEmbedding(api_key, region)
     return _cache[cache_key]

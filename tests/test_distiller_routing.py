@@ -1,23 +1,26 @@
 """Tests for long-context routing: token estimation + threshold branching."""
 
 import asyncio
+import threading
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import adapters.llm_adapter as M
 from core.distiller import DistillError, Distiller
+from core.request_context import LLM_CALLER, Caller, current_user_id
 
 
 class TestReduceAllEmptyBails:
     """缺陷 34：Reduce 全部 batch 返回空 → 显式失败并说明原因，不得落卡。
 
     假件照**生产实际形状**搭：Map 全成功（100 片 > SAFE_SINGLE_REDUCE=80，故走分批归并），
-    归并批次全部失败（返回空）；而上游对「零条分析的归并请求」会**凭空产出**非空档案。
-    这一条必须模拟 —— 不模拟的话，「输出为空即失败」那道门（``:1726``）在用例里反而
-    拦住了，测的就不是真缺口（正是缺陷 34 那条一般化）。
+    归并批次全部失败（空正文）；而上游对「零条分析的归并请求」会**凭空产出**非空档案
+    —— 那正是下游「输出为空即失败」那道门结构上拦不住的形态（缺陷 34 的一般化）。
 
-    变异对象 = ``_run_reduce_concurrent`` 末尾的输入守卫（删掉它）：两条用例都会落到
-    format 阶段 —— ``assert llm.chat.call_count == 0`` / ``formatting`` 帧断言各变红。
+    变异对象 = 批级失败判定（`_single_reduce_async` 里「空正文即抛」那一句，或把失败
+    吞成空串）：两条用例都会落到 format 阶段 —— ``llm.chat.call_count == 0`` /
+    ``formatting`` 帧断言各变红。
     """
 
     TEXT = "AB" * 150000          # 300000 字符 ÷ chunk_size 3000 = 100 片
@@ -49,16 +52,21 @@ class TestReduceAllEmptyBails:
                 return self.FABRICATED
             return self.CARD_JSON
 
-        def chat_stream(system, messages, max_tokens=None, **kwargs):
+        def chat_stream_long(system, messages, max_tokens=None, **kwargs):
+            # 用量随返回值交付（WP4）：桩不 return 的话，调用方会静默落回 last_usage。
+            # 分批归并存分析的那条路（WP5 起归并走流式长输出）产出空正文 = 该批失败。
             if "你正在整合关于" in system:
-                if "来源片段" not in messages[0]["content"]:
-                    yield self.FABRICATED
-                return
+                if "来源片段" in messages[0]["content"]:
+                    yield from ()
+                else:
+                    yield self.FABRICATED   # 零条分析的归并，模型会凭空产出（缺陷 34）
+                return {"prompt_tokens": 1, "completion_tokens": 1}
             yield self.CARD_JSON
+            return {"prompt_tokens": 1, "completion_tokens": 1}
 
         llm.async_chat = AsyncMock(side_effect=async_chat)
         llm.chat = MagicMock(side_effect=chat)
-        llm.chat_stream = MagicMock(side_effect=chat_stream)
+        llm.chat_stream_long = MagicMock(side_effect=chat_stream_long)
         return llm
 
     def _make_distiller(self, llm) -> Distiller:
@@ -93,6 +101,131 @@ class TestReduceAllEmptyBails:
         assert not any(
             isinstance(f, dict) and f.get("status") == "formatting" for f in frames
         )
+
+
+class TestBatchReduceUsesTheLongOutputStream:
+    """WP5 R1：分批归并走流式长输出 —— 不再受生成轮 45/60 s 墙钟。
+
+    真 adapter + 真 socket（假 SSE fixture）：上游回 200 头后静默 2.0 s 再吐完。
+    **非流式请求要等整包**，于是那 2.0 s 的静默就吃满了非流式的标量超时；流式那支
+    `chat_stream_long` 把 read 放宽到 `_BATCH_STREAM_READ_S`（300 s），静默照过。
+
+    变异「恢复 async_chat」：非流式请求在静默期就被读超时打死（`_GEN_*` 缩到同一量级
+    才谈得上不真等），本用例红。
+    """
+
+    def test_reduce_batch_survives_prefill_silence(self, fake_sse, monkeypatch):
+        monkeypatch.setattr(M, "_STREAM_ATTEMPT_S", 0.5)    # 与 WP1 同法：不真等
+        monkeypatch.setattr(M, "_STREAM_DEADLINE_S", 1.5)
+        monkeypatch.setattr(M, "_GEN_ATTEMPT_S", 0.5)       # 非流式那支的墙钟缩到同一量级
+        monkeypatch.setattr(M, "_GEN_DEADLINE_S", 1.5)
+        fake_sse.plan.update(silent_ms=2000, tokens=["合并", "结果"])
+
+        d = Distiller(llm=fake_sse.adapter(), config_path=None)
+
+        out = asyncio.run(d._single_reduce_async(["分析一", "分析二"], "角色"))
+
+        assert out == "合并结果", f"分批归并没有走流式长输出（2.0s 静默被当故障）：{out!r}"
+
+
+class TestAnyBatchFailureFailsTheWholeReduce:
+    """WP5 R2：任一批失败即整体失败 —— 不落半张卡、不进格式化（D3）。
+
+    100 片（2 批，`SAFE_SINGLE_REDUCE=80`）。第 2 批的归并请求由假上游按**请求体**
+    识别（分批是并发发出的，按调用次序认会飘），分别造截断 / 空正文。
+
+    断言：上屏恰一个 error 帧、无 `formatting` 帧、格式化 0 次；并断言分批归并的输出
+    上限是 `CARD_MAX_TOKENS`。变异：① 截断照常交出半截 ② 恢复单批吞异常
+    ③ 恢复空批跳过 ④ 不传 max_tokens。
+    """
+
+    CHUNK = 3000
+    MARK = "M-标记分析"
+    # 前 80 片（批 1）是 "AB"，后 20 片（批 2）是 "CD" —— 只有第 2 批的请求体含标记。
+    # aliases 令每片都命中 match_terms，否则 relevant 回落成 chunks[:3]，分不出批。
+    TEXT = "AB" * (1500 * 80) + "CD" * (1500 * 20)
+    ALIASES = ["AB", "CD"]
+
+    @pytest.mark.parametrize("rule", [
+        pytest.param({"finish_reason": "length"}, id="截断"),
+        pytest.param({"tokens": []}, id="空正文"),
+    ])
+    def test_second_batch_failure_aborts_before_format(self, fake_sse, rule):
+        llm = fake_sse.adapter()
+        real_long = llm.chat_stream_long
+        calls = []
+
+        def spy_long(system, messages, max_tokens=None):
+            calls.append({"system": system, "max_tokens": max_tokens})
+            return (yield from real_long(system, messages, max_tokens))
+
+        llm.chat_stream_long = spy_long
+
+        async def map_stub(system, messages, max_tokens=None, client=None, **kw):
+            body = messages[0]["content"]
+            analysis = (self.MARK if "CD" in body else "普通分析") + body[:8]
+            return (analysis, {"prompt_tokens": 1, "completion_tokens": 1})
+
+        llm.async_chat = map_stub
+        fake_sse.plan.update(tokens=["全", "文"], body_rules=[(self.MARK, rule)])
+
+        d = Distiller(llm=llm, config_path=None)
+        d._longctx_threshold = 0
+        d._chunk_size = self.CHUNK
+
+        frames = list(d.distill_incremental_stream(
+            self.TEXT, "角色", aliases=self.ALIASES, text_type="story"))
+
+        errors = [f for f in frames if isinstance(f, dict) and "error" in f]
+        assert len(errors) == 1, f"第 2 批失败没上屏成 error 帧：{frames[-3:]}"
+        assert not any(
+            isinstance(f, dict) and f.get("status") == "formatting" for f in frames
+        ), "任一批失败却仍然进了格式化"
+
+        reduce_calls = [c for c in calls if "你正在整合关于" in c["system"]]
+        fmt_calls = [c for c in calls if "你正在整合关于" not in c["system"]]
+        assert len(reduce_calls) >= 2, f"没跑到分批归并：{calls}"
+        assert fmt_calls == [], f"格式化不该被调用：{[c['system'][:20] for c in fmt_calls]}"
+        assert {c["max_tokens"] for c in reduce_calls} == {8192}, (
+            f"分批归并的输出上限不是 CARD_MAX_TOKENS："
+            f"{[c['max_tokens'] for c in reduce_calls]}"
+        )
+
+
+class TestBatchThreadCarriesCallerIdentity:
+    """WP5 R3：批线程带上调用方身份 —— 记账与门的 fail-closed 都读 `LLM_CALLER`。
+
+    变异：线程执行换成裸 `loop.run_in_executor(None, …)`（不拷 contextvar）→ 全 None。
+    """
+
+    def test_identity_reaches_every_batch_thread(self):
+        seen: list[tuple[int, str | None]] = []
+        caller_thread = threading.get_ident()
+
+        class _LLM:
+            last_usage = None
+            model = "m"
+
+            def chat_stream_long(self, system, messages, max_tokens=None):
+                seen.append((threading.get_ident(), current_user_id()))
+                yield "合并结果"
+                return {"prompt_tokens": 1, "completion_tokens": 1}
+
+            async def async_chat(self, system, messages, max_tokens=None, client=None):
+                seen.append((threading.get_ident(), current_user_id()))
+                return ("合并结果", {"prompt_tokens": 1, "completion_tokens": 1})
+
+        token = LLM_CALLER.set(Caller(ip=None, user_id="u_ctx"))
+        try:
+            d = Distiller(llm=_LLM(), config_path=None)
+            results = asyncio.run(
+                d._run_reduce_concurrent([["分析一"], ["分析二"]], "角色"))
+        finally:
+            LLM_CALLER.reset(token)
+
+        assert len(results) == 2 and all(r[1] == "合并结果" for r in results), results
+        assert all(t != caller_thread for t, _ in seen), f"批次没在线程里跑：{seen}"
+        assert [u for _, u in seen] == ["u_ctx", "u_ctx"], f"批线程丢了调用方身份：{seen}"
 
 
 class TestEstimateTokens:
