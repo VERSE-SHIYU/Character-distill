@@ -555,6 +555,15 @@ class _ConnectionContext:
                 print(f"[SQLiteStore] Close connection failed: {close_exc}")
 
 
+#: 评论类型 → (评论表, 赞表)。与 PG 侧 `_COMMENT_LIKE_TABLES` 同形：两边各写一份
+#: 不同的表名，同一句 `toggle_comment_like("card", …)` 就会在两侧落到不同的表上。
+_COMMENT_LIKE_TABLES: dict[str, tuple[str, str]] = {
+    "text": ("text_comments", "text_comment_likes"),
+    "post": ("post_comments", "post_comment_likes"),
+    "card": ("card_comments", "card_comment_likes"),
+}
+
+
 class SQLiteStore(StorageBase):
     """Asynchronous storage implementation based on sqlite."""
 
@@ -4339,7 +4348,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT c.id, c.user_id, c.username, c.content, c.created_at, "
+                    "SELECT c.id, c.user_id, c.username, c.content, c.likes, c.created_at, "
                     "COALESCE(u.avatar_data, '') AS avatar_data, "
                     "COALESCE(c.is_ai_reply, 0) AS is_ai_reply, "
                     "COALESCE(c.ai_card_id, '') AS ai_card_id, "
@@ -4947,7 +4956,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT pc.id, pc.user_id, pc.username, pc.content, pc.created_at, pc.ip_location,
+                    """SELECT pc.id, pc.user_id, pc.username, pc.content, pc.likes, pc.created_at, pc.ip_location,
                               COALESCE(u.avatar_data, '') AS avatar_data
                        FROM post_comments pc JOIN user_posts p ON p.id = pc.post_id
                        LEFT JOIN users u ON pc.user_id = u.id
@@ -5078,44 +5087,51 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Add text comment failed: {exc}")
             raise
 
-    async def toggle_text_comment_like(self, comment_id: str, user_id: str) -> dict:
-        """Toggle like on a comment. Returns {'liked': bool, 'likes': int}."""
+    async def toggle_comment_like(self, kind: str, comment_id: str, user_id: str) -> dict | None:
+        """Toggle a like on one comment of any kind.
+
+        Returns `{'liked': bool, 'likes': int}`, or `None` when the comment does not exist —
+        「回 404」与「一行赞都不写」是同一件事的两面，所以判定必须在写之前。
+        """
+        comments, likes = _COMMENT_LIKE_TABLES[kind]
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT 1 FROM text_comment_likes WHERE comment_id = ? AND user_id = ?",
+                    f"SELECT 1 FROM {comments} WHERE id = ?", (comment_id,)
+                )
+                if await cursor.fetchone() is None:
+                    return None
+                cursor = await conn.execute(
+                    f"SELECT 1 FROM {likes} WHERE comment_id = ? AND user_id = ?",
                     (comment_id, user_id),
                 )
-                exists = await cursor.fetchone()
-                if exists:
+                liked = await cursor.fetchone() is not None
+                if liked:
                     await conn.execute(
-                        "DELETE FROM text_comment_likes WHERE comment_id = ? AND user_id = ?",
+                        f"DELETE FROM {likes} WHERE comment_id = ? AND user_id = ?",
                         (comment_id, user_id),
                     )
                     await conn.execute(
-                        "UPDATE text_comments SET likes = likes - 1 WHERE id = ?",
+                        f"UPDATE {comments} SET likes = max(0, likes - 1) WHERE id = ?",
                         (comment_id,),
                     )
-                    liked = False
                 else:
                     await conn.execute(
-                        "INSERT INTO text_comment_likes (comment_id, user_id) VALUES (?, ?)",
+                        f"INSERT INTO {likes} (comment_id, user_id) VALUES (?, ?)",
                         (comment_id, user_id),
                     )
                     await conn.execute(
-                        "UPDATE text_comments SET likes = likes + 1 WHERE id = ?",
+                        f"UPDATE {comments} SET likes = likes + 1 WHERE id = ?",
                         (comment_id,),
                     )
-                    liked = True
                 await conn.commit()
                 cursor = await conn.execute(
-                    "SELECT likes FROM text_comments WHERE id = ?",
-                    (comment_id,),
+                    f"SELECT likes FROM {comments} WHERE id = ?", (comment_id,)
                 )
                 row = await cursor.fetchone()
-            return {"liked": liked, "likes": row[0] if row else 0}
+            return {"liked": not liked, "likes": row[0] if row else 0}
         except Exception as exc:
-            print(f"[SQLiteStore] Toggle text comment like failed: {exc}")
+            print(f"[SQLiteStore] Toggle comment like failed: {exc}")
             raise
 
     async def delete_text_comment(self, comment_id: str, user_id: str) -> bool:
@@ -5132,15 +5148,17 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Delete text comment failed: {exc}")
             raise StoreError("delete_text_comment", exc) from exc
 
-    async def get_liked_comment_ids(self, comment_ids: list[str], user_id: str) -> set[str]:
-        """Return set of comment_ids that the user has liked."""
+    async def get_liked_comment_ids(self, kind: str, comment_ids: list[str],
+                                    user_id: str) -> set[str]:
+        """Return set of comment_ids that the user has liked, from the table for that kind."""
         if not comment_ids:
             return set()
+        _, likes = _COMMENT_LIKE_TABLES[kind]
         try:
             placeholders = ",".join("?" for _ in comment_ids)
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    f"SELECT comment_id FROM text_comment_likes WHERE comment_id IN ({placeholders}) AND user_id = ?",
+                    f"SELECT comment_id FROM {likes} WHERE comment_id IN ({placeholders}) AND user_id = ?",
                     (*comment_ids, user_id),
                 )
                 rows = await cursor.fetchall()
