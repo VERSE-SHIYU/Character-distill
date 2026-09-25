@@ -14,7 +14,7 @@ import os
 
 import yaml
 from dotenv import load_dotenv
-from openai import AsyncOpenAI, BadRequestError, OpenAI
+from openai import AsyncOpenAI, BadRequestError, OpenAI, Timeout
 
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 from core.utils import estimate_usage_from_chars  # 字符→token 估算的唯一出口
@@ -98,6 +98,14 @@ _ATTEMPT_WINDOW_S = _ATTEMPT_TIMEOUT_MARGIN_S + _ATTEMPT_MIN_S  # 撑起一次 a
 _DECISION_ATTEMPT_S = _env_timeout_s("LLM_DECISION_ATTEMPT_S", 5.0, _ATTEMPT_MIN_S)
 _GEN_ATTEMPT_S = _env_timeout_s("LLM_GEN_ATTEMPT_S", 45.0, _ATTEMPT_MIN_S)
 _STREAM_ATTEMPT_S = _env_timeout_s("LLM_STREAM_ATTEMPT_S", 7.0, _ATTEMPT_MIN_S)
+# 长输出（角色卡 / 合并 / 格式化）首字节前的静默可到分钟级：DeepSeek 在排队等调度时才发
+# keep-alive，开始推理后读长输入（prefill）期间完全无数据。流式的 `_STREAM_ATTEMPT_S`
+# 是「首 token 补偿」口径（7s）且以**标量**传给 httpx —— 标量会同时设成读超时，即
+# 「两个数据块之间最多等 7s」，长输入一 prefill 就假失败（生产识别 500 的根因）。
+# 300s 的界：上游对未开始推理的请求 10 分钟关连接、nginx 读超时 600s，300 在两者之内
+# 且远大于任何合理 prefill。**不做 env 出口**（红线：不新增配置项）—— 它是结构性上限，
+# 不是调优旋钮；真要可调，把它改成 `_env_timeout_s(...)` 一行即可。
+_BATCH_STREAM_READ_S = 300.0
 _DECISION_DEADLINE_S = _env_timeout_s("LLM_DECISION_DEADLINE_S", 6.0, _ATTEMPT_WINDOW_S)
 _GEN_DEADLINE_S = _env_timeout_s("LLM_GEN_DEADLINE_S", 60.0, _ATTEMPT_WINDOW_S)
 _STREAM_DEADLINE_S = _env_timeout_s("LLM_STREAM_DEADLINE_S", 8.0, _ATTEMPT_WINDOW_S)
@@ -777,8 +785,14 @@ class LLMAdapter:
                 await asyncio.sleep(budget.on_failure(exc))
 
     @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
-    def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> Generator[str, None, None]:
-        """流式对话，按增量产出文本片段。"""
+    def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None, *,
+                    long_output: bool = False) -> Generator[str, None, None]:
+        """流式对话，按增量产出文本片段。
+
+        ``long_output=True`` 只把**读**超时放宽到 ``_BATCH_STREAM_READ_S``（长输出的
+        prefill 静默可以到分钟级），connect / write / pool 仍取本次 attempt 的 ceiling；
+        默认 False 时逐字维持原行为（聊天流不受影响）。
+        """
         self._before_call()   # 建流之前：拒绝时连 create() 都不发
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
@@ -792,7 +806,10 @@ class LLMAdapter:
                               ceiling_s=_STREAM_ATTEMPT_S, backoff_mult_s=_STREAM_BACKOFF_S,
                               log_prefix="LLMAdapter chat_stream")
         while True:
-            timeout = budget.attempt_timeout()
+            timeout: float | Timeout = budget.attempt_timeout()
+            if long_output:
+                # 分项超时：标量会被 httpx 铺到每个阶段（含 read），长 prefill 必超时。
+                timeout = Timeout(timeout, read=_BATCH_STREAM_READ_S)
             try:
                 stream = self._client.chat.completions.create(
                     model=self._model,
@@ -845,6 +862,17 @@ class LLMAdapter:
         except Exception as exc:
             print(f"读取流式响应失败：{exc}")
             raise
+
+    def chat_stream_long(self, system_prompt: str, messages: list[dict[str, Any]],
+                         max_tokens: int | None = None) -> Generator[str, None, None]:
+        """长输出流式的**唯一入口**：角色卡 / 合并 / 格式化走这里。
+
+        存在的理由是「守汇合点」——`long_output=True` 只在这一个函数里出现，调用点
+        不需要（也不该）知道有个读超时要放宽：那种「5 处各写一遍参数」的写法，漏一处
+        就是一条会在生产上静默读超时的路，而漏掉的那处从调用点看不出来。
+        """
+        yield from self.chat_stream(system_prompt, messages, max_tokens=max_tokens,
+                                    long_output=True)
 
     @T.spanned("llm.chat_with_tools", op="chat", finalize=_infer_finalize)
     def chat_with_tools(
