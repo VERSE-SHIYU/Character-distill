@@ -374,8 +374,13 @@ class _FakeSSEHandler(BaseHTTPRequestHandler):
         plan = self.server.plan
         self.server.calls += 1
         n = int(self.headers.get("Content-Length", 0))
-        if n:
-            self.rfile.read(n)
+        body = self.rfile.read(n).decode("utf-8", "replace") if n else ""
+        # `plan["body_rules"]`：[（请求体含此串 → 覆盖这些 plan 字段）]。按**请求体内容**
+        # 挑行为，不按调用次序 —— 并发发出的请求（如分批归并）到达次序不确定。
+        for needle, override in plan.get("body_rules", ()):
+            if needle in body:
+                plan = {**plan, **override}
+                break
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         if plan["disconnect_after"] is not None:
@@ -391,7 +396,7 @@ class _FakeSSEHandler(BaseHTTPRequestHandler):
             last = i == len(tokens) - 1
             self._sse({**base, "choices": [
                 {"index": 0, "delta": {"content": tok},
-                 "finish_reason": "stop" if last else None}]})
+                 "finish_reason": plan["finish_reason"] if last else None}]})
             if plan["disconnect_after"] == i + 1:
                 self.connection.close()
                 return
@@ -415,11 +420,14 @@ class FakeSSE:
       tokens           逐 token 内容；每片一个 SSE content chunk，末片带 finish_reason=stop
       disconnect_after 吐完第 N 片后断开连接（None = 正常收尾）
       usage            末尾是否补一个 usage 尾块（不补则 adapter 走字符估算并打一行提示）
+      finish_reason    末片的 finish_reason（默认 "stop"；给 "length" 造截断）
+      body_rules       [(请求体含此串, 覆盖哪些 plan 字段), ...] —— 按请求体挑行为。
+                       `tokens: []` 配 `usage: True` = 交付一个空正文的合法收尾。
     """
 
     def __init__(self) -> None:
         self.plan = {"silent_ms": 0, "tokens": ["mock-tok"], "disconnect_after": None,
-                     "usage": True}
+                     "usage": True, "finish_reason": "stop", "body_rules": ()}
         self._srv = _FakeSSEServer(("127.0.0.1", 0), _FakeSSEHandler)
         self._srv.plan = self.plan
         self._srv.calls = 0
