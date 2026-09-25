@@ -63,7 +63,7 @@
 1. 不新增配置项：并发只改 `config.example.yaml` 里已有的 `map_concurrency` 的值。
 2. 识别结果的对外形状 `{name, aliases, importance, reason}` 不变，前端零改动。
 3. 逐片 Map 的提示词与调用方式（识别、蒸馏两处）不改。
-4. 不新建模块：汇总逻辑放在 `core/distiller.py` 或 `core/character_roster.py` 现有文件内，按职责就近放。
+4. 新模块只允许一个：`core/roster_aggregate.py`（WP3 的纯函数，理由见 WP3「落点」）；其余逻辑按职责放在现有文件内。
 5. 不做上传时预识别（识别改后约 1–3 分钟，在 10 分钟上限内）。
 6. WP8 不新增表、不加列：只改续跑的查找条件与分片缓存键。
 
@@ -72,14 +72,14 @@
 | 层 | 模块 | 本线之后的职责 |
 |---|---|---|
 | 适配器 | `adapters/llm_adapter.py` | 长输出读超时（WP1）；上游失败归类（WP2）；`chat_stream` 以返回值交出本次用量（WP4） |
-| 纯计算 | `core/character_roster.py` | 名单汇总、并组、判主次、取理由（WP3，纯函数，不碰 LLM） |
+| 纯计算 | `core/roster_aggregate.py`（新） | 名单汇总、并组、判主次、取理由（WP3，纯函数，不 import 任何项目模块） |
 | 数据定义 | `core/schema.py` | 角色卡 4 组字段划分，定义一处（WP7） |
 | 编排 | `core/distiller.py` | 识别：逐片 → 汇总 → 别名判断 → 出名单；蒸馏：逐片 → 分批合并（任一批失败即整体失败）→ 4 组并行格式化；长输出一律走 `_chat_accounted(stream=True)` → `_collect_stream`，这是唯一的长输出与记账出口；分片缓存键 `chunk_cache_key`（WP8） |
 | 路由 | `web/routers/distill.py` | `/start` 续跑：可复用 `interrupted` 与 `error` 两种任务（WP8） |
 | 存储 | `storage/*_store.py` | `find_resumable_distill`（由 `find_interrupted_distill` 改名并放宽状态条件，WP8） |
 
 **落点细则（红线 4「按职责就近放」的具体化）**
-- WP3：汇总、并组、判主次、取理由是**纯计算**，写成 `core/character_roster.py` 里的纯函数（输入逐片条目 + 别名判断给出的组对 + 全书分片数，输出名单）；`_identify_over_chunks` 只做编排：逐片调用 → 纯函数建组 → 别名判断调用 → 纯函数出名单。测试直接喂列表测纯函数，不需要 LLM 桩。
+- WP3：汇总、并组、判主次、取理由是**纯计算**，写成 `core/roster_aggregate.py`（新）里的纯函数（输入逐片条目 + 别名判断给出的组对 + 全书分片数，输出名单）；`_identify_over_chunks` 只做编排：逐片调用 → 纯函数建组 → 别名判断调用 → 纯函数出名单。测试直接喂列表测纯函数，不需要 LLM 桩。
 - WP7：4 组字段划分只在 `core/schema.py` 定义一处（紧挨 `CharacterCard`），格式化与测试都读它；合并后仍由 `CharacterCard.model_validate` 统一校验，不另写校验。
 
 ## 4. 工作包
@@ -118,8 +118,9 @@
 
 1. **汇总（纯代码）**：以每片解析出的条目为输入。名字与别名做规范化（去空白）后建组：
    - 同一 `name` 必归一组；
-   - 某别名只在**一个**主名下出现过时，按别名并组；同一别名挂在 ≥2 个不同主名下（如「二爷」）视为**有歧义**，不据此并组，交第 2 步。
-   - **有歧义的别名从所有组的 `aliases` 中移除**（不只是不并组）：别名在下游按子串选片、打 RAG 标签（第 1 节第 9 条），留一个泛称就会污染蒸馏。别名判断确认两组是同一人后，合并组的别名同样只保留唯一指向此人的称呼。
+   - 某别名等于另一个主名、且此刻只挂在**一个组**上时，两组合并；反复做到不再有新合并为止（不动点）。
+   - **歧义按「组」判，不按「主名」判**（WP3 审计更正）：同一个人在不同分片里常用不同主名（一片叫「贾宝玉」、一片叫「宝玉」），两片都列了「宝二爷」；按主名数它挂在两个名下，但这两个名归并后是同一组，不算歧义。只有挂在 ≥2 个**不同组**上的别名（如「二爷」同时在宝玉组与贾琏组）才有歧义：不据此并组。
+   - **有歧义的别名从组的 `aliases` 中移除，在最后一步统一做**：别名判断把两组并成一组后，原先两组共有的称呼就只指向这一个人，应保留。所以移除放在别名判断合并之后，按最终分组计数，挂在 ≥2 个最终组上的一律移除。送给别名判断模型的清单里，也不列当时挂在 ≥2 组上的别名（泛称会诱导模型误并）。别名在下游按子串选片、打 RAG 标签（第 1 节第 9 条），留一个泛称就会污染蒸馏。
    - 逐片 `importance` 先规范化：含「主」计为主要，其余一律按次要计。
 2. **别名判断（一次模型调用）**：只把「组的主名 + 别名 + 出现分片数」列表（不含理由、不含正文）交给模型，问「哪些组其实是同一个人」，只输出需要合并的组对。走 `_chat_accounted(stream=True)` 长输出路径（WP1 已放宽读超时）。模型未明确判定为同一人的，**一律保持分开**。
 3. **主次（纯代码）**：每组统计 `chunk_count`（出现的**不同**分片数，同片重复只计一次）与 `main_count`（被逐片识别判为「主要」的分片数）。
@@ -130,7 +131,7 @@
 5. 别名判断调用经 `_chat_accounted` 记账，动作沿用 `distill_identify`（唯一出口，缺陷 16）；受影响的用量行数断言按新的调用次数更新，并在报告里逐条说明。
 6. `IDENTIFY_VERSION` 从 2 升到 3（新口径的名单不能复用旧缓存）；更新其注释。
 7. 删除不再使用的 `IDENTIFY_MERGE_PROMPT` / `IDENTIFY_MERGE_MAX_TOKENS` 及其专属测试；新的别名判断提示词只描述第 2 点这一件事。
-- 落点：汇总、并组、判主次、取理由写成 `core/character_roster.py` 的纯函数（见第 3 节）。
+- 落点（WP3 审计更正，2026-09-25）：汇总、并组、判主次、取理由写成新模块 `core/roster_aggregate.py` 的纯函数，不 import 任何项目模块；`Distiller` 在模块顶层 import 它。**不放 `core/character_roster.py`**：那个模块是名单生命周期层，位于 `Distiller` 之上（它 import `Distiller`，文件头写明「不管 LLM 细节」），`Distiller` 反过来依赖它就是层级倒置，函数内 import 只是把循环藏起来。纯函数测试相应放 `tests/test_roster_aggregate.py`。
 - 测试：第 8 节 I1–I5。
 
 ### WP4 [adapter + distiller] 流式用量随调用返回（独立 commit，排在 WP5 之前）
@@ -194,7 +195,7 @@
 |---|---|---|---|
 | WP1 | — | `adapters/llm_adapter.py`、`core/distiller.py`（5 处改调入口） | 与 WP2、WP4 同文件；`distiller.py` 与 WP3–WP8 同文件 |
 | WP2 | — | `adapters/llm_adapter.py`、`web/server.py` | 与 WP1、WP4 同文件 |
-| WP3 | WP1 | `core/distiller.py`、`core/character_roster.py` | 与 WP5、WP7、WP8 同在 `distiller.py` |
+| WP3 | WP1 | `core/distiller.py`、`core/roster_aggregate.py`（新）、`core/character_roster.py`（搬出） | 与 WP5、WP7、WP8 同在 `distiller.py` |
 | WP4 | — | `adapters/llm_adapter.py`、`core/distiller.py` | 同上 |
 | WP5 | WP1、WP4 | `core/distiller.py` | 同上 |
 | WP6 | — | `config.example.yaml` | 无 |
@@ -205,7 +206,7 @@
 **拆法（2026-09-25 修订：WP8 已合入 main `0dbb3eb`）**
 - **A 线**（现窗口，`feat/distill-longbook`）：WP1 + WP2 → 合入 → WP4 → WP5 → WP6 → WP7 → 蒸馏验收（§10 C、D）。
 - **C 线**（新开，WP1 + WP2 合入 main 之后再开）：WP3 → 识别验收（§10 A、B）→ 合入。
-- 为什么能并行：WP3 只动识别段（`core/distiller.py:942-1135` 的识别函数）与 `core/character_roster.py`；A 线后续改的是 `_collect_stream`（`:618-680`）、分批合并（`:1494-1560`、`:1982-2030`）、格式化（`:2040-2070`）与 `core/schema.py`，行不重叠。测试文件也不重叠（C 线：`test_identify_whole_book.py`、`test_character_roster.py`；A 线：`test_distiller_routing.py`、`test_distill_usage_accounting.py`）。
+- 为什么能并行：WP3 只动识别段（`core/distiller.py:942-1135` 的识别函数）、`core/roster_aggregate.py` 与 `core/character_roster.py`；A 线后续改的是 `_collect_stream`（`:618-680`）、分批合并（`:1494-1560`、`:1982-2030`）、格式化（`:2040-2070`）与 `core/schema.py`，行不重叠。测试文件也不重叠（C 线：`test_identify_whole_book.py`、`test_character_roster.py`；A 线：`test_distiller_routing.py`、`test_distill_usage_accounting.py`）。
 - 为什么 C 线要等 WP1 + WP2 合入：WP3 的编排测试要桩 `chat_stream_long`，这个方法是 WP1 才加的。
 - 为什么不再多开：WP4 要改 WP1 新建的 `_stream`；WP7 的「分批时跳过总合并」与 WP5 改的是同一段；这三个拆开只会制造冲突。
 - 两次真实验收不同时跑：同一个 DeepSeek 账号并发上限 500，识别与蒸馏各 250 会顶满。
@@ -259,13 +260,14 @@
 | S3 | 流中断 → 503 + 上屏文案；边界锁覆盖全部 LLM 异常类 | `tests/test_chat_stream_error.py` | 参数化两例（真 openai 客户端 + 真 socket）：假服务吐一片后断连；假服务静默超过聊天读超时（生产现场的 `ReadTimeout`）。最小 app 装 `register_domain_error_handlers`，路由消费 `chat_stream` → 503，`detail` == 「模型服务暂时不可用，请稍后重试」（与兜底文案差一词，有分辨力），`__cause__` 是 `httpx2` 异常；边界锁改为扫 `llm_error_types()` 全部类名 | ① 不包装 ② 包装面放宽成 `except Exception`（喂一个循环体内的 `AttributeError`，断言仍非 503） ③ `_TRANSPORT_ERRORS` 去掉 `APIConnectionError`（用例：桩一个抛 `openai.APIConnectionError(request=httpx2.Request("POST","http://x"))` 的流） ④ `llm_error_types` 不含 `UpstreamFailure` ⑤ 不登记 503 ⑥ `_upstream_user_message` 不认传输层（断言建流阶段网络错误重试耗尽后的文案 == 读流中断的文案） ⑦ 边界锁改回字面量 |
 
 ### WP3
-纯函数测试放 `tests/test_character_roster.py`（直接喂列表）；编排测试放 `tests/test_identify_whole_book.py`（`TestWholeBookCoverage` 按新口径重写，其余两类保留）。
+纯函数测试放 `tests/test_roster_aggregate.py`（直接喂列表）；编排测试放 `tests/test_identify_whole_book.py`（`TestWholeBookCoverage` 按新口径重写，其余两类保留）。
 
 | # | 守的行为 | 构造 → 断言 | 变异（每条都要红） |
 |---|---|---|---|
 | I1 | 合并阶段只 1 次别名判断，输入无理由、无正文 | 编排测试：3 片桩，reason 与片内各放可搜标记 → `chat_stream.call_count == 1`，其输入不含标记，含每组主名与出现分片数 | 恢复 main 上的 `_identify_merge` |
 | I2 | 别名判断的重修也走流式 | 编排测试：首次回「不是 JSON」→ `chat_stream.call_count == 2`、`chat.call_count == 0`（改写自原 `test_merge_repair_also_uses_stream`） | 重修改 `stream=False` |
 | I3 | 歧义别名：不并组、且从所有组移除 | 纯函数：片1 甲{二爷}、片2 乙{二爷}、组对为空 → 甲乙分开，两者 aliases 都不含「二爷」；再给组对（甲, 丙），丙的「三爷」也挂在丁名下 → 合并组不含「三爷」 | ① 共享任一别名即并 ② 删掉移除那一步 |
+| I3b | 同一人不同主名共列的别名不算歧义；模型并组后共有别名保留 | 纯函数：片1 贾宝玉{宝玉, 宝二爷}、片2 宝玉{宝二爷} → 一组，aliases 含「宝二爷」；再给甲{某爷}、乙{某爷}、组对（甲, 乙）→ 合并组 aliases 含「某爷」；并断言别名判断收到的清单里不含当时挂在 ≥2 组上的别名 | ① 歧义改回按主名计 ② 移除放到别名判断之前 ③ 清单里送出多组共有的别名 |
 | I4 | 主次、排序、理由、不截断 | 纯函数，一套 40 片数据（10% = 4）：X 3 片其中 2 片主要（写法「主角」「主要角色」）→ 主要，理由取主要片那条；Y 3 片、1 片主要、同片重复一次 → 次要、`chunk_count == 3`；Z 恰 4 片全「配角」→ 主要；再加 57 个一次性人物 → 输出组数 == 60，主要在前、组内按 `(main_count, chunk_count)` 降序 | ① 只按 chunk_count 判 ② `>=` 改 `>` ③ 规范化改 `== "主要"` ④ 按条目计数 ⑤ 去掉主次分层 ⑥ 理由取第一条 ⑦ 加 `[:50]` |
 | I5 | 记账 = 逐片汇总 1 行 + 别名判断 1 行 | 先把变异跑在 `tests/test_usage_accounting_lock.py`，红了就不新增；没红才在 `tests/test_identify_whole_book.py` 加一条断言 `["distill_identify"] * 2` | 别名判断改为直接 `self._llm.chat_stream(...)` |
 
@@ -309,7 +311,7 @@
 1. `docker compose -f docker-compose.test.yml up -d --wait`（端口 55432，`tests/conftest.py:27-32` 强制连它）。
 2. 每步只跑以下文件：
    - WP1 + WP2：`test_llm_adapter_retry.py test_usage_accounting_lock.py test_chat_stream_error.py test_llm_adapter_finish_reason.py test_domain_exception_exit.py test_exception_pickle_lock.py`
-   - WP3：`test_identify_whole_book.py test_character_roster.py test_identify_failure_channels.py test_usage_identity_context.py test_distill_usage_accounting.py test_usage_accounting_lock.py test_distill_task_api.py`
+   - WP3：`test_identify_whole_book.py test_roster_aggregate.py test_character_roster.py test_identify_failure_channels.py test_usage_identity_context.py test_distill_usage_accounting.py test_usage_accounting_lock.py test_distill_task_api.py`
    - WP4 + WP5：`test_distiller_routing.py test_distill_usage_accounting.py test_usage_accounting_lock.py test_llm_access_gate.py test_distill_resume.py test_llm_adapter_finish_reason.py`
    - WP8：`test_distill_task_api.py test_postgres_store.py test_storage.py test_distill_resume.py`
    - WP7：`test_distiller_routing.py test_identify_failure_channels.py test_distill_progress.py test_distill_task_api.py test_distill_usage_accounting.py`
