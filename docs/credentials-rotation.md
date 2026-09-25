@@ -27,7 +27,11 @@ NEW_FERNET=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.ge
 #    （需代码支持多密钥验证——暂不支持，需先实现）
 #    当前实现只认单一密钥，轮换需停服：
 #    a) 修改 .env 为新值
-#    b) docker compose -f docker-compose.prod.yml up -d --build app
+#    b) 钉住当前运行版 tag 再重建 app（镜像来自 GHCR，服务器不再构建；不钉 tag 会因
+#       docker-compose.prod.yml:78 的 ${APP_IMAGE_TAG:-latest} 回落到浮动的旧 latest）：
+#         export APP_IMAGE_TAG=$(docker inspect -f '{{.Config.Image}}' \
+#           "$(docker compose -f docker-compose.prod.yml ps -q app)" | sed 's/.*://')
+#         docker compose -f docker-compose.prod.yml up -d app
 #    c) 现有 JWT Token 将立即失效，用户需重新登录
 
 # 3. 两地各自执行（密钥独立）
