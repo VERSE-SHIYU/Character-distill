@@ -43,7 +43,7 @@ from fastapi.testclient import TestClient
 import deps
 import server
 from adapters.llm_adapter import LLMAdapter
-from conftest import TEST_JWT_SECRET, registered_globals
+from conftest import TEST_JWT_SECRET
 from core.text_manager import new_session_entry
 from deps import get_storage
 from routers.auth import get_current_user
@@ -1040,22 +1040,30 @@ async def test_l11_app_installs_the_production_guard():
     「生产经 lifespan 装上了门」；锚在 import 期只会证「模块被导入过」，而那个副作用
     本身就是本步要根除的东西（它让不启 app 的适配器单测凭空被门管住）。
 
-    还原交给 `registered_globals`（唯一入口）：本用例退出后 TestClient 关掉的 loop 已经
-    死了，注册却还指着它的话，同会话后面任何走 `submit_to_main_loop` 的用例都会把协程投到
-    死 loop 上 —— `chat_engine` 的宽 except 吞掉异常，表现为「coroutine ... was never
-    awaited」飘在**别的**用例头上（最难查的那种串味）。
+    还回也归生产 lifespan 自己管（缺陷 113 的修法）：TestClient 退出后守卫必须回到未注册，
+    这条断言与上面那条对称 —— 只有一侧的话，装上就不撤的实现照样绿。
+
+    这里**不**用 `registered_globals()` 兜（那是给测试 app 的 lifespan 用的）：夹具替生产
+    lifespan 还原，就把上面那条退出断言架空了 —— 撤不撤销都是夹具在收尾。
     """
     gate = _gate()
     la = _adapter()
     getter = getattr(la, "get_call_guard", None)
-    assert getter is not None, "adapters.llm_adapter 没发布与 set_call_guard 配对的读取口"
-    # 作用域把两处注册清成「未注册」起步：同会话里别的用例可能已经装过 —— 不清空的话
-    # 读到的是**别人留下的**注册，删掉 lifespan 那一行也照样绿（恒真的假锁）。
-    async with registered_globals():
+    setter = getattr(la, "set_call_guard", None)
+    assert getter is not None and setter is not None, (
+        "adapters.llm_adapter 没发布与 set_call_guard 配对的读写口")
+    saved = getter()
+    # 起点清成「未注册」：同会话里别的用例可能已经装过 —— 不清空的话读到的是**别人留下
+    # 的**注册，删掉 lifespan 那一行也照样绿（恒真的假锁）。
+    setter(None)
+    try:
         assert getter() is None, "起点不是未注册 —— 前面有用例装过守卫"
         with TestClient(server.app):
             assert getter() is gate.geo_call_guard, (
                 "生产 app 启动后守卫不是策略层那一个 —— lifespan 没装门")
+        assert getter() is None, "生产 app 退出后守卫还留在进程里（缺陷 113 的形态）"
+    finally:
+        setter(saved)
 
 
 # ── L12：策略单点（②层） ──────────────────────────────────────────────────

@@ -12,7 +12,7 @@
 | 数字 / 结论 | 证据 | 一句话复现口径 | 派生量（算出来的，产物里没有直接字段）|
 |---|---|---|---|
 | 8 条删除路径删完后 distill_tasks / distill_chunks 残留矩阵（8 格）；sqlite 与 PG 逐格相同 | `ev:distill-orphan-matrix` | `DATABASE_URL=<一次性 PG> python tests/perf/distill_orphan_matrix.py` （脚本 `tests/perf/distill_orphan_matrix.py`） | —（直接测） |
-| 删卡保留行后，find_interrupted_distill 仅命中 status=['interrupted'] 的行（其余状态整批重跑）；sqlite 与 PG 逐格相同 | `ev:distill-resume-reachability` | `DATABASE_URL=<一次性 PG> python tests/perf/distill_resume_reachability.py` （脚本 `tests/perf/distill_resume_reachability.py`） | —（直接测） |
+| 删卡保留行后，find_resumable_distill 命中 status=['error', 'interrupted'] 的行（其余状态整批重跑）；sqlite 与 PG 逐格相同 | `ev:distill-resume-reachability` | `DATABASE_URL=<一次性 PG> python tests/perf/distill_resume_reachability.py` （脚本 `tests/perf/distill_resume_reachability.py`） | —（直接测） |
 | 断点续跑：mock 截断下 6 片各 52 字节全部落库且第二道门放行；二次续跑 map=0（分片未重算） | `ev:incomplete-v5` | `python -m pytest tests/test_distill_resume.py -q` （脚本 `tests/test_distill_resume.py`（**只佐证**，非产出脚本）） | —（直接测） |
 | 属主不存在（A 组）与仍拒绝（B 组）共 42 条用例，按命中 status 分为 32 / 3 / 7；各自命中的 raise 站点与 status（本机有 key） | `ev:ownership-reachability` | `PYTHONPATH=".;tests/perf" PROBE_EVIDENCE_ID=ownership-reachability python -m pytest tests/test_ownership_404.py -q -p raise_probe` （脚本 `tests/perf/raise_probe.py`） | **32** = records 中 status == 404 的条数（A 组：属主不存在）；**3** = records 中 status == 403 的条数（B 组：仍拒绝）；**7** = records 中 nodeid 属 TestMessageParity 的条数（文案一致性） |
 | 同上，PROBE_NO_KEY 置位模拟无 key 机器；两档站点表逐行相同，用例数均 42 passed | `ev:ownership-reachability-nokey` | `PROBE_NO_KEY=1 PYTHONPATH=".;tests/perf" PROBE_EVIDENCE_ID=ownership-reachability-nokey python -m pytest tests/test_ownership_404.py -q -p …` （脚本 `tests/perf/raise_probe.py`） | —（直接测） |
@@ -38,7 +38,7 @@
 | `chunk-size-provenance` | `runtime-measured` | — | — | — | `e389fdc` | 2026-09-12 |
 | `config-yaml-values` | `runtime-measured` | — | — | — | `e389fdc` | 2026-09-12 |
 | `distill-orphan-matrix` | `verified` | docs/evidence/distill-orphan-matrix.json | tests/perf/distill_orphan_matrix.py | producer | `e389fdc` | 2026-09-12 |
-| `distill-resume-reachability` | `verified` | docs/evidence/distill-resume-reachability.json | tests/perf/distill_resume_reachability.py | producer | `e389fdc` | 2026-09-12 |
+| `distill-resume-reachability` | `verified` | docs/evidence/distill-resume-reachability.json | tests/perf/distill_resume_reachability.py | producer | `e6c28a3` | 2026-09-25 |
 | `graphify-snapshot-2026-08-15` | `unverifiable` | — | — | — | `eb72a3bd` | 2026-08-15 |
 | `incomplete-v5` | `verified` | docs/evidence/incomplete-v5.json | tests/test_distill_resume.py | corroborating | `unknown(scratch)` | 2026-09-10 |
 | `ownership-reachability` | `verified` | docs/evidence/ownership-reachability.json | tests/perf/raise_probe.py | producer | `5bacc48` | 2026-09-12 |

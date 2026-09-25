@@ -778,16 +778,18 @@ async def _distill_start_impl(
     text_fp = text_fingerprint(content)
     chunk_size = distiller.effective_chunk_size(text_type)
 
-    # ── 续跑发现：复用上个进程遗留的 interrupted 任务 ────────────────────
-    # boot reconcile 把孤儿 running 置 interrupted（web/server.py）。同一 (user,
-    # text, character) 有 interrupted 行就复用它：前端继续轮询同一 task_id、不产生
-    # 重复行，分片候选按该行 checkpoint 取。force=True 是「重新蒸馏」，不复用。
-    # 精确匹配 character：同一文本下两个角色绝不能互借缓存片。
+    # ── 续跑发现：复用上个进程遗留的 interrupted / error 任务 ──────────────
+    # boot reconcile 把孤儿 running 置 interrupted（web/server.py）；run 中途失败则
+    # 收口成 error，但已落库的分片仍可用。同一 (user, text, character) 有这两种状态
+    # 之一的行就复用它：前端继续轮询同一 task_id、不产生重复行，分片候选按该行
+    # checkpoint 取（只重跑缺的片）。force=True 是「重新蒸馏」，不复用；done 也不复用
+    # —— 已出卡再蒸是「要新版本」，整跑。精确匹配 character：同一文本下两个角色绝不能
+    # 互借缓存片。
     resume_candidates: dict[int, dict] | None = None
     existing = None
     if not req.force:
         try:
-            existing = await storage.find_interrupted_distill(user_id, req.text_id, req.character_name)
+            existing = await storage.find_resumable_distill(user_id, req.text_id, req.character_name)
         except Exception as exc:
             # 发现失败当新任务：宁可整跑，不因发现环节拒启动
             logger.warning("Resume discovery failed (non-fatal, start fresh): %s", exc, exc_info=True)

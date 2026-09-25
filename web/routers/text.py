@@ -303,7 +303,10 @@ async def toggle_comment_like(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Toggle like on a comment."""
-    return await storage.toggle_text_comment_like(comment_id, user["id"])
+    result = await storage.toggle_comment_like("text", comment_id, user["id"])
+    if result is None:
+        raise HTTPException(404, "评论不存在")
+    return result
 
 
 @router.delete("/comments/{comment_id}")
@@ -477,7 +480,7 @@ async def get_text_comments(
         all_ids.append(c["id"])
         all_ids.extend(r["id"] for r in c.get("replies", []))
     if all_ids:
-        liked = await storage.get_liked_comment_ids(all_ids, user["id"])
+        liked = await storage.get_liked_comment_ids("text", all_ids, user["id"])
         for c in result["comments"]:
             c["liked_by_me"] = c["id"] in liked
             for r in c.get("replies", []):

@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""续跑可达性：一条 distill 行在「删卡但保留行」之后，还能被 find_interrupted_distill 找到吗？
+"""续跑可达性：一条 distill 行在「删卡但保留行」之后，还能被 find_resumable_distill 找到吗？
 
 删卡保留行的注释理由是「卡只是反向指针，文本还在就不该清断点，否则重蒸从头烧 API」。
-但续跑发现只匹配 status='interrupted'。本脚本逐状态现跑现测，看这个理由是否成立。
+续跑发现匹配 `status IN ('interrupted','error')`（WP8 起；此前只匹配 interrupted）。
+本脚本逐状态现跑现测，看这个理由在哪些状态上成立。
 
 **一次跑两个 store**，缺 `DATABASE_URL` 直接拒绝运行（不许静默只跑一半）。
 
@@ -71,7 +72,7 @@ async def one_store(kind: str) -> list[dict]:
         await store.save_distill_chunk(dtid, 0, "分片结果", "chunkfp")
         await store.purge_card(cid)          # 反正常规迭代：删卡，保留行
 
-        hit = await store.find_interrupted_distill(uid, tid, "张三")
+        hit = await store.find_resumable_distill(uid, tid, "张三")
         ok = hit is not None and hit["task_id"] == dtid
         rows.append({"status_at_card_delete": status, "resume_hits_row": ok,
                      "checkpoint_reusable": ok})
@@ -86,7 +87,7 @@ def main() -> None:
             "必须设 DATABASE_URL —— 两个 store 逐格对照是本档的一部分，不许静默只跑一半。")
     stores = {"sqlite": run(one_store("sqlite")), "pg": run(one_store("pg"))}
     hits = sorted(r["status_at_card_delete"] for r in stores["sqlite"] if r["resume_hits_row"])
-    claim = (f"删卡保留行后，find_interrupted_distill 仅命中 status={hits or '（无）'} 的行"
+    claim = (f"删卡保留行后，find_resumable_distill 命中 status={hits or '（无）'} 的行"
              f"（其余状态整批重跑）；sqlite 与 PG "
              f"{'逐格相同' if stores['sqlite'] == stores['pg'] else '不一致'}")
     out = write_evidence(

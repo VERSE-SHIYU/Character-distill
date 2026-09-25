@@ -356,9 +356,9 @@ config.yaml 现值（现读，非转述）：
   | `delete_card`（软删）/ `purge_card` / `detach_text_cards` | 保留 | 保留 | 裁决：不动（行身份与卡无关；断点跟文本走） |
   | `delete_user` | 清 | 清 | 已清（`6753f17`）+ 线程停止（`bee9993`） |
 
-- **「删卡保留断点」的注释理由是错的**：`storage/sqlite_store.py` 的 `hard_delete_text` 里写着「不清理 `delete_card` / `purge_card` / `detach_text_cards`：蒸馏行身份是 (user, text, character)，card_id 只是产物反向指针；删卡重蒸是常规迭代，文本还在就不该清掉续跑断点（否则下次重蒸从头烧 API）」。但续跑发现 `find_interrupted_distill` **只匹配 `status = 'interrupted'`**。删卡时行的状态通常是 `running` / `done` / `error` —— **永远命不中**，断点留着也用不上；只有 boot reconcile 把 `running` 翻成 `interrupted` 之后才可达
-  - 现跑现测（`tests/perf/distill_resume_reachability.py`，同产物文件）：`running` / `done` / `error` 三个状态删卡后**都命不中**（整批重跑），只有 `interrupted` 命中。「删卡保留」目前 = 纯占空间、零 API 收益
-  - 即：注释宣称的保护在主流路径上不存在。要么承认它无用而连带清掉，要么改成「按 (user, text, character) 找最近一条可复用行」——后者是**加功能**，不是修 bug
+- **「删卡保留断点」的注释理由是错的**：`storage/sqlite_store.py` 的 `hard_delete_text` 里写着「不清理 `delete_card` / `purge_card` / `detach_text_cards`：蒸馏行身份是 (user, text, character)，card_id 只是产物反向指针；删卡重蒸是常规迭代，文本还在就不该清掉续跑断点（否则下次重蒸从头烧 API）」。但当时的续跑发现（`find_interrupted_distill`，**WP8 起改名 `find_resumable_distill`**）**只匹配 `status = 'interrupted'`**。删卡时行的状态通常是 `running` / `done` / `error` —— 后两个**永远命不中**，断点留着也用不上；只有 boot reconcile 把 `running` 翻成 `interrupted` 之后才可达
+  - 当时的现跑现测（`tests/perf/distill_resume_reachability.py`，同产物文件）：`running` / `done` / `error` 三个状态删卡后**都命不中**（整批重跑），只有 `interrupted` 命中。「删卡保留」当时 = 纯占空间、零 API 收益
+  - 即：注释宣称的保护在主流路径上不存在。要么承认它无用而连带清掉，要么改成「按 (user, text, character) 找最近一条可复用行」——后者是**加功能**，不是修 bug（WP8 已按此立项落地，见「处置」末条）
 - **残留行的 `card_id` 是死指针，但症状是静默 no-op 而非报错**：蒸馏状态查询端点（`web/routers/distill.py` 里构造状态响应体的那处）原样回 `row["card_id"]`；卡被 `purge_card` 之后该 id 已不存在。前端三处消费点**都做了存在性守卫**（`DistillTaskBar.jsx` 与 `DistillWorkbench.jsx` 的 `tryChat` 是 `if (card)`，导出按钮挂在 `view?.canChat` 下），所以不会 404、不会崩——**点了「打开 / 试聊当前版本」什么也不发生**。属「失败被吞成正常返回」同族，但等级低（无数据损坏，只是无反馈）。*（初判为「前端取卡必 404」，实读前端后订正）*
 - **running 任务这一问已有实现**：`web/routers/text.py` 的软删与永久删**都在** `soft_delete` / `hard_delete` 之前调 `cancel_distill_tasks_by_text_id` —— 它同时置内存 `error`（bg 线程在 `distill_incremental_stream` 的消费循环里读这个当停止信号）与 DB `cancel_distills_by_text_id`。所以「删文本时有 running 任务怎么办」的答案是「删了让任务停」，且已落地，**无需再裁决**
 - **真缺口：`admin.delete_user` 这条路没接**。`web/routers/admin.py` 的 `delete_user` 直接调 `storage.delete_user`，**不停在跑的蒸馏线程**；`storage/postgres_store.py` 的 `delete_user` 注释自己承认了这一点。行被清、线程还在烧 LLM 额度，且其 `save_distill_chunk` / `update_distill_task` 双双落空（`WHERE EXISTS` + UPDATE-only），结果是**不可观测的野线程**
@@ -369,6 +369,12 @@ config.yaml 现值（现读，非转述）：
   - **顺序不变量锁**：`tests/test_admin_user_delete_distill.py` —— 取证点选在 spy 的 `delete_user` **内部**读 `_tasks`，比「停止函数有没有被调用」强（能识破「先删库后发信号」这种顺序颠倒的假修）；batch 路径逐用户发信号，不是只发第一个
   - **注释订正**（`53494ae`）：两 store 的 `hard_delete_text` 注释改成真实口径（断点生命周期跟文本走；非 `interrupted` 的残留行重蒸命不中，是已知取舍），证据脚本 `tests/perf/distill_resume_reachability.py` 与 `distill_orphan_matrix.py` 及其产物一并入库
   - **删卡/解绑的清理口径：不动**（保守裁决）。删卡不产生孤儿行（行身份 `(user, text, character)` 与卡无关），清理由文本死亡路径负责；改成「按 `(user, text, character)` 找最近一条可复用行」是**加功能**，另立项
+  - **「加功能」已落地：WP8 失败任务也续跑**（2026-09-25，蓝图 `docs/specs/distill-longbook-blueprint.md` 的 WP8）：
+    - **查找放宽**：`find_interrupted_distill` → `find_resumable_distill`（`storage/base.py`、两个 store、`web/routers/distill.py` 唯一调用点），条件 `status IN ('interrupted','error')`。`done` 仍不复用（已出卡再蒸是「要新版本」，整跑）；`force=True` 照旧跳过复用
+    - **分片缓存键改成整个 Map 请求**：`core/distiller.py::chunk_cache_key(system, user, model)` = `sha256(渲染后的 system + "\x00" + 渲染后的 user) + ":" + 模型`，写入与 `_resume_hit` 校验**都只经这一处**。此前键只含原文，而失败任务可能隔几天才重试，期间换模型或改提示词就会复用错结果。不设「记得 +1 的版本常量」——提示词模板、角色名、chat/story 两套提示词、原文都自动进键
+    - **现跑现测重跑**（`tests/perf/distill_resume_reachability.py`，同产物文件）：`error` 与 `interrupted` 删卡后**都能命中**且断点可复用，`running` / `done` 仍整批重跑（`running` 待 boot reconcile 翻成 `interrupted`）。「非 `interrupted` 行命不中」**不再是已知取舍** —— 它与上文 `53494ae` 那条的注释都已订正
+    - 上线影响：上线前的旧断点指纹只含原文，一律命不中，只重跑一次（不做兼容分支）
+    - 测试：`tests/test_distill_task_api.py::TestEResumeFailedTask`（C1 路由层）、`tests/test_postgres_store.py` / `tests/test_storage.py` 的 `test_find_resumable_distill`（C1 存储层）、`tests/test_distill_resume.py::TestCacheKeyCoversTheRequest`（C2 换模型 / C3 改提示词）
 - **未接停止信号的其余删除点（本轮只记不修）**：`web/routers/card.py` 的卡删除路由（`hard_delete("card")` ×2 / `soft_delete("card")` ×1），以及 `web/routers/market.py` 的 `delete_market_card`（直接调 `storage.delete_card`）—— 要把在跑的任务对上被删的卡需要 `(text_id, character)`，而 `character` 在 identify 步解析出名字之前是空串，匹配不可靠；且与上面「删卡口径不动」是同一件事
 
 **21. `079_remote_user_profiles.sql` 从未接线 —— SQLite 新库缺 `remote_user_profiles` 表** —— 状态：**已修（2026-09-13）**
@@ -1754,7 +1760,7 @@ PROBE_IMAGE         false
 
 > 与「缺陷」分开记账：**缺陷 = 有东西坏了**（有正确行为可对照）；**立项 = 有东西从来没建**（没有可对照的现状，做它就是加功能）。混在一起会让缺陷清单虚高、也让「还有几个真缺陷待修」失真。三、里的编号 10 只留占位，指向本节。
 
-**A. post / card 评论点赞特性整体缺失**（原缺陷 10，2026-09-12 重记并移出）
+**A. post / card 评论点赞特性整体缺失 → 已补（2026-09-25）**（原缺陷 10，2026-09-12 重记并移出）
 - **原记账被证伪**：原条目称「同类端点 `text.py` 的 `get_text_comments` 标了 `liked_by_me`、`list_post_comments` 没标，按 `text.py` 的写法对齐即可」。实读后前提不成立 —— 照做只会写死一个恒 `False` 的**假默认值**（本仓明令禁止，见 §四）
 - 证据（2026-09-12 现跑现查）：
   - **无表**：全仓没有 `post_comment_likes` / 卡评论点赞表；`_likes` 家族只有 `text_comment_likes`（`storage/migrations/031_text_comments.sql` 及 PG 等价物）与 `post_likes`（点赞**帖子**本身，`web/routers/market.py` 的 `like_post` → `toggle_post_like`）
@@ -1762,7 +1768,10 @@ PROBE_IMAGE         false
   - **无原语**：`storage/sqlite_store.py` 的 `get_liked_comment_ids` **硬编码** `text_comment_likes`（PG 侧同），拿 post 评论 id 去查恒返空集
   - **无消费**：前端 `web/frontend/src/components/common/PostCard.jsx` 渲染 post 评论（头像 / 用户名 / IP 属地 / 时间 / 正文）**没有点赞按钮**，从不读该字段；`post.liked_by_me` 是**帖子**的赞，不是评论的
 - 即：真缺口是**「post / card 评论点赞」这个特性从来不存在**，不是「某端点漏标一个字段」。对齐写法 ≠ 修 bug，是**加功能**（建表 + 双方言 migration + toggle 路由 + `get_liked_post_comment_ids` 原语 + 前端按钮），且要新增一张表
-- 处置裁定（用户，2026-09-12）：**不做**。`list_post_comments` 保持现状 —— 不返回该字段，比返回一个恒 `False` 更有信息量
+- 处置裁定（用户，2026-09-12）：**不做**。`list_post_comments` 保持现状 —— 不返回该字段，比返回一个恒 `False` 更有信息量（**2026-09-25 用户改判为「已做」，见下**）
+- **收口（用户，2026-09-25）：已做** —— 按「新功能」走完整流程（spec `docs/specs/spec-comment-likes.md`），四个 commit 依次落地：`00afba5` 迁移 → `43651dc` 共用存储函数 → `23b01af` 路由 → `97b3cd6` 前端按钮。
+- **新表 / 新列**：`post_comment_likes`、`card_comment_likes`（主键 `(comment_id, user_id)`；`comment_id` 外键 + `ON DELETE CASCADE`，`user_id` 不加外键 —— 删用户不删评论，带了级联会让「评论还在、赞没了、计数没减」漂掉）；`post_comments` / `card_comments` 各加 `likes INTEGER NOT NULL DEFAULT 0`。PG `029_comment_likes.sql` + SQLite 孪生 `096_comment_likes.sql`（编号按合并时 main 的最大号；2026-09-25 合并前复核 main 仍停在 PG `028` / SQLite `095`，故不变）。
+- **判据（区别于「对齐写法」）**：三处列表的 `liked_by_me` 由真表查询得出，`get_liked_comment_ids(kind, …)` 按评论类型选表 —— 写死一张表或写死 `False` 都会让 `tests/test_comment_likes.py` 的列表用例变红；游客侧是「不显示按钮」而非「返回假 `False`」。
 - 注：它仍留在第 9 条的扫描名单里（读 user 与否在该端点曾表现为「功能与否」而非「越权与否」），该扫描不受本条影响
 - 立项与否 = **产品决策**，不是待办欠账；将来要做，按「新功能」走完整流程，不挂在缺陷表下
 
@@ -1991,7 +2000,7 @@ PROBE_IMAGE         false
 - **分支 CI 实数（2026-09-24，Spec 123 步骤 4，`12268e0`，run `35993735059`）**：本条**没有消失**，按现数如实记 —— `Event loop is closed` 共 108 行：**gate job 40 行（20 处）/ sentinel job 68 行（34 处）**。来源逐条归到 `tests/test_demo_gate.py`（`PytestUnhandledThreadExceptionWarning: Exception in thread Thread-N (_connection_worker_thread)`），该文件在 `:121` 直接构造 `SQLiteStore` —— 正是上面「直接构造 SQLiteStore 的 SQLite 专属用例」那一类留门，**不是**「新代码把测试引回了 SQLite」。两个 job 的条数不同（20 / 34），与条目开头「条数与命中用例每次不同」的形态一致。该文件不在 Spec 123 的改动面内，故**只记不修**，状态维持「SQLite 专属，按主次不修」。
   - **对照读数**（同口径、上一个分支 run `35941780534`，`990b7dcc`）：`Event loop is closed` gate **52** 行 / sentinel **24** 行。两组数同量级且互有高低（与本 spec 无关的正负抖动），故不把任何一侧的差值归给本次改动。
 
-**113. 全量跑时 T2 额外报 `coroutine ... was never awaited`（只跑 `tests/test_ownership_404.py` 不出现）** —— 状态：**已修**（`8dfb1f8`）
+**113. 全量跑时 T2 额外报 `coroutine ... was never awaited`（只跑 `tests/test_ownership_404.py` 不出现）** —— 状态：**已修**（`8dfb1f8`；2026-09-25 生产侧配对注销收口，见末条）
 - 成因：`tests/test_llm_access_gate.py::test_l11_app_installs_the_production_guard` 用 `with TestClient(server.app)` 触发真实 lifespan，以证明「生产经 lifespan 装上了门」。**启动同时也注册了 `core.scheduling` 的投递器**（`set_main_loop`），而该用例只还原了守卫 —— 退出后 loop 已被 `TestClient` 关掉，注册却还指着它。
 - 之后第一个走 `submit_to_main_loop` 的用例把协程投到死 loop 上；`core/chat_engine.py` 的宽 `except` 吞掉异常，于是它以 `coroutine ... was never awaited` 的形式飘在**别的**用例头上（最难查的那种串味）。
 - 修法：把启动那一段包进本文件既有的 `_snapshot(S.get_loop_submitter, S.set_loop_submitter, before)` 惯用法，并在块后断言已还原。**不新建全局夹具** —— 还原责任归泄漏用例自己（与 `_Restored` docstring 的「还原，而不是置 None」同理由）。
@@ -2001,6 +2010,11 @@ PROBE_IMAGE         false
 - **收敛（2026-09-24，Spec 123 步骤 3，`12268e0`）**：上面写明的触发条件**已成立**，本条因此复发并收敛。触发者是 `tests/test_message_backfill.py::test_C9_shutdown_backfills_the_queues`（`a275beb` 那条触发记录）—— 第二个启动 lifespan 的用例，而且它按旧写法（`async with server_mod._lifespan(...)`，注册后不还原）**恰好复现了本条**。还原收敛为 `tests/conftest.py::registered_globals()` 这一个入口：进入时快照「主 loop / 投递实现 / 调用守卫」三者并把两处注册清成未注册，退出时**先核再还原**（一处都没装上 = 这段没走到装配那一步，当场报错，不留假锁）。两种用法共用它 —— 包住生产 `_lifespan`（C9、l11），或作测试 app 的 lifespan、在其中 `deps.set_main_loop(当前运行 loop)`（`test_message_backfill._client`、`test_ownership_404._make_client`）。l11 自己那层 `_snapshot` 随之删掉；「lifespan 注册的守卫与投递器在生产关停路径没有配对注销」这条已知边界**不变**（本步收敛的是测试侧还原）。
 - **复现命令（现跑，2026-09-24）**：`pytest "tests/test_message_backfill.py::test_C9_shutdown_backfills_the_queues" "tests/test_ownership_404.py::TestOneToOneSessionOwnership::test_T2_independent_session_owner_can_chat"` → `never awaited` **0**（改前 **4**）。分支 CI 侧同一形态：基线 run `35941780534`（`990b7dcc`）里 `tests/test_ownership_404.py::…test_T2_independent_session_owner_can_chat` 挂着 **never awaited**，run `35993735059`（`12268e0`）里它已消失。
 - **红源**：把 C9 改回直接 `async with server_mod._lifespan(...)` → `test_C9_shutdown_backfills_the_queues` 的最后一条断言（`_registrations() == before`）红（1 failed / 14 passed）。
+- **生产侧配对注销收口（2026-09-25，Spec observability E 段步骤 9）**：上一条收敛只落在**测试侧**，「生产关停路径不撤销注册」这条已知边界当时写明「不变」。本步把它关掉：每个 `install_*` / `set_main_loop` 返回自己的撤销函数，`web/server.py::_lifespan` 用 `contextlib.AsyncExitStack` 收集，`yield` 之后、既有停机关停动作（取消后台任务、flush 队列）**之后**逆序执行 —— 那些动作要用投递器，故不能排在撤销之后。
+  - **撤销语义统一为「写回装配前的状态」**：`set_main_loop` 写回**装配前那一个**（loop 与投递实现一起写回），守卫（`install_llm_gate`）写回装配前的守卫 —— 生产上装配前就是未注册，故两者这时都等价于「撤成未注册」。一律写 None 会把**外层**那份注册抹掉，而测试里生产 lifespan 确实会被套在测试 app 的 lifespan 之内跑（C9）。
+  - **`init_error_reporting` 的撤销是 `ExitStack.push` 的退出函数，不是 `callback`**（唯一一处）：回调拿不到正在冒出的异常，`validate_*` 一抛就变成「先 flush + close，异常这才冒出 lifespan」，而这条出口排首位正是为了收到启动期自身抛的错。退出函数先 `capture_exception`（`CancelledError` / `GeneratorExit` 除外 —— 关停与收尾不是故障）再 flush + close，不吞异常。红源：把 `push` 换回 `callback`（撤销不带异常信息）→ `test_startup_failure_is_reported_before_the_client_closes` 红（1 failed / 5 passed）。
+  - **测试侧随之收窄**：`conftest.registered_globals()` 不再包住生产 lifespan（C9、l11 改掉，改由生产 lifespan 自己还原；C9 保留 `_registrations() == before` 作为回归锁），只剩「测试 app 的 lifespan」这一种用法。`test_error_reporting.py` / `test_stdout_logging.py` 里为绕开本条而临时加的 `restore_app_lifespan_globals` 夹具同批删除 —— 它与 `registered_globals()` 补的是同一个根因。
+  - **红源（现跑）**：去掉任意一项撤销 → `tests/test_lifespan_undo.py::test_lifespan_undoes_every_process_wide_registration`、`tests/test_message_backfill.py::test_C9_shutdown_backfills_the_queues`、`tests/test_llm_access_gate.py::test_l11_app_installs_the_production_guard` 三处齐红（实测 **3 failed / 1 error**）；还原后三处齐绿（**3 passed**）。变异取两处：`deps` 的撤销写死 None、`install_llm_gate` 的撤销换成空操作。
 
 ### 四、验证纪律
 
