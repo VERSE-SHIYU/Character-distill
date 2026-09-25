@@ -3,7 +3,8 @@
 
 链路（全部在**同一个 event loop** 里直驱生产函数）：
     保存配置 → 建会话（user_role 留空 = 缺陷 55 的射程）→ 好感度评估落库
-    → 逐出内存 → 恢复会话重建（`_ensure_session` 本身）→ 再评估落库 → 扫全库
+    → 逐出内存 → 恢复会话重建（`_ensure_session` 本身，含取 RAG）
+    → 再评估落库 → 扫全库 + 这次链路吐出的 stdout 与日志记录
 
 **为什么不走 HTTP**：见缺陷 123。起一个 HTTP 面就要跨 event loop（TestClient 每个请求
 另起一个 loop，而 asyncpg 池绑在 loop 上），那条路本身就是 123 的根因，不在本 spec 修。
@@ -34,6 +35,7 @@ from pwdlib import PasswordHash
 from conftest import PG_ENV, main_loop_registered
 
 import deps
+from core.indexing_service import IndexingService
 from core.schema import CharacterCard
 from core.text_manager import TextManager
 from routers.chat import _ensure_session
@@ -68,9 +70,18 @@ class _EchoLLM:
         return self.chat(system_prompt, messages, *a, **kw)
 
 
-class _NoRAG:
-    def get_rag_for_session(self, *a, **kw):
-        return None
+class _FakeRAGEngine:
+    """RAGEngine 替身：`load_existing` 恒真 → 不建索引、不出网、不碰 chroma。
+
+    真 chroma 在 Windows 上读写会 segfault，且 embedding 出网 —— 这里只替掉边界，
+    链路（`_ensure_session` → `get_rag_for_session` → `_get_or_build_rag`）是生产代码。
+    """
+
+    def __init__(self, config):
+        self.collection = None
+
+    def load_existing(self, name) -> bool:
+        return True
 
 
 class _MemMgr:
@@ -79,7 +90,8 @@ class _MemMgr:
 
 def _text_manager(store, llm, sessions) -> TextManager:
     return TextManager(lambda: store, None, llm, sessions,
-                       indexing_service=_NoRAG(), memory_manager=_MemMgr())
+                       indexing_service=IndexingService(store, {}),
+                       memory_manager=_MemMgr())
 
 
 # ── 链路 ─────────────────────────────────────────────────────────────────────
@@ -132,8 +144,12 @@ async def _drive(store, uid: str, llm, api_key: str, embedding_key: str) -> str:
 
     # 恢复会话：走生产代码 `_ensure_session`（路由里那段重建逻辑本身，不是镜像）
     sessions.pop(sid, None)
-    session = await _ensure_session(sid, store, sessions, uid)
-    await _turn(session["engine"], sid)
+    with patch("core.indexing_service.RAGEngine", _FakeRAGEngine):
+        session = await _ensure_session(sid, store, sessions, uid)
+        await _turn(session["engine"], sid)
+    # 恢复会话真走到取 RAG 那一步（否则日志扫描全绿只说明「没东西可泄漏」）
+    assert session["engine"].rag is not None, (
+        "恢复会话没取到 RAG —— 日志扫描会是一条恒真的锁")
 
     state_json, initialized = await store.load_affinity_state_unscoped(sid)
     assert initialized and state_json, (
@@ -230,32 +246,48 @@ async def _async_echo():
 
 # ── 日志面：取 RAG 时 key 不进 stdout / 日志（缺陷 72）─────────────────────────
 #
-# 两个金丝雀走的是**落库**那条链，守不住日志。这条是同一把锁在日志上的最小面：
-# 取 RAG 的每次 HIT / MISS 都把完整 key 打给 stdout，容器里就是 docker logs。
+# 落库扫描守不住日志，而取 RAG 的每次 HIT / MISS 都把完整 key 打给 stdout，
+# 容器里就是 docker logs（缺陷的实际形态）。故 stdout 与日志记录一并收进来扫。
 
 _KEY_WINDOW = 8  # 旧身份只取 key 前 8 位（sk- 之后仅 5 个随机字符），8 位窗口即已辨识
 
 
 def test_indexing_service_never_logs_the_embedding_key(capsys, caplog):
-    from core.indexing_service import IndexingService
-
     secret = f"sk-test-{uuid.uuid4().hex}"
     svc = IndexingService(storage=MagicMock(), rag_config={})
     with caplog.at_level(logging.DEBUG), \
-            patch("core.indexing_service.RAGEngine") as cls:
-        inst = MagicMock()
-        inst.load_existing.return_value = True  # 不真建索引、不出网
-        cls.return_value = inst
+            patch("core.indexing_service.RAGEngine", _FakeRAGEngine):
         svc._get_or_build_rag("text_abc", "正文", embedding_key=secret)
         svc._get_or_build_rag("text_abc", "正文", embedding_key=secret)  # HIT 那条
 
-    captured = capsys.readouterr().out + "\n".join(
-        r.getMessage() for r in caplog.records)
-    leaked = [secret[i:i + _KEY_WINDOW]
-              for i in range(len(secret) - _KEY_WINDOW + 1)
-              if secret[i:i + _KEY_WINDOW] in captured]
-    assert not leaked, (
-        f"嵌入 key 的片段进了日志（命中 {leaked[0]!r}）：{captured!r}")
+    _assert_no_credential_in_text(_captured(capsys, caplog), {"embedding_key": secret})
+
+
+def _captured(capsys, caplog) -> str:
+    """这次链路吐出来的全部文本：stdout（`print` 的去处）+ 日志记录。"""
+    return capsys.readouterr().out + caplog.text
+
+
+def _assert_no_credential_in_text(text: str, sentinels: dict[str, str]) -> None:
+    """凭据本体、或其任意 8 位以上子串，都不许出现在 text 里。
+
+    窗口取 8 位与旧身份同一长度：`sk-` 之后只有 5 个随机字符，8 位即已辨识；
+    任何更长的子串都含一个 8 位窗口，故查窗口不漏。
+    """
+    leaked = [
+        (name, secret[i:i + _KEY_WINDOW])
+        for name, secret in sentinels.items()
+        for i in range(len(secret) - _KEY_WINDOW + 1)
+        if secret[i:i + _KEY_WINDOW] in text
+    ]
+    if not leaked:
+        return
+    hit = [ln for ln in text.splitlines() if any(w in ln for _, w in leaked)]
+    assert False, (
+        "假凭据出现在 stdout / 日志里：\n"
+        + "\n".join(f"  {name} → {w!r}" for name, w in leaked[:8])
+        + "\n命中行：\n"
+        + "\n".join(f"  {ln}" for ln in hit[:20]))
 
 
 # ── SQLite ───────────────────────────────────────────────────────────────────
@@ -263,13 +295,16 @@ def test_indexing_service_never_logs_the_embedding_key(capsys, caplog):
 
 @pytest.mark.asyncio
 class TestSqliteCanary:
-    async def test_credential_never_lands_in_plaintext(self, tmp_path, monkeypatch):
+    async def test_credential_never_lands_in_plaintext(
+            self, tmp_path, monkeypatch, capsys, caplog):
         store = SQLiteStore(str(tmp_path / f"test_{uuid.uuid4().hex}.db"))
         _patch_runtime(monkeypatch, store)
         uid = f"usr_{uuid.uuid4().hex[:12]}"
         sentinels = _sentinels()
 
-        await _drive(store, uid, _EchoLLM(), **sentinels)
+        with caplog.at_level(logging.DEBUG):
+            await _drive(store, uid, _EchoLLM(), **sentinels)
+        _assert_no_credential_in_text(_captured(capsys, caplog), sentinels)
         _assert_clean(_sqlite_hits(store.db_path, sentinels), sentinels)
 
 
@@ -283,7 +318,8 @@ def _dsn() -> str:
 @pytest.mark.asyncio
 @PG_ENV.skipif("PostgresStore 金丝雀")
 class TestPostgresCanary:
-    async def test_credential_never_lands_in_plaintext(self, monkeypatch):
+    async def test_credential_never_lands_in_plaintext(
+            self, monkeypatch, capsys, caplog):
         from storage.postgres_store import PostgresStore
 
         store = PostgresStore(_dsn())
@@ -291,7 +327,9 @@ class TestPostgresCanary:
         uid = f"usr_{uuid.uuid4().hex[:12]}"
         sentinels = _sentinels()
         try:
-            await _drive(store, uid, _EchoLLM(), **sentinels)
+            with caplog.at_level(logging.DEBUG):
+                await _drive(store, uid, _EchoLLM(), **sentinels)
+            _assert_no_credential_in_text(_captured(capsys, caplog), sentinels)
             _assert_clean(await _pg_hits(store, sentinels), sentinels)
         finally:
             await store.close()
