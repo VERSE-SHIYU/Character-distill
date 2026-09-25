@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 
 import pytest
@@ -424,7 +425,7 @@ def test_C2_summary_queues_behind_an_unpersisted_message(flaky, owner):
 
 
 def test_C3_revoke_clears_the_queue(flaky, owner):
-    """`/revoke` 先把队清掉 —— 不清的话补写会把用户刚撤回的消息又写回来。"""
+    """`/revoke` 之后队里不留这条 —— 删库成功即清队，补写不会把刚撤回的消息又写回来。"""
     sid = _new_sid()
     _install_session(flaky, sid, owner, _Engine())
     client = _client(flaky, owner)
@@ -685,6 +686,72 @@ def test_C9_shutdown_backfills_the_queues(flaky, owner, monkeypatch):
         "后面任何投递都会落到死 loop 上")
 
 
+async def _never_writes(key: str) -> int:
+    """一条永远写不进去的补写 —— 「库不可达」那半边由 `ping` 说，这里只管写入本身失败。"""
+    raise RuntimeError(f"db down, key={key}")
+
+
+def test_C10_shutdown_logs_queued_messages_that_are_lost(flaky, owner, monkeypatch, caplog):
+    """关停补写之后还留在队里的，逐个记一条 ERROR —— 队列在内存里，进程一走就没了。
+
+    与 C9 同一个驱动方式（lifespan 的退出段），差别只在**库一直不可达**：C9 验的是
+    「补得上的补上了」，这里验的是「补不上的要被点名」。不记的话这些消息在服务端一个字
+    都不留 —— 用户那边只看到「未保存」，日志里查不到是哪条会话欠了几条。
+
+    两张表都要走到：一对一与群聊的队列各自在内存里，只遍历其中一张，另一张的消息就
+    静默消失，而告警条数看着还是对的。
+
+    与 C9 一样**不**用 `registered_globals()` 兜着（见 C9 的 docstring）：还原该由生产
+    lifespan 自己做，夹具替它兜就把缺陷 113 那条锁架空了。
+    """
+    import deps
+    import server as server_mod
+
+    sid = _new_sid()
+    _install_session(flaky, sid, owner, _Engine())
+    client = _client(flaky, owner)
+
+    flaky.fail_roles = {"char"}
+    flaky.ping_ok = False
+    done = _done(_stream(client, sid, "第一句"))
+    assert done["char_save"]["state"] == "pending"
+
+    # 群聊那张表：用真 `GroupSession` 装条目（形状不手搓），队列里塞一条写不进去的。
+    from core.group_session import GroupSession
+
+    gid = f"g_{uuid.uuid4().hex}"
+    group = GroupSession(gid, {}, user_id=owner)
+    _run(group.outbox.write(_never_writes, ping=flaky.ping))
+    deps.get_group_sessions()[gid] = group
+
+    # 关掉启动期的凭据校验与守卫装配：本用例测的是**退出**那一段，且要能在没有
+    # `.env` / `config.yaml` 的机器上跑绿。
+    monkeypatch.setattr(server_mod, "validate_fernet_key", lambda: None)
+    monkeypatch.setattr(server_mod, "validate_jwt_secret", lambda: None)
+    monkeypatch.setattr(server_mod, "validate_inter_node_secret", lambda: None)
+    # 两个都返回空撤销：装配本体现在把返回值交给 ExitStack 当撤销用，返回 `None`
+    # 会在关停时炸成 `'NoneType' object is not callable`。
+    monkeypatch.setattr(server_mod, "install_llm_gate", lambda app: (lambda: None))
+    monkeypatch.setattr(server_mod, "install_alert_handler", lambda: (lambda: None))
+
+    class _App:
+        state = type("S", (), {"limiter": limiter})()
+
+    async def _drive():
+        async with server_mod._lifespan(_App()):
+            pass
+
+    with caplog.at_level(logging.ERROR):
+        _run(_drive())
+
+    lost = [r.getMessage() for r in caplog.records
+            if "queued messages lost at shutdown" in r.getMessage()]
+    assert lost == [
+        f"queued messages lost at shutdown: scope={sid} count=1",
+        f"queued messages lost at shutdown: scope={gid} count=1",
+    ], f"关停丢的消息没被逐个点名：{lost}"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # G1–G2：群聊这条链上的接线（缺陷 121 的回归面）
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -857,3 +924,183 @@ def test_O6_cleanup_flush_pings_the_storage_of_the_moment(flaky, store, owner, m
 
     assert other.ping_calls > 0, "清理补写没去问当下的库 —— 它握着入队时那个存储实例"
     assert flaky.ping_calls == stale_calls, "清理补写还在问入队时那个库"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# R1–R6：点「重试」时带上 pending 的 key，服务端以库为准回答它们的真实状态
+#
+# 队列在内存里，会话被空闲清理逐出后它就没了；而库里可能早就有那条消息（写成功了、只是
+# 响应没回到前端）。于是「未保存」标记永远翻不回来。对账的判据是幂等键本身。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _loss_records(caplog) -> list[logging.LogRecord]:
+    """丢失告警 —— 一条对数用 `args` 断言（`(scope, 条数, 前 10 个 key)`），不是拼好的字符串。"""
+    return [rec for rec in caplog.records if "lost" in rec.getMessage()]
+
+
+def test_R1_chat_flush_reconciles_keys_the_queue_no_longer_remembers(
+    flaky, owner, intruder, caplog,
+):
+    """① ② 会话被逐出后重建（空队列）：库里有那条 → `flushed`；库里没有 → `dropped` + ERROR。
+
+    两件事合在一条里，因为它们是同一个分支的两边。队列这里**是空的** —— 那条消息在逐出
+    之前就已落库（写成功了、响应没回到前端），只有回库问才答得上来。
+
+    变异：对账只 `flush` 不查库 → 本条两条断言都红（读数里两边都空，标记永远翻不回来）。
+    """
+    import deps
+
+    caplog.set_level(logging.ERROR, logger="core.message_outbox")
+    sid = _new_sid()
+    _install_session(flaky, sid, owner, _Engine())
+    client = _client(flaky, owner)
+
+    landed_key, lost_key = uuid.uuid4().hex, uuid.uuid4().hex
+    landed = _run(flaky.save_message(
+        sid, "assistant", "落库了但没回报", "", client_key=landed_key))
+
+    deps.get_sessions().pop(sid, None)  # 空闲清理把它逐出了 —— 队列跟着没了
+    r = client.post(f"/api/chat/{sid}/flush", json={"keys": [landed_key, lost_key]})
+    assert r.status_code == 200, f"{r.status_code} {r.text[:300]}"
+    body = r.json()
+
+    assert body["flushed"] == [{"key": landed_key, "id": landed["id"]}], body
+    assert body["dropped"] == [lost_key], body
+    lost = _loss_records(caplog)
+    assert len(lost) == 1, f"丢了一条却没留痕（或留了不止一条）：{lost}"
+    assert lost[0].args == (sid, 1, [lost_key]), (
+        f"告警要同时给出会话、条数与前 10 个 key：{lost[0].args}")
+
+    # ④ 非属主带同一份 keys：与「不存在」同码同文案（属主门在写库前就守住了）
+    intruder_client = _client(flaky, intruder)
+    foreign = intruder_client.post(f"/api/chat/{sid}/flush", json={"keys": [landed_key]})
+    missing = intruder_client.post(
+        f"/api/chat/nope_{uuid.uuid4().hex}/flush", json={"keys": [landed_key]})
+    assert foreign.status_code == 404, (
+        f"非属主带 keys 调重试接口：{foreign.status_code} {foreign.text[:200]}")
+    assert foreign.status_code == missing.status_code
+    assert foreign.json()["detail"] == missing.json()["detail"], "非属主与不存在同码不同文案"
+
+
+def test_R2_chat_flush_keeps_a_key_that_is_still_queued_pending(flaky, owner, caplog):
+    """③ 那条还在队里 → 两边都不出现（保持 pending），且不记丢失告警。
+
+    库不可达时点重试，队里每条都是这个处境。此时拿它们去查库，会一条不落地被判成
+    「丢失」—— 用户每点一次重试，日志里就多出一批假警报。
+    """
+    caplog.set_level(logging.ERROR, logger="core.message_outbox")
+    sid = _new_sid()
+    _install_session(flaky, sid, owner, _Engine())
+    client = _client(flaky, owner)
+
+    flaky.fail_roles = {"char"}
+    flaky.ping_ok = False
+    done = _done(_stream(client, sid, "第一句"))
+    key = done["char_save"]["key"]
+    assert done["char_save"]["state"] == "pending"
+
+    r = client.post(f"/api/chat/{sid}/flush", json={"keys": [key]})
+    assert r.status_code == 200, f"{r.status_code} {r.text[:300]}"
+    assert r.json() == {"flushed": [], "dropped": []}, r.json()
+    assert _loss_records(caplog) == [], "还在队里的那条被误报成丢失"
+    assert flaky.ping_calls > 0, "这一步根本没问库，本用例没验到东西"
+
+    # 库回来了那一轮：这条由补写落库（读数里带上真实 id），不是靠对账
+    flaky.fail_roles = set()
+    flaky.ping_ok = True
+    r = client.post(f"/api/chat/{sid}/flush", json={"keys": [key]})
+    assert [f["key"] for f in r.json()["flushed"]] == [key], r.json()
+    assert _loss_records(caplog) == [], "补上了却还报了丢失"
+
+
+def test_R3_chat_flush_rejects_bad_keys(flaky, owner):
+    """⑤ `keys` 的上限与形状：超 200 个、或不是 32 位十六进制 → 422。"""
+    sid = _new_sid()
+    _install_session(flaky, sid, owner, _Engine())
+    client = _client(flaky, owner)
+
+    too_many = client.post(f"/api/chat/{sid}/flush", json={"keys": ["a" * 32] * 201})
+    assert too_many.status_code == 422, f"{too_many.status_code} {too_many.text[:200]}"
+
+    not_hex = client.post(f"/api/chat/{sid}/flush", json={"keys": ["not-a-key"]})
+    assert not_hex.status_code == 422, f"{not_hex.status_code} {not_hex.text[:200]}"
+
+    # 不带 keys 的老调用点照旧：空体、没有体、显式空列表，三种都还是 200
+    assert client.post(f"/api/chat/{sid}/flush", json={}).status_code == 200
+    assert client.post(f"/api/chat/{sid}/flush", json={"keys": []}).status_code == 200
+    assert client.post(f"/api/chat/{sid}/flush").status_code == 200
+
+
+def test_R4_group_flush_reconciles_keys_the_queue_no_longer_remembers(
+    flaky, owner, intruder, caplog,
+):
+    """① ② 群聊版：逐出后重建，库里有的进 `flushed`、没有的进 `dropped` 并记 ERROR。"""
+    import deps
+
+    caplog.set_level(logging.ERROR, logger="core.message_outbox")
+    gid, cards = _make_group(flaky, owner)
+    client = _client(flaky, owner)
+
+    landed_key, lost_key = uuid.uuid4().hex, uuid.uuid4().hex
+    landed = _run(flaky.save_group_message(
+        gid, "角色0", "assistant", "落库了但没回报", client_key=landed_key))
+
+    deps.get_group_sessions().pop(gid, None)  # 空闲清理把它逐出了 —— 队列跟着没了
+    r = client.post(f"/api/group/{gid}/flush", json={"keys": [landed_key, lost_key]})
+    assert r.status_code == 200, f"{r.status_code} {r.text[:300]}"
+    body = r.json()
+
+    assert body["flushed"] == [{"key": landed_key, "id": landed}], body
+    assert body["dropped"] == [lost_key], body
+    lost = _loss_records(caplog)
+    assert len(lost) == 1, f"丢了一条却没留痕（或留了不止一条）：{lost}"
+    assert lost[0].args == (gid, 1, [lost_key]), (
+        f"告警要同时给出群聊、条数与前 10 个 key：{lost[0].args}")
+
+    # ④ 非属主带同一份 keys：与「不存在」同码同文案
+    intruder_client = _client(flaky, intruder)
+    foreign = intruder_client.post(f"/api/group/{gid}/flush", json={"keys": [landed_key]})
+    missing = intruder_client.post(
+        f"/api/group/nope_{uuid.uuid4().hex}/flush", json={"keys": [landed_key]})
+    assert foreign.status_code == 404, (
+        f"非属主带 keys 调群聊重试接口：{foreign.status_code} {foreign.text[:200]}")
+    assert foreign.status_code == missing.status_code
+    assert foreign.json()["detail"] == missing.json()["detail"], "非属主与不存在同码不同文案"
+
+
+def test_R5_group_flush_keeps_a_key_that_is_still_queued_pending(flaky, owner, caplog):
+    """③ 群聊版：还在队里的那条保持 pending，不记丢失告警。"""
+    caplog.set_level(logging.ERROR, logger="core.message_outbox")
+    gid, cards = _make_group(flaky, owner)
+    client = _client(flaky, owner)
+
+    flaky.fail_roles = {"user"}
+    flaky.ping_ok = False
+    body1 = _group_send(client, gid, cards[0], "第一句")
+    key = body1["user_save"]["key"]
+    assert body1["user_save"]["state"] == "pending"
+
+    r = client.post(f"/api/group/{gid}/flush", json={"keys": [key]})
+    assert r.status_code == 200, f"{r.status_code} {r.text[:300]}"
+    assert r.json() == {"flushed": [], "dropped": []}, r.json()
+    assert _loss_records(caplog) == [], "还在队里的那条被误报成丢失"
+
+    flaky.fail_roles = set()
+    flaky.ping_ok = True
+    r = client.post(f"/api/group/{gid}/flush", json={"keys": [key]})
+    assert key in [f["key"] for f in r.json()["flushed"]], r.json()
+    assert _loss_records(caplog) == [], "补上了却还报了丢失"
+
+
+def test_R6_group_flush_rejects_bad_keys(flaky, owner):
+    """⑤ 群聊版：`keys` 的上限与形状同判 422。"""
+    gid, cards = _make_group(flaky, owner)
+    client = _client(flaky, owner)
+
+    too_many = client.post(f"/api/group/{gid}/flush", json={"keys": ["a" * 32] * 201})
+    assert too_many.status_code == 422, f"{too_many.status_code} {too_many.text[:200]}"
+
+    not_hex = client.post(f"/api/group/{gid}/flush", json={"keys": ["not-a-key"]})
+    assert not_hex.status_code == 422, f"{not_hex.status_code} {not_hex.text[:200]}"
+
+    assert client.post(f"/api/group/{gid}/flush", json={}).status_code == 200

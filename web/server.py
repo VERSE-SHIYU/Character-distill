@@ -157,11 +157,19 @@ async def _lifespan(app: FastAPI):
             pass
         # 正常关停不该丢消息：队列在内存里，进程一走就没了。异常退出（崩溃）丢队列是已知
         # 边界，台账 94 写了。
-        from deps import flush_outboxes, get_group_sessions, get_sessions
+        from deps import flush_outboxes, get_group_sessions, get_sessions, pending_outboxes
         try:
-            flushed = await flush_outboxes(get_sessions()) + await flush_outboxes(get_group_sessions())
+            sessions = get_sessions()
+            group_sessions = get_group_sessions()
+            flushed = await flush_outboxes(sessions) + await flush_outboxes(group_sessions)
             if flushed:
                 print(f"[shutdown] flushed {flushed} queued message(s)")
+            # 这一轮补写之后还欠着的，跟着进程一起没了（队列在内存里）。**必须逐个点名**：
+            # 不记的话这些消息在服务端一个字都不留，用户那边只看到「未保存」，事后查不出是
+            # 哪条会话欠了几条。两张表各遍历一次 —— 群聊的队列不在一对一那张表里。
+            for table in (sessions, group_sessions):
+                for scope, count in pending_outboxes(table):
+                    logger.error("queued messages lost at shutdown: scope=%s count=%d", scope, count)
         except Exception as exc:
             logger.error("flush outboxes failed (non-fatal): %s", exc, exc_info=True)
 

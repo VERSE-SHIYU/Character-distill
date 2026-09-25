@@ -1690,6 +1690,27 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get messages failed: {exc}")
             raise
 
+    async def find_message_ids_by_client_keys(
+        self, session_id: str, keys: list[str],
+    ) -> dict[str, int]:
+        """按幂等键查行 id。语义与返回形状见 `StorageBase` 上的同名声明。"""
+        if not keys:
+            return {}
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT client_key, id
+                    FROM messages
+                    WHERE session_id = $1 AND client_key = ANY($2::text[])
+                    """,
+                    session_id, keys,
+                )
+            return {row["client_key"]: row["id"] for row in rows}
+        except Exception as exc:
+            print(f"[PostgresStore] Find message ids by client keys failed: {exc}")
+            raise
+
     # ── group sessions ────────────────────────────────────────────────
 
     async def create_group_session(self, id: str, name: str, card_ids: list[str], user_id: str,
@@ -1863,6 +1884,27 @@ class PostgresStore(StorageBase):
             return messages
         except Exception as exc:
             print(f"[PostgresStore] Get group messages failed: {exc}")
+            raise
+
+    async def find_group_message_ids_by_client_keys(
+        self, group_id: str, keys: list[str],
+    ) -> dict[str, int]:
+        """按幂等键查群聊行 id。语义与返回形状见 `StorageBase` 上的同名声明。"""
+        if not keys:
+            return {}
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT client_key, id
+                    FROM group_messages
+                    WHERE group_id = $1 AND client_key = ANY($2::text[])
+                    """,
+                    group_id, keys,
+                )
+            return {row["client_key"]: row["id"] for row in rows}
+        except Exception as exc:
+            print(f"[PostgresStore] Find group message ids by client keys failed: {exc}")
             raise
 
     _REACTION_TABLES = frozenset({"message_reactions", "dm_reactions"})

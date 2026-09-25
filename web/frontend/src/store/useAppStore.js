@@ -4,7 +4,7 @@ import { parseCardJson } from '../utils/card'
 import { resolveOpeningMessages } from './openingMessage'
 import { TERMS_VERSION, PRIVACY_VERSION } from '../legal/versions'
 import { checkRepeat } from '../utils/repeatGuard'
-import { applyFlushReport, withSaveResult } from '../utils/withSaveResult'
+import { applyFlushReport, pendingSaveKeys, withSaveResult } from '../utils/withSaveResult'
 import { FALLBACK } from '../config/navigation'
 import { scoped, bumpScope } from './scope'
 
@@ -1542,10 +1542,10 @@ const useAppStore = create((set, get) => {
   // 后端「重试」入口：把这条会话里没落库的消息按原顺序再写一遍。
   // 每次写本身也会顺带补写队头，但用户不该为了补一条消息被迫再发一条 —— 这就是那个按钮。
   flushMessages: protect(async (setScoped, get) => {
-    const { sessionId } = get()
+    const { sessionId, messages } = get()
     if (!sessionId) return
     try {
-      const data = await postJSON(`/api/chat/${sessionId}/flush`, {})
+      const data = await postJSON(`/api/chat/${sessionId}/flush`, { keys: pendingSaveKeys(messages) })
       setScoped((s) => ({ messages: applyFlushReport(s.messages, data) }))
     } catch (err) {
       console.error('[store] flushMessages failed:', err)

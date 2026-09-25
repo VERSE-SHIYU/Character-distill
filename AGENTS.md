@@ -1391,6 +1391,7 @@ PROBE_IMAGE         false
   - `git grep -n "saveState\s*:" -- 'web/frontend/src' ':!*.test.*'` → **2** 处，都在 `web/frontend/src/utils/withSaveResult.js`（`:18` 代码、`:43` 代码）—— 没有任何落点手写这个字段。锁在 `withSaveResult.test.js` 的 V2（扫全部产品源码，任何第二份 `saveState:` 判断或第二份文案都判红）。
   - `git grep -n "未保存，刷新后会丢失" -- 'web/frontend/src'` → 产品代码只 **1** 处（`components/common/UnsavedHint.jsx:16`），其余命中都是测试文件与 CSS 注释。同一个 V2 锁同时扫第二份文案。
   - 端到端锁：`tests/test_message_backfill.py`（C1–C9 一对一 / G1–G2 群聊 / O6 队列不持有存储）—— 每条都有一条自身的变异能把它打红（变异脚本与逐条读数见该轮交付报告）。
+- **72 线的三个边角已收口（2026-09-25，分支 `worktree-session-cred`，`a16c9cf` / `154dc39` / `666afca` / `34efbae` / `627fb3c`）**：撤回改为**持锁、先删库后清队**（`MessageOutbox.clear_after` —— 不持锁的话删库那个 `await` 期间排进来的补写会插在「删库」与「清队」之间，用户看到「撤回之后它自己又冒出来」）；「重试」改为**按幂等键回库对账**（`MessageOutbox.reconcile` 一处实现 + 两个 `/flush` 接口收可选 `keys`，≤200 个、每个须 32 位十六进制否则 422；会话被空闲清理逐出后队列是**空的**，只有 key 才答得上「它到底存没存」，判据是写入时落的 `client_key` 而不是内容或时间戳）；丢失告警**两处各一条 ERROR**（对账查不到的那几个 key 记 `queued message lost: scope=… keys=…`，关停 flush 之后仍 `has_pending` 的逐个记 `queued messages lost at shutdown: scope=… count=…`，一对一与群聊两张表都遍历）。两处都**只记 key 与 scope、不记正文**。
 - **不做的事（口径第 4 条，无行为可变异故不设锁）**：不重试、不弹窗、不汇总、不改操作入口。
 
 **95. 适配器的 `Depends(get_jwt_secret)` 在无凭据路径照样取 secret** —— 状态：**已修**（`c417827`，2026-09-23）
