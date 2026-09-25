@@ -61,7 +61,7 @@
     "reproduce": "DATABASE_URL=<一次性 PG> python tests/perf/distill_resume_reachability.py",
     "env": "本地 sqlite（临时库文件）+ 一次性 PG（postgres:16-alpine，POSTGRES_HOST_AUTH_METHOD=trust）；无 LLM 调用、无网络依赖，确定性",
     "measured_at": "2026-09-25",
-    "code_sha": "c5cf853",
+    "code_sha": "e6c28a3",
     "redacted_fields": []
   },
   {
