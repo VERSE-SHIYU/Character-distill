@@ -25,10 +25,16 @@ services:
       - DATABASE_URL=postgresql://glitchtip:${GLITCHTIP_DB_PASSWORD:?缺 GLITCHTIP_DB_PASSWORD：填进 /opt/glitchtip/.env}@postgres:5432/glitchtip
       # 官方文档：必须带 scheme（Include scheme (http or https)）
       - GLITCHTIP_DOMAIN=https://errors.bookecho-shiyu.cn
+      # settings.py:26 默认 ["*"]（:116 会为此打一条告警）。反代已锁定 Host 到本域，
+      # 但容器端口在 prod 网络上仍可达，显式钉住只收这一个 Host。
+      - ALLOWED_HOSTS=errors.bookecho-shiyu.cn
       # 首个用户建完即关掉自助注册
       - ENABLE_USER_REGISTRATION=False
       - SECRET_KEY=${SECRET_KEY:?缺 SECRET_KEY：填进 /opt/glitchtip/.env}
       - EMAIL_URL=${EMAIL_URL:?缺 EMAIL_URL：填进 /opt/glitchtip/.env}
+      # settings.py:838 的默认值是 webmaster@localhost，Resend 要求发件域名已验证，
+      # 必须改成主站同一个发件地址。名字仍用 RESEND_FROM_EMAIL（与主站 .env 一致）。
+      - DEFAULT_FROM_EMAIL=${RESEND_FROM_EMAIL:?缺 RESEND_FROM_EMAIL：填进 /opt/glitchtip/.env}
     mem_limit: 384m
     mem_reservation: 192m
     logging:

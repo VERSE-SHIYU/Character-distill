@@ -8,7 +8,7 @@
 | `FERNET_KEY` | 敏感数据独立加密 | 首次部署 | 90 天 | `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` | 是 |
 | `POSTGRES_PASSWORD` | 数据库连接密码 | 首次部署 | 180 天 | `openssl rand -hex 16` | 是 |
 | `DEEPSEEK_API_KEY` | DeepSeek LLM API | 首次部署 | 按需（API key 泄露时立即换） | DeepSeek 控制台 | 共用同一 Key |
-| `RESEND_API_KEY` | 邮件发送（Resend） | 首次部署 | 按需 | Resend 控制台 | 共用同一 Key |
+| `RESEND_API_KEY` | 邮件发送（Resend）。使用方：SZ `/opt/glitchtip/.env`（GlitchTip 发信） | 首次部署 | 按需 | Resend 控制台 | 共用同一 Key |
 | `ADMIN_INVITE_CODE` | 注册邀请码种子 | 首次部署 | 按需 | 手动设定 | 是 |
 | `FERNET_KEY` 回退 | 若未单独设 `FERNET_KEY`，`JWT_SECRET` 兼做加密密钥（不推荐） | — | — | — | — |
 
@@ -44,13 +44,35 @@ NEW_FERNET=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.ge
 
 ### API Key（DEEPSEEK / RESEND / DASHSCOPE）
 
-在对应厂商控制台重新生成后，更新 `.env` 中对应的值，然后：
+这三个 Key 不由仓库变量下发，走服务器 `.env`（`env_file:`），所以改完必须重建 app 容器
+（`restart` 只重启进程，不重读 `.env`）。
+
+镜像来自 GHCR，服务器**不再构建**（`--build` 的写法已过时）。且必须把当前运行版的 tag
+钉住：`docker-compose.prod.yml:78` 是 `${APP_IMAGE_TAG:-latest}`，tag 未设就回落到浮动
+的 `:latest`（旧版）：
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build app
+cd /opt/character-distill
+export APP_IMAGE_TAG=$(docker inspect -f '{{.Config.Image}}' \
+  "$(docker compose -f docker-compose.prod.yml ps -q app)" | sed 's/.*://')
+docker compose -f docker-compose.prod.yml up -d app
 ```
 
-（无需重启 postgres / nginx）
+（无需重启 postgres / nginx。改仓库变量是另一条路：见 `DEPLOY.md`「由部署下发的配置」，
+重跑一次 deploy `both` 即可，不需要登服务器。）
+
+### RESEND_API_KEY 额外一步：GlitchTip（SZ）
+
+GlitchTip 复用同一把 Resend Key，但读的是它自己的 `/opt/glitchtip/.env`——它由独立 compose
+项目 `glitchtip` 管理，**不在** `docker-compose.prod.yml` 里，所以上面那条 `up -d` 不会带它。
+轮换后必须同步改这个文件并重建该容器，否则 GlitchTip 的告警邮件会用旧 key 静默失败：
+
+```bash
+# 1) 改 /opt/glitchtip/.env 里 EMAIL_URL 的 key 段（文件权限 600）：
+#    EMAIL_URL=smtp+ssl://resend:<新key>@smtp.resend.com:465
+# 2) 重建 glitchtip（env 变化即重建容器；与主站互不影响）
+cd /opt/glitchtip && docker compose -p glitchtip up -d
+```
 
 ## 轮换提醒
 
