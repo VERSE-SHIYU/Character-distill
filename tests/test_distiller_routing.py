@@ -50,11 +50,13 @@ class TestReduceAllEmptyBails:
             return self.CARD_JSON
 
         def chat_stream(system, messages, max_tokens=None, **kwargs):
+            # 用量随返回值交付（WP4）：桩不 return 的话，调用方会静默落回 last_usage
             if "你正在整合关于" in system:
                 if "来源片段" not in messages[0]["content"]:
                     yield self.FABRICATED
-                return
+                return {"prompt_tokens": 1, "completion_tokens": 1}
             yield self.CARD_JSON
+            return {"prompt_tokens": 1, "completion_tokens": 1}
 
         llm.async_chat = AsyncMock(side_effect=async_chat)
         llm.chat = MagicMock(side_effect=chat)

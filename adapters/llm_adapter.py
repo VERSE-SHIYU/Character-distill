@@ -301,12 +301,18 @@ def check_outbound_guard(base_url: str) -> None:
 
 
 def _infer_finalize(sp, self, result, exc) -> None:
-    """推理 span 收尾：补 model + last_usage（OTEL 关时 sp=None，直接返回）。"""
+    """推理 span 收尾：补 model + usage（OTEL 关时 sp=None，直接返回）。
+
+    usage 的来源按入口分两类：**流式**入口（``chat_stream`` / ``chat_stream_long``）把本次
+    用量随返回值交给调用方，收尾这里也取 ``result`` 那一份 —— 与记账侧同源，顺带不再读
+    共享槽；其余入口（``chat`` 返回正文、``chat_with_tools`` 返回 message 对象）仍只有
+    共享属性可读。
+    """
     if sp is None:
         return
     T.set_attr(sp, "model", self._model)
     if exc is None:
-        usage = getattr(self, "last_usage", None)
+        usage = result if isinstance(result, dict) else getattr(self, "last_usage", None)
         if usage:
             T.set_usage(sp, usage.get("prompt_tokens"), usage.get("completion_tokens"))
 
@@ -812,7 +818,7 @@ class LLMAdapter:
 
     def _stream(self, system_prompt: str, messages: list[dict[str, Any]],
                 max_tokens: int | None = None, *,
-                read_s: float | None = None) -> Generator[str, None, None]:
+                read_s: float | None = None) -> Generator[str, None, dict | None]:
         """流式的唯一实现，两个公开入口共用（``chat_stream`` / ``chat_stream_long``）。
 
         ``read_s`` 是**读**阶段的超时上限：``None`` = 取本次 attempt 的 ceiling，即以标量
@@ -821,12 +827,19 @@ class LLMAdapter:
 
         两个入口的差别只有 ``read_s`` 一个值，故「这类调用读超时多长」只在一处定义：
         调用点不需要（也不该）知道有这回事。
+
+        **本次用量随返回值交出**（PEP 380：生成器 ``return v`` → ``StopIteration.value``），
+        记账方不必去读 ``last_usage`` 那个共享槽。共享槽里那个数是**跨调用**的：本函数在
+        写下它之后还要继续 ``yield``，控制权交出去的那一刻起就可能被另一条流的写覆盖，
+        收尾再读会读到别人的账（缺陷 20 的 300/300 串号）。返回值这一份从写出到返回
+        不经过任何共享状态。``last_usage`` 照写，单线程调用方不受影响。
         """
         self._before_call()   # 建流之前：拒绝时连 create() 都不发
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
         prompt_chars = sum(len(m.get("content", "")) for m in payload)
         self.last_usage = None  # 切断上一轮污染
+        usage: dict | None = None  # 本次用量：随返回值交付，不靠收尾时回头读共享槽
         # SDK max_retries 已归 0：create()（吐首 chunk 前）连接失败不再被 SDK 静默重试，
         # 在此用同一 _RetryBudget 做有界补偿（≤_STREAM_ATTEMPTS / ≤_STREAM_DEADLINE_S /
         # 退避 1s），429 也走 _classify_retry 的 Retry-After——不再是手写第四份循环。
@@ -859,11 +872,12 @@ class LLMAdapter:
         try:
             for chunk in stream:
                 if chunk.usage:
-                    self.last_usage = {
+                    usage = {
                         "prompt_tokens": chunk.usage.prompt_tokens or 0,
                         "completion_tokens": chunk.usage.completion_tokens or 0,
                         "estimated": False,
                     }
+                    self.last_usage = usage
                     continue
                 choices = chunk.choices
                 if not choices:
@@ -883,9 +897,11 @@ class LLMAdapter:
                 _check_finish_reason(None, where="chat_stream")  # 流尽仍无终态 → 记缺失
             # 厂商全程未回 usage chunk → 字符估算兜底（估算口径的唯一出口在 core.utils，
             # Map 失败分片走的是同一个函数，改系数不会漏一边）
-            if self.last_usage is None:
-                self.last_usage = estimate_usage_from_chars(prompt_chars, completion_chars)
-                print(f"[llm] usage chunk missing, estimated from chars (pt~{self.last_usage['prompt_tokens']} ct~{self.last_usage['completion_tokens']})")
+            if usage is None:
+                usage = estimate_usage_from_chars(prompt_chars, completion_chars)
+                self.last_usage = usage
+                print(f"[llm] usage chunk missing, estimated from chars (pt~{usage['prompt_tokens']} ct~{usage['completion_tokens']})")
+            return usage
         except IncompleteResponseError:
             raise  # 截断是确定性失败：不吞、不打「读取失败」误导日志、不重试
         except _TRANSPORT_ERRORS as exc:
@@ -907,13 +923,13 @@ class LLMAdapter:
 
     @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
     def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]],
-                    max_tokens: int | None = None) -> Generator[str, None, None]:
+                    max_tokens: int | None = None) -> Generator[str, None, dict | None]:
         """交互/小输出用：读超时取本次 attempt 的 ceiling（聊天是 7 s）。"""
         return (yield from self._stream(system_prompt, messages, max_tokens))
 
     @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
     def chat_stream_long(self, system_prompt: str, messages: list[dict[str, Any]],
-                         max_tokens: int | None = None) -> Generator[str, None, None]:
+                         max_tokens: int | None = None) -> Generator[str, None, dict | None]:
         """长输出流式的**唯一入口**：角色卡 / 合并 / 格式化走这里。
 
         存在的理由是「守汇合点」——读超时放宽只在这一个函数里发生，调用点不需要
