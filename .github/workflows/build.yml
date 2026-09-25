@@ -239,7 +239,7 @@ jobs:
           path: pip-freeze-sentinel.txt
 
   frontend-lint:
-    name: "lint / 前端 no-undef（分支也跑）— 红 = 你写错了"
+    name: "lint+test / 前端（分支也跑）— 红 = 你写错了"
     runs-on: ubuntu-latest
     # 与 test 同一条理由（见上）：挂死不算失败，没有上限就一直占着 runner。
     timeout-minutes: 40
@@ -261,6 +261,12 @@ jobs:
         run: |
           npm ci
           npx eslint src -c eslint.ci.config.js --quiet
+        working-directory: web/frontend
+
+      # 单测进这道门：前端上报那条链（配置为空 / 有 DSN / 抛错后 fallback 与上报）只有
+      # vitest 能红，eslint 看不见。放在同一 job 里复用上一步的 node_modules。
+      - name: Frontend unit tests (vitest)
+        run: npm test
         working-directory: web/frontend
 
   build:
