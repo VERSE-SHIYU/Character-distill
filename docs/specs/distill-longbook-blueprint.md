@@ -20,7 +20,7 @@
 **生产配置**
 1. 生产容器无 `config.yaml`（`git ls-files` 零命中；镜像 `COPY . .`；`docker-compose.prod.yml` 只挂 `./data`），回退读 `config.example.yaml`（`core/distiller.py:350-352`）：`chunk_size: 5000`、`map_concurrency: 30`、模型 `deepseek-v4-pro`、思考关闭。
 2. 并发取自 `self._map_concurrency`（`core/distiller.py:370`），Map 原语用 `asyncio.Semaphore(self._map_concurrency)`（`:1454`，滑动窗口，非分轮）。
-3. 并发 250 的本地前提：Map 用的 `AsyncOpenAI`（`adapters/llm_adapter.py:632-635`，`openai==3.13.0`）默认连接池 `max_connections=1000`，够用；分批合并 `_run_reduce_concurrent` 自带 `Semaphore(sem_size=6)`（`core/distiller.py:1499`），≥ 宝玉的 3 批。DeepSeek 官方并发上限：`deepseek-v4-pro` 每账号 500，超出返回 429（`adapters/llm_adapter.py` 已有 429 独立重试预算）。
+3. 并发 250 的本地前提：Map 用的 `AsyncOpenAI`（`adapters/llm_adapter.py:626-627` 的 `self._async_client`，经 `async_chat` `:745` 取用，`openai==3.13.0`）默认连接池 `max_connections=1000`，够用；分批合并 `_run_reduce_concurrent` 自带 `Semaphore(sem_size=6)`（`core/distiller.py:1499`），≥ 宝玉的 3 批。DeepSeek 官方并发上限：`deepseek-v4-pro` 每账号 500，超出返回 429（`adapters/llm_adapter.py` 已有 429 独立重试预算）。
 4. 模型实测速度：`docs/evidence/thinking-maplen-after.json`（同模型、生产提示词）单次 1.4–31.3 s，输出 556–2,097 token，约 55–78 t/s（含首字约 1.5 s）。
 
 **识别（`POST /api/distill/identify`，同步 HTTP，前端 `useAppStore.js:820`，前端超时 600 s、nginx 600 s）**
@@ -45,14 +45,14 @@
 **2026-09-25 复核补充**
 20. **流式用量存在共享属性上**：`LLMAdapter.chat_stream` 写 `self.last_usage`（`adapters/llm_adapter.py:786` 清空、`:816` 写入、`:840-841` 估算兜底）；`_collect_stream`（`core/distiller.py:660`）经 `core/utils.py:82-83` 读它记账；span 收尾 `_infer_finalize`（`adapters/llm_adapter.py:299`）也读它。已复现：几条流几乎同时结束、且 usage chunk 之后还有一次 `[DONE]` 读时 300/300 串号；结束时刻错开时 300/300 正确。
 21. **`T.spanned` 的生成器包装能透传返回值**：`result = yield from fn(...)`（`core/telemetry.py:272`）+ `return result`（`:288`）。
-22. **分批合并单批失败被静默丢弃**：单批异常 → 结果置空（`core/distiller.py:1512-1513`）；流式路径空批 print 后跳过（`:2024`）；只有全空才报错（`:1528`）。
+22. **分批合并单批失败被静默丢弃**：单批异常 → 结果置空（`core/distiller.py:1511-1513`）；流式路径空批 print 后跳过（`:2024`）；只有全空才报错（`:1528`）。
 23. **续跑只认 interrupted**：`/start` 经 `find_interrupted_distill`（`storage/postgres_store.py:3380`，`WHERE ... status = 'interrupted'`）找可复用任务（`web/routers/distill.py:786-810`）。合并失败的任务状态是 `error`，再点蒸馏是新任务，Map 全部重跑。`AGENTS.md` 已登记：非 interrupted 行命不中是已知取舍，「按 (user, text, character) 找最近一条可复用行」属加功能，另立项。
 24. **分片缓存键不含模型与 Map 提示词版本**：分片级门只比 `text_fingerprint(chunk)`（`core/distiller.py:254`；写入在 `:1913`）；任务级门只比 `chunk_size` 与全文指纹（`web/routers/distill.py:799-802`）。对照：识别的缓存键已含模型与版本（`core/distiller.py:966`，`{指纹}:{model}:{IDENTIFY_VERSION}`）。
 25. 前端蒸馏默认 `force=false`（`web/frontend/src/store/useAppStore.js:831`）。
 26. 本地 worktree 有 `config.yaml`，生产没有；`Distiller` 与 `web/deps.py:36-38` 都是「有 `config.yaml` 就读它」。本地跑出的数若不先移走它，就不是生产配置。
 
 **生产故障证据（SG，执行方只读排查，2026-09-25）**
-27. 500 完成于 2026-09-24 15:06:40.54Z，镜像 `c3ea722`，容器内无 `LLM_*` 覆盖。异常 `httpx2.ReadTimeout`（socket 超时直接上抛，无中间层）。栈：`distill.py:651` → `identify_characters`（`:984`）→ `_identify_over_chunks`（`:1107`）→ `_identify_merge`（`:1123`）→ `_collect_stream`（`:645`）→ `chat_stream` 的 `for chunk in stream`。**落在合并，Map 已全部完成**。
+27. 500 完成于 2026-09-24 15:06:40.54Z，镜像 `c3ea722`，容器内无 `LLM_*` 覆盖。异常 `httpx2.ReadTimeout`（socket 超时直接上抛，无中间层）。栈：`distill.py:651` → `identify_characters`（`:984`）→ `_identify_over_chunks`（`:1107`）→ `_identify_merge`（`:1123`）→ `_collect_stream`（`:645`）→ `chat_stream` 的 `for chunk in stream`（生产镜像 `:805`，基线 `:814`）。**落在合并，Map 已全部完成**。
 28. 那次请求：866,149 字、`text_type=classic`、120 段（均长 7,216 字，每段都超 `chunk_size`，走硬切）→ 识别 242 片（识别用 `self._chunk_size`=5000，不看 text_type）。Map 242 次调用：prompt 692,097 / completion 160,701 token（上游实测，均 664 token/片）；合并输入约 199,106 token（失败后按字符估算）。合并开始到报错约 7.9 s，与流式 7 s 读超时 + 建流对得上。
 29. **classic 的蒸馏分片是 6000 字**：`effective_chunk_size`（`core/distiller.py:381-387`）对 classic 取 `max(chunk_size, 6000)`；识别不受影响。第 15 条的「宝玉 207 片」是按 5000 估的，classic 下以验收实测为准。
 30. **蒸馏里直接调 `chat_stream` 的有 5 处**：`core/distiller.py:645`（`_collect_stream`）、`:1277`、`:1363`、`:1560`（`_single_reduce_stream`）、`:2057`（流式格式化）。聊天只有 `core/chat_engine.py:467` 一处，它需要 7 s 读超时保证首字快。
@@ -86,16 +86,31 @@
 
 ### WP1 [adapter + distiller] 长输出流式读超时
 **根因**：流式调用的 `timeout` 是标量 7 s（`_STREAM_ATTEMPT_S`），httpx 的标量超时同时设了读超时，即「两个数据块之间最多等 7 s」，贯穿整条流。DeepSeek 只在排队等调度时发 keep-alive，开始推理后读长输入（prefill）期间可能完全无数据，长输入一 prefill 就超 7 s（第 1 节第 27、28 条）。已在沙箱用真 adapter 复现：静默 9 s 在第 7.0 s 报 `httpx2.ReadTimeout`；改分项超时后 9.0 s 成功。
-1. `chat_stream` 加 keyword-only 参数 `long_output: bool = False`。为 True 时 `create()` 的 `timeout` 传 `openai.Timeout(<本次 attempt 的 ceiling>, read=_BATCH_STREAM_READ_S)`：connect / write / pool 不变，只放宽读。为 False 时逐字维持现状（聊天不受影响）。
+1. **入口放在适配器**（裁决 2026-09-25，路 D）：适配器公开两个流式方法，共用一个私有实现。
+   - 私有 `_stream(system_prompt, messages, max_tokens, *, read_s)`：现 `chat_stream` 的全部逻辑，唯一差别是 `create()` 的 `timeout` 传 `openai.Timeout(<本次 attempt 的 ceiling>, read=read_s)`：connect / write / pool 不变，只调读。
+   - `chat_stream(...)`：交互用，`read_s` = 本次 attempt 的 ceiling，行为逐字不变（聊天仍是 7 s）。
+   - `chat_stream_long(...)`：长输出批量用，`read_s = _BATCH_STREAM_READ_S`。
+   - 两个公开方法各自保留 `@T.spanned`，都以 `return (yield from self._stream(...))` 透传返回值（WP4 的用量随返回值交出靠这一点）。不设公开的 `long_output` 布尔参数。
 2. 新增一个具名常量 `_BATCH_STREAM_READ_S = 300.0`，放在 `_STREAM_ATTEMPT_S` 旁。依据写进注释：DeepSeek 对未开始推理的请求 10 分钟关连接、nginx 读超时 600 s，300 s 在两者之内且远大于合理 prefill。不做 env 出口。
-3. **守汇合点**：`Distiller` 新增唯一的私有入口（名字自定，如 `_stream_long(...)`），内部即 `self._llm.chat_stream(..., long_output=True)`；第 1 节第 30 条的 5 处全部改调它，不在 5 处各写一遍参数。
-4. 架构锁：在现有 `tests/test_usage_accounting_lock.py` 里加一条 AST 断言——`core/distiller.py` 中 `self._llm.chat_stream` 只出现在这个入口内。
+3. 第 1 节第 30 条的 5 处改调 `self._llm.chat_stream_long(...)`。调用形态仍是 `self._llm.*`，记账形态锁按「传递闭包到 `create`」自动推出入口方法集（`tests/test_usage_accounting_lock.py` 文件头第 1 条事实），**锁不用改**。
+   - 为什么不放在 `Distiller`：蒸馏器里包一层私有方法后，调用点不再是 `self._llm.*`，形态锁认不出；要么给锁开特例（锁的文件头明令禁止豁免名单），要么调用点漏账。放在适配器，「这类调用读超时多长」这条策略也只在一处定义。
+4. 架构锁：一条 AST 断言——`core/distiller.py` 中不出现对 LLM 接收者的 `.chat_stream(` 调用（交互版只给聊天用）。不钉调用点数量（WP5、WP7 会合理地改变它）。
+5. 测试桩：凡给 `Distiller` 用的假 LLM（`_make_llm` 的 `MagicMock` 等）改为桩 `chat_stream_long`；本节之后 WP3–WP7 表中写的「桩 `chat_stream`」一律指 `chat_stream_long`。
 - 测试：第 8 节 S1、S2。
 
 ### WP2 [adapter] 流中断归类为上游失败，统一回 503
-1. `chat_stream` 的读流循环（`for chunk in stream`）里，凡 `_classify_retry`（`adapters/llm_adapter.py:25`）判为瞬时的网络错误，包成 `UpstreamFailure(user_message="模型服务暂时不可用，请稍后重试")` 再抛（`raise ... from exc`，保留原因链）。复用已有判定，不新写异常列表；非瞬时的照旧上抛。流中断**不重放**（已吐出的片段不可撤回）。
+1. **传输层失败只定义一次**（裁决 2026-09-25，含 sentinel 发现）：
+   - 模块级 `_TRANSPORT_ERRORS = (httpx2.TransportError, openai.APIConnectionError)`。依据：openai 3.13.0 读流途中的错误不经包装，原样抛 `httpx2` 异常（`ReadTimeout`、`ReadError`、`RemoteProtocolError` 都是 `TransportError` 子类）；openai 3.19.2 的 `_streaming.py` 会把它包成 `APITimeoutError` / `APIConnectionError`（前者是后者子类，已下载核对）。两者都是库公开的基类，不手写清单；锁定版本与新版本都覆盖。
+   - `chat_stream` 的读流循环在 `except IncompleteResponseError` 之后加 `except _TRANSPORT_ERRORS as exc` → `raise UpstreamFailure(..., user_message=_upstream_user_message(exc)) from exc`。
+   - `_upstream_user_message`（`:423`）是「上游异常 → 上屏文案」的唯一出口：在按状态码查表之前先判 `isinstance(exc, _TRANSPORT_ERRORS)` → 「模型服务暂时不可用，请稍后重试」。这样建流阶段重试耗尽的网络错误（今天落空串 → 通用文案）与读流中断得到同一句话，不在两处各写一份。
+   - 不用「除截断外一切 Exception」：会把我们自己的 bug（如 chunk 形状变了的 `AttributeError`）报成 503「上游不可用」。
+   - 流中断**不重放**（已吐出的片段不可撤回）。
 2. 出口登记，三处都是在已有表里加一项，装配层零改动：`llm_error_types()` 元组加 `UpstreamFailure`；`llm_error_payload` 认它，`kind = "upstream"`；`_LLM_ERROR_STATUS` 加 `"upstream": 503`。
-3. 影响面：聊天流中断也走这个 503 口径，上屏文案更准；报告里写明。
+3. 影响面（已确认，属本次改动）：`UpstreamFailure` 今天还由 `_RetryBudget.on_failure`（`:203/:207`）在各类调用重试耗尽时抛出，登记后这些路径也从 500 变为 503 + `_upstream_user_message`（`:414-423`）的现成文案；聊天流中断同样走 503。报告里写明。
+4. 边界锁补洞：`tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage` 现只扫字面量 `IncompleteResponseError`，改为扫 `llm_error_types()` 返回的全部类名（从元组取，不写字面量），以后加一类自动覆盖。
+5. `web/routers/auth.py:718` 的嵌入测试（Collision B 裁决）：改为 `except Exception as exc`，经 `llm_error_payload(exc)` 取 `kind`，`== "call_refused"` 就 `raise`，否则走原嵌入失败文案；删掉 `:23` 的异常类导入。行为等价。
+6. 边界锁改为 AST 扫描：只看 core/web/storage 中 `import` / `Name` / `Attribute` 是否引用 `llm_error_types()` 的类名，不扫注释与 docstring（文档里提到类名不是耦合）。
+7. `requirements.in` 声明 `httpx2>=2.13.0`（适配器直接 import 它）；按文件头命令带 `--constraint requirements.txt` 重锁，任何 pin 不变。单独 commit `build(deps)`。
 - 测试：第 8 节 S3。
 
 ### WP3 [distiller + roster] 识别合并改为「代码汇总 + 模型只判别名」
@@ -131,7 +146,7 @@
 2. 分批合并的输出上限显式设为 `CARD_MAX_TOKENS`（8192；现状取 `llm.max_tokens=4096`，且非流式截断会抛 `IncompleteResponseError`，`adapters/llm_adapter.py:532`）。改走流式后若仍返回截断标志：**按失败处理并抛出**（沿用现有截断口径），不把半截档案交给格式化。真实验收报出每批的自然输出 token 数；若有批次撞 8192，停下报告，由 Shiyu 定上限，不自行调参。
 3. 批次大小 `SAFE_SINGLE_REDUCE=80` 不改（即 LLM×MapReduce 的折叠阶段）。
 4. `distill_incremental`（非流式，`/run` 用）调用的同一函数随之受益，但其自身的非流式压缩与格式化不在本段范围，只记录。
-- 事实：`_run_reduce_concurrent` 单批异常 → 结果置空（`core/distiller.py:1512-1513`）；流式路径空批只 print 跳过（`:2024`）；只有**全空**才报错（`:1528`）。WP5 第 2 条「截断即失败」抛到这里会被吞掉 —— 宝玉 3 批丢 1 批，卡片少三分之一材料且无人知道。
+- 事实：`_run_reduce_concurrent` 单批异常 → 结果置空（`core/distiller.py:1511-1513`）；流式路径空批只 print 跳过（`:2024`）；只有**全空**才报错（`:1528`）。WP5 第 2 条「截断即失败」抛到这里会被吞掉 —— 宝玉 3 批丢 1 批，卡片少三分之一材料且无人知道。
 - 依据：Hadoop MapReduce 的缺省语义是任务失败达上限即**整个作业失败**，输出只在全部任务成功后才提交（`mapreduce.reduce.maxattempts`，mapred-default.xml），不交付缺块的结果。
 - 修法：在唯一汇合点 `_run_reduce_concurrent`，**任一批失败即整体失败**。「失败」= 抛异常**或**返回空正文。沿用现有 `DistillError` 上屏口径；全空守卫被这条覆盖，其测试保留。非流式 `_do_reduce` 共用此函数，随之变化，报告记录。不加批级重试（adapter 建流前已重试，再加一层是嵌套重试相乘；`UpstreamFailure` 分不清「建流耗尽」与「流中断」）。
 - **定案：失败即整体失败，同时做 WP8**。前者保证不交半张卡；WP8 让失败后的重试只重跑合并与格式化，两者合起来才同时满足「质量不降」与「失败代价小」。
@@ -187,12 +202,14 @@
 | WP8 | — | `storage/*`、`web/routers/distill.py`、`core/distiller.py`（仅缓存键函数和常量） | `distiller.py` 只改 `:220-256`、`:1856-1868`（命中循环与提示词构造前移）与 `:1913` |
 | WP9 | 全部 | — | — |
 
-**建议拆法**（一窗口一条线，`distiller.py` 串行）：
-- 执行 spec 1：WP1 + WP2（止血：做完即可部署，生产识别不再 500 于读超时）。
-- 执行 spec 2：WP3。
-- 执行 spec 3：WP4 → WP5 → WP6 → WP7。
-- 执行 spec 4：WP8。可在执行 spec 2 或 3 合入后开并行窗口；它与 WP5、WP7 在 `distiller.py` 的改动行不重叠，git 能自动合并，但仍需先合 main 再开。
-- WP9 放在最后一个合入的执行 spec 里。
+**拆法（2026-09-25 修订：WP8 已合入 main `0dbb3eb`）**
+- **A 线**（现窗口，`feat/distill-longbook`）：WP1 + WP2 → 合入 → WP4 → WP5 → WP6 → WP7 → 蒸馏验收（§10 C、D）。
+- **C 线**（新开，WP1 + WP2 合入 main 之后再开）：WP3 → 识别验收（§10 A、B）→ 合入。
+- 为什么能并行：WP3 只动识别段（`core/distiller.py:942-1135` 的识别函数）与 `core/character_roster.py`；A 线后续改的是 `_collect_stream`（`:618-680`）、分批合并（`:1494-1560`、`:1982-2030`）、格式化（`:2040-2070`）与 `core/schema.py`，行不重叠。测试文件也不重叠（C 线：`test_identify_whole_book.py`、`test_character_roster.py`；A 线：`test_distiller_routing.py`、`test_distill_usage_accounting.py`）。
+- 为什么 C 线要等 WP1 + WP2 合入：WP3 的编排测试要桩 `chat_stream_long`，这个方法是 WP1 才加的。
+- 为什么不再多开：WP4 要改 WP1 新建的 `_stream`；WP7 的「分批时跳过总合并」与 WP5 改的是同一段；这三个拆开只会制造冲突。
+- 两次真实验收不同时跑：同一个 DeepSeek 账号并发上限 500，识别与蒸馏各 250 会顶满。
+- 两条线各自合入前先 `git merge origin/main`。
 
 ## 6. 决策记录
 
@@ -233,13 +250,13 @@
 5. **变异流程**（每行一次）：工作区只改「变异」列那一处 → 只跑该行测试节点 → 记「红/绿 + 首条失败断言」→ `git checkout -- <文件>` 还原；变异不进 commit。先对**现有**测试跑同一变异，已红的不新增测试，读数照报。
 6. **放置**：按表中文件加；表里没列的不新建测试文件。
 
-### WP1、WP2（假 SSE 服务做成 `tests/conftest.py` 的 fixture，WP5 的 R1、R2 复用它）
+### WP1、WP2（`tests/conftest.py` 新建进程内线程版假 SSE fixture：可配静默毫秒、吐片数、吐 N 片后断连，只交出 base_url；`tests/perf/mock_llm_server.py` 不动——它是 perf 子进程装置、不是 fixture，也表达不了「吐一片后断连」。WP5 的 R1、R2 复用这个 fixture）
 
 | # | 守的行为 | 文件 | 构造 → 断言 | 变异（每条都要红） |
 |---|---|---|---|---|
-| S1 | 长输出流容忍 prefill 静默，聊天流不变 | `tests/test_llm_adapter_retry.py` | 假服务先回 200 头、静默 1.0 s 再吐内容；monkeypatch `_STREAM_ATTEMPT_S=0.5`、`_STREAM_DEADLINE_S=1.5`：`long_output=True` → 成功；`long_output=False` → 读超时。`test_timeout_family_defaults_unchanged` 补 `_BATCH_STREAM_READ_S == 300.0` | ① 忽略 `long_output` ② 放宽时把 connect 也放大（断言 connect 仍 = ceiling） |
-| S2 | 蒸馏的长输出流只有一个入口 | `tests/test_usage_accounting_lock.py` | AST：`core/distiller.py` 里 `self._llm.chat_stream` 仅在入口方法内出现 | 任一处改回直接调 |
-| S3 | 流中断 → 503 + 上屏文案 | `tests/test_chat_stream_error.py` | 假服务吐一片后断开连接；最小 app 装 `register_domain_error_handlers`，路由消费 `chat_stream` → 503，`detail` == 上游文案，原因链保留 | ① 不包装 ② `llm_error_types` 不含 `UpstreamFailure` ③ 不登记 503 |
+| S1 | 长输出流容忍 prefill 静默，聊天流不变 | `tests/test_llm_adapter_retry.py` | 假服务先回 200 头、静默 1.0 s 再吐内容；monkeypatch `_STREAM_ATTEMPT_S=0.5`、`_STREAM_DEADLINE_S=1.5`：`chat_stream_long` → 成功；`chat_stream` → 读超时。`test_timeout_family_defaults_unchanged` 补 `_BATCH_STREAM_READ_S == 300.0` | ① `chat_stream_long` 的 `read_s` 改回 ceiling ② 放宽时把 connect 也放大（断言 connect 仍 = ceiling） |
+| S2 | 蒸馏只用长输出流 | `tests/test_llm_adapter_retry.py`（已落此处） | AST：`core/distiller.py` 中没有对 LLM 接收者的 `.chat_stream(` 调用；形态锁原有断言保持绿 | 任一处改回 `chat_stream` |
+| S3 | 流中断 → 503 + 上屏文案；边界锁覆盖全部 LLM 异常类 | `tests/test_chat_stream_error.py` | 参数化两例（真 openai 客户端 + 真 socket）：假服务吐一片后断连；假服务静默超过聊天读超时（生产现场的 `ReadTimeout`）。最小 app 装 `register_domain_error_handlers`，路由消费 `chat_stream` → 503，`detail` == 「模型服务暂时不可用，请稍后重试」（与兜底文案差一词，有分辨力），`__cause__` 是 `httpx2` 异常；边界锁改为扫 `llm_error_types()` 全部类名 | ① 不包装 ② 包装面放宽成 `except Exception`（喂一个循环体内的 `AttributeError`，断言仍非 503） ③ `_TRANSPORT_ERRORS` 去掉 `APIConnectionError`（用例：桩一个抛 `openai.APIConnectionError(request=httpx2.Request("POST","http://x"))` 的流） ④ `llm_error_types` 不含 `UpstreamFailure` ⑤ 不登记 503 ⑥ `_upstream_user_message` 不认传输层（断言建流阶段网络错误重试耗尽后的文案 == 读流中断的文案） ⑦ 边界锁改回字面量 |
 
 ### WP3
 纯函数测试放 `tests/test_character_roster.py`（直接喂列表）；编排测试放 `tests/test_identify_whole_book.py`（`TestWholeBookCoverage` 按新口径重写，其余两类保留）。
@@ -291,7 +308,7 @@
 
 1. `docker compose -f docker-compose.test.yml up -d --wait`（端口 55432，`tests/conftest.py:27-32` 强制连它）。
 2. 每步只跑以下文件：
-   - WP1 + WP2：`test_llm_adapter_retry.py test_usage_accounting_lock.py test_chat_stream_error.py test_llm_adapter_finish_reason.py`
+   - WP1 + WP2：`test_llm_adapter_retry.py test_usage_accounting_lock.py test_chat_stream_error.py test_llm_adapter_finish_reason.py test_domain_exception_exit.py test_exception_pickle_lock.py`
    - WP3：`test_identify_whole_book.py test_character_roster.py test_identify_failure_channels.py test_usage_identity_context.py test_distill_usage_accounting.py test_usage_accounting_lock.py test_distill_task_api.py`
    - WP4 + WP5：`test_distiller_routing.py test_distill_usage_accounting.py test_usage_accounting_lock.py test_llm_access_gate.py test_distill_resume.py test_llm_adapter_finish_reason.py`
    - WP8：`test_distill_task_api.py test_postgres_store.py test_storage.py test_distill_resume.py`
