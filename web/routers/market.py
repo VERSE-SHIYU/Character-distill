@@ -822,7 +822,8 @@ async def list_comments(
         for c in comments:
             c["liked_by_me"] = c["id"] in liked
     else:
-        # 游客看得到计数，看不到按钮 —— 与文本评论列表同一口径。
+        # 游客看得到计数、看不到按钮。文本评论那一侧口径不同：它整行都在 `canWrite`
+        # 判断之内，游客连计数都没有。
         for c in comments:
             c["liked_by_me"] = False
     return {"comments": comments}
