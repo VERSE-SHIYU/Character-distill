@@ -2094,11 +2094,11 @@ class Distiller:
         system_prompt = (
             DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
         )
-        yield from self._llm.chat_stream_long(
+        usage = yield from self._llm.chat_stream_long(
             system_prompt,
             [{"role": "user", "content":
                 f"以下是关于「{character_name}」的完整分析档案，严格按 JSON 格式输出角色卡：\n\n{profile_draft}"
             }],
             max_tokens=self.CARD_MAX_TOKENS,
         )
-        self._try_record_usage("distill_format")
+        self._try_record_usage("distill_format", usage)

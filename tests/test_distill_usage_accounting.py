@@ -59,6 +59,11 @@ class _FakeLLM:
         self.last_usage = {"prompt_tokens": 7, "completion_tokens": 3}
         self._model = "test-model"
 
+    @property
+    def model(self) -> str:
+        """真 adapter 的 `model` 是只读属性（分片断点键要带上它）。"""
+        return self._model
+
     def chat(self, system, messages, max_tokens=None):
         return self._replies.pop(0)
 
@@ -422,3 +427,24 @@ class TestStreamReturnValueAccounting:
         d = Distiller(_ReturnUsageLLM([]), config_path=None)
         assert list(d._single_reduce_stream(["分析一"], "角色")) == ["x"]
         self._assert_404(records, "distill_reduce")
+
+    def test_incremental_format_stream_accounts_returned_usage(self, records):
+        """流式格式化（第 5 个流式记账点）：账取 `yield from` 的返回值。
+
+        `distill_incremental_stream` 要整条跑完才到得了 Phase 3 —— 这条同时当「那一处确实
+        跑到了」的仪器：`fmt` 为空即说明本轮根本没走到格式化，红的是覆盖面而不是取值。
+        Reduce 那一段（`_single_reduce_stream`）也落一条 `distill_reduce`，两个站点在本轮
+        都不许读共享属性，故两处变异各自会红一条：断言只挑 `distill_format`，免得一个站点的
+        变异把另一站点的用例也染色（那就分不清是谁坏了）。
+        """
+        d = Distiller(_ReturnUsageLLM([]), config_path=None)
+        d._longctx_threshold = 1          # 强制落到 MapReduce 分支，否则短文本路由去长上下文
+        d._chunk_size = 200
+
+        list(d.distill_incremental_stream(TEXT, "角色", text_type="story"))
+
+        fmt = [u for a, u in records if a == "distill_format"]
+        assert len(fmt) == 1, f"没跑到流式格式化，或记了 {len(fmt)} 条：{records}"
+        assert fmt[0] is not None, "没把返回值交给 _try_record_usage，落回了共享属性"
+        assert fmt[0]["completion_tokens"] == 404, (
+            f"记的是共享属性（999）而不是本次调用返回的那一份：{fmt[0]}")
