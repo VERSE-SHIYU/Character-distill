@@ -11,6 +11,33 @@
 | `deploy/sz/glitchtip/docker-compose.yml` | `/opt/glitchtip/docker-compose.yml` |
 | `deploy/sz/nginx/glitchtip.conf` | `/opt/character-distill/nginx/conf.d/glitchtip.conf` |
 
+## 改了本目录的文件：必须重新 scp 覆盖 + diff 验证
+
+因为不走流水线，**在仓库里改了不会自动到服务器**——服务器那份是上次 scp 的快照，会一直停在旧版本。
+实例：`ALLOWED_HOSTS=errors.bookecho-shiyu.cn` 于 `3dc95f3` 进了仓库，服务器那份仍缺这一行，
+容器里 `ALLOWED_HOSTS` 为空 → Django 取通配默认并每次打告警，直到 2026-09-25 手工补传才生效。
+
+所以每次改完走三步（以 compose 为例）：
+
+```bash
+# 1) 传到临时位置再覆盖。cp 到已存在的文件会保留原权限（现为 644 root:root）
+scp -i ~/.ssh/shenzhen_deploy deploy/sz/glitchtip/docker-compose.yml \
+    admin@47.107.42.111:/tmp/glitchtip-compose.yml
+ssh -i ~/.ssh/shenzhen_deploy admin@47.107.42.111 \
+  'sudo cp /tmp/glitchtip-compose.yml /opt/glitchtip/docker-compose.yml && rm /tmp/glitchtip-compose.yml'
+
+# 2) diff 确认与仓库一致（无输出 = 一致）
+ssh -i ~/.ssh/shenzhen_deploy admin@47.107.42.111 \
+    'sudo cat /opt/glitchtip/docker-compose.yml' \
+  | diff -u deploy/sz/glitchtip/docker-compose.yml -
+
+# 3) 重建。该 compose 只有一个服务、无 depends_on，不会碰到主站 postgres
+ssh -i ~/.ssh/shenzhen_deploy admin@47.107.42.111 \
+  'cd /opt/glitchtip && sudo docker compose -p glitchtip up -d --force-recreate'
+```
+
+改 `glitchtip.conf` 只需第 1、2 步，然后按文末的 `openresty -t` + reload 生效。
+
 `/opt/glitchtip/.env`（**不入库**，`chmod 600`）需要四个变量，只列名：
 
 - `GLITCHTIP_DB_PASSWORD` — PG 角色 `glitchtip` 的口令；建议只用纯字母数字（它会被拼进

@@ -31,7 +31,8 @@ NEW_FERNET=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.ge
 #       docker-compose.prod.yml:78 的 ${APP_IMAGE_TAG:-latest} 回落到浮动的旧 latest）：
 #         export APP_IMAGE_TAG=$(docker inspect -f '{{.Config.Image}}' \
 #           "$(docker compose -f docker-compose.prod.yml ps -q app)" | sed 's/.*://')
-#         docker compose -f docker-compose.prod.yml up -d app
+#         docker compose -f docker-compose.prod.yml up -d --no-deps app
+#         （--no-deps 不能省：不带它会把 app 依赖的 postgres 一起 recreate）
 #    c) 现有 JWT Token 将立即失效，用户需重新登录
 
 # 3. 两地各自执行（密钥独立）
@@ -59,8 +60,12 @@ NEW_FERNET=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.ge
 cd /opt/character-distill
 export APP_IMAGE_TAG=$(docker inspect -f '{{.Config.Image}}' \
   "$(docker compose -f docker-compose.prod.yml ps -q app)" | sed 's/.*://')
-docker compose -f docker-compose.prod.yml up -d app
+docker compose -f docker-compose.prod.yml up -d --no-deps app
 ```
+
+`--no-deps` 不能省。点名 `app` 时 compose 仍会连带它 `depends_on` 的 postgres 一起 recreate
+（2026-09-25 实测把 `character-distill-postgres-1` 重建了一次——卷没动、数据完好，但违反了
+「重启只重建 app」那条铁律）；`--no-deps` 才是真的只动 app。
 
 （无需重启 postgres / nginx。改仓库变量是另一条路：见 `DEPLOY.md`「由部署下发的配置」，
 重跑一次 deploy `both` 即可，不需要登服务器。）
