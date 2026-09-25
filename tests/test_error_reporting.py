@@ -78,9 +78,13 @@ def test_empty_dsn_does_not_initialize(monkeypatch):
 
 
 def test_error_with_traceback_carries_stack_and_region_tag(recorder, monkeypatch):
-    """`logger.error(..., exc_info=True)` → 一条事件，带堆栈、带 `region` 标签。"""
+    """`logger.error(..., exc_info=True)` → 一条事件，带堆栈、带 `region` 标签。
+
+    `NODE_REGION` 故意设成**非缺省**值：设成缺省值时，标签对不上也说明不了读没读环境
+    变量 —— 一律回落成缺省同样满足断言，那这条就证不到 `region` 来自节点身份。
+    """
     monkeypatch.setenv("SENTRY_DSN", DSN)
-    monkeypatch.setenv("NODE_REGION", "cn-shenzhen")
+    monkeypatch.setenv("NODE_REGION", "probe-region")
 
     init_error_reporting()
     try:
@@ -92,7 +96,7 @@ def test_error_with_traceback_carries_stack_and_region_tag(recorder, monkeypatch
     assert len(recorder.events) == 1, f"应恰好一条事件，实得 {len(recorder.events)}"
     event = recorder.events[0]
     assert event["logentry"]["message"] == "obs-probe-error", event.get("logentry")
-    assert event["tags"]["region"] == "cn-shenzhen", event.get("tags")
+    assert event["tags"]["region"] == "probe-region", event.get("tags")
     last = event["exception"]["values"][-1]
     assert last["type"] == "ZeroDivisionError", last
     assert last["stacktrace"]["frames"], f"事件里没有堆栈帧：{last}"

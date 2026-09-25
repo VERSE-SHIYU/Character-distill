@@ -3,12 +3,15 @@
 **`SENTRY_DSN` 为空 = 整个模块不生效。** 见 `init_error_reporting`：不 import SDK、
 不初始化，行为与接线之前逐字一致 —— 所以本模块可以先合 main，不等 GlitchTip 就绪。
 
-**为什么只从日志汇合点进。** 全仓约 300 处 `print + raise` 的未捕获异常都落在
-`web/server.py` 的 `_global_exception_handler`（`logger.exception` 记一条带堆栈的
-ERROR）。Sentry 的默认 `LoggingIntegration` 收这条，于是后端的错**全部**经这一处
-汇合上报。`auto_enabling_integrations=False` 且不装 `[fastapi]` extra 是配套的：
-放开自动集成或装上那个 extra，Starlette 集成会对同一个异常**再**报一条，同一个错误
-两份事件。
+**为什么只从日志汇合点进。** 未捕获异常都落在 `web/server.py` 的
+`_global_exception_handler`（`logger.exception` 记一条带堆栈的 ERROR），Sentry 缺省的
+`LoggingIntegration` 收这条，后端的错于是**全部**经这一处汇合上报。
+
+`auto_enabling_integrations=False` 且不装 `[fastapi]` extra 是配套的，理由是**实测**：
+`server.app` 在导入期就建好了，SDK 却是 lifespan 首行才 init —— 那两个集成的补丁打在
+类上，对既有的 app 不生效。放开它既不会多拿到上下文、也不会多报一条事件，等于一件
+**假装有覆盖的死配置**；关掉，只留日志这一条路。代价是：将来若把 init 提前到导入期，
+这两行要跟着重新判断。
 
 **只报错，不采正文。** `traces_sample_rate=0`、`auto_session_tracking=False`；
 `send_default_pii=False` 之上再加一道 `before_send`，把 `request.data` /
@@ -23,15 +26,12 @@ from __future__ import annotations
 import logging
 import os
 
+from core.node import node_region
+
 logger = logging.getLogger(__name__)
 
 #: 环境变量名。**唯一读取点**在本模块。
 SENTRY_DSN_ENV = "SENTRY_DSN"
-
-#: 节点身份：与 `web/routers/auth.py` 注册 `home_region` 用的是同一个变量、同一个缺省。
-#: 那边取的是函数内局部变量（`auth.py:436`），名字拿不到，只能按同一口径重读一遍。
-NODE_REGION_ENV = "NODE_REGION"
-DEFAULT_NODE_REGION = "cn-shenzhen"
 
 
 def _scrub_request(event: dict, hint: dict) -> dict:
@@ -69,4 +69,4 @@ def init_error_reporting() -> None:
         # `"body": {"note": "..."}`。本系统的请求体就是用户的对话与上传内容。
         include_local_variables=False,
     )
-    sentry_sdk.set_tag("region", os.environ.get(NODE_REGION_ENV, DEFAULT_NODE_REGION))
+    sentry_sdk.set_tag("region", node_region())
