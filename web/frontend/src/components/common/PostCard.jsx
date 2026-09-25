@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
 import { fetchWithTimeout, getAuthHeaders } from '../../api/client'
+import { likeComment } from '../../api/comments'
 import useAppStore from '../../store/useAppStore'
 import useCanWrite from '../../hooks/useCanWrite'
 import Avatar from './Avatar'
 import ErrorBox from './ErrorBox'
+import CommentLikeButton from './CommentLikeButton'
 import { Heart, MessageSquare, Trash2, Close, Lock, MapPin } from './Icon'
 import { parseCardJson } from '../../utils/card'
 import { formatRelativeTime } from '../../utils/time'
@@ -110,6 +112,17 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
     } catch (err) {
       setError(err.message)
     } finally { setCommentSending(false) }
+  }
+
+  const handleCommentLike = async (commentId) => {
+    try {
+      const data = await likeComment('post', commentId)
+      setComments((prev) =>
+        prev.map((c) => (c.id === commentId ? { ...c, liked_by_me: data.liked, likes: data.likes } : c)),
+      )
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const handleLikeClick = () => {
@@ -230,6 +243,14 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
                     <span className="post-card-comment-time">{c.created_at ? formatRelativeTime(c.created_at) : ''}</span>
                   </div>
                   <p className="post-card-comment-text">{c.content}</p>
+                  <div style={{ marginTop: 4 }}>
+                    <CommentLikeButton
+                      liked={c.liked_by_me}
+                      count={c.likes}
+                      canWrite={canWrite}
+                      onClick={() => handleCommentLike(c.id)}
+                    />
+                  </div>
                 </div>
               </div>
             ))

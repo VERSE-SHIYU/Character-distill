@@ -712,6 +712,9 @@ async def list_post_comments(
 ) -> dict:
     """Get all comments for a post."""
     comments = await storage.get_post_comments_owned(post_id, user["id"])
+    liked = await storage.get_liked_comment_ids("post", [c["id"] for c in comments], user["id"])
+    for c in comments:
+        c["liked_by_me"] = c["id"] in liked
     return {"comments": comments}
 
 
@@ -748,6 +751,39 @@ async def like_post(
     return await storage.toggle_post_like(post_id, user["id"])
 
 
+#: 两条评论点赞路由都是字面量开头的短路径（4 段 / 3 段），与下面通配卡路由区里的
+#: `/{card_id}/comments/...` 段数或末段字面量不同，不会互相遮蔽；仍放在通配区之前，
+#: 免得将来加通配路由时这里变成「靠段数侥幸不撞」。
+@router.post("/post/comments/{comment_id}/like")
+@limiter.limit("30/minute")
+async def like_post_comment(
+    request: Request,
+    comment_id: str,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Toggle like on a post comment."""
+    result = await storage.toggle_comment_like("post", comment_id, user["id"])
+    if result is None:
+        raise HTTPException(404, "评论不存在")
+    return result
+
+
+@router.post("/comments/{comment_id}/like")
+@limiter.limit("30/minute")
+async def like_card_comment(
+    request: Request,
+    comment_id: str,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Toggle like on a card comment."""
+    result = await storage.toggle_comment_like("card", comment_id, user["id"])
+    if result is None:
+        raise HTTPException(404, "评论不存在")
+    return result
+
+
 @router.delete("/posts/{post_id}")
 @limiter.limit("30/minute")
 async def delete_post(
@@ -778,7 +814,18 @@ async def list_comments(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get all comments for a card."""
-    comments = await storage.get_comments_owned(card_id, (user or {}).get("id"))
+    viewer_id = (user or {}).get("id")
+    comments = await storage.get_comments_owned(card_id, viewer_id)
+    if viewer_id:
+        liked = await storage.get_liked_comment_ids(
+            "card", [c["id"] for c in comments], viewer_id)
+        for c in comments:
+            c["liked_by_me"] = c["id"] in liked
+    else:
+        # 游客看得到计数、看不到按钮。文本评论那一侧口径不同：它整行都在 `canWrite`
+        # 判断之内，游客连计数都没有。
+        for c in comments:
+            c["liked_by_me"] = False
     return {"comments": comments}
 
 
