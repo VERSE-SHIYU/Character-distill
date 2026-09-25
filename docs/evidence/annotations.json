@@ -85,6 +85,14 @@
         "value": true
       },
       {
+        "path": "stores.sqlite[2].resume_hits_row",
+        "value": true
+      },
+      {
+        "path": "stores.pg[2].resume_hits_row",
+        "value": true
+      },
+      {
         "path": "stores.sqlite[0].resume_hits_row",
         "value": false
       },
@@ -94,16 +102,24 @@
       },
       {
         "path": "stores.sqlite[2].checkpoint_reusable",
-        "value": false
+        "value": true
       },
       {
         "path": "stores.pg[2].checkpoint_reusable",
+        "value": true
+      },
+      {
+        "path": "stores.sqlite[1].checkpoint_reusable",
+        "value": false
+      },
+      {
+        "path": "stores.pg[1].checkpoint_reusable",
         "value": false
       }
     ],
     "derived": [],
     "non_repo_paths": [],
-    "notes": ""
+    "notes": "索引按脚本里的状态序：0=running、1=done、2=error、3=interrupted。WP8（2026-09-25）把可复用状态放宽为 interrupted+error，故 [2] 的 checkpoint_reusable 由 false 翻 true；running/done 仍整批重跑。"
   },
   "graphify-snapshot-2026-08-15": {
     "assertions": null,

@@ -14,8 +14,8 @@
       },
       {
         "status_at_card_delete": "error",
-        "resume_hits_row": false,
-        "checkpoint_reusable": false
+        "resume_hits_row": true,
+        "checkpoint_reusable": true
       },
       {
         "status_at_card_delete": "interrupted",
@@ -36,8 +36,8 @@
       },
       {
         "status_at_card_delete": "error",
-        "resume_hits_row": false,
-        "checkpoint_reusable": false
+        "resume_hits_row": true,
+        "checkpoint_reusable": true
       },
       {
         "status_at_card_delete": "interrupted",

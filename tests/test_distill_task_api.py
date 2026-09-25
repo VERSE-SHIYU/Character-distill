@@ -479,11 +479,12 @@ class _ResumeDistillerStub:
         return self.chunk_size
 
 
-def _seed_interrupted(store, user_id, tid, *, task_id, chunk_size, fp, chunks=()):
-    """落一行 interrupted 任务（带 checkpoint 参数）+ 可选分片行。"""
+def _seed_checkpoint_row(store, user_id, tid, *, task_id, chunk_size, fp, chunks=(),
+                         status="interrupted", message="进程重启，任务中断"):
+    """落一行带 checkpoint 参数的任务行 + 可选分片行 —— 续跑发现的输入。"""
     _run_async(store.create_distill_task(
-        task_id, user_id, tid, character="甲", status="interrupted", progress_pct=40,
-        message="进程重启，任务中断", card_id="", awakening="",
+        task_id, user_id, tid, character="甲", status=status, progress_pct=40,
+        message=message, card_id="", awakening="",
         chunk_size=chunk_size, text_fingerprint=fp,
     ))
     for idx, result, c_fp in chunks:
@@ -520,7 +521,7 @@ class TestEResumeGate:
         body = "角色说的话" * 20
         tid = self._text(store, user_id, body)
         task_id = f"dt_{uuid.uuid4().hex}"
-        _seed_interrupted(store, user_id, tid, task_id=task_id,
+        _seed_checkpoint_row(store, user_id, tid, task_id=task_id,
                           chunk_size=9999, fp=text_fingerprint(body),
                           chunks=[(0, "分析A", "cfp0")])
 
@@ -542,7 +543,7 @@ class TestEResumeGate:
         body = "新正文内容"
         tid = self._text(store, user_id, body)
         task_id = f"dt_{uuid.uuid4().hex}"
-        _seed_interrupted(store, user_id, tid, task_id=task_id,
+        _seed_checkpoint_row(store, user_id, tid, task_id=task_id,
                           chunk_size=3000, fp=text_fingerprint("旧的正文字符串"),
                           chunks=[(0, "旧分析", text_fingerprint("旧的某个分片"))])
 
@@ -559,7 +560,7 @@ class TestEResumeGate:
         body = "新正文内容"
         tid = self._text(store, user_id, body)
         task_id = f"dt_{uuid.uuid4().hex}"
-        _seed_interrupted(store, user_id, tid, task_id=task_id,
+        _seed_checkpoint_row(store, user_id, tid, task_id=task_id,
                           chunk_size=3000, fp=text_fingerprint(body),
                           chunks=[(0, "分析A", "cfp0"), (3, "分析B", "cfp3")])
 
@@ -575,7 +576,7 @@ class TestEResumeGate:
         body = "新正文内容"
         tid = self._text(store, user_id, body)
         old_id = f"dt_{uuid.uuid4().hex}"
-        _seed_interrupted(store, user_id, tid, task_id=old_id,
+        _seed_checkpoint_row(store, user_id, tid, task_id=old_id,
                           chunk_size=3000, fp=text_fingerprint(body),
                           chunks=[(0, "分析A", "cfp0")])
 
@@ -637,7 +638,7 @@ class _CapOnlySemaphore:
         pass
 
 
-def _install_bg(monkeypatch, store, cap=3):
+def _install_bg(monkeypatch, store, cap=3, distiller=None):
     """把 /start 的真后台线程装进测试：stub 掉 store/LLM 边界。
 
     返回 (蒸馏器, 信号量, 线程表, 解析出的 llm)。submit_to_main_loop 换成同步
@@ -646,8 +647,11 @@ def _install_bg(monkeypatch, store, cap=3):
     第 4 位交回解析实例是给**前提断言**用的：调用方各自按自己的语境驱动那个出口
     （sync 用例 `_assert_premise_resolves`，async 用例就地 `await`），本函数在
     loop 里也跑得，故不在这里驱动协程。
+
+    `distiller` 缺省是 `_ChunkEmittingDistiller`；要观察续跑行为的用例自备一个
+    认识 resume_candidates 的蒸馏器。
     """
-    distiller = _ChunkEmittingDistiller()
+    distiller = _ChunkEmittingDistiller() if distiller is None else distiller
     llm = _install_user_llm(monkeypatch)
     monkeypatch.setattr("deps.get_distiller", lambda llm=None: distiller)
     monkeypatch.setattr("deps.get_text_manager", lambda llm=None: object())
@@ -666,6 +670,123 @@ def _install_bg(monkeypatch, store, cap=3):
 
     monkeypatch.setattr("core.concurrency.ctx_thread", _spy)
     return distiller, sem, threads, llm
+
+
+# ── WP8：失败（error）任务续跑（真后台线程端到端）────────────────────────────
+# 分片级三重门在 tests/test_distill_resume.py 覆盖；这里管端到端：路由发现 error 行
+# → 复用原 task_id → 已存分片作为候选交到蒸馏器手上 → 那几片不再发 Map 调用。
+
+
+class _ResumeSkippingDistiller(_ChunkEmittingDistiller):
+    """像 `_ChunkEmittingDistiller`，但 `resume_candidates` 里的片不发 Map 调用。
+
+    只把「路由到底有没有把候选交通到蒸馏器手上、通了几片」变成可数的调用数：命中
+    判定故意不看指纹（指纹比对是 `chunk_cache_key` 的单元测试面），只看候选里有没有
+    这个 index。
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.seen_candidates: dict | None | str = "NOT_CALLED"
+
+    def distill_incremental_stream(self, text, character_name, *,
+                                   aliases=None, text_type="story",
+                                   on_chunk_done=None, resume_candidates=None):
+        self.seen_candidates = resume_candidates
+        hits = set(resume_candidates or {})
+        for i in range(self.N):
+            if i in hits:
+                yield {"status": "analyzing", "current": i + 1, "total": self.N}
+                continue
+            self.map_calls += 1
+            if on_chunk_done:
+                on_chunk_done(i, f"分析{i}", f"fp{i}")
+            yield {"status": "analyzing", "current": i + 1, "total": self.N}
+
+
+class TestEResumeFailedTask:
+    """WP8：失败（error）任务也可续跑 —— 复用已完成的分片，只重跑合并与格式化。
+
+    改前 `find_interrupted_distill` 只认 `status='interrupted'`：合并失败的任务状态是
+    `error`，再点一次蒸馏铸新 task_id、Map 全部重跑（蓝图第 1 节第 23 条）。
+    """
+
+    BODY = "角色说的话"
+
+    def _text(self, store, uid):
+        tid = f"txt_{uuid.uuid4().hex}"
+        _run_async(store.save_text(tid, "src.txt", self.BODY, user_id=uid))
+        return tid
+
+    def _seed(self, store, uid, tid, *, task_id, status, chunks):
+        """落一行带断点的任务行 —— chunk_size / 全文指纹取「/start 会算出的那一对」。"""
+        _seed_checkpoint_row(
+            store, uid, tid, task_id=task_id, status=status,
+            message="蒸馏失败：服务内部异常，请重试" if status == "error" else "已完成",
+            chunk_size=_ResumeSkippingDistiller().effective_chunk_size(),
+            fp=text_fingerprint(self.BODY), chunks=chunks,
+        )
+
+    def _start(self, store, uid, tid, monkeypatch, distiller, *, force=False):
+        """跑一次真 `/start`（真后台线程），跑完线程才返回。"""
+        _d, _sem, threads, llm = _install_bg(monkeypatch, store, distiller=distiller)
+        _assert_premise_resolves(store, llm)
+        resp = _build_client(store, uid).post(
+            "/api/distill/start",
+            json={"text_id": tid, "character_name": "甲", "force": force},
+        )
+        for t in threads:
+            t.join(timeout=30)
+        return resp
+
+    def test_error_task_resumes_and_skips_checkpointed_chunks(self, store, user_id, monkeypatch):
+        """error 行的断点被复用：原 task_id + 已存的 2 片零 Map 调用。"""
+        tid = self._text(store, user_id)
+        old_id = f"dt_{uuid.uuid4().hex}"
+        self._seed(store, user_id, tid, task_id=old_id, status="error",
+                   chunks=[(0, "分析0", "fp0"), (1, "分析1", "fp1")])
+        distiller = _ResumeSkippingDistiller()
+
+        resp = self._start(store, user_id, tid, monkeypatch, distiller)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["task_id"] == old_id, "error 行该被复用，而不是新铸 task_id"
+        assert distiller.seen_candidates == {
+            0: {"result": "分析0", "fingerprint": "fp0"},
+            1: {"result": "分析1", "fingerprint": "fp1"},
+        }, "路由该把 error 行已存的分片作为候选交下去"
+        assert distiller.map_calls == _ChunkEmittingDistiller.N - 2, \
+            "已存 2 片断点，只该重跑剩下的片"
+
+    def test_done_task_is_not_resumed(self, store, user_id, monkeypatch):
+        """done 行不复用：已出卡的再次蒸馏是「要新版本」，整跑。"""
+        tid = self._text(store, user_id)
+        done_id = f"dt_{uuid.uuid4().hex}"
+        self._seed(store, user_id, tid, task_id=done_id, status="done",
+                   chunks=[(0, "分析0", "fp0")])
+        distiller = _ResumeSkippingDistiller()
+
+        resp = self._start(store, user_id, tid, monkeypatch, distiller)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["task_id"] != done_id, "done 行不该复用"
+        assert distiller.seen_candidates is None, "不复用就不该有候选片"
+        assert distiller.map_calls == _ChunkEmittingDistiller.N
+
+    def test_force_ignores_error_row(self, store, user_id, monkeypatch):
+        """force=True 是「重新蒸馏」：连 error 行也不复用。"""
+        tid = self._text(store, user_id)
+        old_id = f"dt_{uuid.uuid4().hex}"
+        self._seed(store, user_id, tid, task_id=old_id, status="error",
+                   chunks=[(0, "分析0", "fp0"), (1, "分析1", "fp1")])
+        distiller = _ResumeSkippingDistiller()
+
+        resp = self._start(store, user_id, tid, monkeypatch, distiller, force=True)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["task_id"] != old_id, "force=True 不该复用"
+        assert distiller.seen_candidates is None
+        assert distiller.map_calls == _ChunkEmittingDistiller.N
 
 
 def _age_row(store, task_id, minutes):

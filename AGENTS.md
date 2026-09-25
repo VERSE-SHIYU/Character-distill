@@ -356,9 +356,9 @@ config.yaml 现值（现读，非转述）：
   | `delete_card`（软删）/ `purge_card` / `detach_text_cards` | 保留 | 保留 | 裁决：不动（行身份与卡无关；断点跟文本走） |
   | `delete_user` | 清 | 清 | 已清（`6753f17`）+ 线程停止（`bee9993`） |
 
-- **「删卡保留断点」的注释理由是错的**：`storage/sqlite_store.py` 的 `hard_delete_text` 里写着「不清理 `delete_card` / `purge_card` / `detach_text_cards`：蒸馏行身份是 (user, text, character)，card_id 只是产物反向指针；删卡重蒸是常规迭代，文本还在就不该清掉续跑断点（否则下次重蒸从头烧 API）」。但续跑发现 `find_interrupted_distill` **只匹配 `status = 'interrupted'`**。删卡时行的状态通常是 `running` / `done` / `error` —— **永远命不中**，断点留着也用不上；只有 boot reconcile 把 `running` 翻成 `interrupted` 之后才可达
-  - 现跑现测（`tests/perf/distill_resume_reachability.py`，同产物文件）：`running` / `done` / `error` 三个状态删卡后**都命不中**（整批重跑），只有 `interrupted` 命中。「删卡保留」目前 = 纯占空间、零 API 收益
-  - 即：注释宣称的保护在主流路径上不存在。要么承认它无用而连带清掉，要么改成「按 (user, text, character) 找最近一条可复用行」——后者是**加功能**，不是修 bug
+- **「删卡保留断点」的注释理由是错的**：`storage/sqlite_store.py` 的 `hard_delete_text` 里写着「不清理 `delete_card` / `purge_card` / `detach_text_cards`：蒸馏行身份是 (user, text, character)，card_id 只是产物反向指针；删卡重蒸是常规迭代，文本还在就不该清掉续跑断点（否则下次重蒸从头烧 API）」。但当时的续跑发现（`find_interrupted_distill`，**WP8 起改名 `find_resumable_distill`**）**只匹配 `status = 'interrupted'`**。删卡时行的状态通常是 `running` / `done` / `error` —— 后两个**永远命不中**，断点留着也用不上；只有 boot reconcile 把 `running` 翻成 `interrupted` 之后才可达
+  - 当时的现跑现测（`tests/perf/distill_resume_reachability.py`，同产物文件）：`running` / `done` / `error` 三个状态删卡后**都命不中**（整批重跑），只有 `interrupted` 命中。「删卡保留」当时 = 纯占空间、零 API 收益
+  - 即：注释宣称的保护在主流路径上不存在。要么承认它无用而连带清掉，要么改成「按 (user, text, character) 找最近一条可复用行」——后者是**加功能**，不是修 bug（WP8 已按此立项落地，见「处置」末条）
 - **残留行的 `card_id` 是死指针，但症状是静默 no-op 而非报错**：蒸馏状态查询端点（`web/routers/distill.py` 里构造状态响应体的那处）原样回 `row["card_id"]`；卡被 `purge_card` 之后该 id 已不存在。前端三处消费点**都做了存在性守卫**（`DistillTaskBar.jsx` 与 `DistillWorkbench.jsx` 的 `tryChat` 是 `if (card)`，导出按钮挂在 `view?.canChat` 下），所以不会 404、不会崩——**点了「打开 / 试聊当前版本」什么也不发生**。属「失败被吞成正常返回」同族，但等级低（无数据损坏，只是无反馈）。*（初判为「前端取卡必 404」，实读前端后订正）*
 - **running 任务这一问已有实现**：`web/routers/text.py` 的软删与永久删**都在** `soft_delete` / `hard_delete` 之前调 `cancel_distill_tasks_by_text_id` —— 它同时置内存 `error`（bg 线程在 `distill_incremental_stream` 的消费循环里读这个当停止信号）与 DB `cancel_distills_by_text_id`。所以「删文本时有 running 任务怎么办」的答案是「删了让任务停」，且已落地，**无需再裁决**
 - **真缺口：`admin.delete_user` 这条路没接**。`web/routers/admin.py` 的 `delete_user` 直接调 `storage.delete_user`，**不停在跑的蒸馏线程**；`storage/postgres_store.py` 的 `delete_user` 注释自己承认了这一点。行被清、线程还在烧 LLM 额度，且其 `save_distill_chunk` / `update_distill_task` 双双落空（`WHERE EXISTS` + UPDATE-only），结果是**不可观测的野线程**
@@ -369,6 +369,12 @@ config.yaml 现值（现读，非转述）：
   - **顺序不变量锁**：`tests/test_admin_user_delete_distill.py` —— 取证点选在 spy 的 `delete_user` **内部**读 `_tasks`，比「停止函数有没有被调用」强（能识破「先删库后发信号」这种顺序颠倒的假修）；batch 路径逐用户发信号，不是只发第一个
   - **注释订正**（`53494ae`）：两 store 的 `hard_delete_text` 注释改成真实口径（断点生命周期跟文本走；非 `interrupted` 的残留行重蒸命不中，是已知取舍），证据脚本 `tests/perf/distill_resume_reachability.py` 与 `distill_orphan_matrix.py` 及其产物一并入库
   - **删卡/解绑的清理口径：不动**（保守裁决）。删卡不产生孤儿行（行身份 `(user, text, character)` 与卡无关），清理由文本死亡路径负责；改成「按 `(user, text, character)` 找最近一条可复用行」是**加功能**，另立项
+  - **「加功能」已落地：WP8 失败任务也续跑**（2026-09-25，蓝图 `docs/specs/distill-longbook-blueprint.md` 的 WP8）：
+    - **查找放宽**：`find_interrupted_distill` → `find_resumable_distill`（`storage/base.py`、两个 store、`web/routers/distill.py` 唯一调用点），条件 `status IN ('interrupted','error')`。`done` 仍不复用（已出卡再蒸是「要新版本」，整跑）；`force=True` 照旧跳过复用
+    - **分片缓存键改成整个 Map 请求**：`core/distiller.py::chunk_cache_key(system, user, model)` = `sha256(渲染后的 system + "\x00" + 渲染后的 user) + ":" + 模型`，写入与 `_resume_hit` 校验**都只经这一处**。此前键只含原文，而失败任务可能隔几天才重试，期间换模型或改提示词就会复用错结果。不设「记得 +1 的版本常量」——提示词模板、角色名、chat/story 两套提示词、原文都自动进键
+    - **现跑现测重跑**（`tests/perf/distill_resume_reachability.py`，同产物文件）：`error` 与 `interrupted` 删卡后**都能命中**且断点可复用，`running` / `done` 仍整批重跑（`running` 待 boot reconcile 翻成 `interrupted`）。「非 `interrupted` 行命不中」**不再是已知取舍** —— 它与上文 `53494ae` 那条的注释都已订正
+    - 上线影响：上线前的旧断点指纹只含原文，一律命不中，只重跑一次（不做兼容分支）
+    - 测试：`tests/test_distill_task_api.py::TestEResumeFailedTask`（C1 路由层）、`tests/test_postgres_store.py` / `tests/test_storage.py` 的 `test_find_resumable_distill`（C1 存储层）、`tests/test_distill_resume.py::TestCacheKeyCoversTheRequest`（C2 换模型 / C3 改提示词）
 - **未接停止信号的其余删除点（本轮只记不修）**：`web/routers/card.py` 的卡删除路由（`hard_delete("card")` ×2 / `soft_delete("card")` ×1），以及 `web/routers/market.py` 的 `delete_market_card`（直接调 `storage.delete_card`）—— 要把在跑的任务对上被删的卡需要 `(text_id, character)`，而 `character` 在 identify 步解析出名字之前是空串，匹配不可靠；且与上面「删卡口径不动」是同一件事
 
 **21. `079_remote_user_profiles.sql` 从未接线 —— SQLite 新库缺 `remote_user_profiles` 表** —— 状态：**已修（2026-09-13）**

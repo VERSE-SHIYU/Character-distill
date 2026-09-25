@@ -803,13 +803,17 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def find_interrupted_distill(self, user_id: str, text_id: str, character: str) -> dict | None:
-        """Return the newest interrupted distill task for (user, text, character), or None.
+    async def find_resumable_distill(self, user_id: str, text_id: str, character: str) -> dict | None:
+        """Return the newest resumable distill task for (user, text, character), or None.
 
-        Resume discovery: boot reconcile leaves a dead process's running rows as
-        'interrupted'. /start looks one up to reuse its task_id + chunk checkpoint
-        instead of minting a fresh task. Exact character match — a shared text must
-        not let two characters reuse each other's cached chunks.
+        Resume discovery. Two terminal states are resumable: 'interrupted' (boot
+        reconcile leaves a dead process's running rows as such) and 'error' (the
+        run failed after some chunks were already checkpointed — retrying should
+        redo only the missing chunks, not all of them). 'done' is not resumable:
+        distilling again means "I want a fresh version", which reruns everything.
+        /start reuses the found task_id + chunk checkpoint instead of minting a
+        fresh task. Exact character match — a shared text must not let two
+        characters reuse each other's cached chunks.
         """
 
     @abstractmethod

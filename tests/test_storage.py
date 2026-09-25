@@ -1686,20 +1686,23 @@ class TestDistillTaskPersistence:
         # interrupted 不占 running 槽；是步骤 3 挑选恢复对象的直接依据
         assert await store.count_running_distills("u1") == 0
 
-    async def test_find_interrupted_distill(self, store, text_id):
-        # 续跑发现：只认 interrupted（done/running 不算）；character 精确匹配——同一文本下
-        # 两个角色绝不能互借缓存片；user 隔离。
+    async def test_find_resumable_distill(self, store, text_id):
+        # 续跑发现：interrupted 与 error 都可复用 —— 失败任务重试同样只补失败片。
+        # done 不复用：已出卡的再次蒸馏是「要新版本」，整跑。character 精确匹配 ——
+        # 同一文本下两个角色绝不能互借缓存片；user 隔离。
         await store.create_distill_task("dtI1", "u1", text_id, character="甲", status="interrupted")
-        await store.create_distill_task("dtI2", "u1", text_id, character="乙", status="interrupted")
-        await store.create_distill_task("dtI3", "u1", text_id, character="甲", status="done")
-        await store.create_distill_task("dtI4", "u2", text_id, character="甲", status="interrupted")
+        await store.create_distill_task("dtE1", "u1", text_id, character="乙", status="error")
+        await store.create_distill_task("dtD1", "u1", text_id, character="丙", status="done")
+        await store.create_distill_task("dtE2", "u2", text_id, character="甲", status="error")
 
-        got = await store.find_interrupted_distill("u1", text_id, "甲")
+        got = await store.find_resumable_distill("u1", text_id, "甲")
         assert got is not None and got["task_id"] == "dtI1"
         assert got["chunk_size"] is None and got["text_fingerprint"] == ""
-        assert await store.find_interrupted_distill("u1", text_id, "丙") is None
-        assert (await store.find_interrupted_distill("u2", text_id, "甲"))["task_id"] == "dtI4"
-        assert await store.find_interrupted_distill("u1", "txt_none", "甲") is None
+        assert (await store.find_resumable_distill("u1", text_id, "乙"))["task_id"] == "dtE1"
+        assert await store.find_resumable_distill("u1", text_id, "丙") is None    # done 不复用
+        assert await store.find_resumable_distill("u1", text_id, "丁") is None    # 该角色无行
+        assert (await store.find_resumable_distill("u2", text_id, "甲"))["task_id"] == "dtE2"
+        assert await store.find_resumable_distill("u1", "txt_none", "甲") is None
 
     async def test_list_distill_tasks_capped_and_full_row_shape(self, store, text_id):
         # G：admin 运维视图的读路径。上限必守（无 cascade 的表会无限长），
