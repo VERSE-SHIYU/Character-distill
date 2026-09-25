@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import ast
 import pathlib
+from types import SimpleNamespace
 
 import httpx2
+import openai
 import pytest
 from conftest import cause_chain
 from fastapi import FastAPI
@@ -218,3 +220,90 @@ def test_s3_our_own_bug_is_not_reported_as_upstream(fake_sse, monkeypatch):
 
     assert r.status_code != 503, "自身缺陷被冒充成上游失败（用户会被误导去重试）"
     assert r.status_code == 500
+
+
+# ── WP2 S3：传输层失败的**版本面**与「两条路同一句话」──────────────────
+#
+# 上面几条用真 socket 造断连/读超时；这两条判的是**分类**，只能手搓异常 ——
+# openai ≥3.19 在 `_streaming.py` 读到传输层错之后会 new 一个自己的 APIConnectionError，
+# 那个对象不是真 socket 能造出来的（3.13.0 不这么包，故本地栈上跑不出这一形态）。
+
+class _RaisingStream:
+    def __iter__(self):
+        return self
+
+    def __init__(self, exc):
+        self._exc = exc
+
+    def __next__(self):
+        raise self._exc
+
+
+class _RaisingCompletions:
+    def __init__(self, exc, at):
+        self._exc, self._at = exc, at
+
+    def create(self, **kwargs):
+        if self._at == "create":
+            raise self._exc
+        return _RaisingStream(self._exc)
+
+
+class _NoopOpenAI:
+    """替真实构造：用例随后会换掉 `_client`，这里只要__init__不真连网。"""
+
+    def __init__(self, **kwargs):
+        pass
+
+
+def _stub_llm(monkeypatch, exc, at):
+    """一个指向「按 `at` 抛 `exc`」的桩客户端的真 adapter（`at` ∈ create / read）。"""
+    monkeypatch.setattr(M, "OpenAI", _NoopOpenAI)
+    monkeypatch.setattr(M, "_STREAM_ATTEMPT_S", 0.5)   # 不真等：读窗与天花板都缩到 0.5s
+    monkeypatch.setattr(M, "_STREAM_DEADLINE_S", 1.5)
+    llm = M.LLMAdapter(api_key="sk-test-fake")
+    llm._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=_RaisingCompletions(exc, at)))
+    return llm
+
+
+def _wrapped_connection_error() -> openai.APIConnectionError:
+    """openai ≥3.19 读流中断的形态：APIConnectionError（**不是** httpx2 的子类）。"""
+    return openai.APIConnectionError(
+        request=httpx2.Request("POST", "http://fake-upstream/v1/chat/completions"))
+
+
+def test_s3_openai_wrapped_transport_error_is_upstream_failure(monkeypatch):
+    """变异③：`_TRANSPORT_ERRORS` 去掉 `APIConnectionError` → 本条红（退回 500）。
+
+    sentinel 上的 3 条红就是这一形态：openai 3.19.2 把流中途的传输层异常包成
+    APIConnectionError（超时是它的子类 APITimeoutError），而它**不是** httpx2.TransportError
+    的子类 —— 只认 httpx2 的包装会在 openai 升过 3.1x 后静默失效。
+    """
+    exc = _wrapped_connection_error()
+    llm = _stub_llm(monkeypatch, exc, at="read")
+
+    with pytest.raises(UpstreamFailure) as ei:
+        list(llm.chat_stream("sys", _MSGS))
+
+    assert ei.value.user_message == _UPSTREAM_TEXT
+    assert exc in cause_chain(ei.value), "原因链必须保留 openai 包出来的那个异常（排障要看它）"
+
+
+def test_s3_transport_text_is_identical_on_both_paths(monkeypatch):
+    """变异⑥：`_upstream_user_message` 不认传输层 → 本条红（两条都退回通用口径）。
+
+    同一个传输层故障，建流阶段（create() 直接失败、重试耗尽）与读流阶段（迭代中断）
+    必须说出**同一句话**。两处各写一份文案时（旧写法：读流侧用自己的常量、建流侧查
+    状态码表得到 ""），用户看到「重发一次」还是笼统的「服务暂时不可用」取决于故障恰巧
+    落在哪一段 —— 相等断言拦的是这个；字面量那半拦「两边一起改成同一句错话」。
+    """
+    build = _stub_llm(monkeypatch, httpx2.ConnectError("connect boom"), at="create")
+    with pytest.raises(UpstreamFailure) as e_build:
+        list(build.chat_stream("sys", _MSGS))
+
+    mid = _stub_llm(monkeypatch, httpx2.ConnectError("connect boom"), at="read")
+    with pytest.raises(UpstreamFailure) as e_mid:
+        list(mid.chat_stream("sys", _MSGS))
+
+    assert e_build.value.user_message == e_mid.value.user_message == _UPSTREAM_TEXT

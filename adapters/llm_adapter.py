@@ -13,6 +13,7 @@ from typing import Any
 import os
 
 import httpx2
+import openai
 import yaml
 from dotenv import load_dotenv
 from openai import AsyncOpenAI, BadRequestError, OpenAI, Timeout
@@ -420,12 +421,30 @@ class UpstreamFailure(RuntimeError):
         super().__init__(message)
 
 
+# 传输层失败：连接建立之后 / 读流途中的网络故障。**只在这里定义一次** —— 建流阶段的
+# ``_RetryBudget.on_failure`` 与读流阶段的 ``_stream`` 判「是不是传输层」都取这一处。
+#
+# 为什么要两个类：openai 的包装行为会随版本变。3.13.0 把流中途的传输层异常原样抛出
+# （httpx2.TransportError 子类），3.19.2 起在 openai/_streaming.py 把它包成
+# APIConnectionError（超时是其子类 APITimeoutError），而它**不是** httpx2.TransportError 的
+# 子类 —— 只认 httpx2 的话，openai 一升过 3.1x 这里就静默失效（sentinel 上的 500 即此）。
+_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
+    httpx2.TransportError,
+    openai.APIConnectionError,
+)
+
+
 def _upstream_user_message(exc: Exception) -> str:
     """上游异常 → 上屏文案；未登记的状态码 → ""（由出口落通用文案）。
 
-    识别口径与 ``_classify_retry`` 的 429 判定一致（先看 ``status_code``，其次报错文本里的
-    429）—— 免得同一次失败在「算不算限流」和「该说什么」两处各判出一个答案。
+    传输层失败先判：它没有 status_code，落进状态码表只会得到 ""（通用文案），而这类失败
+    的处置是「重发一次」而不是「去设置页检查 key」。文案与 ``_GENERIC_USER_ERROR``（"服务
+    暂时不可用…"）刻意不同，措辞更指向动作，也便于据文案分辨「有没有被认成传输层」。
+    其余识别口径与 ``_classify_retry`` 的 429 判定一致（先看 ``status_code``，其次报错文本
+    里的 429）—— 免得同一次失败在「算不算限流」和「该说什么」两处各判出一个答案。
     """
+    if isinstance(exc, _TRANSPORT_ERRORS):
+        return "模型服务暂时不可用，请稍后重试"
     code = getattr(exc, "status_code", None)
     if code is None and "429" in str(exc):
         code = 429
@@ -501,10 +520,6 @@ def llm_error_types() -> tuple[type[BaseException], ...]:
 
 
 _GENERIC_USER_ERROR = "服务暂时不可用，请稍后重试"
-
-# 流式读流途中的传输层故障（断连 / 读超时）专用上屏文案：这不是「我们哪里写错了」，
-# 而是「上游这条流断了，重发一次请求大概率能通」—— 措辞比通用文案更指向动作。
-_TRANSPORT_USER_ERROR = "模型服务暂时不可用，请稍后重试"
 
 
 def user_facing_error(exc: BaseException) -> str:
@@ -873,16 +888,18 @@ class LLMAdapter:
                 print(f"[llm] usage chunk missing, estimated from chars (pt~{self.last_usage['prompt_tokens']} ct~{self.last_usage['completion_tokens']})")
         except IncompleteResponseError:
             raise  # 截断是确定性失败：不吞、不打「读取失败」误导日志、不重试
-        except httpx2.TransportError as exc:
+        except _TRANSPORT_ERRORS as exc:
             # 读流途中的传输层故障（断连 → RemoteProtocolError、读超时 → ReadTimeout，
-            # 都是 TransportError 子类）：归成上游失败，交统一出口回 503 + 上屏文案。
+            # openai ≥3.19 还可能是它自己包出来的 APIConnectionError）：归成上游失败，
+            # 交统一出口回 503 + 上屏文案。分类与文案都由 _upstream_user_message 裁决，
+            # 与建流阶段同一处 —— 同一个故障在两条路上说出同一句话。
             # **只认传输层**：宽成 except Exception 会把我们自己的 bug（AttributeError
             # 之类）报成上游故障，把用户引去「稍后重试」而不是让我们修。
             # 流**不重放** —— 已吐出的片段不可撤回，重放会重复交付。
             print(f"读取流式响应失败（上游传输层）：{exc}")
             raise UpstreamFailure(
                 f"chat_stream 读流中断：{exc}",
-                user_message=_TRANSPORT_USER_ERROR,
+                user_message=_upstream_user_message(exc),
             ) from exc   # from：原因链保留（排障要看是断连还是读超时）
         except Exception as exc:
             print(f"读取流式响应失败：{exc}")
