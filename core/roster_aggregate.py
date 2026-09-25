@@ -15,6 +15,11 @@
 别名又是另一片的主名，按「挂在几个主名上」数它挂在两个名下，会被当泛称丢掉，两个人
 也并不到一起。按组数就不会：别名等于另一个主名、且此刻只挂在一个组上 → 两组并，做到
 不动点；并完只剩一组，「宝二爷」就只指向一个人，该留。
+
+**成员主名优先**（判定「挂在几组上」的口径）：某组的成员主名只属于那一组。片1 贾宝玉
+{宝玉}、片2 宝玉{宝二爷}、片3 甄宝玉{宝玉} 并组后，「宝玉」是合并组的成员主名、又被
+甄宝玉组当别名 —— 只数别名会把它当泛称从两边一起移除，合并组因此丢掉最常用的称呼，
+下游按子串选片就漏掉此人的大部分片。判据与清单过滤共用一份，见 `_visible_aliases`。
 """
 
 from __future__ import annotations
@@ -117,13 +122,42 @@ def _assemble_group(
     }
 
 
-def _alias_owners(groups: Sequence[dict[str, Any]]) -> dict[str, set[int]]:
-    """别名 → 挂着它的组下标集合。「挂在几组上」是歧义的唯一判据。"""
+def _visible_aliases(groups: Sequence[dict[str, Any]]) -> list[tuple[str, ...]]:
+    """每个组该对外的别名 —— 清单过滤与最终移除**共用这一份**口径，不写两份。
+
+    「挂在几组上」数的是各组的主名、成员主名与别名，判据三条：
+
+      - 该称呼是某组的成员主名 → 只属于那一组：本组保留（即使它不是显示名），
+        其余组的 `aliases` 里移除。有分片以它为主名列出此人，它就不是泛称 ——
+        别组拿它当别名，不足以让它降格；
+      - 只以别名身份出现、且挂在 ≥2 个组上（如「二爷」同时指两个人）→ 从所有组移除；
+      - 其余（只挂一个组）→ 保留。
+
+    只数 `aliases` 会把前一种误判成后一种：片1 贾宝玉{宝玉}、片2 宝玉{宝二爷}、
+    片3 甄宝玉{宝玉} 并组后，「宝玉」在合并组与甄宝玉组的别名里各挂一次 → 两边一起
+    移除 → 合并组丢掉最常用的称呼，下游按子串选片就漏掉此人的大部分片。
+    """
     owners: dict[str, set[int]] = {}
+    member_of: dict[str, int] = {}
     for i, group in enumerate(groups):
+        for name in group["members"]:
+            owners.setdefault(name, set()).add(i)
+            member_of[name] = i     # 成员互不相交，同一主名只可能属于一个组
         for alias in group["aliases"]:
             owners.setdefault(alias, set()).add(i)
-    return owners
+
+    visible: list[tuple[str, ...]] = []
+    for i, group in enumerate(groups):
+        kept: list[str] = []
+        for alias in group["aliases"]:
+            owner = member_of.get(alias)
+            if owner is None:
+                if len(owners[alias]) < 2:
+                    kept.append(alias)
+            elif owner == i:
+                kept.append(alias)
+        visible.append(tuple(kept))
+    return visible
 
 
 def group_identify_entries(
@@ -200,35 +234,32 @@ def alias_prompt_rows(
     别名里去掉**当时**挂在 ≥2 组上的那些 —— 泛称（「二爷」）摆进清单只会诱导模型
     把两个人并成一个。这里算的是并组前的悬挂情况，因为模型要判的正是「这组和那组
     是不是同一人」；并组之后再算，泛称会因为只剩一组而显得「唯一」，就白送了。
+
+    口径与最终移除同一份（`_visible_aliases`）：清单里显示什么，最后就留什么。
     """
-    owners = _alias_owners(groups)
+    visible = _visible_aliases(groups)
     return [
-        (group["name"], group["chunk_count"],
-         tuple(a for a in group["aliases"] if len(owners[a]) < 2))
-        for group in groups
+        (group["name"], group["chunk_count"], visible[i])
+        for i, group in enumerate(groups)
     ]
 
 
 def _strip_ambiguous(groups: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """按**最终**分组移除歧义别名 —— 对每一个组都做，包括没被合并、原样返回的组。
+    """按**最终**分组移除不属于本组的称呼 —— 对每一个组都做，包括没被合并、原样返回的组。
 
     只在被合并的组上做会漏掉绝大多数：模型回 `[]`（谁都不用并）时全是单组，
-    歧义别名会一个不剩地留在名单里，污染下游的子串匹配。
+    泛称会一个不剩地留在名单里，污染下游的子串匹配。判据见 `_visible_aliases`。
     """
-    owners = _alias_owners(groups)
-    ambiguous = {alias for alias, idxs in owners.items() if len(idxs) >= 2}
-    if not ambiguous:
-        return list(groups)
+    visible = _visible_aliases(groups)
     return [
-        {**group, "aliases": tuple(a for a in group["aliases"] if a not in ambiguous)}
-        for group in groups
+        {**group, "aliases": visible[i]} for i, group in enumerate(groups)
     ]
 
 
 def merge_identify_groups(
     groups: Sequence[dict[str, Any]], pairs: Sequence[Sequence[str]],
 ) -> list[dict[str, Any]]:
-    """按别名判断给出的组对并组，然后按最终分组移除歧义别名。
+    """按别名判断给出的组对并组，然后按最终分组移除不属于本组的称呼。
 
     **模型没判为同一人的一律保持分开** —— 只并它点名的对，不做任何推断式合并。
     `pairs` 里写错的名字（不在名单中的主名）忽略：那是模型输出，认错一个名字不该让

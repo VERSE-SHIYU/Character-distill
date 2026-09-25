@@ -12,6 +12,8 @@
   I3b  同一人不同主名共列的别名**不算**歧义（片1 贾宝玉{宝玉,宝二爷}、片2 宝玉{宝二爷}
        是同一组）；模型并组后原先多组共有的称呼只指向一个人，要保留；而送给别名
        判断模型的清单里也不列**当时**挂在 ≥2 组上的别名（泛称会诱导模型误并）。
+  I3c  成员主名优先：「宝玉」是合并组的成员主名、又被甄宝玉组当别名 —— 只属于有它
+       的那一组。只以别名身份挂在 ≥2 组上的，才从所有组移除。
   I4   主次、排序、理由、不截断 —— 四个输入全是代码可数的。
 
 判定「歧义」的时机是本文件的中心：**并组做完、按最终分组计数**。放在并组之前，
@@ -142,6 +144,57 @@ class TestSamePersonDifferentNames:
         # 反面对照：没有任何别名挂在多组上时，别名照常送（不是一律清空）
         single = group_identify_entries(_SAME_PERSON_TWO_NAMES)
         assert any("宝二爷" in a for _n, _c, a in alias_prompt_rows(single))
+
+
+# 片1 贾宝玉{宝玉}、片2 宝玉{宝二爷}、片3 甄宝玉{宝玉}；模型判（贾宝玉, 宝玉）同一人。
+# 「宝玉」是合并组（成员 贾宝玉、宝玉）的成员主名，同时又被甄宝玉组当别名。
+_MEMBER_NAME_BEATS_ALIAS = [
+    [{"name": "贾宝玉", "aliases": ["宝玉"]}],
+    [{"name": "宝玉", "aliases": ["宝二爷"]}],
+    [{"name": "甄宝玉", "aliases": ["宝玉"]}],
+]
+
+
+class TestMemberNameBeatsAlias:
+    """成员主名优先：一个称呼若是某组的成员主名，它只属于那一组。
+
+    旧口径只数 aliases（挂在几个组的 `aliases` 里），于是「宝玉」被算成挂在两个组上
+    = 泛称 → 从两边一起移除：合并组丢掉最常用的称呼，甄宝玉组也留着不该留的（反之
+    亦同）。蒸馏选片按 `match_terms = [name] + aliases` 做子串匹配，丢了「宝玉」就等于
+    把此人的片判给别人（B2 挂）。
+
+    变异对象 = ① 所有权只数 aliases、不数主名（合并组丢「宝玉」→ 红）
+              ② 成员主名也被移除（`_visible_aliases` 不要成员归属那一支 → 红）
+              ③ 清单不过滤（与移除不同口径 → 红）
+    """
+
+    def test_member_main_name_is_owned_by_its_group_only(self):
+        groups = _merged(_MEMBER_NAME_BEATS_ALIAS, pairs=[("贾宝玉", "宝玉")])
+
+        assert len(groups) == 2, "只并了模型点名的那一对"
+        merged = next(g for g in groups if "宝玉" in g["members"])
+        assert set(merged["members"]) == {"贾宝玉", "宝玉"}
+        assert "宝玉" in merged["aliases"], "成员主名要留在自己组（哪怕不是显示名）"
+        assert "宝二爷" in merged["aliases"], "唯一别名照常留着（移除 ≠ 清空）"
+        other = next(g for g in groups if g is not merged)
+        assert other["aliases"] == (), "别组把它当别名，不足以让它降格成泛称"
+        assert [g["name"] for g in groups if "宝玉" == g["name"] or "宝玉" in g["aliases"]] \
+            == ["贾宝玉"], "在 name ∪ aliases 里「宝玉」恰命中一组"
+
+    def test_alias_prompt_rows_use_the_same_ownership(self):
+        """清单过滤与最终移除同口径 —— 不写两份。
+
+        这一条在修复前即为绿（修复不改这三个组的清单内容），它的分辨力在变异③：
+        清单不过滤时，贾宝玉组与甄宝玉组会把「宝玉」送给模型，诱导它误判。
+        """
+        rows = alias_prompt_rows(group_identify_entries(_MEMBER_NAME_BEATS_ALIAS))
+        sent = [(name, chunks, aliases) for name, chunks, aliases in rows]
+
+        assert [name for name, _c, _a in sent] == ["贾宝玉", "宝玉", "甄宝玉"]
+        assert all("宝玉" not in aliases for _n, _c, aliases in sent), (
+            "成员主名不进别组清单（本组它是主名，也不在别名里）")
+        assert any("宝二爷" in aliases for _n, _c, aliases in sent), (
+            "不属于任何组主名的独有别名照常送（过滤 ≠ 清空）")
 
 
 # 40 片，10% = 4 片。X / Y / Z 各按一种边界摆：
