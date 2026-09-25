@@ -1,30 +1,30 @@
 # -*- coding: utf-8 -*-
-"""识别覆盖全书：分片 Map + 合并，失败率判据，合并走流式。
+"""识别覆盖全书：分片 Map → 代码归组 → 一次别名判断，失败率判据。
 
 缺陷形态：``identify_characters`` 取 ``text[:10000]`` —— 红楼梦这类长篇只覆盖头两章，
 名单天然残缺，而残缺名单会被落库、被所有下游当成全书名单用。本文件锁五件事：
 
   1. 只在**最后一个分片**出现的角色也进名单，且**每个分片都被送进了识别**
      （变异对象 = 恢复 ``excerpt = text[:10000]``：单次调用、末章角色丢失 → 红）
-  2. 单分片**不合并**（`_identify_merge` 不被调用）——短文本的调用形态与改前一致
-  3. 合并调用走 ``chat_stream``（非流式生成有 45s/60s 墙钟上限，长输出必然撞墙）
+  2. 单分片**不判别名**（走原来那一次 ``chat``）——短文本的调用形态与改前一致
+  3. 合并阶段只 **1 次**模型调用，走 ``chat_stream_long``（非流式的 45s/60s 墙钟
+     装不下长输出，通道与逐片 Map 保持一致）；它的输入只有主名 / 别名 / 出现分片数，
+     **没有 reason、没有正文**——判主次与取理由都是纯计算
   4. 分片失败率越过容忍上限即抛；**解析失败与调用失败同权**计
-  5. 重修重试也不许退回非流式 ``chat``（否则重修那两次还是撞墙）
+  5. 别名判断解析失败后的重修同样不许退回非流式 ``chat``
+
+归组、并组、判主次、取理由是纯计算，已在 `tests/test_character_roster.py` 逐条锁过
+（I3、I4）—— 这里只锁编排：调了几次、走的哪条通道、喂进去的是什么。
 """
 
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.distiller import (
-    _IDENTIFY_CACHE,
-    IDENTIFY_MERGE_PROMPT,
-    DistillError,
-    Distiller,
-)
+from core.distiller import _IDENTIFY_CACHE, DistillError, Distiller
 
 FILLER = "甲" * 2000          # chunk_size=3000 → 一段一片
 TAIL = "孔明在末章登场"        # 只在最后一分片出现的角色
@@ -86,16 +86,39 @@ def _map_stub():
     return async_chat
 
 
-def _merge_stream(*, first=None):
-    """合并桩：``chat_stream`` 的 side_effect（返回迭代器，模拟增量）。
+# 三片桩（I1 / I2 用）：每片一个角色，片内的「正文标记」与理由里的「理由标记」都不许
+# 出现在别名判断的输入里 —— 输入若带了正文或 reason，这两个标记就会露出来。
+_NAMES = ("阿尔法", "贝塔", "伽马")
+_TEXT_MARKERS = ("正文标记一", "正文标记二", "正文标记三")
+_REASON_MARKERS = ("理由标记一", "理由标记二", "理由标记三")
+THREE_CHUNK_TEXT = "\n\n".join(FILLER + m for m in _TEXT_MARKERS)
 
-    ``first`` 给定时，第一次调用吐它（用于考「解析失败后的重修」）。
+
+def _three_char_map_stub():
+    """Map 桩：按片内的正文标记各回一个角色（带理由标记与一个唯一别称）。"""
+    async def async_chat(system, messages, max_tokens=None, **kwargs):
+        content = messages[0]["content"]
+        for marker, name, reason in zip(_TEXT_MARKERS, _NAMES, _REASON_MARKERS):
+            if marker in content:
+                return (_chars_json([{
+                    "name": name, "aliases": [f"{name}别称"],
+                    "importance": "主要", "reason": reason,
+                }]), {"prompt_tokens": 1, "completion_tokens": 1})
+        return ("[]", {"prompt_tokens": 1, "completion_tokens": 1})
+
+    return async_chat
+
+
+def _alias_stream(*, first=None):
+    """别名判断桩：``chat_stream`` 的 side_effect（返回迭代器，模拟增量）。
+
+    默认回合法空数组 —— 「这些组谁都不用并」是常见答案（`allow_empty` 就是为它开的）。
+    ``first`` 给定时第一次调用吐它（用于考「解析失败后的重修」）。
     """
-    payload = _chars_json([KONGMING])
     replies = list(first) if first is not None else []
 
     def chat_stream(system, messages, max_tokens=None, **kwargs):
-        return iter([replies.pop(0)] if replies else [payload])
+        return iter([replies.pop(0)] if replies else ["[]"])
 
     return chat_stream
 
@@ -106,73 +129,75 @@ class TestWholeBookCoverage:
 
     def test_character_only_in_last_chunk_is_identified(self):
         """末章才登场的角色进名单 —— 且每个分片都送了识别，不是只送前 1 万字。"""
-        llm = _make_llm(async_chat=_map_stub(), chat_stream=_merge_stream())
+        llm = _make_llm(async_chat=_map_stub(), chat_stream=_alias_stream())
         d = _make_distiller(llm)
 
         result = d.identify_characters(WHOLE_BOOK_TAIL_CHARS)
 
-        assert [c["name"] for c in result] == ["孔明"]
+        # 名字、别名、主次、理由四件都在纯函数里走完全程（不是模型原样返回的那份）
+        assert len(result) == 1
+        assert result[0]["name"] == "孔明"
+        assert result[0]["aliases"] == ["诸葛亮"]
+        assert result[0]["importance"] == "主要"
+        assert result[0]["reason"] == "末章登场"
         # 6 个分片全送：变异「恢复 text[:10000]」会让这里变成 1，末章角色随之消失
         assert llm.async_chat.await_count == 6
         sent = [c.args[1][0]["content"] for c in llm.async_chat.await_args_list]
         assert any("孔明" in s for s in sent), "末章那一片没被送进识别"
 
     def test_single_chunk_does_not_merge(self):
-        """单分片走原来那次调用（`chat`），不合并 —— 短文本形态与改前一致。"""
+        """单分片走原来那次调用（`chat`），不归组也不判别名 —— 短文本形态与改前一致。"""
         llm = _make_llm(chat=lambda *a, **kw: _chars_json([KONGMING]))
         d = _make_distiller(llm)
 
-        with patch.object(d, "_identify_merge") as mock_merge:
-            result = d.identify_characters("短文本，只有一个分片")
+        result = d.identify_characters("短文本，只有一个分片")
 
-        mock_merge.assert_not_called()
         assert llm.chat.call_count == 1
-        assert llm.chat_stream.call_count == 0
+        assert llm.chat_stream.call_count == 0, "单分片不该走到别名判断那一步"
         assert [c["name"] for c in result] == ["孔明"]
 
-    def test_merge_call_uses_stream(self):
-        """合并走 chat_stream：非流式生成墙钟装不下整本书的名单。"""
-        llm = _make_llm(async_chat=_map_stub(), chat_stream=_merge_stream())
+    def test_alias_judgement_is_one_call_without_reason_or_text(self):
+        """合并阶段只 1 次模型调用，输入只有主名 / 别名 / 出现分片数。
+
+        变异对象 = 恢复 main 上的 `_identify_merge`（把各片名单整包丟给模型重写）：
+        调用次数与输入内容两条断言都会红。
+        """
+        llm = _make_llm(async_chat=_three_char_map_stub(), chat_stream=_alias_stream())
         d = _make_distiller(llm)
 
-        d.identify_characters(WHOLE_BOOK_TAIL_CHARS)
+        result = d.identify_characters(THREE_CHUNK_TEXT)
 
         assert llm.chat_stream.call_count == 1
-        assert llm.chat.call_count == 0, "合并这条路上不该出现非流式 chat"
-        assert llm.chat_stream.call_args.args[0] == IDENTIFY_MERGE_PROMPT
+        assert llm.chat.call_count == 0, "别名判断这条路上不该出现非流式 chat"
+        body = llm.chat_stream.call_args.args[1][0]["content"]
+        assert not any(m in body for m in _TEXT_MARKERS), "正文不许进别名判断"
+        assert not any(m in body for m in _REASON_MARKERS), "理由不许进别名判断"
+        for name in _NAMES:
+            assert name in body, "每组主名要进别名判断"
+        assert body.count("出现 1 个分片") == 3, "每组出现分片数要进别名判断"
+        # 三个组各在 1 片、各被判主要一次 → 名单全靠纯函数算出来，不是模型原样返回
+        assert [c["name"] for c in result] == list(_NAMES)
+        assert [c["reason"] for c in result] == list(_REASON_MARKERS)
+        assert [c["aliases"] for c in result] == [[f"{n}别称"] for n in _NAMES]
 
-    def test_merge_repair_also_uses_stream(self):
-        """合并解析失败后的重修也不许退回非流式 chat（否则重修照样撞墙）。"""
+    def test_alias_judgement_repair_also_streams(self):
+        """别名判断解析失败后的重修也不许退回非流式 chat（否则重修照样撞墙）。
+
+        变异对象 = 把重修改成 `stream=False`：`chat_stream.call_count` 变 1 且
+        `chat` 被调到 → 红。
+        """
         llm = _make_llm(
-            async_chat=_map_stub(),
-            chat_stream=_merge_stream(first=["不是 JSON"]),
+            async_chat=_three_char_map_stub(),
+            chat_stream=_alias_stream(first=["不是 JSON"]),
             chat=lambda *a, **kw: pytest.fail("重修走了非流式 chat"),
         )
         d = _make_distiller(llm)
 
-        result = d.identify_characters(WHOLE_BOOK_TAIL_CHARS)
+        result = d.identify_characters(THREE_CHUNK_TEXT)
 
-        assert [c["name"] for c in result] == ["孔明"]
+        assert [c["name"] for c in result] == list(_NAMES)
         assert llm.chat_stream.call_count == 2      # 初次 + 重修
         assert llm.chat.call_count == 0
-
-    def test_merge_max_tokens_is_raised(self):
-        """合并调用的 max_tokens 是 IDENTIFY_MERGE_MAX_TOKENS，且初次与重修一致。
-
-        CARD_MAX_TOKENS（8192）装不下整本书的花名册——撞上去就是「超长被截断」，
-        识别整个失败。这一条也顺带锁住重修没退回小上限（退回则重修白修）。
-        """
-        llm = _make_llm(
-            async_chat=_map_stub(),
-            chat_stream=_merge_stream(first=["不是 JSON"]),
-        )
-        d = _make_distiller(llm)
-
-        d.identify_characters(WHOLE_BOOK_TAIL_CHARS)
-
-        passed = [c.kwargs.get("max_tokens") for c in llm.chat_stream.call_args_list]
-        assert passed == [Distiller.IDENTIFY_MERGE_MAX_TOKENS] * 2
-        assert Distiller.IDENTIFY_MERGE_MAX_TOKENS > Distiller.CARD_MAX_TOKENS
 
 
 class TestChunkFailurePolicy:
@@ -194,7 +219,7 @@ class TestChunkFailurePolicy:
                 raise RuntimeError("connection timeout")
             return (_chars_json([KONGMING]), {"prompt_tokens": 1, "completion_tokens": 1})
 
-        return _make_llm(async_chat=async_chat, chat_stream=_merge_stream())
+        return _make_llm(async_chat=async_chat, chat_stream=_alias_stream())
 
     def test_failure_over_tolerance_raises(self):
         """4 片坏 3 片（75% > 50%）→ 抛，不拿半本书的名单当全书名单。"""
@@ -268,7 +293,7 @@ class TestEmptyRosterIsNotFailure:
         d = _make_distiller(llm)
 
         assert d.identify_characters("\n\n".join([FILLER] * 4)) == []
-        assert llm.chat_stream.call_count == 0, "没有名单可合并，不该走到合并那一步"
+        assert llm.chat_stream.call_count == 0, "没有可归组的条目，不该走到别名判断那一步"
 
     def test_empty_roster_is_cached_like_any_other_result(self):
         """空名单同样是**成功结果**，照样进 memo —— 失败才不进缓存。"""
