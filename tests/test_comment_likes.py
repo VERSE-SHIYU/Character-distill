@@ -16,8 +16,14 @@ import uuid
 
 import asyncpg
 import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 from conftest import PG_ENV, TEST_DATABASE_URL
+from deps import get_storage
+from routers.auth import get_current_user, get_optional_user
+from routers.market import router as market_router
+from routers.text import router as text_router
 from storage.postgres_store import PostgresStore
 
 _pg = PG_ENV.skipif("PG 评论点赞用例")
@@ -142,5 +148,110 @@ async def test_liked_ids_come_from_the_table_for_that_kind(kind: str):
         other_id, _ = await _seed_comment(store, kind)
         await store.toggle_comment_like(kind, liked_id, user_id)
         assert await store.get_liked_comment_ids(kind, [liked_id, other_id], user_id) == {liked_id}
+    finally:
+        await store.close()
+
+
+# ── 3. 路由层：不存在的评论回 404，列表带 liked_by_me ────────────────────────
+#
+# 存储层返回 `None` 只是「回 404」的一半：路由把 `None` 翻译成 404 是另一半。
+# 列表的 `liked_by_me` 则是路由层的账 —— 存储只答「这批 id 里哪些赞过」。
+
+_LIKE_ROUTE = {
+    "text": "/api/text/comments/{}/like",
+    "post": "/api/market/post/comments/{}/like",
+    "card": "/api/market/comments/{}/like",
+}
+_LIST_ROUTE = {
+    "post": "/api/market/post/{}/comments",
+    "card": "/api/market/{}/comments",
+}
+
+
+async def _seed_two_comments(store: PostgresStore, kind: str) -> tuple[str, str, str, str]:
+    """同一父级下两条评论（不同作者），返回 `(parent_id, 我赞的那条, 另一条, 我的 id)`。"""
+    username = _uid("n")
+    user = await store.create_user(_uid("u"), username, "x")
+    other_name = _uid("n")
+    other = await store.create_user(_uid("u"), other_name, "x")
+    if kind == "post":
+        parent = await store.add_post(user["id"], "帖子", "public")
+        liked = await store.add_post_comment(parent["id"], user["id"], username, "评论")
+        second = await store.add_post_comment(parent["id"], other["id"], other_name, "评论")
+    else:
+        text = await store.save_text(_uid("t"), "f.txt", "正文", user_id=user["id"])
+        card = await store.save_card(_uid("c"), text["id"], "卡", "{}", user["id"])
+        # 新卡默认 private，匿名访客看不到私卡评论。要测「游客看得见计数」，卡得是公开的。
+        await store.update_card_visibility(card["id"], "public")
+        liked = await store.add_comment(card["id"], user["id"], username, "评论")
+        second = await store.add_comment(card["id"], other["id"], other_name, "评论")
+        parent = card
+    return parent["id"], liked["id"], second["id"], user["id"]
+
+
+def _app(store: PostgresStore, user: dict | None):
+    """只装被测的两条 router —— 判据是这两条路由的行为，不是整个 app 的装配。
+
+    用 `AsyncClient` 而不是 `TestClient`：asyncpg 的连接池绑定创建它的 loop，测试的
+    临时 loop 里建池、再让 `TestClient` 的 portal loop 去用会炸
+    （`another operation is in progress`）。同一个 `async def` 里造数据 + 发请求，
+    存储和 app 就共用同一个 loop。
+    """
+    app = FastAPI()
+    app.include_router(text_router)
+    app.include_router(market_router)
+    app.dependency_overrides[get_storage] = lambda: store
+    if user is not None:
+        app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_optional_user] = lambda: user
+    return app
+
+
+async def _request(method: str, app: FastAPI, path: str):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        return await ac.request(method, path)
+
+
+@_pg
+@pytest.mark.parametrize("kind", ["text", "post", "card"])
+async def test_liking_a_missing_comment_over_http_returns_404(kind: str):
+    store = await _store()
+    try:
+        user = await store.create_user(_uid("u"), _uid("n"), "x")
+        resp = await _request("POST", _app(store, user), _LIKE_ROUTE[kind].format(_uid("gone")))
+        assert resp.status_code == 404
+    finally:
+        await store.close()
+
+
+@_pg
+@pytest.mark.parametrize("kind", ["post", "card"])
+async def test_comment_list_marks_liked_by_me_and_carries_the_count(kind: str):
+    """「我赞的那条为真、另一条为假」——写死成 `False` 会让前半条当场变红。"""
+    store = await _store()
+    try:
+        parent_id, liked_id, second_id, user_id = await _seed_two_comments(store, kind)
+        await store.toggle_comment_like(kind, liked_id, user_id)
+        me = {"id": user_id, "username": "n", "role": "user"}
+        resp = await _request("GET", _app(store, me), _LIST_ROUTE[kind].format(parent_id))
+        by_id = {c["id"]: c for c in resp.json()["comments"]}
+        assert by_id[liked_id]["liked_by_me"] is True
+        assert by_id[second_id]["liked_by_me"] is False
+        assert by_id[liked_id]["likes"] == 1
+    finally:
+        await store.close()
+
+
+@_pg
+async def test_card_comment_list_is_never_liked_for_anonymous():
+    """游客看得到计数、看不到按钮：`liked_by_me` 一律 `False`，哪怕这条评论真被赞过。"""
+    store = await _store()
+    try:
+        card_id, liked_id, _, user_id = await _seed_two_comments(store, "card")
+        await store.toggle_comment_like("card", liked_id, user_id)
+        resp = await _request("GET", _app(store, None), _LIST_ROUTE["card"].format(card_id))
+        by_id = {c["id"]: c for c in resp.json()["comments"]}
+        assert by_id[liked_id]["liked_by_me"] is False
+        assert by_id[liked_id]["likes"] == 1
     finally:
         await store.close()
