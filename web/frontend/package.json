@@ -12,6 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@sentry/react": "^10.75.3",
     "antd-mobile": "^5.42.3",
     "idb": "^8.0.3",
     "react": "^19.2.6",
