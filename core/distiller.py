@@ -649,19 +649,27 @@ class Distiller:
 
         **记账落在发起调用的这一级**（形态锁的判据）：谁消费响应谁把账记进唯一出口
         （`_try_record_usage`），调用方不必记得补一笔 —— 靠调用方代记是约定不是机制，
-        新增一个调用方漏写就是一段没账的成本。成功时流已耗尽，`last_usage` 立刻读
-        （晚了会被下一次调用覆盖）。截断与其余失败都按字符估算补记：usage chunk 排在
-        finish_reason **之后**，校验不过就不交付，故截断时 `last_usage` 必为 ``None``；
-        而失败调用同样烧了 token（重试墙下空烧）—— 只记成功会让统计系统性偏低。
+        新增一个调用方漏写就是一段没账的成本。**成功时的用量取自流的返回值**（
+        `StopIteration.value`，即 `adapters/llm_adapter.py::_stream` 的 `return usage`），
+        不去读 `last_usage` 那个跨调用的共享槽：流是并发跑的，收尾回头读会读到并发的
+        另一条流的账（缺陷 20）。截断与其余失败都按字符估算补记：usage chunk 排在
+        finish_reason **之后**，校验不过就不交付，故截断时那条流没交过用量；而失败调用
+        同样烧了 token（重试墙下空烧）—— 只记成功会让统计系统性偏低。
         """
         prompt_chars = self._prompt_chars(system_prompt, messages)
         parts: list[str] = []
+        usage: dict | None = None
         try:
-            for piece in self._llm.chat_stream_long(
+            stream = self._llm.chat_stream_long(
                 system_prompt, messages,
                 max_tokens=self.CARD_MAX_TOKENS if max_tokens is None else max_tokens,
-            ):
-                parts.append(piece)
+            )
+            while True:
+                try:
+                    parts.append(next(stream))
+                except StopIteration as stop:   # `for` 会把返回值吞掉，只能自己驱动
+                    usage = stop.value
+                    break
         except Exception as exc:
             text = "".join(parts)
             self._try_record_usage(
@@ -672,7 +680,7 @@ class Distiller:
                 print(f"调用 LLM 进行{label}失败：{exc}")
                 raise
             return evidence, True
-        self._try_record_usage(usage_action)
+        self._try_record_usage(usage_action, usage)
         return "".join(parts), False
 
     def _chat_accounted(
@@ -1289,10 +1297,12 @@ class Distiller:
             {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[: self._chunk_size * 10]},
         ]
 
-        yield from self._llm.chat_stream_long(system_prompt, user_messages, max_tokens=self.CARD_MAX_TOKENS)
-        # 流耗尽后 last_usage 才可读（_distill_longcontext_stream 同形）——生成器被消费方
-        # 半途丢弃时这行不会执行，与既有的流式记账口径一致，不额外兜底。
-        self._try_record_usage("distill_stream")
+        usage = yield from self._llm.chat_stream_long(
+            system_prompt, user_messages, max_tokens=self.CARD_MAX_TOKENS,
+        )
+        # 账取本次调用的返回值，不读 last_usage（并发时那是别人的账，缺陷 20）——生成器被
+        # 消费方半途丢弃时这行不会执行，与既有的流式记账口径一致，不额外兜底。
+        self._try_record_usage("distill_stream", usage)
 
     def generate_opening(self, card_json: dict, user_role: str) -> str:
         """Generate context-aware opening based on character card + user role."""
@@ -1375,7 +1385,17 @@ class Distiller:
 
         yield {"status": "formatting"}
         tc = 0
-        for token in self._llm.chat_stream_long(system_prompt, [{"role": "user", "content": user_content}], max_tokens=self.CARD_MAX_TOKENS):
+        usage: dict | None = None
+        stream = self._llm.chat_stream_long(
+            system_prompt, [{"role": "user", "content": user_content}],
+            max_tokens=self.CARD_MAX_TOKENS,
+        )
+        while True:
+            try:
+                token = next(stream)
+            except StopIteration as stop:   # 滤思考态用的是显式驱动，返回值同样要接住
+                usage = stop.value
+                break
             if token == "\x00THINKING\x00":
                 continue
             yield token
@@ -1383,7 +1403,7 @@ class Distiller:
             if tc % 50 == 0:
                 yield {"heartbeat": True}
 
-        self._try_record_usage("distill_longcontext")
+        self._try_record_usage("distill_longcontext", usage)
 
     def _auto_tag(self, card_dict: dict) -> list[str]:
         """Lightweight LLM call to pick 1-3 preset tags matching the card.
@@ -1572,11 +1592,10 @@ class Distiller:
     def _single_reduce_stream(self, raw_analyses: list[str], character_name: str):
         """Merge independent chunk analyses into a single profile (streaming)."""
         combined = self._reduce_user_prompt(raw_analyses, character_name)
-        yield from self._llm.chat_stream_long(
+        usage = yield from self._llm.chat_stream_long(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
         )
-        usage = self._llm.last_usage
         self._try_record_usage("distill_reduce", usage)
 
     def _do_reduce(self, raw_analyses: list[str], character_name: str) -> str:
@@ -2075,11 +2094,11 @@ class Distiller:
         system_prompt = (
             DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
         )
-        yield from self._llm.chat_stream_long(
+        usage = yield from self._llm.chat_stream_long(
             system_prompt,
             [{"role": "user", "content":
                 f"以下是关于「{character_name}」的完整分析档案，严格按 JSON 格式输出角色卡：\n\n{profile_draft}"
             }],
             max_tokens=self.CARD_MAX_TOKENS,
         )
-        self._try_record_usage("distill_format")
+        self._try_record_usage("distill_format", usage)

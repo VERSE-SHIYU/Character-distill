@@ -139,6 +139,7 @@
 - 复现（2026-09-25，真 `LLMAdapter.chat_stream` + 真 `_collect_stream`，假 client）：3 条流结束时刻错开时 300/300 正确；结束时刻重合、且 usage chunk 之后有一次读 `[DONE]` 的 socket 读（真实 SSE 就是这样，会释放 GIL）时 300/300 串号，三行全记成最后一条的 303。结论：竞态真实存在，但只在几条流几乎同时结束时触发，生产中属低概率的记账错误，不影响超时和卡片质量。
 - 修法（已定）：`chat_stream` 以 `return usage` 交出本次用量（PEP 380：生成器 `return v` 即 `StopIteration(v)`）。`T.spanned` 的生成器包装已是 `result = yield from fn(...)` + `return result`（`core/telemetry.py:272`、`:288`），返回值能穿过；`_infer_finalize` 对 `chat_stream` 改用这个 `result`。`_collect_stream` 用 `next()` 驱动并取 `StopIteration.value` 记账，不再读共享属性。`last_usage` 照写，其余单线程调用方（`chat_engine`、`agent_loop`）不动。现有测试桩按新契约补 `return usage`。
 - 否掉的：`threading.local` 存 usage（仍是「读一个隐式共享状态」，只是换了作用域）；每条并行调用各配一个 adapter 实例（改装配面大，治标）。
+- **范围补充（WP4 S0 后裁决 + 补漏，2026-09-25）**：蒸馏里共有 **5 处**流式记账点，改后一律取「本次调用返回的那一份」，不再回头读共享属性 `last_usage`。本分支实测坐标（`feat/distill-reduce`）：① `_collect_stream`（`core/distiller.py:633`；`next()` 环，`usage = stop.value` `:671`，记账 `:683`）；② `distill_stream`（`def` `:1281`；`usage = yield from` `:1300`，记账 `:1305`）；③ `_distill_longcontext_stream`（`def` `:1370`；`usage = stop.value` `:1397`，记账 `:1406`）；④ `_single_reduce_stream`（`def` `:1592`；`usage = yield from` `:1595`，记账 `:1599`）；⑤ 流式格式化（`distill_incremental_stream` Phase 3，`def` `:1814`；`usage = yield from` `:2097`，记账 `:2104`）。第 ②④⑤ 处是 `usage = yield from self._llm.chat_stream_long(...)`、第 ①③ 处是滤思考态用的显式 `next()` 环，两者都把 `usage` 显式交给 `_try_record_usage`；改完后蒸馏里的流式记账只剩「随返回值」这一种口径。非流式的 `chat()` 调用点不在本项。
 - 测试：第 8 节 R4、F1（记账部分）。
 
 ### WP5 [distiller] 分批合并走流式 + 任一批失败即整体失败
@@ -275,6 +276,7 @@
 | # | 守的行为 | 文件 | 构造 → 断言 | 变异（每条都要红） |
 |---|---|---|---|---|
 | R4 | 并发流式各记各的账（D2） | `tests/test_distill_usage_accounting.py` | 3 批并发，桩按批 `return` 各自 usage（ct = 101/202/303），吐完末片后先 `Barrier(3).wait()` 再结束 → 落账三行 == {101, 202, 303} | `_collect_stream` 改回读 `self._llm.last_usage` |
+| R4b | `yield from` 的两处也记本次返回值 | `tests/test_distill_usage_accounting.py` | 桩 `chat_stream_long` 吐完后 `return {ct: 404}`，同时把 `last_usage` 设成 `{ct: 999}` → `_distill_longcontext_stream`、`_single_reduce_stream` 各跑一次，落账 == 404 | 任一处改回读 `last_usage` / 不传 usage |
 
 ### WP5
 | # | 守的行为 | 文件 | 构造 → 断言 | 变异（每条都要红） |

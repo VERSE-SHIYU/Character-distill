@@ -222,3 +222,95 @@ def test_stream_without_terminal_chunk_passes(capsys):
     llm._client = _Client(_Completions([_StreamChunk("a"), _StreamChunk("b")]))
     assert list(llm.chat_stream("sys", _MSGS)) == ["a", "b"]
     assert "finish_reason=None" in capsys.readouterr().out
+
+
+# ── WP4：用量随返回值交出 ─────────────────────────────────────────────────────
+
+class _UsageChunk:
+    """只带 usage、不带 choices 的收尾 chunk（真实 SSE 里 usage 排在终态之后）。"""
+
+    def __init__(self, pt, ct):
+        self.usage = SimpleNamespace(prompt_tokens=pt, completion_tokens=ct)
+        self.choices = []
+
+
+def test_stream_hands_back_this_calls_usage():
+    """`_stream` 把**本次**用量随返回值交出（PEP 380），调用方不必回头读共享属性。
+
+    这是整条链的底：R4 / R4b 都用桩替掉了 `chat_stream_long`，穿不过 `_stream`，覆盖不到
+    「返回值到底有没有交出来」这一步。
+
+    变异：去掉 `_stream` 末尾那条 `return usage` → `stop.value` 是 None，本条红。
+    """
+    llm = _llm()
+    llm._client = _Client(_Completions([
+        _StreamChunk("a"),
+        _StreamChunk(None, finish_reason="stop"),
+        _UsageChunk(7, 404),
+    ]))
+
+    gen = llm.chat_stream("sys", _MSGS)
+    pieces: list[str] = []
+    while True:
+        try:
+            pieces.append(next(gen))     # `for` 会把返回值吞掉，只能自己驱动
+        except StopIteration as stop:
+            usage = stop.value
+            break
+
+    assert pieces == ["a"]
+    assert usage == {"prompt_tokens": 7, "completion_tokens": 404, "estimated": False}, (
+        f"返回值没带出本次用量：{usage!r}")
+
+
+# ── WP4：span 的用量来源与记账同源（流式取返回值） ─────────────────────────────
+
+class _SpySpan:
+    def __init__(self):
+        self.attrs: dict = {}
+
+    def set_attribute(self, key, value):
+        self.attrs[key] = value
+
+
+class _SpyLLM:
+    """`_infer_finalize` 只碰 `_model` 与（改前写法的）`last_usage`。"""
+
+    _model = "m"
+
+    def __init__(self, last_usage):
+        self.last_usage = last_usage
+
+
+class TestSpanUsageSource:
+    def test_stream_span_usage_comes_from_the_returned_value(self):
+        """流式入口把本次用量随返回值交出，span 也取那一份 —— 与记账同一个来源。
+
+        构造的是「共享槽里是别人的账」：流并发跑时本函数写下 last_usage 之后还要继续
+        yield，控制权交出去就可能被另一条流覆盖，收尾再读会读到别人那一笔。
+
+        变异：`_infer_finalize` 退回 `getattr(self, "last_usage", None)` → span 记成 999，
+        本条红。
+        """
+        sp = _SpySpan()
+        M._infer_finalize(
+            sp, _SpyLLM({"prompt_tokens": 9, "completion_tokens": 999}),
+            {"prompt_tokens": 1, "completion_tokens": 404}, None,
+        )
+
+        assert sp.attrs["model"] == "m"
+        assert sp.attrs["ctok"] == 404, f"span 记了共享槽的账：{sp.attrs}"
+        assert sp.attrs["ptok"] == 1
+
+    def test_non_stream_span_usage_still_reads_the_shared_slot(self):
+        """非流式入口（`chat` 返回正文、`chat_with_tools` 返回 message 对象）没有可读的
+        返回值，仍按共享槽记 —— 这条拦住「顺手把非流式那半也一起删掉」。
+
+        变异：`_infer_finalize` 的兜底支改成恒定 `None` → 无 ctok/ptok，本条红。
+        """
+        sp = _SpySpan()
+        M._infer_finalize(sp, _SpyLLM({"prompt_tokens": 7, "completion_tokens": 3}),
+                          "一段正文", None)
+
+        assert sp.attrs["ctok"] == 3, f"非流式那半不该跟着流式改没了：{sp.attrs}"
+        assert sp.attrs["ptok"] == 7
