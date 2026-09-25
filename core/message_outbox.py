@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Sequence, TypeVar
 from uuid import uuid4
 
+from pydantic import BaseModel, field_validator
+
 from core.nonfatal import nonfatal
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,10 @@ _T = TypeVar("_T")
 # 对账请求里 `keys` 的上限。前端一次只发「当前看得见的未保存」，200 足够；没有上限的话，
 # 一个构造出来的大 body 就能让存储拼出一条超长的 `IN (...)` / `ANY(...)`。
 MAX_RECONCILE_KEYS = 200
+
+# 丢失告警里列出的 key 个数上限（条数仍报全量）。同样是给请求体留的那道口子：不截的话
+# 一行日志能长到没人看。10 个够定位是哪几条消息。
+_LOST_KEYS_LOGGED = 10
 
 # 队列 key 是 `uuid4().hex`（见 `write`）—— 别的形状不可能是本系统发出的 key。
 _CLIENT_KEY_RE = re.compile(r"\A[0-9a-f]{32}\Z")
@@ -124,6 +130,22 @@ def validate_client_keys(keys: list[str]) -> list[str]:
     return keys
 
 
+class FlushRequest(BaseModel):
+    """两个 `/flush` 接口共用的请求体：`keys` 是要回库对账的幂等键，可省略。
+
+    省略（或为空）= 只补写，行为与加对账之前一字不差。**这里是唯一的定义处**：一对一与
+    群聊各留一份副本的话，改了一处漏另一处，宽松的那边就是绕过点 —— 422 挡不住的 key 会
+    一路走到存储拼出的 `IN (...)`。判据本身也是同模块的 `validate_client_keys`。
+    """
+
+    keys: list[str] = []
+
+    @field_validator("keys")
+    @classmethod
+    def _check_keys(cls, keys: list[str]) -> list[str]:
+        return validate_client_keys(keys)
+
+
 class MessageOutbox:
     """一个会话（一对一 / 群聊各一个）的补写队列。见模块 docstring 的不变量与边界。"""
 
@@ -185,8 +207,9 @@ class MessageOutbox:
 
         三类 key 分开处理：**这一轮补写里已经了结的**（flushed / dropped）不再问；**还在
         队里的**保持 pending（答案是「还没写，下次补」，问了反而会把它误判成丢失）；
-        剩下的才回库问 —— 查到并入 `flushed`，查不到就是真丢了，并入 `dropped` 并记一条
-        ERROR（只记 key 与 `scope`，不记正文）。
+        剩下的才回库问 —— 查到并入 `flushed`，查不到就是真丢了，并入 `dropped`。整轮合计
+        记**一条** ERROR（条数给全量、key 只列前 `_LOST_KEYS_LOGGED` 个；只记 key 与
+        `scope`，不记正文）。
 
         **`scope` 只用于那条告警**（会话 / 群聊 id）：队列自己不知道它挂在谁名下，而日志
         面板上只有一行文本，不点名是哪条会话就没法追。
@@ -208,13 +231,22 @@ class MessageOutbox:
         if probe.failed:
             return report
 
+        lost: list[str] = []
         for key in unresolved:
             row_id = found.get(key)
             if row_id is None:
                 report.dropped.append(key)
-                logger.error("queued message lost: scope=%s keys=%s", scope, key)
+                lost.append(key)
             else:
                 report.flushed.append((key, row_id))
+        if lost:
+            # 整轮一条，**不是每个 key 一条**：`keys` 是请求体里来的（上限 200），逐 key 记
+            # 的话一个构造出来的大 body 就能让一次重试刷满日志面板 —— 而面板正是拿来追这
+            # 条会话的地方，被刷满了就等于没有。条数给全量（截断只截列出来的 key，不少报）。
+            logger.error(
+                "queued messages lost: scope=%s count=%d keys=%s",
+                scope, len(lost), lost[:_LOST_KEYS_LOGGED],
+            )
         return report
 
     async def _flush_locked(self, *, ping: Callable[[], Awaitable[None]]) -> FlushReport:

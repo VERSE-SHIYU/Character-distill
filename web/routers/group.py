@@ -14,7 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 
 from core.trash_service import hard_delete, restore, soft_delete
 from deps import get_storage, get_user_llm, get_sessions, get_group_sessions
@@ -24,7 +24,7 @@ from storage.base import StorageBase
 from routers.auth import get_current_user
 from core.chat_engine import calc_stage
 from core.message_outbox import (
-    FlushReport, save_field, terminal_frame, validate_client_keys,
+    FlushReport, FlushRequest, save_field, terminal_frame,
 )
 from core.nonfatal import nonfatal
 
@@ -67,19 +67,6 @@ class ReactRequest(BaseModel):
 
 class UpdateGroupAvatarRequest(BaseModel):
     avatar_data: str
-
-
-class FlushRequest(BaseModel):
-    """`/{group_id}/flush` 的请求体：`keys` 是要回库对账的幂等键，可省略。
-
-    与一对一那份同形、同判据（`core.message_outbox.validate_client_keys`）。
-    """
-    keys: list[str] = []
-
-    @field_validator("keys")
-    @classmethod
-    def _check_keys(cls, keys: list[str]) -> list[str]:
-        return validate_client_keys(keys)
 
 
 async def _rebuild_group_session(

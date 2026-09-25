@@ -925,8 +925,9 @@ def test_O6_cleanup_flush_pings_the_storage_of_the_moment(flaky, store, owner, m
 # 响应没回到前端）。于是「未保存」标记永远翻不回来。对账的判据是幂等键本身。
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _loss_records(caplog) -> list[str]:
-    return [rec.getMessage() for rec in caplog.records if "lost" in rec.getMessage()]
+def _loss_records(caplog) -> list[logging.LogRecord]:
+    """丢失告警 —— 一条对数用 `args` 断言（`(scope, 条数, 前 10 个 key)`），不是拼好的字符串。"""
+    return [rec for rec in caplog.records if "lost" in rec.getMessage()]
 
 
 def test_R1_chat_flush_reconciles_keys_the_queue_no_longer_remembers(
@@ -959,7 +960,8 @@ def test_R1_chat_flush_reconciles_keys_the_queue_no_longer_remembers(
     assert body["dropped"] == [lost_key], body
     lost = _loss_records(caplog)
     assert len(lost) == 1, f"丢了一条却没留痕（或留了不止一条）：{lost}"
-    assert lost_key in lost[0] and sid in lost[0], f"告警没点名 key 或会话：{lost[0]}"
+    assert lost[0].args == (sid, 1, [lost_key]), (
+        f"告警要同时给出会话、条数与前 10 个 key：{lost[0].args}")
 
     # ④ 非属主带同一份 keys：与「不存在」同码同文案（属主门在写库前就守住了）
     intruder_client = _client(flaky, intruder)
@@ -1044,7 +1046,8 @@ def test_R4_group_flush_reconciles_keys_the_queue_no_longer_remembers(
     assert body["dropped"] == [lost_key], body
     lost = _loss_records(caplog)
     assert len(lost) == 1, f"丢了一条却没留痕（或留了不止一条）：{lost}"
-    assert lost_key in lost[0] and gid in lost[0], f"告警没点名 key 或群聊：{lost[0]}"
+    assert lost[0].args == (gid, 1, [lost_key]), (
+        f"告警要同时给出群聊、条数与前 10 个 key：{lost[0].args}")
 
     # ④ 非属主带同一份 keys：与「不存在」同码同文案
     intruder_client = _client(flaky, intruder)

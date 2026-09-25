@@ -387,10 +387,32 @@ async def test_reconcile_reports_a_lost_message_and_logs_it(caplog):
 
     assert report.dropped == [key]
     assert report.flushed == []
-    lost = [r.getMessage() for r in caplog.records if "lost" in r.getMessage()]
+    lost = [r for r in caplog.records if "lost" in r.getMessage()]
     assert len(lost) == 1, f"丢了一条却没留痕（或留了不止一条）：{caplog.records}"
-    assert key in lost[0], f"告警里没点名是哪个 key：{lost[0]}"
-    assert "s1" in lost[0], f"告警里没点名是哪条会话：{lost[0]}"
+    assert lost[0].args == ("s1", 1, [key]), (
+        f"告警要同时给出会话、条数与前 10 个 key：{lost[0].args}")
+
+
+async def test_reconcile_logs_one_alert_for_the_whole_round(caplog):
+    """②′ 一次对账只记**一条**告警，不是每个 key 一条。
+
+    `keys` 是请求体里来的（上限 200），逐 key 记的话一个构造出来的大 body 就能让一次重试
+    刷满 200 行日志 —— 日志面板正是拿来追这条会话的地方，被刷满了就等于没有。
+
+    条数仍给**全量**（不能因为截断而少报），只有列出来的 key 截到前 10 个。
+    """
+    caplog.set_level(logging.ERROR, logger="core.message_outbox")
+    outbox = MessageOutbox()
+    db = _DB(up=True)
+    keys = [f"{i:032x}" for i in range(12)]
+
+    report = await outbox.reconcile(keys, scope="s1", ping=db.ping, lookup=_Lookup())
+
+    assert report.dropped == keys and report.flushed == [], report
+    lost = [r for r in caplog.records if "lost" in r.getMessage()]
+    assert len(lost) == 1, f"12 条丢失记了 {len(lost)} 条告警，应当整轮一条：{lost}"
+    assert lost[0].args == ("s1", 12, keys[:10]), (
+        f"告警要报全量条数、只列前 10 个 key：{lost[0].args}")
 
 
 async def test_reconcile_leaves_a_still_queued_message_alone():
