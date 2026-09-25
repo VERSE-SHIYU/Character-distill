@@ -14,7 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from core.trash_service import hard_delete, restore, soft_delete
 from deps import get_storage, get_user_llm, get_sessions, get_group_sessions
@@ -23,7 +23,9 @@ from limiter import limiter
 from storage.base import StorageBase
 from routers.auth import get_current_user
 from core.chat_engine import calc_stage
-from core.message_outbox import FlushReport, save_field, terminal_frame
+from core.message_outbox import (
+    FlushReport, save_field, terminal_frame, validate_client_keys,
+)
 from core.nonfatal import nonfatal
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,19 @@ class ReactRequest(BaseModel):
 
 class UpdateGroupAvatarRequest(BaseModel):
     avatar_data: str
+
+
+class FlushRequest(BaseModel):
+    """`/{group_id}/flush` 的请求体：`keys` 是要回库对账的幂等键，可省略。
+
+    与一对一那份同形、同判据（`core.message_outbox.validate_client_keys`）。
+    """
+    keys: list[str] = []
+
+    @field_validator("keys")
+    @classmethod
+    def _check_keys(cls, keys: list[str]) -> list[str]:
+        return validate_client_keys(keys)
 
 
 async def _rebuild_group_session(
@@ -572,6 +587,7 @@ async def send_message(
 async def flush_group_messages(
     group_id: str,
     request: Request,
+    req: FlushRequest = FlushRequest(),
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
@@ -579,11 +595,18 @@ async def flush_group_messages(
 
     属主校验走 `_get_owned_group`（与 `/send`、`/broadcast` 同一处、同一句 404）：非属主
     与不存在的群聊同判 404，不给存在性枚举留信道。响应体与 broadcast 的 done 帧同形。
+
+    带 `keys` 时顺带回库对账（`group.outbox.reconcile`），理由与一对一那条同一份：
+    逐出后重建的队列是空的，只有回库才答得上「那条到底存没存」，且查询按 `group_id`
+    收窄 —— 问不出别的群里的 key。
     """
     group = await _get_owned_group(group_id, user["id"], storage)
     if group is None:
         raise HTTPException(404, "群聊会话已过期，请重新创建")
-    return (await group.outbox.flush(ping=storage.ping)).as_json()
+    return (await group.outbox.reconcile(
+        req.keys, scope=group_id, ping=storage.ping,
+        lookup=lambda keys: storage.find_group_message_ids_by_client_keys(group_id, keys),
+    )).as_json()
 
 
 @router.post("/{group_id}/broadcast")

@@ -12,14 +12,16 @@ from typing import Any, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from deps import get_sessions, get_storage, get_text_manager, touch_session
 from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
 from core.affinity_service import read_persisted_affinity, resolve_session_affinity
-from core.message_outbox import FlushReport, SaveState, save_field, terminal_frame
+from core.message_outbox import (
+    FlushReport, SaveState, save_field, terminal_frame, validate_client_keys,
+)
 from core.nonfatal import nonfatal
 from core.schema import evidence_snapshots, evidence_to_json
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
@@ -252,6 +254,20 @@ class RevokeRequest(BaseModel):
 class ResetRequest(BaseModel):
     """Reset in-memory chat history."""
     session_id: str
+
+
+class FlushRequest(BaseModel):
+    """`/{session_id}/flush` 的请求体：`keys` 是要回库对账的幂等键，可省略。
+
+    省略（或为空）= 只补写，行为与加对账之前一字不差。判据本身在
+    `core.message_outbox.validate_client_keys`，两个入口共用一份。
+    """
+    keys: list[str] = []
+
+    @field_validator("keys")
+    @classmethod
+    def _check_keys(cls, keys: list[str]) -> list[str]:
+        return validate_client_keys(keys)
 
 
 # ---- Shared helpers ----
@@ -716,6 +732,7 @@ async def revoke_messages(
 async def flush_session_messages(
     session_id: str,
     request: Request,
+    req: FlushRequest = FlushRequest(),
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
@@ -724,10 +741,17 @@ async def flush_session_messages(
 
     属主校验走 `_ensure_session`（与 `/send` 同一处）：非属主与不存在的会话同判 404，
     不给存在性枚举留信道。响应体与 done 帧同形（`flushed` / `dropped`）。
+
+    带 `keys` 时顺带回库对账（`outbox.reconcile`）：会话被空闲清理逐出后队列是空的，
+    而库里可能早就有那条消息 —— 只补写答不上来「它到底存没存」。`keys` 为空时对账在
+    `reconcile` 里退化成不查库，与只补写一字不差，所以这里不另开分支。
     """
     session = await _ensure_session(session_id, storage, sessions, user["id"])
     outbox = session["outbox"]
-    return (await outbox.flush(ping=storage.ping)).as_json()
+    return (await outbox.reconcile(
+        req.keys, scope=session_id, ping=storage.ping,
+        lookup=lambda keys: storage.find_message_ids_by_client_keys(session_id, keys),
+    )).as_json()
 
 
 @router.get("/affinity/{session_id}", response_model=None)

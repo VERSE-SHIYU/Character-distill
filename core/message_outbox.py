@@ -25,16 +25,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, TypeVar
+from typing import Any, Awaitable, Callable, Sequence, TypeVar
 from uuid import uuid4
 
 from core.nonfatal import nonfatal
+
+logger = logging.getLogger(__name__)
 
 # 一条待补写的消息：(幂等键, 真正去落库的协程构造器)
 _Entry = tuple[str, Callable[[str], Awaitable[int]]]
 
 _T = TypeVar("_T")
+
+# 对账请求里 `keys` 的上限。前端一次只发「当前看得见的未保存」，200 足够；没有上限的话，
+# 一个构造出来的大 body 就能让存储拼出一条超长的 `IN (...)` / `ANY(...)`。
+MAX_RECONCILE_KEYS = 200
+
+# 队列 key 是 `uuid4().hex`（见 `write`）—— 别的形状不可能是本系统发出的 key。
+_CLIENT_KEY_RE = re.compile(r"\A[0-9a-f]{32}\Z")
 
 
 @dataclass(frozen=True)
@@ -99,6 +110,20 @@ def terminal_frame(payload: dict[str, Any], report: FlushReport) -> str:
     return f"data: {json.dumps(merged, ensure_ascii=False, default=str)}\n\n"
 
 
+def validate_client_keys(keys: list[str]) -> list[str]:
+    """校验对账请求里的 `keys`，不合法抛 `ValueError`（FastAPI 的校验器把它转成 422）。
+
+    形状与上限是本模块的接口面的一部分，所以判据写在这里、两个入口（一对一 / 群聊）
+    共用一份 —— 两处各写一遍的话，改了一处漏另一处，宽松的那边就是绕过点。
+    """
+    if len(keys) > MAX_RECONCILE_KEYS:
+        raise ValueError(f"最多 {MAX_RECONCILE_KEYS} 个 key，收到 {len(keys)} 个")
+    for key in keys:
+        if not _CLIENT_KEY_RE.match(key):
+            raise ValueError(f"key 必须是 32 位十六进制：{key!r}")
+    return keys
+
+
 class MessageOutbox:
     """一个会话（一对一 / 群聊各一个）的补写队列。见模块 docstring 的不变量与边界。"""
 
@@ -134,6 +159,57 @@ class MessageOutbox:
         """从队头按顺序补写，直到队空、或探到库不可达为止。见 `_flush_locked`。"""
         async with self._lock:
             return await self._flush_locked(ping=ping)
+
+    async def reconcile(
+        self,
+        keys: Sequence[str],
+        *,
+        scope: str,
+        ping: Callable[[], Awaitable[None]],
+        lookup: Callable[[list[str]], Awaitable[dict[str, int]]],
+    ) -> FlushReport:
+        """先补写，再拿 `keys` 回库对账 —— 「重试」按钮要的完整读数。
+
+        **为什么要对账**：会话被空闲清理逐出后再重建，队列是**空的**，而库里可能早就有
+        那条消息（写成功了，只是响应没回到前端）。只补写的话读数里什么都没有，前端把它
+        当「还在排队」，那条消息就永远停在未保存。
+
+        判据是幂等键本身（写入时落库的 `client_key`），不是内容、也不是时间戳 —— 后者会把
+        两条内容相同的消息判成同一条。
+
+        三类 key 分开处理：**这一轮补写里已经了结的**（flushed / dropped）不再问；**还在
+        队里的**保持 pending（答案是「还没写，下次补」，问了反而会把它误判成丢失）；
+        剩下的才回库问 —— 查到并入 `flushed`，查不到就是真丢了，并入 `dropped` 并记一条
+        ERROR（只记 key 与 `scope`，不记正文）。
+
+        **`scope` 只用于那条告警**（会话 / 群聊 id）：队列自己不知道它挂在谁名下，而日志
+        面板上只有一行文本，不点名是哪条会话就没法追。
+
+        查库失败（库不可达）时那几个 key 两边都不进、**保持 pending** —— 那与补写同一套
+        口径：此刻问不着库，就不能断言消息是丢了。见 `nonfatal`。
+        """
+        async with self._lock:
+            report = await self._flush_locked(ping=ping)
+            still_queued = {key for key, _ in self._queue}
+
+        settled = {key for key, _ in report.flushed} | set(report.dropped)
+        unresolved = [key for key in keys if key not in still_queued and key not in settled]
+        if not unresolved:
+            return report
+
+        async with nonfatal("outbox", "look up messages by client key") as probe:
+            found = await lookup(unresolved)
+        if probe.failed:
+            return report
+
+        for key in unresolved:
+            row_id = found.get(key)
+            if row_id is None:
+                report.dropped.append(key)
+                logger.error("queued message lost: scope=%s keys=%s", scope, key)
+            else:
+                report.flushed.append((key, row_id))
+        return report
 
     async def _flush_locked(self, *, ping: Callable[[], Awaitable[None]]) -> FlushReport:
         """补写的主体 —— **调用方须已持锁**（`write` / `flush` 各自在同一把锁内调它）。

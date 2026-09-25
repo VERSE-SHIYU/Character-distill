@@ -13,6 +13,7 @@ seam 是 `MessageOutbox` 的五个方法（`write` / `flush` / `discard` / `clea
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 
@@ -337,3 +338,98 @@ async def test_revoke_holds_the_lock_while_the_delete_is_in_flight():
     assert (report.flushed, report.dropped) == ([], [])
     assert len(writer.calls) == 1, "撤回已把这段历史整个清掉，补写不许把它写回库"
     assert outbox.has_pending is False
+
+
+# ── reconcile：点「重试」时拿幂等键回库对账 ─────────────────────────────────
+
+
+class _Lookup:
+    """假 `lookup`：只回答表里有的 key，并记下每次被问了哪些。"""
+
+    def __init__(self, found: dict[str, int] | None = None) -> None:
+        self.found = dict(found or {})
+        self.asked: list[list[str]] = []
+
+    async def __call__(self, keys: list[str]) -> dict[str, int]:
+        self.asked.append(list(keys))
+        return {k: v for k, v in self.found.items() if k in keys}
+
+
+async def test_reconcile_reports_a_message_the_database_already_has():
+    """① 队里没有、但库里**有**这一行 → 并入 `flushed`（带真实行 id）。
+
+    这就是「写成功了、响应没回到前端」那半边：前端那条停在「未保存」，而会话被空闲清理
+    逐出后队列是空的 —— 只 `flush` 的话读数里什么都没有，标记永远翻不回来。
+    """
+    outbox = MessageOutbox()
+    db = _DB(up=True)
+    key = "a" * 32
+    lookup = _Lookup({key: 7})
+
+    report = await outbox.reconcile([key], scope="s1", ping=db.ping, lookup=lookup)
+
+    assert report.flushed == [(key, 7)]
+    assert report.dropped == []
+    assert lookup.asked == [[key]], "该问的没问，或问了不止一次"
+
+
+async def test_reconcile_reports_a_lost_message_and_logs_it(caplog):
+    """② 队里没有、库里也没有 → 判死并入 `dropped`，同时记一条 ERROR。
+
+    它是「消息真的丢了」的第二个时刻（第一个是关停那一段）。只记 key 与 scope，不记正文。
+    """
+    caplog.set_level(logging.ERROR, logger="core.message_outbox")
+    outbox = MessageOutbox()
+    db = _DB(up=True)
+    key = "b" * 32
+
+    report = await outbox.reconcile([key], scope="s1", ping=db.ping, lookup=_Lookup())
+
+    assert report.dropped == [key]
+    assert report.flushed == []
+    lost = [r.getMessage() for r in caplog.records if "lost" in r.getMessage()]
+    assert len(lost) == 1, f"丢了一条却没留痕（或留了不止一条）：{caplog.records}"
+    assert key in lost[0], f"告警里没点名是哪个 key：{lost[0]}"
+    assert "s1" in lost[0], f"告警里没点名是哪条会话：{lost[0]}"
+
+
+async def test_reconcile_leaves_a_still_queued_message_alone():
+    """③ 那条还在队里 → 两边都不出现，且**不许**拿它去查库。
+
+    对账问的是「队列已经不记得的那条到底落库没有」；还在队里的，答案就是「还没写，
+    下次补」。拿去查库不仅白问，还会把一条 pending 判成 lost —— 库挂了的时候每点一次
+    重试，就在日志里多报一次「消息丢失」。
+    """
+    db = _DB(up=False)
+    outbox = MessageOutbox()
+    writer = _Writer(db)
+    state, _ = await outbox.write(writer, ping=db.ping)
+    assert state.state == "pending"
+    lookup = _Lookup({state.key: 9})
+
+    report = await outbox.reconcile([state.key], scope="s1", ping=db.ping, lookup=lookup)
+
+    assert (report.flushed, report.dropped) == ([], [])
+    assert lookup.asked == [], "还在队里的那条不该被拿去查库"
+
+
+async def test_reconcile_does_not_re_ask_about_a_key_this_round_settled():
+    """本次补写里已经了结的 key 不再查库 —— 再问一次会把补上的那条又判成丢的。
+
+    这一轮 `flush` 已经把它写进去了（读数里有真实行 id）；若不排除，`lookup` 会拿到
+    一个「库里查不到」的答案 —— 因为查的是**别的** id 空间里没有它 —— 于是同一条消息
+    既在 `flushed` 又在 `dropped`，前端按后者标成「保存失败」。
+    """
+    db = _DB(up=False)
+    outbox = MessageOutbox()
+    writer = _Writer(db)
+    state, _ = await outbox.write(writer, ping=db.ping)
+    assert state.state == "pending"
+
+    db.up = True  # 库回来了：这次 reconcile 的第一段就会把它补上
+    lookup = _Lookup()
+    report = await outbox.reconcile([state.key], scope="s1", ping=db.ping, lookup=lookup)
+
+    assert [key for key, _ in report.flushed] == [state.key]
+    assert report.dropped == []
+    assert lookup.asked == []
