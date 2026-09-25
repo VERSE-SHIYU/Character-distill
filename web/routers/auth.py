@@ -23,6 +23,7 @@ from pydantic import BaseModel, field_validator
 from adapters.llm_adapter import LLMCallRefused
 from core import roles
 from core.email_service import send_verification_code
+from core.node import node_region
 from core.nonfatal import nonfatal
 from deps import get_config, get_storage, refresh_user_llm
 from storage.base import StorageBase
@@ -433,9 +434,9 @@ async def register(
 
     user_id = uuid.uuid4().hex[:16]
     password_hash = password_hasher.hash(req.password)
-    node_region = os.getenv("NODE_REGION", "cn-shenzhen")
+    home_region = node_region()
     user = await storage.create_user(
-        user_id, username, password_hash, email=email, home_region=node_region,
+        user_id, username, password_hash, email=email, home_region=home_region,
     )
     if inv:
         await storage.use_invite_code(inv, user["id"])

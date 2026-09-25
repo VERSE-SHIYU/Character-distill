@@ -196,16 +196,35 @@ def get_storage() -> StorageBase:
     return _storage
 
 
-def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> Callable[[], None]:
     """Capture the main event loop, and register the submitter that routes DB work to it.
 
     捕获与注册是同一件事的两半：本模块是**唯一**知道主 loop 的地方，故由它向下
     注册投递实现（`core.scheduling.set_loop_submitter`）。注册只发生在启动时捕获到
     loop 之后 —— 那之前投递一律 `RuntimeError`：`core.scheduling` 不留退路。
+
+    返回的撤销把**两者一起**写回装配前的样子：注册是同一个函数对象
+    （`_submit_to_main_loop`），光看投递实现分辨不出「还回没还回」，真正的差别是它
+    指向哪个 loop。关停后不撤的话，注册就指着已经关掉的 loop，迟到的投递会落到死
+    loop 上 —— 撤销之后 `submit_to_main_loop` 当场 `RuntimeError`，那是想要的行为。
+
+    写回的是**装配前那一个**（生产上就是未注册，故这时等价于「撤成未注册」），不是一律
+    写 None：测试里生产 lifespan 会被套在别人的作用域里跑（`test_message_backfill` 的
+    C9 在测试 app 的 lifespan 之内再驱动一次生产 lifespan），一律写 None 会把外层那份
+    注册抹掉 —— 外层退出时的「装过就要还」断言当场报错，那正是它该报的错。
     """
     global _main_loop
+    prev_loop = _main_loop
+    prev_submitter = scheduling.get_loop_submitter()
     _main_loop = loop
     scheduling.set_loop_submitter(_submit_to_main_loop)
+
+    def _undo() -> None:
+        global _main_loop
+        _main_loop = prev_loop
+        scheduling.set_loop_submitter(prev_submitter)
+
+    return _undo
 
 
 def get_main_loop() -> asyncio.AbstractEventLoop | None:

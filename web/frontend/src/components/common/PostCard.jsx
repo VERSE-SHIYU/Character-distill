@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { fetchWithTimeout, getAuthHeaders } from '../../api/client'
+import { likeComment } from '../../api/comments'
 import useAppStore from '../../store/useAppStore'
 import useCanWrite from '../../hooks/useCanWrite'
 import Avatar from './Avatar'
@@ -115,16 +116,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
 
   const handleCommentLike = async (commentId) => {
     try {
-      const res = await fetchWithTimeout(`/api/market/post/comments/${commentId}/like`, {
-        method: 'POST',
-        headers: { ...getAuthHeaders() },
-      })
-      if (!res.ok) {
-        const detail = await res.json().catch(() => ({}))
-        setError(detail.detail || '点赞失败')
-        return
-      }
-      const data = await res.json()
+      const data = await likeComment('post', commentId)
       setComments((prev) =>
         prev.map((c) => (c.id === commentId ? { ...c, liked_by_me: data.liked, likes: data.likes } : c)),
       )

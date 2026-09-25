@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 # 在所有会触发模型加载的 import 之前，先执行全局 meta-tensor 防御。
 # 此模块设置环境变量、torch 默认设备，并修补 nn.Module.to。
@@ -76,7 +76,10 @@ from web.llm_gate import install_llm_gate
 from web.demo_gate import install_demo_gate
 from storage.base import StorageBase
 from core.log_collector import install_log_collector
+from core.stdout_logging import install_stdout_logging
 from core.alerting import install_alert_handler
+from core.error_reporting import init_error_reporting
+from web.client_config import router as client_config_router
 
 logger = logging.getLogger(__name__)
 
@@ -94,57 +97,73 @@ else:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    # 门在**启动动作的最前面**：守卫是进程级全局，装配期注册（与 `set_main_loop`
-    # 同一处形态）。放第一位是因为启动过程本身若出现 LLM 调用，门必须在那一刻已成立。
+    # 注册与撤销**成对**：每个 `install_*` / `set_main_loop` 返回自己的撤销函数，交给
+    # ExitStack 在关停时**逆序**执行（最后注册的最先撤）。不撤的代价见台账 113：注册
+    # 留在进程里、投递实现还指着已关闭的 loop，同会话后面的用例把协程投到死 loop 上。
     #
-    # **不放 import 期**：`import web.server` 改变进程级策略，会让同一进程里任何
-    # 不启 app 的代码（适配器单测、脚本）凭空被门管住 —— 序依赖随之而来（谁先 import
-    # 决定谁被拦）。注册是**装配**这件事的一部分，就写在装配处。
-    install_llm_gate(app)
-    validate_fernet_key()
-    validate_jwt_secret()
-    validate_inter_node_secret()
-    install_log_collector()
-    # 与面板同一个装配处：面板负责「留在进程里等人来查」，告警负责「推出去」。
-    # `ALERT_EMAIL` 未配置时不安装，只记一条 WARNING（见 core/alerting）。
-    install_alert_handler()
-    loop = asyncio.get_running_loop()
-    # context 传播点注记：`asyncio.to_thread` 会拷贝 contextvar（标准库内部走
-    # `contextvars.copy_context()`），裸 `loop.run_in_executor` **不会** —— 后者只把
-    # 裸函数丢进执行器，不碰 context。故「执行器本身不是断点」这句话对前者成立、
-    # 对后者是错的（实测 Python 3.12，读数与依据见 tests/census_llm_call_contexts.py §一）。
-    # 生产代码零处裸用 run_in_executor，故这里是注记订正，不是需要包装的缺陷；
-    # 将来若要在执行器里跑需要上下文的活，走 `asyncio.to_thread` 或 core.concurrency。
-    loop.set_default_executor(ThreadPoolExecutor(max_workers=200, thread_name_prefix="chat_pool"))
-    from deps import set_main_loop
-    set_main_loop(loop)
-    await _preload_embedding()
-    await _reconcile_distill_tasks()
-    cleanup_task = asyncio.create_task(_session_cleanup_loop())
-    resync_task = asyncio.create_task(_cross_border_resync_loop())
-    yield
-    # 顺序：先停清理循环并**等它退出**，再补写队列。反过来的话两边会同时 flush 同一把
-    # 队列 —— 清理循环可能正把会话出队，而这里正拿着它补写；也会让「谁在写」这件事
-    # 在关停期间变得说不清。
-    cleanup_task.cancel()
-    resync_task.cancel()
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await resync_task
-    except asyncio.CancelledError:
-        pass
-    # 正常关停不该丢消息：队列在内存里，进程一走就没了。异常退出（崩溃）丢队列是已知
-    # 边界，台账 94 写了。
-    from deps import flush_outboxes, get_group_sessions, get_sessions
-    try:
-        flushed = await flush_outboxes(get_sessions()) + await flush_outboxes(get_group_sessions())
-        if flushed:
-            print(f"[shutdown] flushed {flushed} queued message(s)")
-    except Exception as exc:
-        logger.error("flush outboxes failed (non-fatal): %s", exc, exc_info=True)
+    # 顺序：关停动作（取消后台任务、flush 队列）在 `yield` 之后、ExitStack 撤销之前跑
+    # —— 它们要用到投递器，所以**不能**让 ExitStack 先把投递器撤了。
+    async with AsyncExitStack() as stack:
+        # 上报接在第一位：它不发 LLM 调用，放在门之前不破坏下面那条不变量；放最前是为了
+        # 收到**启动期自身**抛出的错 —— 排在后面的装配项一旦在启动时炸，这条出口还没接上。
+        #
+        # 唯一一处 `push` 而不是 `callback`：回调拿不到正在冒出的异常，`validate_*` 一抛
+        # 就变成「先 flush + close，异常这才冒出去」，这条出口的唯一目的正好落空（见
+        # `core/error_reporting._ReportingExit`）。
+        stack.push(init_error_reporting())
+
+        # 门必须在**任何可能发起 LLM 调用的装配项**之前成立：守卫是进程级全局，装配期
+        # 注册（与 `set_main_loop` 同一处形态）。
+        #
+        # **不放 import 期**：`import web.server` 改变进程级策略，会让同一进程里任何
+        # 不启 app 的代码（适配器单测、脚本）凭空被门管住 —— 序依赖随之而来（谁先 import
+        # 决定谁被拦）。注册是**装配**这件事的一部分，就写在装配处。
+        stack.callback(install_llm_gate(app))
+        validate_fernet_key()
+        validate_jwt_secret()
+        validate_inter_node_secret()
+        stack.callback(install_log_collector())
+        stack.callback(install_stdout_logging())
+        # 三个出口同一个装配处：面板「留在进程里等人来查」、stdout「推给 docker logs」、
+        # 告警「推去邮箱」。`ALERT_EMAIL` 未配置时不安装告警，只记一条 WARNING（见 core/alerting）。
+        stack.callback(install_alert_handler())
+        loop = asyncio.get_running_loop()
+        # context 传播点注记：`asyncio.to_thread` 会拷贝 contextvar（标准库内部走
+        # `contextvars.copy_context()`），裸 `loop.run_in_executor` **不会** —— 后者只把
+        # 裸函数丢进执行器，不碰 context。故「执行器本身不是断点」这句话对前者成立、
+        # 对后者是错的（实测 Python 3.12，读数与依据见 tests/census_llm_call_contexts.py §一）。
+        # 生产代码零处裸用 run_in_executor，故这里是注记订正，不是需要包装的缺陷；
+        # 将来若要在执行器里跑需要上下文的活，走 `asyncio.to_thread` 或 core.concurrency。
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=200, thread_name_prefix="chat_pool"))
+        from deps import set_main_loop
+        stack.callback(set_main_loop(loop))
+        await _preload_embedding()
+        await _reconcile_distill_tasks()
+        cleanup_task = asyncio.create_task(_session_cleanup_loop())
+        resync_task = asyncio.create_task(_cross_border_resync_loop())
+        yield
+        # 顺序：先停清理循环并**等它退出**，再补写队列。反过来的话两边会同时 flush 同一把
+        # 队列 —— 清理循环可能正把会话出队，而这里正拿着它补写；也会让「谁在写」这件事
+        # 在关停期间变得说不清。
+        cleanup_task.cancel()
+        resync_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await resync_task
+        except asyncio.CancelledError:
+            pass
+        # 正常关停不该丢消息：队列在内存里，进程一走就没了。异常退出（崩溃）丢队列是已知
+        # 边界，台账 94 写了。
+        from deps import flush_outboxes, get_group_sessions, get_sessions
+        try:
+            flushed = await flush_outboxes(get_sessions()) + await flush_outboxes(get_group_sessions())
+            if flushed:
+                print(f"[shutdown] flushed {flushed} queued message(s)")
+        except Exception as exc:
+            logger.error("flush outboxes failed (non-fatal): %s", exc, exc_info=True)
 
 
 app = FastAPI(title="Character Simulator API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=_lifespan)
@@ -302,7 +321,7 @@ import time
 #: 语义不是「这里没有身份」——那会让带凭据的请求在这里被当成匿名，`/api/market/*` 的
 #: 写路由与 `request.state.user` 的读者都会拿到空身份。带有效凭据时身份就是真的；
 #: 没带、过期、无效，才退化成空身份放行。
-PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/send-code", "/api/auth/reset-password", "/api/health", "/api/health/ready", "/api/announcement/active"}
+PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/send-code", "/api/auth/reset-password", "/api/health", "/api/health/ready", "/api/announcement/active", "/api/client-config"}
 PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login", "/api/market/", "/api/inter-node/")
 
 # Throttle last_active updates to once per 60s per user
@@ -445,6 +464,12 @@ async def public_active_announcement(
 
 
 app.include_router(_announce_router)
+
+
+# ---- Public: client config router ----
+# 与 announce 同类：前端**登录前**就要读（`main.jsx` 起来第一件事就是取它），故登记进
+# `PUBLIC_PATHS`。装配与内容都在 `web/client_config.py`。
+app.include_router(client_config_router)
 
 
 @app.get("/api/health")

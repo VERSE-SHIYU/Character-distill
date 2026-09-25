@@ -237,10 +237,12 @@ def pg_skip_reason(what: str) -> str:
 # 实测到的形态（缺陷 113）：`test_C9` 经 `_lifespan` 装上投递实现却不还原，注册留在了
 # 后面 —— 同会话里之后任何走 `submit_to_main_loop` 的用例都把协程投到**已经关掉**的
 # loop 上；`chat_engine` 的宽 `except` 把异常吞掉，只在别人的用例头上飘一句
-# `coroutine ... was never awaited`（最难查的那种串味）。
+# `coroutine ... was never awaited`（最难查的那种串味）。测试 app 的 lifespan 因此需要
+# 一个夹具来替它收尾。
 #
-# 于是「装过就要还」只有这一处实现，两种用法共用：
-#   * 包住生产装配：``async with registered_globals(): async with server._lifespan(app)``
+# 生产那边的「装过就要还」**不在这里**：`_lifespan` 从缺陷 113 之后自己撤销每一项
+# （见 `install_*` / `set_main_loop` 返回的撤销函数）。夹具要是也去兜生产 lifespan，
+# 那条回归锁就被架空了 —— 撤不撤销都绿。所以下面这份只剩**一种**用法：
 #   * 作测试 app 的 lifespan，在其中 ``deps.set_main_loop(当前运行 loop)``
 @contextlib.asynccontextmanager
 async def registered_globals():
