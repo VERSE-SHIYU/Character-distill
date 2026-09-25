@@ -137,6 +137,12 @@ class MessageOutbox:
         """队里还有没有没落库的消息（空闲清理与关停据此决定要不要 flush）。"""
         return bool(self._queue)
 
+    @property
+    def pending_count(self) -> int:
+        """队里还欠着几条 —— 关停的丢失告警要的是条数，只知「有没有」点不出是哪几条会话
+        欠了多少。空闲清理不用它（那里补不上就不出队，消息没丢）。"""
+        return len(self._queue)
+
     async def write(
         self, write_fn: Callable[[str], Awaitable[int]], *, ping: Callable[[], Awaitable[None]],
     ) -> tuple[SaveState, FlushReport]:

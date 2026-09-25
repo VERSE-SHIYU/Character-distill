@@ -355,6 +355,20 @@ async def flush_outboxes(sessions: dict[str, Any]) -> int:
     return flushed
 
 
+def pending_outboxes(sessions: dict[str, Any]) -> list[tuple[str, int]]:
+    """这张表里补写之后仍欠着的会话：`(会话/群聊 id, 条数)`。
+
+    只给**关停**用：进程一走队列就没了，这些消息永久丢，得逐个记一条告警。空闲清理**不
+    用它** —— 那里补不上就不出队、下一轮再补，消息并没有丢，报出来是假警报。
+    """
+    pending: list[tuple[str, int]] = []
+    for scope, sess in list(sessions.items()):
+        outbox = _outbox_of(sess)
+        if outbox.has_pending:
+            pending.append((scope, outbox.pending_count))
+    return pending
+
+
 async def _session_cleanup_loop() -> None:
     """Periodically evict idle sessions from the in-memory cache.
 

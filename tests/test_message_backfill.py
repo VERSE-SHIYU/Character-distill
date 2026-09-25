@@ -682,6 +682,68 @@ def test_C9_shutdown_backfills_the_queues(flaky, owner, monkeypatch):
         "后面任何投递都会落到死 loop 上")
 
 
+async def _never_writes(key: str) -> int:
+    """一条永远写不进去的补写 —— 「库不可达」那半边由 `ping` 说，这里只管写入本身失败。"""
+    raise RuntimeError(f"db down, key={key}")
+
+
+def test_C10_shutdown_logs_queued_messages_that_are_lost(flaky, owner, monkeypatch, caplog):
+    """关停补写之后还留在队里的，逐个记一条 ERROR —— 队列在内存里，进程一走就没了。
+
+    与 C9 同一个驱动方式（lifespan 的退出段），差别只在**库一直不可达**：C9 验的是
+    「补得上的补上了」，这里验的是「补不上的要被点名」。不记的话这些消息在服务端一个字
+    都不留 —— 用户那边只看到「未保存」，日志里查不到是哪条会话欠了几条。
+
+    两张表都要走到：一对一与群聊的队列各自在内存里，只遍历其中一张，另一张的消息就
+    静默消失，而告警条数看着还是对的。
+    """
+    import deps
+    import server as server_mod
+
+    sid = _new_sid()
+    _install_session(flaky, sid, owner, _Engine())
+    client = _client(flaky, owner)
+
+    flaky.fail_roles = {"char"}
+    flaky.ping_ok = False
+    done = _done(_stream(client, sid, "第一句"))
+    assert done["char_save"]["state"] == "pending"
+
+    # 群聊那张表：用真 `GroupSession` 装条目（形状不手搓），队列里塞一条写不进去的。
+    from core.group_session import GroupSession
+
+    gid = f"g_{uuid.uuid4().hex}"
+    group = GroupSession(gid, {}, user_id=owner)
+    _run(group.outbox.write(_never_writes, ping=flaky.ping))
+    deps.get_group_sessions()[gid] = group
+
+    # 关掉启动期的凭据校验与守卫装配：本用例测的是**退出**那一段，且要能在没有
+    # `.env` / `config.yaml` 的机器上跑绿。
+    monkeypatch.setattr(server_mod, "validate_fernet_key", lambda: None)
+    monkeypatch.setattr(server_mod, "validate_jwt_secret", lambda: None)
+    monkeypatch.setattr(server_mod, "validate_inter_node_secret", lambda: None)
+    monkeypatch.setattr(server_mod, "install_llm_gate", lambda app: None)
+    monkeypatch.setattr(server_mod, "install_alert_handler", lambda: None)
+
+    class _App:
+        state = type("S", (), {"limiter": limiter})()
+
+    async def _drive():
+        async with registered_globals():
+            async with server_mod._lifespan(_App()):
+                pass
+
+    with caplog.at_level(logging.ERROR):
+        _run(_drive())
+
+    lost = [r.getMessage() for r in caplog.records
+            if "queued messages lost at shutdown" in r.getMessage()]
+    assert lost == [
+        f"queued messages lost at shutdown: scope={sid} count=1",
+        f"queued messages lost at shutdown: scope={gid} count=1",
+    ], f"关停丢的消息没被逐个点名：{lost}"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # G1–G2：群聊这条链上的接线（缺陷 121 的回归面）
 # ═══════════════════════════════════════════════════════════════════════════════
