@@ -206,13 +206,15 @@ _DOMAIN_ERROR_STATUS: dict[type, int] = {DistillError: 400}
 # LLM 侧已知失败 → 状态码：**一张表**，按 `llm_error_payload` 的判别键 `kind` 查。
 # 未完成终态：同一异常类下 finish_reason 语义不同（content_filter 是用户可修正的输入
 # 问题 400、length 是上游截断 502、资源不足可稍后重试 503）；调用点门拒绝是 403
-# （D1：被 geo 拦截统一 403，不回落全局 key）。未登记兜 502（上游问题，不按我们的故障）。
-# 这张表原先长在 web/routers/chat.py，且只认 finish_reason —— **搬家 + 收拢成一张**，
-# 不是再造第二张让配码变成「先查 A 表再查 B 表」。
+# （D1：被 geo 拦截统一 403，不回落全局 key）；上游失败（**含流读到一半断掉**）是 503
+# —— 服务端暂时不可达、可稍后重试，与「我们的代码有问题」的 500 分开。未登记兜 502
+# （上游问题，不按我们的故障）。这张表原先长在 web/routers/chat.py，且只认
+# finish_reason —— **搬家 + 收拢成一张**，不是再造第二张让配码变成「先查 A 表再查 B 表」。
 _LLM_ERROR_STATUS: dict[str, int] = {
     "incomplete:content_filter": 400,
     "incomplete:length": 502,
     "incomplete:insufficient_system_resource": 503,
+    "upstream": 503,
     "call_refused": 403,
 }
 _LLM_ERROR_STATUS_DEFAULT = 502

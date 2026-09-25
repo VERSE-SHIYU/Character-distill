@@ -12,6 +12,7 @@ from typing import Any
 
 import os
 
+import httpx2
 import yaml
 from dotenv import load_dotenv
 from openai import AsyncOpenAI, BadRequestError, OpenAI, Timeout
@@ -469,9 +470,9 @@ def llm_error_payload(exc: BaseException) -> dict[str, Any] | None:
     否则每加一个异常类，core/web 就多一处 isinstance 耦合。本层是这条边界的唯一出口。
 
     **判别键 `kind`**（配码与审计只认它，不认异常类名）：未完成终态是
-    ``incomplete:<finish_reason>``、调用点门拒绝是 ``call_refused``。同族的两种已知
-    失败因此共用一张表 —— 配码那侧没有「先查 A 表再查 B 表」。原有的 `code` /
-    `finish_reason` 字段保留给既有调用方。
+    ``incomplete:<finish_reason>``、调用点门拒绝是 ``call_refused``、上游失败是
+    ``upstream``。同族的几种已知失败因此共用一张表 —— 配码那侧没有「先查 A 表再查
+    B 表」。原有的 `code` / `finish_reason` 字段保留给既有调用方。
     """
     if isinstance(exc, LLMCallRefused):
         return {"code": "call_refused", "error": exc.reason, "kind": "call_refused",
@@ -480,6 +481,12 @@ def llm_error_payload(exc: BaseException) -> dict[str, Any] | None:
         return {"code": "incomplete_response", "error": exc.user_message,
                 "finish_reason": exc.finish_reason,
                 "kind": f"incomplete:{exc.finish_reason}"}
+    if isinstance(exc, UpstreamFailure):
+        # `user_message` 可能为 ""（未登记的状态码 / 裸的传输层故障）：出口
+        # ``user_facing_error`` 把 payload["error"] 原样上屏，空串会显示成一片空白
+        # 而不是「服务不可用」—— 所以这里就落通用文案，别把空串漏到出口。
+        return {"code": "upstream", "error": exc.user_message or _GENERIC_USER_ERROR,
+                "finish_reason": "", "kind": "upstream"}
     return None
 
 
@@ -490,10 +497,14 @@ def llm_error_types() -> tuple[type[BaseException], ...]:
     ``tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage``
     禁 core/web/storage 出现该标识）。新增一种 LLM 失败 = 在这里的元组加一个类，
     装配层零改动。"""
-    return (IncompleteResponseError, LLMCallRefused)
+    return (IncompleteResponseError, LLMCallRefused, UpstreamFailure)
 
 
 _GENERIC_USER_ERROR = "服务暂时不可用，请稍后重试"
+
+# 流式读流途中的传输层故障（断连 / 读超时）专用上屏文案：这不是「我们哪里写错了」，
+# 而是「上游这条流断了，重发一次请求大概率能通」—— 措辞比通用文案更指向动作。
+_TRANSPORT_USER_ERROR = "模型服务暂时不可用，请稍后重试"
 
 
 def user_facing_error(exc: BaseException) -> str:
@@ -859,6 +870,17 @@ class LLMAdapter:
                 print(f"[llm] usage chunk missing, estimated from chars (pt~{self.last_usage['prompt_tokens']} ct~{self.last_usage['completion_tokens']})")
         except IncompleteResponseError:
             raise  # 截断是确定性失败：不吞、不打「读取失败」误导日志、不重试
+        except httpx2.TransportError as exc:
+            # 读流途中的传输层故障（断连 → RemoteProtocolError、读超时 → ReadTimeout，
+            # 都是 TransportError 子类）：归成上游失败，交统一出口回 503 + 上屏文案。
+            # **只认传输层**：宽成 except Exception 会把我们自己的 bug（AttributeError
+            # 之类）报成上游故障，把用户引去「稍后重试」而不是让我们修。
+            # 流**不重放** —— 已吐出的片段不可撤回，重放会重复交付。
+            print(f"读取流式响应失败（上游传输层）：{exc}")
+            raise UpstreamFailure(
+                f"chat_stream 读流中断：{exc}",
+                user_message=_TRANSPORT_USER_ERROR,
+            ) from exc   # from：原因链保留（排障要看是断连还是读超时）
         except Exception as exc:
             print(f"读取流式响应失败：{exc}")
             raise

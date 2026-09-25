@@ -7,9 +7,24 @@
 """
 from __future__ import annotations
 
+import ast
 import pathlib
 
-from adapters.llm_adapter import IncompleteResponseError, llm_error_payload
+import httpx2
+import pytest
+from conftest import cause_chain
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from openai import OpenAI as _REAL_OPENAI
+
+import adapters.llm_adapter as M
+import server  # web/server.py 装配层（conftest 已把 web/ 加进 sys.path）
+from adapters.llm_adapter import (
+    IncompleteResponseError,
+    UpstreamFailure,
+    llm_error_payload,
+    llm_error_types,
+)
 from routers.chat import _stream_error_payload
 
 
@@ -45,14 +60,161 @@ def test_boundary_maps_known_failure_and_rejects_others():
     assert llm_error_payload(RuntimeError("boom")) is None
 
 
-def test_no_exception_class_leaks_into_core_web_storage():
-    """边界锁：core/web/storage 只认 code 字符串。将来加第二个异常类时，
-    若在路由层 isinstance/import，这条会红——它拦的就是那类耦合的重现。"""
+_BOUNDARY_SUBTREES = ("core", "web", "storage")
+
+
+def _boundary_sources(overrides: dict[str, str] | None = None) -> dict[str, str]:
     root = pathlib.Path(__file__).resolve().parent.parent
-    offenders = [
-        str(p.relative_to(root))
-        for sub in ("core", "web", "storage")
+    sources = {
+        str(p.relative_to(root)): p.read_text(encoding="utf-8")
+        for sub in _BOUNDARY_SUBTREES
         for p in (root / sub).rglob("*.py")
-        if "IncompleteResponseError" in p.read_text(encoding="utf-8")
-    ]
-    assert offenders == []
+    }
+    if overrides:
+        sources.update(overrides)
+    return sources
+
+
+def _boundary_offenders(sources: dict[str, str], names: list[str]) -> list[str]:
+    """源码里**真的引用了**这些类名的地方 —— 只看 import / Name / Attribute。
+
+    走 AST、不扫原文：注释与 docstring 里为了讲清机制而提一句类名，不是耦合
+    （反过来，原文扫描会逼着文档绕开标识符，把说明写糊）。判据是「这行代码
+    认不认得这个类」：`from … import X`、裸 `X`、`mod.X` 三种形态。
+    解析失败**不跳过**：整批调用点会随文件一起消失，锁假绿。
+    """
+    hits: list[str] = []
+    for rel, src in sources.items():
+        try:
+            tree = ast.parse(src, filename=rel)
+        except SyntaxError as exc:
+            hits.append(f"{rel}: 解析失败（{type(exc).__name__}: {exc}）")
+            continue
+        for n in ast.walk(tree):
+            if isinstance(n, ast.ImportFrom):
+                found = [a.name for a in n.names if a.name in names]
+            elif isinstance(n, ast.Name):
+                found = [n.id] if n.id in names else []
+            elif isinstance(n, ast.Attribute):
+                found = [n.attr] if n.attr in names else []
+            else:
+                continue
+            hits += [f"{rel}:{n.lineno}: {name}" for name in found]
+    return hits
+
+
+def test_no_exception_class_leaks_into_core_web_storage():
+    """边界锁：core/web/storage 只认 code 字符串（`llm_error_payload` 的 `kind`）。
+
+    类名清单**取自 `llm_error_types()`**、不写字面量：新增一种 LLM 失败 = 在那一个元组
+    加一个类，本锁自动纳入，不会出现「新异常类漏检」。在路由层 import / isinstance /
+    `except` 具体类，这条会红——它拦的就是那类耦合的重现。
+    """
+    names = [cls.__name__ for cls in llm_error_types()]
+    assert names, "llm_error_types() 为空 —— 锁在假绿"
+    assert _boundary_offenders(_boundary_sources(), names) == []
+
+
+def test_boundary_lock_reddens_on_a_real_reference_in_core():
+    """变异自测①：core 里加一行真 import → 红。锁不具分辨力时这条先塌。"""
+    names = [cls.__name__ for cls in llm_error_types()]
+    injected = f"from adapters.llm_adapter import {names[0]}\n"
+    hits = _boundary_offenders({"core/utils.py": injected}, names)
+    assert hits, f"core 里 import 了异常类名，锁没红 —— 判据是假的：{hits}"
+
+
+def test_boundary_lock_ignores_comments_and_docstrings():
+    """变异自测②：只写进注释/docstring → **不**红（文档要能讲清机制）。"""
+    names = [cls.__name__ for cls in llm_error_types()]
+    src = (
+        f'"""说明机制时会提到 {names[0]}，但那不是引用。"""\n'
+        f"# 历史注释里提 {names[-1]} 同理\n"
+        "x = 1\n"
+    )
+    hits = _boundary_offenders({"core/utils.py": src}, names)
+    assert hits == [], f"注释/docstring 被当成耦合 —— 判据扫过头了：{hits}"
+
+
+# ── WP2 S3：流中断归类为上游失败（真 socket）→ 503 + 上屏文案 ──────────
+#
+# 「读流中途断掉」无法用桩表达：桩不会真的在读上超时，也不会真的断连。本文件里的
+# 假 SSE 服务吐一片之后关连接（并承诺一个远大于实发的 Content-Length —— HTTP/1.0
+# 无长度头时中途断开是以 EOF 干净收尾，客户端读不到任何错，那条路测不出协议错）。
+
+_UPSTREAM_TEXT = "模型服务暂时不可用，请稍后重试"
+_MSGS = [{"role": "user", "content": "hi"}]
+
+
+def _minimal_app(monkeypatch, fake_sse):
+    """最小 app：一个消费 `chat_stream` 的路由 + 与生产**同一处**注册的异常出口。"""
+    monkeypatch.setattr(M, "OpenAI", _REAL_OPENAI)      # 真客户端（真 socket）
+    monkeypatch.setattr(M, "_STREAM_ATTEMPT_S", 0.5)     # 不真等：读窗缩到 0.5s
+    monkeypatch.setattr(M, "_STREAM_DEADLINE_S", 1.5)
+    llm = fake_sse.adapter()
+
+    app = FastAPI()
+
+    @app.get("/boom")
+    def boom():
+        for _ in llm.chat_stream("sys", _MSGS):
+            pass
+        return {"ok": True}
+
+    server.register_domain_error_handlers(app)
+    return llm, TestClient(app, raise_server_exceptions=False)
+
+
+def test_s3_stream_disconnect_is_upstream_failure(fake_sse, monkeypatch):
+    """吐一片后断开 → UpstreamFailure，上屏文案取自本层；原因链保留上游协议错。"""
+    fake_sse.plan.update(tokens=["a"], disconnect_after=1)
+    llm, _ = _minimal_app(monkeypatch, fake_sse)
+
+    with pytest.raises(UpstreamFailure) as ei:
+        list(llm.chat_stream("sys", _MSGS))
+
+    assert ei.value.user_message == _UPSTREAM_TEXT
+    kinds = [type(e).__name__ for e in cause_chain(ei.value)]
+    assert "RemoteProtocolError" in kinds, f"原因链必须保留上游协议错，实际 {kinds}"
+
+
+def test_s3_stream_read_timeout_is_upstream_failure(fake_sse, monkeypatch):
+    """首字节前的读超时（生产 500 的那条）同样归成上游失败，不再是裸的传输层异常。"""
+    fake_sse.plan.update(silent_ms=1000, tokens=["never"])
+    llm, _ = _minimal_app(monkeypatch, fake_sse)
+
+    with pytest.raises(UpstreamFailure) as ei:
+        list(llm.chat_stream("sys", _MSGS))
+
+    assert ei.value.user_message == _UPSTREAM_TEXT
+    kinds = [type(e).__name__ for e in cause_chain(ei.value)]
+    assert "ReadTimeout" in kinds, f"原因链必须保留读超时，实际 {kinds}"
+
+
+def test_s3_stream_disconnect_maps_to_503(fake_sse, monkeypatch):
+    """HTTP 侧：装同一份注册后，流中断回 503 + 上游文案（全文即用户可见文案）。"""
+    fake_sse.plan.update(tokens=["a"], disconnect_after=1)
+    _, client = _minimal_app(monkeypatch, fake_sse)
+
+    r = client.get("/boom")
+
+    assert r.status_code == 503, f"流中断必须回 503，实际 {r.status_code}"
+    assert r.json()["detail"] == _UPSTREAM_TEXT
+
+
+def test_s3_our_own_bug_is_not_reported_as_upstream(fake_sse, monkeypatch):
+    """包装只认传输层：流里抛出的自身缺陷必须**不是** 503。
+
+    变异（把包装放宽成 `except Exception`）时这条变红。把我们自己的 bug 报成上游失败，
+    用户会被引去「稍后重试」，而真正该修的是我们 —— 宁可 500 显形。
+    """
+    fake_sse.plan.update(tokens=["a"])
+    _, client = _minimal_app(monkeypatch, fake_sse)
+    monkeypatch.setattr(
+        M, "_check_finish_reason",
+        lambda *a, **kw: (_ for _ in ()).throw(AttributeError("our own bug")),
+    )
+
+    r = client.get("/boom")
+
+    assert r.status_code != 503, "自身缺陷被冒充成上游失败（用户会被误导去重试）"
+    assert r.status_code == 500

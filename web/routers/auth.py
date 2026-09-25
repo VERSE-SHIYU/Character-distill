@@ -20,7 +20,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel, field_validator
 
-from adapters.llm_adapter import LLMCallRefused
+from adapters.llm_adapter import llm_error_payload
 from core import roles
 from core.email_service import send_verification_code
 from core.nonfatal import nonfatal
@@ -715,11 +715,11 @@ async def test_embedding(
         emb = DashScopeEmbedding(api_key=key, region=region)
         emb(["测试"])
         return {"ok": True}
-    except LLMCallRefused:
-        # 门拒了就不吞：请求根本没发出去，把理由当「嵌入失败」上屏是在说谎。交统一出口
-        # （`web/server.py` 的 `_llm_error_handler` → `call_refused` → 403 + 理由）。
-        raise
     except Exception as exc:
+        if (llm_error_payload(exc) or {}).get("kind") == "call_refused":
+            # 门拒了就不吞：请求根本没发出去，把理由当「嵌入失败」上屏是在说谎。交统一出口
+            # （`web/server.py` 的 `_llm_error_handler` → `call_refused` → 403 + 理由）。
+            raise
         # 日志只放 user id 与异常，绝不放 key。
         logger.warning("Embedding test failed for user %s: %r", user["id"], exc)
         return {"ok": False, "error": describe_embedding_failure(exc), "detail": str(exc)}
