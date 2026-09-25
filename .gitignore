@@ -221,8 +221,9 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Sensitive compose files (contain credentials)
-docker-compose.yml
-docker-compose.override.yml
+# 锚定到根目录：不带斜杠会匹配任意深度，把 deploy/ 下要入库的编排也挡掉。
+/docker-compose.yml
+/docker-compose.override.yml
 
 # Claude Code
 .claude/

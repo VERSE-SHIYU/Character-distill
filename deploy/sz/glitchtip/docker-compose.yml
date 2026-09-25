@@ -22,7 +22,7 @@ services:
       - VALKEY_URL=
       # 角色和库都是 glitchtip（步骤 8 在 PG 里建）。口令只存在同目录 .env，不入库。
       # 口令里若含 @ : / 等字符必须 URL 编码 —— 建议只用纯字母数字。
-      - DATABASE_URL=postgresql://glitchtip:${GLITCHTIP_DB_PASSWORD:?缺 GLITCHTIP_DB_PASSWORD：填进 /opt/glitchtip/.env}
+      - DATABASE_URL=postgresql://glitchtip:${GLITCHTIP_DB_PASSWORD:?缺 GLITCHTIP_DB_PASSWORD：填进 /opt/glitchtip/.env}@postgres:5432/glitchtip
       # 官方文档：必须带 scheme（Include scheme (http or https)）
       - GLITCHTIP_DOMAIN=https://errors.bookecho-shiyu.cn
       # 首个用户建完即关掉自助注册
