@@ -22,9 +22,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sqlite3
 import uuid
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pwdlib import PasswordHash
@@ -224,6 +226,36 @@ def _patch_runtime(monkeypatch, store):
 
 async def _async_echo():
     return _EchoLLM()
+
+
+# ── 日志面：取 RAG 时 key 不进 stdout / 日志（缺陷 72）─────────────────────────
+#
+# 两个金丝雀走的是**落库**那条链，守不住日志。这条是同一把锁在日志上的最小面：
+# 取 RAG 的每次 HIT / MISS 都把完整 key 打给 stdout，容器里就是 docker logs。
+
+_KEY_WINDOW = 8  # 旧身份只取 key 前 8 位（sk- 之后仅 5 个随机字符），8 位窗口即已辨识
+
+
+def test_indexing_service_never_logs_the_embedding_key(capsys, caplog):
+    from core.indexing_service import IndexingService
+
+    secret = f"sk-test-{uuid.uuid4().hex}"
+    svc = IndexingService(storage=MagicMock(), rag_config={})
+    with caplog.at_level(logging.DEBUG), \
+            patch("core.indexing_service.RAGEngine") as cls:
+        inst = MagicMock()
+        inst.load_existing.return_value = True  # 不真建索引、不出网
+        cls.return_value = inst
+        svc._get_or_build_rag("text_abc", "正文", embedding_key=secret)
+        svc._get_or_build_rag("text_abc", "正文", embedding_key=secret)  # HIT 那条
+
+    captured = capsys.readouterr().out + "\n".join(
+        r.getMessage() for r in caplog.records)
+    leaked = [secret[i:i + _KEY_WINDOW]
+              for i in range(len(secret) - _KEY_WINDOW + 1)
+              if secret[i:i + _KEY_WINDOW] in captured]
+    assert not leaked, (
+        f"嵌入 key 的片段进了日志（命中 {leaked[0]!r}）：{captured!r}")
 
 
 # ── SQLite ───────────────────────────────────────────────────────────────────

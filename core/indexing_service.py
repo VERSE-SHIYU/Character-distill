@@ -11,6 +11,7 @@ import logging
 import asyncio
 from typing import Any
 
+from core.embeddings import key_fingerprint
 from core.rag import CollectionUnusableError, RAGEngine
 from core.scene_indexer import SceneIndexer
 
@@ -42,12 +43,14 @@ class IndexingService:
     ) -> RAGEngine:
         """Return cached text-level RAG, or build + cache. (sync)"""
         import time
-        cache_key = f"{text_id}:{embedding_key}"
+        # 身份必须用整个 key（前 8 位里有 5 位是随机字符，两个 key 会撞成同一个
+        # embedder，后者的请求记在前者账上），但身份不能进日志 —— 故只留指纹。
+        cache_key = f"{text_id}:{key_fingerprint(embedding_key)}"
         cached = self._text_rag_cache.get(cache_key)
         if cached is not None:
-            print(f"[RAG] cache HIT {cache_key}")
+            print(f"[RAG] cache HIT {text_id}")
             return cached
-        print(f"[RAG] cache MISS {cache_key}, building...")
+        print(f"[RAG] cache MISS {text_id}, building...")
         _t = time.time()
         col_name = f"text_{text_id}"
         rag_config = dict(self._rag_config)

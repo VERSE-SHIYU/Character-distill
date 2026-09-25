@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+import core.embeddings as embeddings_mod
 from core.embeddings import (
     DashScopeEmbedding,
     Mem0BridgeEmbedder,
     current_embed_deadline,
+    create_safe_embedding_fn,
     embed_deadline,
     get_embed_stats,
     reset_embed_stats,
@@ -464,3 +467,24 @@ class TestEmbedDeadline:
         unbounded.embeddings.create.assert_called_once_with(
             model=emb._model, input=["y"], dimensions=emb._dimensions
         )
+
+
+# ── 工厂缓存的身份是整个 key，不是前 8 位（缺陷 72）────────────────────────────
+#
+# 旧身份只取 key 前 8 位，而 `sk-` 之后只有 5 个随机字符：两个不同 key 前缀相同时
+# 共用同一个 DashScopeEmbedding —— 后者的请求会用前者的 key 发出、记在前者账上。
+
+
+class TestFactoryCacheIdentity:
+    def test_keys_sharing_the_first_8_chars_get_different_instances(self, monkeypatch):
+        monkeypatch.setattr(embeddings_mod, "_cache", {})
+        prefix = f"sk-{uuid.uuid4().hex[:5]}"  # 恰好 8 位
+        a = create_safe_embedding_fn(prefix + "-AAAA", "cn")
+        b = create_safe_embedding_fn(prefix + "-BBBB", "cn")
+        assert a is not b, "前 8 位相同的两个 key 共用了一个 embedder"
+
+    def test_the_same_key_still_reuses_one_instance(self, monkeypatch):
+        # 缓存语义不变：同一个 key 仍然只造一个实例。
+        monkeypatch.setattr(embeddings_mod, "_cache", {})
+        key = f"sk-{uuid.uuid4().hex}"
+        assert create_safe_embedding_fn(key, "cn") is create_safe_embedding_fn(key, "cn")
