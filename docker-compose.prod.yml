@@ -89,6 +89,12 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       # 告警收件邮箱：见 DEPLOY.md「由部署下发的配置」。
       - ALERT_EMAIL=${ALERT_EMAIL:-}
+      # 报错收集：两个 DSN 由部署下发，`:-` 空默认 = 不接线（接口给 {}、CSP 不加宽）。
+      # SENTRY_RELEASE 取 APP_IMAGE_TAG —— deploy.yml 在 compose up 之前 export 的就是它，
+      # 于是线上事件带的是镜像 tag（= commit sha），与镜像版本对得上。
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - SENTRY_FRONTEND_DSN=${SENTRY_FRONTEND_DSN:-}
+      - SENTRY_RELEASE=${APP_IMAGE_TAG:-}
     depends_on:
       postgres:
         condition: service_healthy

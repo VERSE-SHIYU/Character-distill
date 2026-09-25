@@ -155,24 +155,29 @@ def _compose(record: logging.LogRecord, suppressed: int) -> tuple[str, str]:
     return subject, "".join(parts)
 
 
-def install_alert_handler() -> None:
-    """装配入口：把告警 handler 挂到 root logger 上。
+def install_alert_handler() -> Callable[[], None]:
+    """装配入口：把告警 handler 挂到 root logger 上；返回撤销。
 
     生产在 `web/server.py` 的 lifespan 里调用，紧跟 `install_log_collector()`。
 
     `ALERT_EMAIL` 为空 → **不安装**，只记一条 WARNING（这条会进后台日志面板）。
     **不设默认收件人**：告警发到一个没人看的地址，比不发更坏 —— 它看起来像有人在收。
+
+    两种「没装上」都返回空操作：`ALERT_EMAIL` 没配，以及根上已经有同**类**的 handler
+    （那个是别人装的，不该由这一处的撤销摘掉）。
     """
     to = alert_email()
     if not to:
         logging.getLogger(__name__).warning(
             "ALERT_EMAIL 未配置，主动告警未启用（ERROR 仍进后台日志面板）"
         )
-        return
+        return lambda: None
     root = logging.getLogger()
     if any(isinstance(h, AlertHandler) for h in root.handlers):
-        return
-    root.addHandler(AlertHandler(to))
+        return lambda: None
+    handler = AlertHandler(to)
+    root.addHandler(handler)
+    return lambda: root.removeHandler(handler)
 
 
 def _main(argv: list[str]) -> int:
