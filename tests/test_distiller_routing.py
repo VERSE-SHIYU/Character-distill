@@ -468,3 +468,41 @@ class TestMapPhaseFailureHandling:
         # 用「个分片」而非裸「分片」：上屏的「部分片段处理失败」是合法中文，裸词会假阳
         assert "个分片" not in errors[0]["error"]
         assert "重试" in errors[0]["error"]
+
+
+
+class TestFormatFieldGroups:
+    """WP7 F3：4 组 ∪ 后置字段 == CharacterCard.model_fields，两两无交集。
+
+    分组与后置字段定义在 core/schema.py 一处（紧挨 CharacterCard），本测试直接读那份
+    定义，不另存副本。变异 = 从某组删一个字段 → 并集缺项，union 断言变红。
+    """
+
+    def test_groups_cover_model_fields_exactly_once(self):
+        from core.schema import FORMAT_GROUPS, POST_FORMAT_FIELDS, CharacterCard
+
+        all_fields = set(CharacterCard.model_fields)
+        buckets = [set(fields) for fields in FORMAT_GROUPS.values()]
+        buckets.append(set(POST_FORMAT_FIELDS))
+
+        union = set().union(*buckets)
+        assert union == all_fields, (
+            f"分组未覆盖全部字段：缺={sorted(all_fields - union)} "
+            f"多（不存在于 model_fields）={sorted(union - all_fields)}"
+        )
+
+        for i in range(len(buckets)):
+            for j in range(i + 1, len(buckets)):
+                overlap = buckets[i] & buckets[j]
+                assert not overlap, f"第 {i} 桶与第 {j} 桶重叠：{sorted(overlap)}"
+
+    def test_group_schema_is_scoped_to_the_group(self):
+        """组提示词带的子 schema 只列本组字段（由 CharacterCard 取，不手写）。"""
+        from core.schema import FORMAT_GROUPS, CharacterCard, format_group_schema
+
+        for group, fields in FORMAT_GROUPS.items():
+            sub = format_group_schema(group)
+            assert set(sub["properties"]) == set(fields), group
+            assert set(sub.get("required", ())) <= set(fields), group
+            # 嵌套模型定义必须带上，否则 $ref 解析不了
+            assert "PsycheProfile" in sub.get("$defs", {}), group
