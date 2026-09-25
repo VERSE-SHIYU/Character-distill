@@ -207,6 +207,50 @@ commit：`feat(deploy): SZ-only GlitchTip stack and vhost`
 ### B 段报告
 每步贴原始输出；凭据一律不贴；任何失败即停，不做计划外变更。
 
+## E 段：lifespan 注册的配对撤销（123 已合入，A 段合入后做；与 B 段互不阻塞）
+
+### 已查实的约束（基线 origin/main `2d79423`，123 已合入）
+1. **注册现状**：`web/server.py::_lifespan` 里的进程级注册全部没有撤销：
+   - `install_llm_gate(app)` → `set_call_guard(geo_call_guard)`（`web/llm_gate.py:103`；读写口 `adapters/llm_adapter.py:225/231`）
+   - `install_log_collector()`、`install_alert_handler()`，以及 A 段新增的 `install_stdout_logging()` 与 `init_error_reporting()`
+   - `set_main_loop(loop)` → `scheduling.set_loop_submitter(...)`
+2. **123 定下的语义**：`core/scheduling.py:48-54`，未注册时 `submit_to_main_loop` 当场抛 `RuntimeError`，没有退路。所以关停后撤销投递器，迟到的投递会明确报错，不会投到已关闭的 loop 上。这正是想要的行为
+3. **两个 handler 的去重方式不同**：
+   - `AlertHandler` 按类去重（`core/alerting.py:173`）
+   - 环形缓冲和 stdout handler 靠 `addHandler` 按对象身份去重
+4. **执行器不在范围内**：`loop.set_default_executor(...)` 不需要本仓撤销。`python -m web.server` 走 `uvicorn.run`，最终由 `asyncio.run` 执行；按 Python 文档，`asyncio.run` 收尾时会调用 `loop.shutdown_default_executor()`。S0 核对 uvicorn 版本确实走的是 `asyncio.run`，不是就停下报告
+5. **`install_demo_gate(app)` 不动**（`web/server.py:155-157`）：它必须在导入期、路由登记之后执行，放进 lifespan 就会变成静默的空操作
+6. **测试侧**：
+   - `tests/conftest.py::registered_globals()`（:246）退出时会断言「作用域内至少有一处注册还在」。它现在有两种用法：一是包住生产 `_lifespan`（`test_message_backfill.py::test_C9_shutdown_backfills_the_queues`、`test_llm_access_gate.py:1054` 的 l11），二是作测试 app 的 lifespan
+   - 生产 lifespan 自己撤销之后，第一种用法退出时两处注册都已清空，这条断言必然红
+   - C9 的最后一条断言 `_registrations() == before` 本身就是「生产关停还原了注册」的锁
+7. **台账 113** 写着「已知边界：生产关停路径不撤销，此条不变」，本段做完要改写这一条
+
+### 约束
+- **撤销与注册写在同一处**：每个 `install_*` 返回自己的撤销函数。lifespan 用 `contextlib.AsyncExitStack` 收集这些撤销，关停时按注册的逆序执行。不另起一套「注销清单」
+- 没有真正装上的（比如 `ALERT_EMAIL` 为空，或者按类去重时发现已经装过），返回空操作。**只撤销自己装上的**，按各自原有的去重方式判断
+- `deps` 的主 loop 与投递器一起撤销：`set_main_loop` 返回的撤销函数把两者都还原成未注册
+- `init_error_reporting()` 的撤销是 flush 后关闭 client。它最先注册，按逆序最后撤销，这样关停过程中产生的 ERROR 仍能被上报
+- 现有的关停动作（取消后台任务、flush 队列）保持原样，也保持先后顺序；ExitStack 的撤销在这些动作之后执行（它们要用到投递器）
+
+### 步骤 9：[web] lifespan 配对撤销
+- 各个 `install_*` 和 `set_main_loop` 改为返回撤销函数；`_lifespan` 用 `AsyncExitStack` 串起来
+- `:97-102` 那段注释补一句：注册与撤销成对出现，逆序撤销
+- 先写失败用例：用 `TestClient(server.app)` 启动再退出，之后调用守卫、投递器、主 loop 都是未注册，根日志器上不剩本仓的 handler
+- 测试侧跟着调整：
+  - C9、l11 不再用 `registered_globals()` 包住生产 lifespan，由生产 lifespan 自己还原。C9 的 `_registrations() == before` 就是回归锁
+  - `registered_globals()` 只保留「测试 app 的 lifespan」这一种用法，文档注释同步改
+  - `tests/test_usage_identity_context.py::_LoopSubmitter` 若因此失效就改，没失效不动
+- 鉴别力自测：去掉任意一项撤销 → 新用例或 C9 必须变红
+- 台账 113：「已知边界」改为已收敛，写上本 commit
+
+commit：`fix(lifespan): pair every process-wide registration with its undo`
+
+### E 段验证
+只跑 `tests/test_message_backfill.py`、`tests/test_llm_access_gate.py`、`tests/test_usage_identity_context.py`、`tests/test_stdout_logging.py`，以及本步新增的用例；合并门是分支 CI。
+
+## D 段：51 处静默吞错补日志（等 119 残留合入后补写本节）
+
 ## C 段：退役自建组件
 B 段线上验证通过、Shiyu 确认之后再开，另行补充到本文件。
 
