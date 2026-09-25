@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
+import { likeComment } from '../api/comments'
 import Avatar from './common/Avatar'
 import useIsMobile from '../hooks/useIsMobile'
 import PageHeader from './PageHeader'
@@ -291,16 +292,7 @@ export default function MarketCardDetail() {
 
   const handleCommentLike = async (commentId) => {
     try {
-      const res = await fetchWithTimeout(`/api/market/comments/${commentId}/like`, {
-        method: 'POST',
-        headers: { ...getAuthHeaders() },
-      })
-      if (!res.ok) {
-        const detail = await res.json().catch(() => ({}))
-        setError(detail.detail || '点赞失败')
-        return
-      }
-      const data = await res.json()
+      const data = await likeComment('card', commentId)
       setComments((prev) =>
         prev.map((c) => (c.id === commentId ? { ...c, liked_by_me: data.liked, likes: data.likes } : c)),
       )

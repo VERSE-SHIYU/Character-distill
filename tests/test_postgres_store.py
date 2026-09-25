@@ -421,6 +421,28 @@ class TestTextCrud:
         assert len(texts) >= 3
 
 
+@_pg
+class TestPgTextCommentsWithReplies:
+    """回复回填走的是**真 PG** 的占位符，SQLite 侧那一份不是同一段 SQL。
+
+    `?` → `$n` 的重编号在 PG 侧是手工数的，数错不会在任何 SQLite 用例里露头：占位符从
+    `$2` 起、参数里又第一个塞 `text_id`，SQL 里就没有 `$1` 了 —— PG 不替未使用的参数
+    推断类型，直接 `IndeterminateDatatypeError`。读路径一炸，文本详情页整页 500。
+    """
+
+    async def test_replies_are_nested_under_their_top_level_comment(self, store, text_id, user_id):
+        await store.save_text(text_id, "src.txt", "正文", user_id=user_id)
+        top = await store.add_text_comment(text_id, user_id, "u", "顶层评论")
+        reply = await store.add_text_comment(text_id, user_id, "u", "回复", parent_id=top["id"])
+
+        got = await store.get_text_comments_owned(text_id, user_id)
+
+        assert got["total"] == 1, "顶层评论只该数一条，回复不算"
+        assert [c["id"] for c in got["comments"]] == [top["id"]], "顶层评论本身没取到"
+        assert [r["id"] for r in got["comments"][0]["replies"]] == [reply["id"]], \
+            "回复没挂到顶层评论下面"
+
+
 # ── Card CRUD ────────────────────────────────────────────────────────────────
 
 @_pg
@@ -942,19 +964,23 @@ class TestDistillTaskPersistence:
         assert "重启" in got["message"]
         assert await store.count_running_distills(user_id) == 0
 
-    async def test_find_interrupted_distill(self, store, text_id):
-        # 续跑发现：只认 interrupted；character 精确匹配（同文本两角色不互借）；user 隔离。
+    async def test_find_resumable_distill(self, store, text_id):
+        # 续跑发现：interrupted 与 error 都可复用 —— 失败任务重试同样只补失败片。
+        # done 不复用：已出卡的再次蒸馏是「要新版本」，整跑。character 精确匹配
+        # （同文本两角色不互借）；user 隔离。
         await store.create_distill_task("dtI1", "u1", text_id, character="甲", status="interrupted")
-        await store.create_distill_task("dtI2", "u1", text_id, character="乙", status="interrupted")
-        await store.create_distill_task("dtI3", "u1", text_id, character="甲", status="done")
-        await store.create_distill_task("dtI4", "u2", text_id, character="甲", status="interrupted")
+        await store.create_distill_task("dtE1", "u1", text_id, character="乙", status="error")
+        await store.create_distill_task("dtD1", "u1", text_id, character="丙", status="done")
+        await store.create_distill_task("dtE2", "u2", text_id, character="甲", status="error")
 
-        got = await store.find_interrupted_distill("u1", text_id, "甲")
+        got = await store.find_resumable_distill("u1", text_id, "甲")
         assert got is not None and got["task_id"] == "dtI1"
         assert got["chunk_size"] is None and got["text_fingerprint"] == ""
-        assert await store.find_interrupted_distill("u1", text_id, "丙") is None
-        assert (await store.find_interrupted_distill("u2", text_id, "甲"))["task_id"] == "dtI4"
-        assert await store.find_interrupted_distill("u1", "txt_none", "甲") is None
+        assert (await store.find_resumable_distill("u1", text_id, "乙"))["task_id"] == "dtE1"
+        assert await store.find_resumable_distill("u1", text_id, "丙") is None    # done 不复用
+        assert await store.find_resumable_distill("u1", text_id, "丁") is None    # 该角色无行
+        assert (await store.find_resumable_distill("u2", text_id, "甲"))["task_id"] == "dtE2"
+        assert await store.find_resumable_distill("u1", "txt_none", "甲") is None
 
     async def test_list_distill_tasks_capped_and_full_row_shape(self, store, text_id):
         # G：admin 运维视图的读路径。上限必守（无 cascade 的表会无限长）；

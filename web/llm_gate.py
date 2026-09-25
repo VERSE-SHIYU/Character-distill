@@ -15,8 +15,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
-from adapters.llm_adapter import OutboundRefused, set_call_guard
+from adapters.llm_adapter import OutboundRefused, get_call_guard, set_call_guard
 from core.scheduling import submit_to_main_loop
 from deps import get_storage
 from web.geo_guard import check_api_allowed
@@ -94,13 +95,20 @@ def emit_geo_block_audit(user_id: str | None, ip: str | None, base_url: str, rea
         logger.warning("Record geo block failed (non-fatal): %s", exc)
 
 
-def install_llm_gate(app) -> None:
-    """装配入口：把守卫注册进适配器。生产（`web/server.py`）与测试最小 app 共用这一个。
+def install_llm_gate(app) -> Callable[[], None]:
+    """装配入口：把守卫注册进适配器；返回撤销（写回装配前那一个）。
+
+    生产（`web/server.py`）与测试最小 app 共用这一个。
 
     取 *app* 是为了与 `register_domain_error_handlers` 同形 —— 装配层「装什么」集中
     在一处，将来门若有 app 级状态（如按 app 覆盖）也不必再改调用方签名。
+
+    与 `deps.set_main_loop` 同一种说法：写回的是**装配前那一个**。生产上装配前就是未注册，
+    故这时等价于「注销」。
     """
+    prev = get_call_guard()
     set_call_guard(geo_call_guard)
+    return lambda: set_call_guard(prev)
 
 
 __all__ = [

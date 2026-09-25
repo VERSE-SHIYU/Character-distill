@@ -49,6 +49,7 @@ certifi==2026.7.22
     #   httpx
     #   kubernetes
     #   requests
+    #   sentry-sdk
 cffi==2.1.1
     # via
     #   argon2-cffi-bindings
@@ -317,6 +318,8 @@ rpds-py==2026.6.3
     # via
     #   jsonschema
     #   referencing
+sentry-sdk==2.70.0
+    # via -r requirements.in
 shellingham==1.5.4
     # via typer
 six==1.17.0
@@ -384,6 +387,7 @@ urllib3==2.7.0
     #   kubernetes
     #   qdrant-client
     #   requests
+    #   sentry-sdk
 uvicorn==0.53.0
     # via
     #   -r requirements.in
