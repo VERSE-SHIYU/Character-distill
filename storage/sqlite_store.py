@@ -147,6 +147,10 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     # 「段内编号单调」。它的存在是 README 那条唯一例外的实例 —— 只加 PG 列会让两侧真库的
     # 列集锁红，而那条锁不许开豁免。
     "095_users_timezone.sql",
+    # 096 建两张新表 + 两个新列，与退役列块互不相干，排段尾保「段内编号单调」。
+    # 新**表**也要孪生的理由：列集锁比的是**表集合**（只在一侧的表会被 `_column_drift`
+    # 报成漂移），README 那段只写了「加列」，锁的判据比它宽 —— 以锁为准。
+    "096_comment_likes.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
