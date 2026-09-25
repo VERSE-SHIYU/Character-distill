@@ -56,8 +56,12 @@ router = APIRouter(prefix="/api/client-config", tags=["client-config"])
 
 
 @router.get("")
-def client_config() -> dict[str, str]:
+async def client_config() -> dict[str, str]:
     """前端启动时要的那几项。**未配置上报时返回 `{}`**。
+
+    `async def` 不是顺手写的：前端**首屏渲染就等这个响应**（`main.jsx` 拿到它才建根）。
+    写成同步 `def`，FastAPI 会把它排进线程池，白搭一次线程调度 —— 这条路径没有任何阻塞
+    调用，直接跑在事件循环上。
 
     空对象就是「没有这份配置」这一个事实，与 `core/error_reporting.py` 那句「`SENTRY_DSN`
     为空 = 整个模块不生效」同一口径：前端照常渲染，只是不初始化 SDK。不填假 DSN，也不
