@@ -23,6 +23,12 @@ from openai import AsyncOpenAI
 
 from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_facing_error
 from core.chat_preprocessor import ChatPreprocessor
+from core.roster_aggregate import (
+    alias_prompt_rows,
+    finalize_identify_roster,
+    group_identify_entries,
+    merge_identify_groups,
+)
 from core.schema import CharacterCard, PRESET_TAGS
 from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
 from core import telemetry as T  # OTel 埋点
@@ -42,8 +48,8 @@ _IDENTIFY_CACHE_LOCK = threading.Lock()
 
 
 #: 别名收录规则：只喂给**逐片识别**那一步。合并那一步不再让模型收录别名 —— 一个人的
-#: 多个称呼由代码从各组已收录的别名里取，有歧义的按共现移除（`core/character_roster.py`
-#: 的 `group_identify_entries`），模型不经手别名。
+#: 多个称呼由代码从各组已收录的别名里取，有歧义的按最终分组移除（`core/roster_aggregate.py`
+#: 的 `merge_identify_groups`），模型不经手别名。
 #: 别名在下游是按子串匹配用的（蒸馏选片 `any(t in c for t in match_terms)`、RAG 打标签
 #: `rag.py:_tag_characters`），所以一个多人共用的称呼一旦进了 aliases，就会把别人的场景
 #: 误标给此人。判据交给 LLM，代码里不加子串/规则推断。
@@ -1076,15 +1082,9 @@ class Distiller:
         未越线、且每一片都解析成空名单 → 返回 ``[]``：这是**真的没有具名角色**，
         不是识别失败。与单分片同口径 —— 空名单是合法结果，失败才抛。
 
-        归组、并组、判主次、取理由都是纯计算（`core/character_roster.py`）；模型只判一件
+        归组、并组、判主次、取理由都是纯计算（`core/roster_aggregate.py`）；模型只判一件
         需要判断力的事：哪些组其实是同一个人（`_identify_alias_pairs`）。
         """
-        # 函数内 import：`core.character_roster` 在模块级 import 了本模块的 `DistillError`
-        # （`NoTargetCharacter` 的基类），顶层再反向 import 就是循环。
-        from core.character_roster import (
-            finalize_identify_roster, group_identify_entries, merge_identify_groups,
-        )
-
         def _build_prompt(chunk: str) -> tuple[str, str]:
             return IDENTIFY_SYSTEM_PROMPT, chunk
 
@@ -1138,13 +1138,16 @@ class Distiller:
         归组与主次已经在代码里定完。送正文不但白烧 token，还会把判断从「这两个称呼
         是否指同一人」拖到「谁戏份多」。
 
+        别名也做了筛选：当时挂在 ≥2 组上的泛称不进清单（`alias_prompt_rows`）——
+        摆进去只会诱导模型把两个人并成一个。
+
         走 `_chat_accounted(stream=True)`：与逐片 Map、蒸馏的长输出同一条流式路径，
         读超时按 WP1 的 `chat_stream_long` 放宽；记账落在唯一出口（缺陷 16）。
         """
         body = "各组如下：\n" + "\n".join(
-            f"- {g['name']}（出现 {g['chunk_count']} 个分片；"
-            f"别名：{'、'.join(g['aliases']) or '无'}）"
-            for g in groups
+            f"- {name}（出现 {chunks} 个分片；"
+            f"别名：{'、'.join(aliases) or '无'}）"
+            for name, chunks, aliases in alias_prompt_rows(groups)
         )
         messages: list[dict[str, Any]] = [{"role": "user", "content": body}]
         reply, upstream_truncated = self._chat_accounted(
