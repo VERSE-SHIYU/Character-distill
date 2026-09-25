@@ -267,7 +267,7 @@
 | I2 | 别名判断的重修也走流式 | 编排测试：首次回「不是 JSON」→ `chat_stream.call_count == 2`、`chat.call_count == 0`（改写自原 `test_merge_repair_also_uses_stream`） | 重修改 `stream=False` |
 | I3 | 歧义别名：不并组、且从所有组移除 | 纯函数：片1 甲{二爷}、片2 乙{二爷}、组对为空 → 甲乙分开，两者 aliases 都不含「二爷」；再给组对（甲, 丙），丙的「三爷」也挂在丁名下 → 合并组不含「三爷」 | ① 共享任一别名即并 ② 删掉移除那一步 |
 | I4 | 主次、排序、理由、不截断 | 纯函数，一套 40 片数据（10% = 4）：X 3 片其中 2 片主要（写法「主角」「主要角色」）→ 主要，理由取主要片那条；Y 3 片、1 片主要、同片重复一次 → 次要、`chunk_count == 3`；Z 恰 4 片全「配角」→ 主要；再加 57 个一次性人物 → 输出组数 == 60，主要在前、组内按 `(main_count, chunk_count)` 降序 | ① 只按 chunk_count 判 ② `>=` 改 `>` ③ 规范化改 `== "主要"` ④ 按条目计数 ⑤ 去掉主次分层 ⑥ 理由取第一条 ⑦ 加 `[:50]` |
-| I5 | 记账 = 逐片汇总 1 行 + 别名判断 1 行 | 先把变异跑在 `tests/test_usage_accounting_lock.py`，红了就不新增；没红才在 `tests/test_distill_usage_accounting.py` 加一条断言 `["distill_identify"] * 2` | 别名判断改为直接 `self._llm.chat_stream(...)` |
+| I5 | 记账 = 逐片汇总 1 行 + 别名判断 1 行 | 先把变异跑在 `tests/test_usage_accounting_lock.py`，红了就不新增；没红才在 `tests/test_identify_whole_book.py` 加一条断言 `["distill_identify"] * 2` | 别名判断改为直接 `self._llm.chat_stream(...)` |
 
 收尾：删 `test_merge_call_uses_stream`、`test_merge_max_tokens_is_raised`；改写 `tests/test_usage_identity_context.py:398` 的注释；`git grep -n "IDENTIFY_MERGE_PROMPT\|IDENTIFY_MERGE_MAX_TOKENS"` 为 0。版本号见 第 6 节 D7。
 
