@@ -4,6 +4,7 @@ import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 import useCanWrite from '../hooks/useCanWrite'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
+import { likeComment } from '../api/comments'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -142,16 +143,7 @@ export default function TextDetailPage() {
 
   const handleLike = async (commentId) => {
     try {
-      const res = await fetchWithTimeout(`/api/text/comments/${commentId}/like`, {
-        method: 'POST',
-        headers: { ...getAuthHeaders() },
-      })
-      if (!res.ok) {
-        const detail = await res.json().catch(() => ({}))
-        setError(detail.detail || '点赞失败')
-        return
-      }
-      const data = await res.json()
+      const data = await likeComment('text', commentId)
       // Update both top-level and replies
       const update = (items) =>
         items.map((c) => {
