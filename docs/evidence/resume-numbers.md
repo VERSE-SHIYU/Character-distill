@@ -38,7 +38,7 @@
 | `chunk-size-provenance` | `runtime-measured` | — | — | — | `e389fdc` | 2026-09-12 |
 | `config-yaml-values` | `runtime-measured` | — | — | — | `e389fdc` | 2026-09-12 |
 | `distill-orphan-matrix` | `verified` | docs/evidence/distill-orphan-matrix.json | tests/perf/distill_orphan_matrix.py | producer | `e389fdc` | 2026-09-12 |
-| `distill-resume-reachability` | `verified` | docs/evidence/distill-resume-reachability.json | tests/perf/distill_resume_reachability.py | producer | `c5cf853` | 2026-09-25 |
+| `distill-resume-reachability` | `verified` | docs/evidence/distill-resume-reachability.json | tests/perf/distill_resume_reachability.py | producer | `e6c28a3` | 2026-09-25 |
 | `graphify-snapshot-2026-08-15` | `unverifiable` | — | — | — | `eb72a3bd` | 2026-08-15 |
 | `incomplete-v5` | `verified` | docs/evidence/incomplete-v5.json | tests/test_distill_resume.py | corroborating | `unknown(scratch)` | 2026-09-10 |
 | `ownership-reachability` | `verified` | docs/evidence/ownership-reachability.json | tests/perf/raise_probe.py | producer | `5bacc48` | 2026-09-12 |
