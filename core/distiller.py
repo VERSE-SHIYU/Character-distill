@@ -657,7 +657,7 @@ class Distiller:
         prompt_chars = self._prompt_chars(system_prompt, messages)
         parts: list[str] = []
         try:
-            for piece in self._llm.chat_stream(
+            for piece in self._llm.chat_stream_long(
                 system_prompt, messages,
                 max_tokens=self.CARD_MAX_TOKENS if max_tokens is None else max_tokens,
             ):
@@ -1289,7 +1289,7 @@ class Distiller:
             {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[: self._chunk_size * 10]},
         ]
 
-        yield from self._llm.chat_stream(system_prompt, user_messages, max_tokens=self.CARD_MAX_TOKENS)
+        yield from self._llm.chat_stream_long(system_prompt, user_messages, max_tokens=self.CARD_MAX_TOKENS)
         # 流耗尽后 last_usage 才可读（_distill_longcontext_stream 同形）——生成器被消费方
         # 半途丢弃时这行不会执行，与既有的流式记账口径一致，不额外兜底。
         self._try_record_usage("distill_stream")
@@ -1375,7 +1375,7 @@ class Distiller:
 
         yield {"status": "formatting"}
         tc = 0
-        for token in self._llm.chat_stream(system_prompt, [{"role": "user", "content": user_content}], max_tokens=self.CARD_MAX_TOKENS):
+        for token in self._llm.chat_stream_long(system_prompt, [{"role": "user", "content": user_content}], max_tokens=self.CARD_MAX_TOKENS):
             if token == "\x00THINKING\x00":
                 continue
             yield token
@@ -1572,7 +1572,7 @@ class Distiller:
     def _single_reduce_stream(self, raw_analyses: list[str], character_name: str):
         """Merge independent chunk analyses into a single profile (streaming)."""
         combined = self._reduce_user_prompt(raw_analyses, character_name)
-        yield from self._llm.chat_stream(
+        yield from self._llm.chat_stream_long(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
         )
@@ -2075,7 +2075,7 @@ class Distiller:
         system_prompt = (
             DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
         )
-        yield from self._llm.chat_stream(
+        yield from self._llm.chat_stream_long(
             system_prompt,
             [{"role": "user", "content":
                 f"以下是关于「{character_name}」的完整分析档案，严格按 JSON 格式输出角色卡：\n\n{profile_draft}"

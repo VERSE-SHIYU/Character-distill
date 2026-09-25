@@ -193,6 +193,9 @@ class _FakeStreamLLM(_FakeLLM):
         yield from self._pieces
         raise self._exc
 
+    # 长输出入口在生产里是 chat_stream 的薄委托（只放宽读超时）：桩共用同一份记录
+    chat_stream_long = chat_stream
+
 
 @pytest.fixture
 def records(monkeypatch) -> list[tuple[str, dict | None]]:

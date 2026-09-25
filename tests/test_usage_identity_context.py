@@ -388,6 +388,9 @@ class _FakeLLM:
         for i in range(0, len(text), 40):
             yield text[i:i + 40]
 
+    # 长输出入口在生产里是 chat_stream 的薄委托（只放宽读超时）：桩共用同一份记录
+    chat_stream_long = chat_stream
+
     def _make_async_client(self):
         return _FakeClient()
 

@@ -66,6 +66,9 @@ class _FakeLLM:
         self.stream_inputs.append(messages[0]["content"])
         yield '{"name": "角色", "identity": "' + self._digest(messages[0]["content"]) + '"}'
 
+    # 长输出入口在生产里是 chat_stream 的薄委托（只放宽读超时）：桩共用同一份记录
+    chat_stream_long = chat_stream
+
     @staticmethod
     def _digest(text: str) -> str:
         return "分析-" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]

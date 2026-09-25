@@ -12,9 +12,11 @@ from typing import Any
 
 import os
 
+import httpx2
+import openai
 import yaml
 from dotenv import load_dotenv
-from openai import AsyncOpenAI, BadRequestError, OpenAI
+from openai import AsyncOpenAI, BadRequestError, OpenAI, Timeout
 
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 from core.utils import estimate_usage_from_chars  # 字符→token 估算的唯一出口
@@ -98,6 +100,14 @@ _ATTEMPT_WINDOW_S = _ATTEMPT_TIMEOUT_MARGIN_S + _ATTEMPT_MIN_S  # 撑起一次 a
 _DECISION_ATTEMPT_S = _env_timeout_s("LLM_DECISION_ATTEMPT_S", 5.0, _ATTEMPT_MIN_S)
 _GEN_ATTEMPT_S = _env_timeout_s("LLM_GEN_ATTEMPT_S", 45.0, _ATTEMPT_MIN_S)
 _STREAM_ATTEMPT_S = _env_timeout_s("LLM_STREAM_ATTEMPT_S", 7.0, _ATTEMPT_MIN_S)
+# 长输出（角色卡 / 合并 / 格式化）首字节前的静默可到分钟级：DeepSeek 在排队等调度时才发
+# keep-alive，开始推理后读长输入（prefill）期间完全无数据。流式的 `_STREAM_ATTEMPT_S`
+# 是「首 token 补偿」口径（7s）且以**标量**传给 httpx —— 标量会同时设成读超时，即
+# 「两个数据块之间最多等 7s」，长输入一 prefill 就假失败（生产识别 500 的根因）。
+# 300s 的界：上游对未开始推理的请求 10 分钟关连接、nginx 读超时 600s，300 在两者之内
+# 且远大于任何合理 prefill。**不做 env 出口**（红线：不新增配置项）—— 它是结构性上限，
+# 不是调优旋钮；真要可调，把它改成 `_env_timeout_s(...)` 一行即可。
+_BATCH_STREAM_READ_S = 300.0
 _DECISION_DEADLINE_S = _env_timeout_s("LLM_DECISION_DEADLINE_S", 6.0, _ATTEMPT_WINDOW_S)
 _GEN_DEADLINE_S = _env_timeout_s("LLM_GEN_DEADLINE_S", 60.0, _ATTEMPT_WINDOW_S)
 _STREAM_DEADLINE_S = _env_timeout_s("LLM_STREAM_DEADLINE_S", 8.0, _ATTEMPT_WINDOW_S)
@@ -411,12 +421,30 @@ class UpstreamFailure(RuntimeError):
         super().__init__(message)
 
 
+# 传输层失败：连接建立之后 / 读流途中的网络故障。**只在这里定义一次** —— 建流阶段的
+# ``_RetryBudget.on_failure`` 与读流阶段的 ``_stream`` 判「是不是传输层」都取这一处。
+#
+# 为什么要两个类：openai 的包装行为会随版本变。3.13.0 把流中途的传输层异常原样抛出
+# （httpx2.TransportError 子类），3.19.2 起在 openai/_streaming.py 把它包成
+# APIConnectionError（超时是其子类 APITimeoutError），而它**不是** httpx2.TransportError 的
+# 子类 —— 只认 httpx2 的话，openai 一升过 3.1x 这里就静默失效（sentinel 上的 500 即此）。
+_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
+    httpx2.TransportError,
+    openai.APIConnectionError,
+)
+
+
 def _upstream_user_message(exc: Exception) -> str:
     """上游异常 → 上屏文案；未登记的状态码 → ""（由出口落通用文案）。
 
-    识别口径与 ``_classify_retry`` 的 429 判定一致（先看 ``status_code``，其次报错文本里的
-    429）—— 免得同一次失败在「算不算限流」和「该说什么」两处各判出一个答案。
+    传输层失败先判：它没有 status_code，落进状态码表只会得到 ""（通用文案），而这类失败
+    的处置是「重发一次」而不是「去设置页检查 key」。文案与 ``_GENERIC_USER_ERROR``（"服务
+    暂时不可用…"）刻意不同，措辞更指向动作，也便于据文案分辨「有没有被认成传输层」。
+    其余识别口径与 ``_classify_retry`` 的 429 判定一致（先看 ``status_code``，其次报错文本
+    里的 429）—— 免得同一次失败在「算不算限流」和「该说什么」两处各判出一个答案。
     """
+    if isinstance(exc, _TRANSPORT_ERRORS):
+        return "模型服务暂时不可用，请稍后重试"
     code = getattr(exc, "status_code", None)
     if code is None and "429" in str(exc):
         code = 429
@@ -461,9 +489,9 @@ def llm_error_payload(exc: BaseException) -> dict[str, Any] | None:
     否则每加一个异常类，core/web 就多一处 isinstance 耦合。本层是这条边界的唯一出口。
 
     **判别键 `kind`**（配码与审计只认它，不认异常类名）：未完成终态是
-    ``incomplete:<finish_reason>``、调用点门拒绝是 ``call_refused``。同族的两种已知
-    失败因此共用一张表 —— 配码那侧没有「先查 A 表再查 B 表」。原有的 `code` /
-    `finish_reason` 字段保留给既有调用方。
+    ``incomplete:<finish_reason>``、调用点门拒绝是 ``call_refused``、上游失败是
+    ``upstream``。同族的几种已知失败因此共用一张表 —— 配码那侧没有「先查 A 表再查
+    B 表」。原有的 `code` / `finish_reason` 字段保留给既有调用方。
     """
     if isinstance(exc, LLMCallRefused):
         return {"code": "call_refused", "error": exc.reason, "kind": "call_refused",
@@ -472,6 +500,12 @@ def llm_error_payload(exc: BaseException) -> dict[str, Any] | None:
         return {"code": "incomplete_response", "error": exc.user_message,
                 "finish_reason": exc.finish_reason,
                 "kind": f"incomplete:{exc.finish_reason}"}
+    if isinstance(exc, UpstreamFailure):
+        # `user_message` 可能为 ""（未登记的状态码 / 裸的传输层故障）：出口
+        # ``user_facing_error`` 把 payload["error"] 原样上屏，空串会显示成一片空白
+        # 而不是「服务不可用」—— 所以这里就落通用文案，别把空串漏到出口。
+        return {"code": "upstream", "error": exc.user_message or _GENERIC_USER_ERROR,
+                "finish_reason": "", "kind": "upstream"}
     return None
 
 
@@ -482,7 +516,7 @@ def llm_error_types() -> tuple[type[BaseException], ...]:
     ``tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage``
     禁 core/web/storage 出现该标识）。新增一种 LLM 失败 = 在这里的元组加一个类，
     装配层零改动。"""
-    return (IncompleteResponseError, LLMCallRefused)
+    return (IncompleteResponseError, LLMCallRefused, UpstreamFailure)
 
 
 _GENERIC_USER_ERROR = "服务暂时不可用，请稍后重试"
@@ -776,9 +810,18 @@ class LLMAdapter:
             except Exception as exc:
                 await asyncio.sleep(budget.on_failure(exc))
 
-    @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
-    def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> Generator[str, None, None]:
-        """流式对话，按增量产出文本片段。"""
+    def _stream(self, system_prompt: str, messages: list[dict[str, Any]],
+                max_tokens: int | None = None, *,
+                read_s: float | None = None) -> Generator[str, None, None]:
+        """流式的唯一实现，两个公开入口共用（``chat_stream`` / ``chat_stream_long``）。
+
+        ``read_s`` 是**读**阶段的超时上限：``None`` = 取本次 attempt 的 ceiling，即以标量
+        交给 httpx、每个阶段（含 read）都用它 —— 交互流逐字维持原行为；给出数值则只放宽
+        read，connect / write / pool 仍取 ceiling。
+
+        两个入口的差别只有 ``read_s`` 一个值，故「这类调用读超时多长」只在一处定义：
+        调用点不需要（也不该）知道有这回事。
+        """
         self._before_call()   # 建流之前：拒绝时连 create() 都不发
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
@@ -792,7 +835,10 @@ class LLMAdapter:
                               ceiling_s=_STREAM_ATTEMPT_S, backoff_mult_s=_STREAM_BACKOFF_S,
                               log_prefix="LLMAdapter chat_stream")
         while True:
-            timeout = budget.attempt_timeout()
+            timeout: float | Timeout = budget.attempt_timeout()
+            if read_s is not None:
+                # 分项超时：标量会被 httpx 铺到每个阶段（含 read），长 prefill 必超时。
+                timeout = Timeout(timeout, read=read_s)
             try:
                 stream = self._client.chat.completions.create(
                     model=self._model,
@@ -842,9 +888,40 @@ class LLMAdapter:
                 print(f"[llm] usage chunk missing, estimated from chars (pt~{self.last_usage['prompt_tokens']} ct~{self.last_usage['completion_tokens']})")
         except IncompleteResponseError:
             raise  # 截断是确定性失败：不吞、不打「读取失败」误导日志、不重试
+        except _TRANSPORT_ERRORS as exc:
+            # 读流途中的传输层故障（断连 → RemoteProtocolError、读超时 → ReadTimeout，
+            # openai ≥3.19 还可能是它自己包出来的 APIConnectionError）：归成上游失败，
+            # 交统一出口回 503 + 上屏文案。分类与文案都由 _upstream_user_message 裁决，
+            # 与建流阶段同一处 —— 同一个故障在两条路上说出同一句话。
+            # **只认传输层**：宽成 except Exception 会把我们自己的 bug（AttributeError
+            # 之类）报成上游故障，把用户引去「稍后重试」而不是让我们修。
+            # 流**不重放** —— 已吐出的片段不可撤回，重放会重复交付。
+            print(f"读取流式响应失败（上游传输层）：{exc}")
+            raise UpstreamFailure(
+                f"chat_stream 读流中断：{exc}",
+                user_message=_upstream_user_message(exc),
+            ) from exc   # from：原因链保留（排障要看是断连还是读超时）
         except Exception as exc:
             print(f"读取流式响应失败：{exc}")
             raise
+
+    @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
+    def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]],
+                    max_tokens: int | None = None) -> Generator[str, None, None]:
+        """交互/小输出用：读超时取本次 attempt 的 ceiling（聊天是 7 s）。"""
+        return (yield from self._stream(system_prompt, messages, max_tokens))
+
+    @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
+    def chat_stream_long(self, system_prompt: str, messages: list[dict[str, Any]],
+                         max_tokens: int | None = None) -> Generator[str, None, None]:
+        """长输出流式的**唯一入口**：角色卡 / 合并 / 格式化走这里。
+
+        存在的理由是「守汇合点」——读超时放宽只在这一个函数里发生，调用点不需要
+        （也不该）知道有这回事：那种「5 处各写一遍参数」的写法，漏一处就是一条会在
+        生产上静默读超时的路，而漏掉的那处从调用点看不出来。
+        """
+        return (yield from self._stream(system_prompt, messages, max_tokens,
+                                        read_s=_BATCH_STREAM_READ_S))
 
     @T.spanned("llm.chat_with_tools", op="chat", finalize=_infer_finalize)
     def chat_with_tools(
