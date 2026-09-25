@@ -4245,11 +4245,13 @@ class PostgresStore(StorageBase):
 
                 comment_ids = [c["id"] for c in comments]
                 if comment_ids:
+                    # `text_id` 是第一个参数（$1），SQL 里必须真的用到它：PG 不给没人用的
+                    # 参数推断类型，只传不写就是 IndeterminateDatatypeError。
                     placeholders = ",".join(f"${i+2}" for i in range(len(comment_ids)))
                     reply_rows = await conn.fetch(
                         f"""SELECT id, text_id, user_id, username, content, parent_id, likes, created_at
                             FROM text_comments
-                            WHERE parent_id IN ({placeholders})
+                            WHERE text_id = $1 AND parent_id IN ({placeholders})
                             ORDER BY created_at ASC""",
                         text_id, *comment_ids,
                     )

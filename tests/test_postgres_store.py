@@ -421,6 +421,28 @@ class TestTextCrud:
         assert len(texts) >= 3
 
 
+@_pg
+class TestPgTextCommentsWithReplies:
+    """回复回填走的是**真 PG** 的占位符，SQLite 侧那一份不是同一段 SQL。
+
+    `?` → `$n` 的重编号在 PG 侧是手工数的，数错不会在任何 SQLite 用例里露头：占位符从
+    `$2` 起、参数里又第一个塞 `text_id`，SQL 里就没有 `$1` 了 —— PG 不替未使用的参数
+    推断类型，直接 `IndeterminateDatatypeError`。读路径一炸，文本详情页整页 500。
+    """
+
+    async def test_replies_are_nested_under_their_top_level_comment(self, store, text_id, user_id):
+        await store.save_text(text_id, "src.txt", "正文", user_id=user_id)
+        top = await store.add_text_comment(text_id, user_id, "u", "顶层评论")
+        reply = await store.add_text_comment(text_id, user_id, "u", "回复", parent_id=top["id"])
+
+        got = await store.get_text_comments_owned(text_id, user_id)
+
+        assert got["total"] == 1, "顶层评论只该数一条，回复不算"
+        assert [c["id"] for c in got["comments"]] == [top["id"]], "顶层评论本身没取到"
+        assert [r["id"] for r in got["comments"][0]["replies"]] == [reply["id"]], \
+            "回复没挂到顶层评论下面"
+
+
 # ── Card CRUD ────────────────────────────────────────────────────────────────
 
 @_pg
