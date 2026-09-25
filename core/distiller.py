@@ -1532,7 +1532,6 @@ class Distiller:
         character_name: str,
         on_batch_done: "callable | None" = None,
         sem_size: int = 6,
-        client: AsyncOpenAI | None = None,
     ) -> list[tuple[int, str]]:
         """Run multiple Reduce batches concurrently with a semaphore."""
         sem = asyncio.Semaphore(sem_size)
@@ -1541,11 +1540,9 @@ class Distiller:
 
         async def _one(i: int, batch: list[str]) -> tuple[int, str]:
             async with sem:
-                try:
-                    result = await self._single_reduce_async(batch, character_name, client=client)
-                except Exception as exc:
-                    logger.warning("Reduce batch %s failed: %s", i, exc, exc_info=True)
-                    result = ""
+                # 不吞异常：任一批失败即整体失败（WP5）。吞掉后置空，会让「宝玉 3 批丢 1 批」
+                # 变成一张少三分之一材料的卡，而下游看不出少了什么。
+                result = await self._single_reduce_async(batch, character_name)
             async with lock:
                 done_count[0] += 1
                 current = done_count[0]
@@ -1554,18 +1551,7 @@ class Distiller:
             return (i, result)
 
         tasks = [asyncio.create_task(_one(i, b)) for i, b in enumerate(batches)]
-        results = await asyncio.gather(*tasks)
-        # Reduce 全空 = 100% 失败，没有 Map 那种「按失败率容忍」的余地：把空列表当合法输入
-        # 交给归并，模型会对零条分析**凭空产出**一份非空档案，下游「输出为空即失败」那道门
-        # 结构上拦不住（缺陷 34）—— 判据要落在**归并的输入有没有内容**上。
-        # 守卫放在此处，因为两条 reduce 路径（stream 的 `_reduce_batches` / 非 stream 的
-        # `_do_reduce`）的批次结果都汇到这一个出口；放在调用点则会漏掉 `_do_reduce` 的递归那一路。
-        if not any(r[1].strip() for r in results):
-            raise DistillError(
-                "蒸馏失败：归并阶段未能产出有效内容，请稍后重试",
-                f"Reduce batch 全空：{len(batches)}/{len(batches)} 失败",
-            )
-        return results
+        return await asyncio.gather(*tasks)
 
     def _single_reduce(self, raw_analyses: list[str], character_name: str) -> str:
         """Merge independent chunk analyses into a single profile (sync)."""
@@ -1578,16 +1564,36 @@ class Distiller:
         self._try_record_usage("distill_reduce", usage)
         return result
 
-    async def _single_reduce_async(self, raw_analyses: list[str], character_name: str, client: AsyncOpenAI | None = None) -> str:
-        """Merge independent chunk analyses into a single profile (async, for concurrent batches)."""
+    async def _single_reduce_async(self, raw_analyses: list[str], character_name: str) -> str:
+        """单批归并：走流式长输出，失败即抛（供 `_run_reduce_concurrent` 并发调用）。
+
+        长输出非流式必然撞生成轮的 45 s 单次 / 60 s 总墙钟（`_distill_longcontext` 的
+        同一处境），而分批归并正是长输出 —— 故与角色卡/格式化同走 `_chat_accounted(
+        stream=True)`，读超时随之放宽（`chat_stream_long`）。
+
+        `_chat_accounted` 是同步调用，用 `asyncio.to_thread` 丢进线程，异步循环才不阻塞
+        （`gather` + `Semaphore` 的并发结构不变）。身份靠 `to_thread` 内部的
+        `copy_context()` 进线程 —— `LLM_CALLER` 是普通 contextvar，随之过去。
+
+        截断与空正文都按失败抛：半截档案（`length` 截断）与凭空产出的档案（零条输入）
+        都不能交给格式化，否则落下的卡少材料而无人知道（缺陷 34 / WP5）。
+        """
         combined = self._reduce_user_prompt(raw_analyses, character_name)
-        result, usage = await self._llm.async_chat(
+        reply, truncated = await asyncio.to_thread(
+            self._chat_accounted,
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
-            client=client,
+            "分批归并",
+            "distill_reduce",
+            stream=True,
+            max_tokens=self.CARD_MAX_TOKENS,
         )
-        self._try_record_usage("distill_reduce", usage)
-        return result
+        if truncated or not reply.strip():
+            raise DistillError(
+                "蒸馏失败：归并阶段未能产出有效内容，请稍后重试",
+                f"Reduce batch 失败：{'截断（finish_reason=length）' if truncated else '空正文'}",
+            )
+        return reply
 
     def _single_reduce_stream(self, raw_analyses: list[str], character_name: str):
         """Merge independent chunk analyses into a single profile (streaming)."""
@@ -1611,12 +1617,8 @@ class Distiller:
         ]
 
         async def _concurrent() -> list[str]:
-            run_client = self._llm._make_async_client()
-            try:
-                results = await self._run_reduce_concurrent(batches, character_name, client=run_client)
-                return [r[1] for r in sorted(results, key=lambda x: x[0]) if r[1].strip()]
-            finally:
-                await run_client.close()
+            results = await self._run_reduce_concurrent(batches, character_name)
+            return [r[1] for r in sorted(results, key=lambda x: x[0])]
 
         try:
             asyncio.get_running_loop()
@@ -2020,13 +2022,9 @@ class Distiller:
                 rq.put(("batch", done_count, idx, result))
 
             async def _reduce_batches() -> list[tuple[int, str]]:
-                run_client = self._llm._make_async_client()
-                try:
-                    return await self._run_reduce_concurrent(
-                        batches, character_name, _on_batch_done, client=run_client
-                    )
-                finally:
-                    await run_client.close()
+                return await self._run_reduce_concurrent(
+                    batches, character_name, _on_batch_done
+                )
 
             def _reduce_thread() -> None:
                 try:
@@ -2055,13 +2053,9 @@ class Distiller:
 
             rt.join(timeout=5)
 
-            batch_results: list[str] = []
-            for i in range(len(batches)):
-                result = batch_by_index.get(i, "")
-                if result.strip():
-                    batch_results.append(result)
-                else:
-                    print(f"[distiller] Reduce batch {i} returned empty, skipped")
+            # 每一批都在：失败的那批不会走到这里（`_single_reduce_async` 抛，上面已上屏
+            # error 帧并返回）。原先「空批 print 后跳过」的写法会让丢失的那批静默消失。
+            batch_results: list[str] = [batch_by_index[i] for i in range(len(batches))]
 
             yield {"heartbeat": True}
 

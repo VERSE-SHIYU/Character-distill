@@ -150,6 +150,7 @@
 - 事实：`_run_reduce_concurrent` 单批异常 → 结果置空（`core/distiller.py:1511-1513`）；流式路径空批只 print 跳过（`:2024`）；只有**全空**才报错（`:1528`）。WP5 第 2 条「截断即失败」抛到这里会被吞掉 —— 宝玉 3 批丢 1 批，卡片少三分之一材料且无人知道。
 - 依据：Hadoop MapReduce 的缺省语义是任务失败达上限即**整个作业失败**，输出只在全部任务成功后才提交（`mapreduce.reduce.maxattempts`，mapred-default.xml），不交付缺块的结果。
 - 修法：在唯一汇合点 `_run_reduce_concurrent`，**任一批失败即整体失败**。「失败」= 抛异常**或**返回空正文。沿用现有 `DistillError` 上屏口径；全空守卫被这条覆盖，其测试保留。非流式 `_do_reduce` 共用此函数，随之变化，报告记录。不加批级重试（adapter 建流前已重试，再加一层是嵌套重试相乘；`UpstreamFailure` 分不清「建流耗尽」与「流中断」）。
+- **线程机制（WP5 S0 后裁决，2026-09-25）**：每批的 `_chat_accounted(stream=True)` 用 `await asyncio.to_thread(...)` 放进线程，`asyncio.gather` + `Semaphore(6)` 结构不变。依据：仓内同形先例（`web/routers/chat.py:517/528`、`web/routers/distill.py:1070` 用 `to_thread` 逐片推进流式生成器；`core/character_roster.py:110`）；`to_thread` 内部 `copy_context()`，`LLM_CALLER` 随之进线程；流式 span 走 `_start_noncurrent`（不 attach），不需要载体配对，所以不另造 `ctx_submit` + `wrap_future` 的组合。改完若 `_run_reduce_concurrent` 的 `client` 参数不再被用到，连同调用点的实参一起删掉，不留死参数。
 - **定案：失败即整体失败，同时做 WP8**。前者保证不交半张卡；WP8 让失败后的重试只重跑合并与格式化，两者合起来才同时满足「质量不降」与「失败代价小」。
 - 测试：第 8 节 R1–R3。
 
