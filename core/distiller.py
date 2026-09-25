@@ -226,15 +226,30 @@ def text_fingerprint(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _resume_hit(index: int, chunk: str, candidates: dict | None) -> str | None:
+def chunk_cache_key(system: str, user: str, model: str) -> str:
+    """分片断点缓存键 = 渲染后的 Map 请求指纹 + 模型。
+
+    键必须覆盖所有影响 Map 输出的输入。原来只含原文，因为续跑窗口只有「崩溃到重启」
+    几分钟；失败任务也纳入续跑后可能隔几天才重试，期间换了模型或改了 Map 提示词，
+    只按原文比分会复用错的结果。直接对「发出去的那对提示词」取指纹，比手工维护一个
+    要记得 +1 的版本常量少一个会漏的地方 —— 提示词模板、角色名、chat/story 两套
+    Map 提示词、原文，全都自动进了键。模型单列，与识别缓存键同口径。
+    """
+    digest = hashlib.sha256(f"{system}\x00{user}".encode("utf-8")).hexdigest()
+    return f"{digest}:{model}"
+
+
+def _resume_hit(index: int, key: str, candidates: dict | None) -> str | None:
     """续跑分片三重门：三道全过才返回缓存 result，否则 None（需重跑）。
 
     1. candidates 里有该 index 且形状正确（result/fingerprint 两键齐全，_shape_ok）
     2. result 非空 —— 空结果不是可用结果
-    3. chunk_fingerprint 与当前切分重算的 sha256 一致（该片原文未变）
+    3. 存的 fingerprint 与 ``key``（本片本次渲染出的 Map 请求缓存键，见
+       `chunk_cache_key`）逐字相同 —— 请求没变才复用
 
-    第 3 道用原文哈希而非 index：别名漂移会让 relevant 切片变化、index 语义漂移，
-    哈希不一致即拒绝复用——宁重跑，不拼错位结果。
+    第 3 道比的是整个请求而不是 index：别名漂移会让 relevant 切片变化、index 语义
+    漂移，键不一致即拒绝复用——宁重跑，不拼错位结果。比请求而非原文，是为了让换模型、
+    改提示词同样落进这一道门。
 
     第 2 道是**纵深防御**，不是契约：它挡的是「任何路径往 checkpoint 里写入空结果」
     这一类错误，不承诺结构校验——非空但内容不完整（截断的自由文本）照过。
@@ -251,7 +266,7 @@ def _resume_hit(index: int, chunk: str, candidates: dict | None) -> str | None:
         return None
     if not (isinstance(cand["result"], str) and cand["result"].strip()):
         return None
-    if cand["fingerprint"] != text_fingerprint(chunk):
+    if cand["fingerprint"] != key:
         return None
     return cand["result"]
 
@@ -1853,8 +1868,16 @@ class Distiller:
         map_results: list[tuple[int, str]] = []
         miss_indices: list[int] = []
         current = 0
+
+        def _build_map_prompt(chunk: str) -> tuple[str, str]:
+            return map_system(character_name), map_user(chunk, character_name)
+
+        def _cache_key(chunk: str) -> str:
+            """本片断点键 = 渲染后的 Map 请求 + 模型。写入与校验都只经此一处。"""
+            return chunk_cache_key(*_build_map_prompt(chunk), self._llm.model)
+
         for i, chunk in enumerate(relevant):
-            hit = _resume_hit(i, chunk, resume_candidates)
+            hit = _resume_hit(i, _cache_key(chunk), resume_candidates)
             if hit is None:
                 miss_indices.append(i)
                 continue
@@ -1863,9 +1886,6 @@ class Distiller:
             yield {"status": "analyzing", "current": current, "total": total}
 
         q: queue.Queue = queue.Queue()
-
-        def _build_map_prompt(chunk: str) -> tuple[str, str]:
-            return map_system(character_name), map_user(chunk, character_name)
 
         def _on_chunk(j: int, result: str, ok: bool) -> None:
             # 原语看到的是**未命中片列表**的下标 j —— 这里是全函数唯一一处把它映射回
@@ -1907,10 +1927,11 @@ class Distiller:
                 map_results.append((idx, result))
                 # 每片完成即回调落库（不攒批：攒批时 OOM 会丢掉一整批已付费的结果）。
                 # 命中的片不在此列（上面已并入 map_results），不重复写。
-                # 指纹在此算——只有这里能拿到 relevant[idx] 的原文。
+                # 键在此算——只有这里能拿到 relevant[idx] 的原文（且 _cache_key 与命中
+                # 校验走的是同一个函数，写入与校验不会各算各的）。
                 if ok:
                     if on_chunk_done:
-                        on_chunk_done(idx, result, text_fingerprint(relevant[idx]))
+                        on_chunk_done(idx, result, _cache_key(relevant[idx]))
                 elif on_chunk_done:
                     # 失败片不落 checkpoint：写进去的是空串 + 合法指纹，续跑时只有门 2
                     # 拦得住。静默的 checkpoint 失效是最贵的那种 —— 点名该片本轮不入库、下轮重跑。
