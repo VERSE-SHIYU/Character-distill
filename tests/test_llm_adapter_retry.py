@@ -437,13 +437,13 @@ def test_long_output_stream_survives_prefill_silence(fake_sse, monkeypatch):
     monkeypatch.setattr(M, "_STREAM_DEADLINE_S", 1.5)
     fake_sse.plan.update(silent_ms=1000, tokens=["long-ok"])
 
-    got = list(fake_sse.adapter().chat_stream("sys", _LONG_MSGS, long_output=True))
+    got = list(fake_sse.adapter().chat_stream_long("sys", _LONG_MSGS))
 
     assert got == ["long-ok"], f"1.0s 静默被当成故障了：{got!r}"
 
 
 def test_chat_stream_still_times_out_on_silence(fake_sse, monkeypatch):
-    """S1 的另一半：聊天流（long_output=False）逐字维持现状 —— 同样的静默仍按读超时失败。"""
+    """S1 的另一半：聊天流（走短路径 `chat_stream`）逐字维持现状 —— 同样的静默仍按读超时失败。"""
     monkeypatch.setattr(M, "OpenAI", _REAL_OPENAI)
     monkeypatch.setattr(M, "_STREAM_ATTEMPT_S", 0.5)
     monkeypatch.setattr(M, "_STREAM_DEADLINE_S", 1.5)
@@ -468,7 +468,7 @@ def test_long_output_widens_read_timeout_only():
     fake = _SyncClient(lambda: iter([_StreamChunk("a")]))
     llm._client = fake
 
-    assert list(llm.chat_stream("sys", _LONG_MSGS, long_output=True)) == ["a"]
+    assert list(llm.chat_stream_long("sys", _LONG_MSGS)) == ["a"]
 
     t = fake.chat.completions.timeouts[0]
     assert isinstance(t, _OpenAITimeout), f"长输出必须传分项 Timeout，实际 {t!r}"
@@ -499,31 +499,14 @@ def _llm_call_sites(src: str, rel: str) -> list[tuple[str, int]]:
 
 
 def test_long_output_has_exactly_one_entry():
-    """长输出流只有一个入口；5 处调用点不得各自直接调短路径。
+    """distiller 侧只许走长输出入口，不得直接调短路径。
 
-    「5 处各写一遍 `long_output=True`」的写法，漏一处就是一条会在生产上静默读超时的
-    路 —— 而漏掉的那处从调用点本身看不出来。故两半都锁：distiller 侧不许再出现短路径
-    调用点（变异：任一处改回 `self._llm.chat_stream(` → 本条红），adapter 侧
-    `long_output=True` 只许出现在入口体内（覆盖「入口忘了传参」这类静默失效）。
+    短路径的读超时是本次 attempt 的 ceiling（7s），长输入一 prefill 就假失败；漏一处
+    就是一条会在生产上静默读超时的路，而它从调用点本身看不出来（变异：任一处改回
+    `self._llm.chat_stream(` → 本条红）。入口侧的「放宽只在一个函数里发生」由
+    `test_long_output_widens_read_timeout_only` 逐参数钉住，不在这里重复。
     """
     distiller = (_REPO_ROOT / "core/distiller.py").read_text(encoding="utf-8")
-    sites = _llm_call_sites(distiller, "core/distiller.py")
-    short = [ln for name, ln in sites if name == "chat_stream"]
-    long_ = [ln for name, ln in sites if name == "chat_stream_long"]
+    short = [ln for name, ln in _llm_call_sites(distiller, "core/distiller.py")
+             if name == "chat_stream"]
     assert not short, f"core/distiller.py 仍有直接调短路径的调用点（漏改）：{short}"
-    assert len(long_) == 5, f"长输出调用点应为 5 处，实际 {len(long_)}：{long_}"
-
-    adapter = (_REPO_ROOT / "adapters/llm_adapter.py").read_text(encoding="utf-8")
-    tree = ast.parse(adapter, filename="adapters/llm_adapter.py")
-    entry = [n for n in ast.walk(tree)
-             if isinstance(n, ast.FunctionDef) and n.name == "chat_stream_long"]
-    assert len(entry) == 1, f"入口 chat_stream_long 不存在或不唯一：{[e.name for e in entry]}"
-    body = range(entry[0].lineno, entry[0].end_lineno + 1)
-
-    widened = [n.lineno for n in ast.walk(tree)
-               if isinstance(n, ast.keyword) and n.arg == "long_output"
-               and isinstance(n.value, ast.Constant) and n.value.value is True]
-    assert len(widened) == 1, f"long_output=True 应只出现一次（入口内），实际 {widened}"
-    assert widened[0] in body, (
-        f"long_output=True 出现在入口外（第 {widened[0]} 行）—— 放宽读超时绕过了汇合点"
-    )

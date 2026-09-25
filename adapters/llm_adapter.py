@@ -795,14 +795,17 @@ class LLMAdapter:
             except Exception as exc:
                 await asyncio.sleep(budget.on_failure(exc))
 
-    @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
-    def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None, *,
-                    long_output: bool = False) -> Generator[str, None, None]:
-        """流式对话，按增量产出文本片段。
+    def _stream(self, system_prompt: str, messages: list[dict[str, Any]],
+                max_tokens: int | None = None, *,
+                read_s: float | None = None) -> Generator[str, None, None]:
+        """流式的唯一实现，两个公开入口共用（``chat_stream`` / ``chat_stream_long``）。
 
-        ``long_output=True`` 只把**读**超时放宽到 ``_BATCH_STREAM_READ_S``（长输出的
-        prefill 静默可以到分钟级），connect / write / pool 仍取本次 attempt 的 ceiling；
-        默认 False 时逐字维持原行为（聊天流不受影响）。
+        ``read_s`` 是**读**阶段的超时上限：``None`` = 取本次 attempt 的 ceiling，即以标量
+        交给 httpx、每个阶段（含 read）都用它 —— 交互流逐字维持原行为；给出数值则只放宽
+        read，connect / write / pool 仍取 ceiling。
+
+        两个入口的差别只有 ``read_s`` 一个值，故「这类调用读超时多长」只在一处定义：
+        调用点不需要（也不该）知道有这回事。
         """
         self._before_call()   # 建流之前：拒绝时连 create() 都不发
         payload = self._build_messages(system_prompt, messages)
@@ -818,9 +821,9 @@ class LLMAdapter:
                               log_prefix="LLMAdapter chat_stream")
         while True:
             timeout: float | Timeout = budget.attempt_timeout()
-            if long_output:
+            if read_s is not None:
                 # 分项超时：标量会被 httpx 铺到每个阶段（含 read），长 prefill 必超时。
-                timeout = Timeout(timeout, read=_BATCH_STREAM_READ_S)
+                timeout = Timeout(timeout, read=read_s)
             try:
                 stream = self._client.chat.completions.create(
                     model=self._model,
@@ -885,16 +888,23 @@ class LLMAdapter:
             print(f"读取流式响应失败：{exc}")
             raise
 
+    @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
+    def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]],
+                    max_tokens: int | None = None) -> Generator[str, None, None]:
+        """交互/小输出用：读超时取本次 attempt 的 ceiling（聊天是 7 s）。"""
+        return (yield from self._stream(system_prompt, messages, max_tokens))
+
+    @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
     def chat_stream_long(self, system_prompt: str, messages: list[dict[str, Any]],
                          max_tokens: int | None = None) -> Generator[str, None, None]:
         """长输出流式的**唯一入口**：角色卡 / 合并 / 格式化走这里。
 
-        存在的理由是「守汇合点」——`long_output=True` 只在这一个函数里出现，调用点
-        不需要（也不该）知道有个读超时要放宽：那种「5 处各写一遍参数」的写法，漏一处
-        就是一条会在生产上静默读超时的路，而漏掉的那处从调用点看不出来。
+        存在的理由是「守汇合点」——读超时放宽只在这一个函数里发生，调用点不需要
+        （也不该）知道有这回事：那种「5 处各写一遍参数」的写法，漏一处就是一条会在
+        生产上静默读超时的路，而漏掉的那处从调用点看不出来。
         """
-        yield from self.chat_stream(system_prompt, messages, max_tokens=max_tokens,
-                                    long_output=True)
+        return (yield from self._stream(system_prompt, messages, max_tokens,
+                                        read_s=_BATCH_STREAM_READ_S))
 
     @T.spanned("llm.chat_with_tools", op="chat", finalize=_infer_finalize)
     def chat_with_tools(
