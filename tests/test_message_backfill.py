@@ -424,7 +424,7 @@ def test_C2_summary_queues_behind_an_unpersisted_message(flaky, owner):
 
 
 def test_C3_revoke_clears_the_queue(flaky, owner):
-    """`/revoke` 先把队清掉 —— 不清的话补写会把用户刚撤回的消息又写回来。"""
+    """`/revoke` 之后队里不留这条 —— 删库成功即清队，补写不会把刚撤回的消息又写回来。"""
     sid = _new_sid()
     _install_session(flaky, sid, owner, _Engine())
     client = _client(flaky, owner)

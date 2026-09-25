@@ -691,13 +691,13 @@ async def revoke_messages(
     user_id = user["id"]
     session = await _ensure_session(req.session_id, storage, sessions, user_id)
 
-    # 撤回 = 这段历史整个不要了：队里还没落库的那几条也得摘掉。不清队的话补写会把它们
-    # 又写回来，用户看到的是「撤回之后它自己又冒出来了」。**先清队再删库** —— 顺序反过来
-    # 时，两步之间插进来的补写，正好就是删完之后又出现的那条。
-    session["outbox"].clear()
-
-    # Delete from SQLite first
-    count = await storage.delete_messages_after(req.session_id, req.message_id)
+    # 撤回 = 这段历史整个不要了：队里还没落库的那几条也得摘掉，否则补写会把它们又写回来，
+    # 用户看到的是「撤回之后它自己又冒出来了」。**删库成功之后才清队，且两步同持队列锁** ——
+    # 反过来（先清队再删库）或不持锁，删库那段 `await` 里插进来的补写就会把正在被撤回的
+    # 消息写进库，而且是在删完之后写的，于是留在库里。
+    count = await session["outbox"].clear_after(
+        lambda: storage.delete_messages_after(req.session_id, req.message_id)
+    )
 
     # Rebuild in-memory engine.history from remaining DB rows
     try:

@@ -1,7 +1,7 @@
 """补写队列：顺序、可达性分辨、丢弃粒度。
 
-seam 是 `MessageOutbox` 的四个方法（`write` / `flush` / `discard` / `clear`）—— 队列不碰
-存储，`write_fn` 与 `ping` 都是传进来的，所以这一层可以完全脱离数据库测。
+seam 是 `MessageOutbox` 的五个方法（`write` / `flush` / `discard` / `clear` / `clear_after`）
+—— 队列不碰存储，`write_fn` 与 `ping` 都是传进来的，所以这一层可以完全脱离数据库测。
 
 **「库不可达」在夹具里的形状是「写入与 ping 一起失败」**，不是「ping 说不可达而写入照常
 成功」—— 真实现里连不上时写就是会抛（写完才问 ping 是为了分辨「库挂了」与「这一条坏了」，
@@ -243,3 +243,97 @@ async def test_clear_empties_the_queue():
     report = await outbox.flush(ping=db.ping)
     assert (report.flushed, report.dropped) == ([], [])
     assert first.rows == [] and second.rows == []
+
+
+# ── clear_after：撤回 = 删库成功之后才清队（持锁） ───────────────────────────
+
+
+def _deleter(result: int = 7, *, exc: Exception | None = None):
+    """假 `action`：`/revoke` 里那步「删库」。`exc` 非空时抛它。"""
+
+    async def _run() -> int:
+        if exc is not None:
+            raise exc
+        return result
+
+    return _run
+
+
+async def test_revoke_keeps_the_queue_when_the_delete_fails():
+    """删库抛错 → 队里未落库的消息**一条都不许少**。
+
+    这是撤回的失败路径：库删不掉，历史就没删掉，那些消息仍然该被补写。
+
+    变异：`clear_after` 改成先清队再执行 `action` → 本条红（队被清空，消息真丢了）。
+    """
+    db = _DB(up=False)
+    outbox = MessageOutbox()
+    writer = _Writer(db)
+    state, _ = await outbox.write(writer, ping=db.ping)
+    assert state.state == "pending"
+
+    with pytest.raises(RuntimeError, match="delete failed"):
+        await outbox.clear_after(_deleter(exc=RuntimeError("delete failed")))
+
+    assert outbox.has_pending is True, "删库失败了，队里那条还在排队，不该被清掉"
+
+    db.up = True
+    report = await outbox.flush(ping=db.ping)
+    assert report.flushed == [(state.key, 1)], "撤回没成功，这条照样要能补上"
+
+
+async def test_revoke_clears_the_queue_after_the_delete_succeeds():
+    """删库成功 → 队空，且把 `action` 的结果原样交回调用方（`/revoke` 要拿它当 `deleted`）。"""
+    db = _DB(up=False)
+    outbox = MessageOutbox()
+    writer = _Writer(db)
+    await outbox.write(writer, ping=db.ping)
+
+    result = await outbox.clear_after(_deleter(3))
+
+    assert result == 3, "`clear_after` 要把 action 的返回值原样交回（`deleted` 就是它）"
+    assert outbox.has_pending is False
+
+    db.up = True
+    report = await outbox.flush(ping=db.ping)
+    assert (report.flushed, report.dropped) == ([], [])
+
+
+async def test_revoke_holds_the_lock_while_the_delete_is_in_flight():
+    """删库进行中排进来的 flush **等撤回结束**才执行，且不会把已撤回的消息写回库。
+
+    这条管的是「撤回之后它自己又冒出来了」：库在删的这段时间里，如果补写能插进
+    「删库」与「清队」之间，那些正在被撤回的消息就被写进了库 —— 而且是在删完之后写的，
+    所以留在库里。
+
+    变异：`clear_after` 只保留「删完再清」但**不持锁** → 本条两条断言都红（flush 抢在
+    清除之前把那两条补写进库）。
+    """
+    db = _DB(up=False)
+    outbox = MessageOutbox()
+    writer = _Writer(db)
+    state, _ = await outbox.write(writer, ping=db.ping)
+    assert state.state == "pending"
+
+    db.up = True  # 库回来了：这之后任何一次补写都会把这条写进库
+    gate, started = asyncio.Event(), asyncio.Event()
+
+    async def _slow_delete() -> int:
+        started.set()
+        await gate.wait()
+        return 1
+
+    t_revoke = asyncio.create_task(outbox.clear_after(_slow_delete))
+    await started.wait()  # 删库已经进到一半、正占着锁
+    t_flush = asyncio.create_task(outbox.flush(ping=db.ping))
+    await asyncio.sleep(0)  # 那次 flush 排队等锁
+
+    assert len(writer.calls) == 1, "撤回还没结束，flush 不许先动队列（撤回持锁）"
+
+    gate.set()
+    assert await asyncio.wait_for(t_revoke, timeout=5) == 1
+    report = await asyncio.wait_for(t_flush, timeout=5)
+
+    assert (report.flushed, report.dropped) == ([], [])
+    assert len(writer.calls) == 1, "撤回已把这段历史整个清掉，补写不许把它写回库"
+    assert outbox.has_pending is False

@@ -26,13 +26,15 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, TypeVar
 from uuid import uuid4
 
 from core.nonfatal import nonfatal
 
 # 一条待补写的消息：(幂等键, 真正去落库的协程构造器)
 _Entry = tuple[str, Callable[[str], Awaitable[int]]]
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -177,6 +179,21 @@ class MessageOutbox:
     def clear(self) -> None:
         """清空队列（`/revoke` 用：这段历史整个不要了，补写会把它们又写回来）。"""
         self._queue.clear()
+
+    async def clear_after(self, action: Callable[[], Awaitable[_T]]) -> _T:
+        """持锁执行 `action`，**它成功之后**才清队，并把它的结果原样交回。
+
+        `/revoke` 用：先删库、删成功了这段历史才真的不要了。删库抛错时队列**原样保留**、
+        异常上抛 —— 历史没删掉，那些消息就仍然该被补写。
+
+        **持锁是这条顺序成立的前提**（与 `write` 那条同一个道理）：不持锁的话，删库的
+        `await` 期间排进来的补写会插到「删库」与「清队」之间，把正在被撤回的消息写进库 ——
+        而且是在删完之后写的，于是它们留在库里，用户看到「撤回之后它自己又冒出来了」。
+        """
+        async with self._lock:
+            result = await action()
+            self._queue.clear()
+            return result
 
     def _drop_head(self, key: str) -> None:
         """出队，但只删「还是原来那个头」。
