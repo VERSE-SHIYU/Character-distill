@@ -3,6 +3,12 @@
 **`SENTRY_DSN` 为空 = 整个模块不生效。** 见 `init_error_reporting`：不 import SDK、
 不初始化，行为与接线之前逐字一致 —— 所以本模块可以先合 main，不等 GlitchTip 就绪。
 
+**返回的是 `ExitStack.push` 的退出函数，不是回调。** 差别只在异常那一格，而这一格正好是
+本模块存在的理由：`validate_*` 抛出时，若撤销走 `callback`，它拿不到正在冒出的异常 ——
+flush + close 先跑，异常这才冒出 lifespan 交给 uvicorn，那时 client 已经关了，启动期
+自身抛的错一条都发不出去。`push` 的退出函数带 `(exc_type, exc, tb)`，先 `capture_exception`
+再 flush + close。**不吞异常**（返回 None），异常照旧往上传。
+
 **为什么只从日志汇合点进。** 未捕获异常都落在 `web/server.py` 的
 `_global_exception_handler`（`logger.exception` 记一条带堆栈的 ERROR），Sentry 缺省的
 `LoggingIntegration` 收这条，后端的错于是**全部**经这一处汇合上报。
@@ -23,9 +29,9 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from collections.abc import Callable
 
 from core.node import node_region
 
@@ -33,6 +39,10 @@ logger = logging.getLogger(__name__)
 
 #: 环境变量名。**唯一读取点**在本模块。
 SENTRY_DSN_ENV = "SENTRY_DSN"
+
+#: 关停与收尾不是「故障」：取消是正常关停路径（uvicorn 关停 lifespan 就是取消它），
+#: `GeneratorExit` 是解释器收尾。报它们等于每次部署各发一条假告警。
+_NOT_A_FAILURE = (asyncio.CancelledError, GeneratorExit)
 
 
 def _scrub_request(event: dict, hint: dict) -> dict:
@@ -44,11 +54,30 @@ def _scrub_request(event: dict, hint: dict) -> dict:
     return event
 
 
-def init_error_reporting() -> Callable[[], None]:
-    """按 `SENTRY_DSN` 起不起上报；返回撤销（flush 后关闭 client）。**在 lifespan 首行调用。**
+class _ReportingExit:
+    """`ExitStack.push` 的退出函数：**有异常先上报**，再 flush + close；不吞异常。
 
-    放首位不是因为它有什么前置依赖（它不发 LLM 调用），而是为了收到**启动期自身**
-    抛出的错 —— 排后面的装配项一旦在启动时炸，这条出口还没接上。
+    `sdk` 为 None（`SENTRY_DSN` 为空）时是空操作：那时连 SDK 都没 import，没有东西可撤。
+    """
+
+    def __init__(self, sdk=None) -> None:
+        self._sdk = sdk
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        sdk = self._sdk
+        if sdk is None:
+            return
+        if exc_type is not None and not issubclass(exc_type, _NOT_A_FAILURE):
+            sdk.capture_exception(exc)
+        sdk.flush()
+        sdk.get_client().close()
+
+
+def init_error_reporting() -> _ReportingExit:
+    """按 `SENTRY_DSN` 起不起上报；返回退出函数交给 `_lifespan` 的 `ExitStack.push`。
+
+    **放 lifespan 首行**不是因为它有什么前置依赖（它不发 LLM 调用），而是为了收到**启动期
+    自身**抛出的错 —— 排后面的装配项一旦在启动时炸，这条出口还没接上。
 
     DSN 为空时返回空操作：那时连 SDK 都没 import，没有东西可撤。
 
@@ -57,7 +86,7 @@ def init_error_reporting() -> Callable[[], None]:
     """
     dsn = os.environ.get(SENTRY_DSN_ENV, "").strip()
     if not dsn:
-        return lambda: None
+        return _ReportingExit()
 
     import sentry_sdk
 
@@ -76,9 +105,4 @@ def init_error_reporting() -> Callable[[], None]:
         include_local_variables=False,
     )
     sentry_sdk.set_tag("region", node_region())
-
-    def _undo() -> None:
-        sentry_sdk.flush()
-        sentry_sdk.get_client().close()
-
-    return _undo
+    return _ReportingExit(sentry_sdk)

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -24,6 +25,7 @@ DSN = "https://public@errors.example.test/1"
 # 字面量若紧挨路由函数的定义，就会被算成「事件里出现了正文」，那是测试自己造的假象。
 EXC_MARKER = "obs-probe-uncaught"
 BODY_MARKER = "obs-probe-request-body"
+STARTUP_MARKER = "obs-probe-startup"
 PROBE_PATH = "/__error_reporting_probe"
 
 
@@ -155,6 +157,44 @@ class _ProbeBody(BaseModel):
 
 async def _boom(payload: _ProbeBody) -> None:
     raise RuntimeError(EXC_MARKER)
+
+
+def test_startup_failure_is_reported_before_the_client_closes(recorder, monkeypatch):
+    """启动期自身抛的错也要报出去 —— 这正是这条出口排在 lifespan 首位的理由。
+
+    判据落在「异常冒出去之前，事件已经发出去了」上。撤销若走 `stack.callback`，回调拿不
+    到正在冒出的异常，顺序就反了：flush + close 先跑，异常这才冒出 lifespan 交给 uvicorn
+    —— 那时 client 已经关了，这条出口的唯一目的正好落空。故撤销是 `stack.push` 的退出
+    函数（见 `core/error_reporting._ReportingExit`）。
+
+    变异：把 `_lifespan` 里那处 `stack.push` 换回 `stack.callback`（撤销不带异常信息）
+    → 本条红。
+    """
+    monkeypatch.setenv("SENTRY_DSN", DSN)
+
+    import server as server_mod
+
+    def _boom() -> None:
+        raise RuntimeError(STARTUP_MARKER)
+
+    # 只留一个**会抛**的校验项，就落在上报之后几步的位置上（lifespan 里的顺序）：
+    # fernet 与 inter-node 的校验关掉，让 jwt 那一处成为唯一的失败点。
+    monkeypatch.setattr(server_mod, "validate_fernet_key", lambda: None)
+    monkeypatch.setattr(server_mod, "validate_jwt_secret", _boom)
+
+    class _App:
+        state = type("S", (), {"limiter": object()})()
+
+    async def _drive() -> None:
+        async with server_mod._lifespan(_App()):
+            pass  # pragma: no cover —— 上面那步就该抛，走不到这里
+
+    with pytest.raises(RuntimeError, match=STARTUP_MARKER):
+        asyncio.run(_drive())
+
+    sentry_sdk.flush()
+    blob = json.dumps(recorder.events)
+    assert STARTUP_MARKER in blob, f"启动期抛的错没上报（撤销顺序反了？）：{blob}"
 
 
 def test_uncaught_route_error_reports_once_without_request_body(recorder, monkeypatch):

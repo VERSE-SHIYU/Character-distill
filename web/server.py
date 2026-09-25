@@ -105,7 +105,11 @@ async def _lifespan(app: FastAPI):
     async with AsyncExitStack() as stack:
         # 上报接在第一位：它不发 LLM 调用，放在门之前不破坏下面那条不变量；放最前是为了
         # 收到**启动期自身**抛出的错 —— 排在后面的装配项一旦在启动时炸，这条出口还没接上。
-        stack.callback(init_error_reporting())
+        #
+        # 唯一一处 `push` 而不是 `callback`：回调拿不到正在冒出的异常，`validate_*` 一抛
+        # 就变成「先 flush + close，异常这才冒出去」，这条出口的唯一目的正好落空（见
+        # `core/error_reporting._ReportingExit`）。
+        stack.push(init_error_reporting())
 
         # 门必须在**任何可能发起 LLM 调用的装配项**之前成立：守卫是进程级全局，装配期
         # 注册（与 `set_main_loop` 同一处形态）。
