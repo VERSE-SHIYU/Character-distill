@@ -491,6 +491,31 @@ class StorageBase(ABC):
         """List all messages in one session."""
 
     @abstractmethod
+    async def find_message_ids_by_client_keys(
+        self, session_id: str, keys: list[str],
+    ) -> dict[str, int]:
+        """按幂等键查行 id：`{key: 行 id}`，只含**本会话里确实存在**的那些。
+
+        对账用（`core.message_outbox.MessageOutbox.reconcile`）：队列在会话被逐出后重建
+        时是空的，「这条消息到底落库没有」只能回库问 —— 而问的依据必须是写入时的幂等键。
+        拿内容或时间戳去猜，会把两条内容相同的消息判成同一条。
+
+        `keys` 为空直接回 `{}`：空 `IN ()` 是语法错误，不是空结果。调用方也靠这个信号
+        知道「没有可对账的键」，两边不必各自判空。
+        """
+
+    @abstractmethod
+    async def find_group_message_ids_by_client_keys(
+        self, group_id: str, keys: list[str],
+    ) -> dict[str, int]:
+        """群聊版，范围换成 `group_id`，其余语义同上。
+
+        **本条是 base 里唯一的群聊消息方法**：`save_group_message` /
+        `get_group_messages` 只存在于两个实现、没进抽象声明。对账这条路径两个入口
+        （一对一 / 群聊）都要走，两个实现必须都有它，所以它进抽象集。
+        """
+
+    @abstractmethod
     async def delete_messages_after(self, session_id: str, message_id: int) -> int:
         """Delete messages after and including message_id."""
 

@@ -582,6 +582,22 @@ class TestMessageCrud:
                     session_id, "user", "重放的内容", "k1",
                 )
 
+    async def test_find_message_ids_by_client_keys(self, store, text_id, card_id, session_id):
+        """步骤 2：按幂等键查行 id（SQLite 侧同形见
+        `tests/test_client_key_idempotency.py`）。"""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "Char", json.dumps({"name": "Char"}))
+        await store.save_session(session_id, card_id, "", "")
+        first = await store.save_message(session_id, "user", "第一条", "", client_key="k1")
+        second = await store.save_message(session_id, "assistant", "第二条", "", client_key="k2")
+        # k9 没被问到：少了它，「不过滤 key、把本会话的行全返回」也能过（SQLite 侧同一条）
+        await store.save_message(session_id, "user", "没被问到的", "", client_key="k9")
+
+        found = await store.find_message_ids_by_client_keys(session_id, ["k1", "k2", "k3"])
+
+        assert found == {"k1": first["id"], "k2": second["id"]}
+        assert await store.find_message_ids_by_client_keys(session_id, []) == {}
+
     async def test_client_key_null_rows_are_unconstrained(self, store, text_id, card_id, session_id):
         """partial index：NULL key 的行不受约束（老调用点连着写两条相同内容是对的）。"""
         await store.save_text(text_id, "src.txt", "source")
@@ -764,6 +780,20 @@ class TestGroupSessionCrud:
         rows = await store.get_group_messages(gid)
         assert len(rows) == 1
         assert rows[0]["content"] == "第一条"
+
+    async def test_find_group_message_ids_by_client_keys(self, store):
+        """按幂等键查群聊行 id，范围是 `group_id`（SQLite 侧同形见
+        `tests/test_client_key_idempotency.py`）。"""
+        g1, g2 = f"grp_{uuid.uuid4().hex}", f"grp_{uuid.uuid4().hex}"
+        first = await store.save_group_message(g1, "张三", "assistant", "第一条", client_key="k1")
+        second = await store.save_group_message(g1, "李四", "user", "第二条", client_key="k2")
+        await store.save_group_message(g1, "张三", "assistant", "没被问到的", client_key="k9")
+        await store.save_group_message(g2, "张三", "assistant", "别处的", client_key="k1")
+
+        assert await store.find_group_message_ids_by_client_keys(g1, ["k1", "k2", "k3"]) == {
+            "k1": first, "k2": second,
+        }
+        assert await store.find_group_message_ids_by_client_keys(g2, []) == {}
 
 
 # ── Follow / DM ──────────────────────────────────────────────────────────────

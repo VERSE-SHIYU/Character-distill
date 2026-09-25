@@ -2251,6 +2251,29 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get messages failed: {exc}")
             raise
 
+    async def find_message_ids_by_client_keys(
+        self, session_id: str, keys: list[str],
+    ) -> dict[str, int]:
+        """按幂等键查行 id。语义与返回形状见 `StorageBase` 上的同名声明。"""
+        if not keys:
+            return {}
+        try:
+            async with await self._connect() as conn:
+                holes = ",".join("?" for _ in keys)
+                cursor = await conn.execute(
+                    f"""
+                    SELECT client_key, id
+                    FROM messages
+                    WHERE session_id = ? AND client_key IN ({holes})
+                    """,
+                    (session_id, *keys),
+                )
+                rows = await cursor.fetchall()
+            return {row[0]: int(row[1]) for row in rows}
+        except Exception as exc:
+            print(f"[SQLiteStore] Find message ids by client keys failed: {exc}")
+            raise
+
     # ── group sessions ────────────────────────────────────────────────
 
     async def create_group_session(
@@ -2435,6 +2458,29 @@ class SQLiteStore(StorageBase):
             return messages
         except Exception as exc:
             print(f"[SQLiteStore] Get group messages failed: {exc}")
+            raise
+
+    async def find_group_message_ids_by_client_keys(
+        self, group_id: str, keys: list[str],
+    ) -> dict[str, int]:
+        """按幂等键查群聊行 id。语义与返回形状见 `StorageBase` 上的同名声明。"""
+        if not keys:
+            return {}
+        try:
+            async with await self._connect() as conn:
+                holes = ",".join("?" for _ in keys)
+                cursor = await conn.execute(
+                    f"""
+                    SELECT client_key, id
+                    FROM group_messages
+                    WHERE group_id = ? AND client_key IN ({holes})
+                    """,
+                    (group_id, *keys),
+                )
+                rows = await cursor.fetchall()
+            return {row[0]: int(row[1]) for row in rows}
+        except Exception as exc:
+            print(f"[SQLiteStore] Find group message ids by client keys failed: {exc}")
             raise
 
     _REACTION_TABLES = frozenset({"message_reactions", "dm_reactions"})

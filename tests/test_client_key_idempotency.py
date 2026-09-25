@@ -91,6 +91,50 @@ class TestClientKeySQLite:
 
         assert len(await store.get_messages(sid)) == 2
 
+    # ── 按 key 查行 id：对账（`MessageOutbox.reconcile`）的存储底座 ────────────
+
+    async def test_lookup_returns_only_the_keys_that_are_stored(self, store):
+        """给一串 key，回一张 `{key: 行 id}`：查的命中的入库，没查的不许顺手带出来。
+
+        `k9` 那条是判别力所在 —— 少了它，「不过滤 key、把本会话的行全返回」也能过。
+        """
+        sid = await _make_session(store)
+        first = await store.save_message(sid, "user", "第一条", "", client_key="k1")
+        second = await store.save_message(sid, "assistant", "第二条", "", client_key="k2")
+        await store.save_message(sid, "user", "没被问到的", "", client_key="k9")
+
+        found = await store.find_message_ids_by_client_keys(sid, ["k1", "k2", "k3"])
+
+        assert found == {"k1": first["id"], "k2": second["id"]}
+
+    async def test_lookup_is_scoped_to_the_session(self, store):
+        """查询按 `session_id` 约束：别的会话用了同一个 key，不算这条会话的命中。"""
+        mine, other = await _make_session(store), await _make_session(store)
+        elsewhere = await store.save_message(other, "user", "别处的", "", client_key="k1")
+
+        assert await store.find_message_ids_by_client_keys(mine, ["k1"]) == {}
+        assert await store.find_message_ids_by_client_keys(
+            other, ["k1"]) == {"k1": elsewhere["id"]}
+
+    async def test_group_lookup_is_scoped_to_the_group(self, store):
+        g1, g2 = f"grp_{uuid.uuid4().hex}", f"grp_{uuid.uuid4().hex}"
+        first = await store.save_group_message(g1, "张三", "assistant", "第一条", client_key="k1")
+        second = await store.save_group_message(g1, "李四", "user", "第二条", client_key="k2")
+        await store.save_group_message(g1, "张三", "assistant", "没被问到的", client_key="k9")
+        await store.save_group_message(g2, "张三", "assistant", "别处的", client_key="k1")
+
+        assert await store.find_group_message_ids_by_client_keys(g1, ["k1", "k2", "k3"]) == {
+            "k1": first, "k2": second,
+        }
+
+    async def test_empty_keys_asks_nothing_and_answers_nothing(self, store):
+        """空列表直接 `{}` —— 不拼 `IN ()`（那是语法错误，不是空结果）。"""
+        sid = await _make_session(store)
+        await store.save_message(sid, "user", "第一条", "", client_key="k1")
+
+        assert await store.find_message_ids_by_client_keys(sid, []) == {}
+        assert await store.find_group_message_ids_by_client_keys("grp_x", []) == {}
+
     async def test_unique_index_backstops_duplicate_key(self, store, db_path):
         """K3：绕过查重直接插同 key，唯一索引必须拦下（这条是兜底，不是主路径）。"""
         sid = await _make_session(store)
