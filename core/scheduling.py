@@ -5,17 +5,17 @@
 `core.utils` 自建 loop 的线程、审计投递），本模块把语义收敛到一处。
 
 方向：core 不认识 web。`web/deps.py` 捕获主 loop 时**向下注册**实现
-（`scheduling.set_loop_submitter`）；未注册时的回退语义在这里定义一次。
+（`scheduling.set_loop_submitter`）；未注册时这里**当场报错**，没有退路。
 
-未注册回退（只有独立进程/测试会走到）：
-  - ``wait=True``：``asyncio.run`` 并**响亮**警告 —— 调用方以为在等主 loop 的结果，
-    实际是在当前线程另起了个 loop，池会被跨 loop 触碰。warning 是给这个错觉留的痕迹。
-  - ``wait=False``：当前线程有运行中的 loop 就 ``create_task``，否则 ``asyncio.run``。
+未注册为什么不留退路：以前 ``wait=True`` 走 ``asyncio.run``、``wait=False`` 走
+``create_task``，看着像「独立进程和测试也能用」，其实是拿**当前线程**另起一个 loop ——
+池被跨 loop 触碰（正是本模块要消灭的那件事），而且测试会借这条路在错误的线程上干活：
+实测退路被命中 22 次，其中 21 次被调用方的宽 ``except`` 吞掉，用例照常显示通过 ——
+测的根本不是生产形状。独立进程要投递就自己注册（``scripts/smoke_eval_e2e.py``、
+``scripts/integration_check.py`` 就是这么做的）。
 """
 from __future__ import annotations
 
-import asyncio
-import warnings
 from typing import Any, Callable
 
 LoopSubmitter = Callable[..., Any]
@@ -38,20 +38,17 @@ def submit_to_main_loop(coro, *, wait: bool = True, timeout: float = 600) -> Any
     """把 *coro* 投递到主 loop。
 
     已注册实现时委托给它，并**原样返回它的返回值**（`wait=True` 时是协程的结果）。
-    未注册时走下文的回退语义。
+    未注册时抛 `RuntimeError` —— 不许在本线程另起 loop：那会跨 loop 触碰连接池，
+    而且让测试在错误的线程上过关（见模块头）。
+
+    拒绝时**先 `close()` 掉 *coro***：调用方把协程交出来就不再持有它，扔回异常而不管
+    协程的话，谁都不会 await 它 —— GC 时飘一条 `coroutine ... was never awaited`，
+    而且因为是别人的栈帧被 GC 到，症状挂在**别的**用例头上（最难查的那种串味）。
     """
-    if _submitter is not None:
-        return _submitter(coro, wait=wait, timeout=timeout)
-
-    if wait:
-        warnings.warn(
-            "[scheduling] No loop submitter registered, falling back to asyncio.run() "
-            "— 这不是主 loop，跨 loop 复用的连接池会炸"
+    if _submitter is None:
+        coro.close()
+        raise RuntimeError(
+            "未注册投递实现：submit_to_main_loop 需要 web 层启动时经 "
+            "scheduling.set_loop_submitter 注册；独立进程请自行注册"
         )
-        return asyncio.run(coro)
-
-    try:
-        running = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    return running.create_task(coro)
+    return _submitter(coro, wait=wait, timeout=timeout)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import asyncio
 import random
 import time
@@ -17,6 +18,8 @@ from openai import AsyncOpenAI, BadRequestError, OpenAI
 
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 from core.utils import estimate_usage_from_chars  # 字符→token 估算的唯一出口
+
+logger = logging.getLogger(__name__)
 
 
 def _classify_retry(exc: Exception) -> tuple[bool, float | None]:
@@ -205,9 +208,15 @@ class _RetryBudget:
                 f"{self._err} failed after {self._total} attempts: {exc}",
                 user_message=user_message)
         if is_429:
-            print(f"{self._tag}Rate limited (429), attempt {self._total}, waiting {wait:.1f}s")
+            logger.warning(
+                "%sRate limited (429), attempt %s, waiting %.1fs",
+                self._tag, self._total, wait,
+            )
         else:
-            print(f"{self._tag}Attempt {self._total} failed: {exc}, retrying in {wait:.1f}s...")
+            logger.warning(
+                "%sAttempt %s failed: %s, retrying in %.1fs...",
+                self._tag, self._total, exc, wait,
+            )
         return wait
 
 
@@ -556,7 +565,7 @@ def _resolve_max_tokens(llm_cfg: dict[str, Any]) -> int:
         try:
             return int(env)
         except ValueError:
-            print(f"[LLMAdapter] LLM_MAX_TOKENS={env!r} 不是整数，回退 config.yaml")
+            logger.warning("[LLMAdapter] LLM_MAX_TOKENS=%r 不是整数，回退 config.yaml", env)
     return int(llm_cfg.get("max_tokens", 4096))
 
 
@@ -592,7 +601,7 @@ class LLMAdapter:
             if isinstance(data, dict) and "llm" in data:
                 llm_cfg = data["llm"]
         except Exception as exc:
-            print(f"[LLMAdapter] Config file load failed, using defaults: {exc}")
+            logger.error("[LLMAdapter] Config file load failed, using defaults: %s", exc, exc_info=True)
             pass
 
         self._base_url = base_url or str(llm_cfg.get("base_url", "https://api.deepseek.com"))

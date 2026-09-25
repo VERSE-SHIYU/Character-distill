@@ -201,7 +201,7 @@ def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
 
     捕获与注册是同一件事的两半：本模块是**唯一**知道主 loop 的地方，故由它向下
     注册投递实现（`core.scheduling.set_loop_submitter`）。注册只发生在启动时捕获到
-    loop 之后 —— 那之前没有主 loop 可投，`core.scheduling` 的回退语义接管。
+    loop 之后 —— 那之前投递一律 `RuntimeError`：`core.scheduling` 不留退路。
     """
     global _main_loop
     _main_loop = loop
@@ -219,7 +219,24 @@ def _submit_to_main_loop(coro, *, wait: bool = True, timeout: float = 600):
     wait=True 时取结果并抛出协程的异常（调用方原本就在等，串行语义不变）；
     wait=False 时不取结果、不阻塞，异常交给 done-callback 落日志 —— 那正是
     「记账/审计不该拖住请求」的写法。
+
+    主 loop 线程上 `wait=True` 是**自等**：`run_coroutine_threadsafe` 把协程排回当前
+    loop，而当前 loop 正卡在这句 `result()` 上 —— 堵满 timeout（生产上 15 秒），异常
+    还会被调用方的宽 `except` 吞成一行 warning，症状是「保存静默不生效且不报错」。
+    必须在投递**之前**报错：async 路由里该写成 `await asyncio.to_thread(...)`。
+
+    拒绝时**先 `close()` 掉 *coro***：理由与 `core.scheduling.submit_to_main_loop`
+    的未注册分支同一条 —— 丢下调用方的协程，GC 时那条 `never awaited` 会飘在别人的
+    用例头上。
     """
+    if wait and _main_loop is not None:
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is _main_loop:
+            coro.close()
+            raise RuntimeError("主 loop 线程上不得阻塞等主 loop")
     fut = asyncio.run_coroutine_threadsafe(coro, _main_loop)
     if wait:
         return fut.result(timeout=timeout)

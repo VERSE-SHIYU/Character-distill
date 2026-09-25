@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -16,6 +17,8 @@ from core.agent.tools import EMPTY_RESULT
 from core.schema import SourceTrace
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 from core.utils import try_record_usage
+
+logger = logging.getLogger(__name__)
 
 ROUTER_SYSTEM_PROMPT = (
     "你是一个对话系统的检索决策器。你的唯一职责是判断："
@@ -105,7 +108,7 @@ class AgentLoop:
                     retrieved=retrieved, evidence=evidence,
                 )
             except Exception as exc:
-                print(f"[AgentLoop] chat_with_tools error: {exc}")
+                logger.warning("[AgentLoop] chat_with_tools error: %s", exc, exc_info=True)
                 return AgentLoopResult(
                     messages=original, steps=steps, degraded=True,
                     retrieved=retrieved, evidence=evidence,

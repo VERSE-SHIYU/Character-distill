@@ -513,7 +513,7 @@ async def publish_card(
     try:
         outcome, reason = await _publish_preflight(card, user, storage)
     except Exception as exc:
-        print(f"[market-pregate] preflight crashed → flag: {exc}")
+        logger.error("[market-pregate] preflight crashed → flag: %s", exc, exc_info=True)
         from storage.base import new_review_id as _rid
         try:
             await storage.save_review_log(_rid(), card_id, user["id"], "flag", f"[publish-injection] 审核异常：{exc}"[:300])

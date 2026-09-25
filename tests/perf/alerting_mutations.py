@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""spec-119 变异矩阵驱动 —— 10 条变异打 `tests/test_failure_alerting.py` 的 12 条判别器。
+"""spec-119 变异矩阵驱动 —— 13 条变异打 `tests/test_failure_alerting.py` 的 12 条判别器。
 
 **为什么入库。** 本份交付报告里的「哪条变异红、红在哪句」全部来自这个脚本。数字若只骑在
 仓外脚本上，三个月后复现不了（§四：文档引用的数字，其产数脚本与原始产物也要入库）。
@@ -27,8 +27,16 @@
 它只有一条路：让扫描面上真的出现一个解析不动的文件。故这条变异动的是**输入**（写一个
 `core/_spec119_syntax_probe.py`，用完删除），不是被守对象。
 
+**M11–M13 补的是「按结构判定」这层判据的分辨力。** 旧判据的三个漏洞各有能撞红的样本：
+M11 往 `core/distiller.py` 的 `else:` 分支里插一句 print（不在 `except` 里，靠文本规则
+命中；旧写法只读 `.body`，会把它静默跳过）；M12 把 `web/routers/distill.py` 那处改回
+`print` 而保留后面的 `raise HTTPException(400, …)`（HTTPException 走不到全局处理器，
+失败仍只落 stdout，旧判据当「必然抛出」放过）；M13 删掉 `core/alerting.py` 那唯一的豁免
+print（相等比较要能在**豁免失效**时变红）。三条都不重复 M10 已覆盖的「`except` 里改回
+`print`」。
+
 **用法**
-    python tests/perf/alerting_mutations.py            # 全部（基线 + 10 条）
+    python tests/perf/alerting_mutations.py            # 全部（基线 + 13 条）
     python tests/perf/alerting_mutations.py --list     # 只列变异，不跑（核对锚点用）
 """
 from __future__ import annotations
@@ -56,8 +64,11 @@ NONFATAL = ROOT / "core" / "nonfatal.py"                # 「吞掉但留痕」�
 ALERTING = ROOT / "core" / "alerting.py"                # 告警邮件的门槛（ALERT_LEVEL）
 CONTEXT = ROOT / "core" / "context_engine.py"           # 一处被改造过的吞错落点
 PROBE = ROOT / "core" / "_spec119_syntax_probe.py"      # M9 临时创建的语法坏文件
+DISTILLER = ROOT / "core" / "distiller.py"               # M11：else 分支（旧扫描器静默跳过）
+WEB_DISTILL = ROOT / "web" / "routers" / "distill.py"    # M12：打印后抛 HTTPException
 
-TARGETS = (TEST, SERVER, NONFATAL, ALERTING, CONTEXT)   # 需要按字节还原的文件
+TARGETS = (TEST, SERVER, NONFATAL, ALERTING, CONTEXT,
+           DISTILLER, WEB_DISTILL)                       # 需要按字节还原的文件
 DOMAIN = ["tests/test_failure_alerting.py"]
 
 sys.path.insert(0, str(ROOT / "tests"))
@@ -145,6 +156,37 @@ MUTATIONS = [
           '            print(f"[ContextEngine] Character filter failed: {exc}")'),
      ])],
      "RED", "这些地方的失败只落在容器 stdout 里"),
+
+    ("M11 吞错写进 `else:` 分支（旧判据只读 `.body`，整类静默跳过）",
+     "tests/test_failure_alerting.py",
+     [("repl", DISTILLER, [
+         ('        except RuntimeError:\n'
+          '            merged = asyncio.run(_concurrent())\n'
+          '        else:\n'
+          '            merged = [self._single_reduce(b, character_name) for b in batches]\n',
+          '        except RuntimeError:\n'
+          '            merged = asyncio.run(_concurrent())\n'
+          '        else:\n'
+          '            print("[distill] probe failed")\n'
+          '            merged = [self._single_reduce(b, character_name) for b in batches]\n'),
+     ])],
+     "RED", ("这些地方的失败只落在容器 stdout 里", "core/distiller.py")),
+
+    ("M12 `print` 之后 `raise HTTPException` 不算交给日志（旧判据当「必然抛出」放过）",
+     "tests/test_failure_alerting.py",
+     [("repl", WEB_DISTILL, [
+         ('        logger.warning("[distill] Card validation failed: %s", exc)\n',
+          '        print(f"[distill] Card validation failed: {exc}")\n'),
+     ])],
+     "RED", ("这些地方的失败只落在容器 stdout 里", "web/routers/distill.py")),
+
+    ("M13 唯一的豁免失效（那处被改好）→ 相等比较必须变红",
+     "tests/test_failure_alerting.py",
+     [("repl", ALERTING, [
+         ('        print(f"发送失败: {type(exc).__name__}: {exc}", file=sys.stderr)\n',
+          ''),
+     ])],
+     "RED", "改用 nonfatal 或模块 logger：[]"),
 ]
 
 GROUPS = {"M": MUTATIONS}

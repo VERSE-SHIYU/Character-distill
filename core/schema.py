@@ -1,9 +1,12 @@
 """角色卡与相关结构的 Pydantic 模型定义。"""
 
+import logging
 import json
 from typing import Any, Literal, NamedTuple, TypedDict
 
 from pydantic import BaseModel, model_validator
+
+logger = logging.getLogger(__name__)
 
 # 预设标签列表 — 用于角色分类和 AI 自动打标
 PRESET_TAGS = [
@@ -295,10 +298,13 @@ def parse_evidence(raw: Any) -> list[EvidenceSnapshot] | None:
         try:
             raw = json.loads(raw)
         except (ValueError, TypeError) as exc:
-            print(f"[schema] evidence 解析失败，该条消息按「无证据」返回: {exc}")
+            logger.warning("[schema] evidence 解析失败，该条消息按「无证据」返回: %s", exc)
             return None
     if not isinstance(raw, list):
-        print(f"[schema] evidence 落库值不是 JSON 数组（{type(raw).__name__}），按「无证据」返回")
+        logger.warning(
+            "[schema] evidence 落库值不是 JSON 数组（%s），按「无证据」返回",
+            type(raw).__name__,
+        )
         return None
     return raw
 

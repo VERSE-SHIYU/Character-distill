@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 import time
@@ -12,6 +13,8 @@ from adapters.llm_adapter import (  # 出站门（缺陷 73）：与 LLM 出站�
     check_outbound_guard,
 )
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
+
+logger = logging.getLogger(__name__)
 
 # ── Active embed deadline（D2：线程/上下文级，杜绝跨请求污染）────────────────
 # 挂死的 embed 发生在 mem0/chroma 库内部（它们各自调 embedding_model.embed /
@@ -345,9 +348,10 @@ class DashScopeEmbedding(EmbeddingFunction):
                 exc_str = str(exc)
                 if _is_moderation_error(exc_str):
                     # 内容审核拦截：降级为逐条重试，跳过违规段
-                    print(
-                        f"[embed-stats] moderation detected in batch, "
-                        f"falling back to per-item retry: {exc_str[:120]}"
+                    logger.warning(
+                        "[embed-stats] moderation detected in batch, "
+                        "falling back to per-item retry: %s",
+                        exc_str[:120],
                     )
                     for orig_idx, orig_text in batch:
                         try:
@@ -358,9 +362,10 @@ class DashScopeEmbedding(EmbeddingFunction):
                         except Exception as inner_exc:
                             if _is_moderation_error(str(inner_exc)):
                                 moderation_blocked += 1
-                                print(
-                                    f"[embed-stats] moderation_blocked: "
-                                    f"len={len(orig_text)} source={self.source}"
+                                logger.info(
+                                    "[embed-stats] moderation_blocked: "
+                                    "len=%s source=%s",
+                                    len(orig_text), self.source,
                                 )
                                 # 零向量占位，保持 ChromaDB 对齐
                                 all_results.append(
