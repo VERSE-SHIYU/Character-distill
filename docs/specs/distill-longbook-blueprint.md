@@ -370,7 +370,7 @@
 4. 卡片：`CharacterCard.model_validate` 通过；所有顶层字段非空；`dialogue_examples`、`catchphrases` 各取前 5 条，去首尾引号与空白后在原文做子串查找，报命中数，未命中的原样贴出由 Shiyu 判。卡片不入库、不进 commit。
 
 **D. 通用**
-1. 服务端日志计数：`429`、HTTP 5xx、`读取流式响应失败`、`Reduce batch`。
+1. 服务端日志计数：`429`、HTTP 5xx、`读取流式响应失败`、`Reduce batch`、`Map chunk N failed`（分片失败）。
 2. 停下条件（贴原始读数，不调参、不合并）：识别 > 8 分钟；宝玉 > 5 分钟（前提：账户上限 ≥ 60，见 WP14 核算）；任一批 completion_tokens ≥ 8192 或出现截断；**任一分片最终失败**；任一 5xx；B2 任一条不成立。429 本身不再是停下条件：WP14 之后它是闸收敛的正常信号，只报次数。
 3. 读数模板（照填）：
 
