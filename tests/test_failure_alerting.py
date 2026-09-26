@@ -272,23 +272,35 @@ def _in_except_handler(node: ast.AST, parent: dict[ast.AST, ast.AST]) -> bool:
     return False
 
 
-def _print_swallows_in(path: Path) -> list[tuple[str, str]]:
-    """本文件里所有吞错 `print` 的 `(相对路径, 所在函数名)` 列表。"""
+def _scanned(path: Path) -> tuple[str, ast.Module, dict[ast.AST, ast.AST]]:
+    """读 + 解析 + 建父链：两把锁共用一个入口。
+
+    **解析不动就当场炸**，不能静默跳过 —— 静默跳过的后果是判据在**空集**上通过（假绿），
+    而假绿是「两种成因共用一个信号」里更坏的那一半。共用这一个入口，是为了让「扫到坏文件
+    会炸」只有一处实现：复制一份出去，两份就会各漂各的。
+
+    父链收 `iter_fields` 的**列表与单值两种**字段。第 3 节要从 `print` 这个**表达式**节点
+    向上走到它所在的语句 —— 那一段走的正是 `Expr.value` 这类单值边，只收列表会在那里断链。
+    """
     src = path.read_text(encoding="utf-8")
     try:
         tree = ast.parse(src)
-    except SyntaxError as exc:            # 扫到语法坏的文件要当场炸，不能静默跳过
+    except SyntaxError as exc:
         raise AssertionError(f"{path}: 扫描目标无法解析：{exc}") from exc
 
     parent: dict[ast.AST, ast.AST] = {}
     for node in ast.walk(tree):
         for _field, val in ast.iter_fields(node):
-            if isinstance(val, list):
-                for item in val:
-                    if isinstance(item, ast.AST):
-                        parent[item] = node
-            elif isinstance(val, ast.AST):
-                parent[val] = node
+            items = val if isinstance(val, list) else [val]
+            for item in items:
+                if isinstance(item, ast.AST):
+                    parent[item] = node
+    return src, tree, parent
+
+
+def _print_swallows_in(path: Path) -> list[tuple[str, str]]:
+    """本文件里所有吞错 `print` 的 `(相对路径, 所在函数名)` 列表。"""
+    src, tree, parent = _scanned(path)
 
     bad: list[tuple[str, str]] = []
     rel = path.relative_to(_REPO).as_posix()
@@ -477,19 +489,7 @@ def _branches_leave_a_trace(stmts: list[ast.stmt]) -> bool:
 
 def _silent_broad_excepts_in(path: Path) -> list[tuple[str, str]]:
     """本文件里所有「宽 `except` 吞掉且不留痕」的 `(相对路径, 所在函数名)`。"""
-    src = path.read_text(encoding="utf-8")
-    try:
-        tree = ast.parse(src)
-    except SyntaxError as exc:            # 扫到语法坏的文件要当场炸，不能静默跳过
-        raise AssertionError(f"{path}: 扫描目标无法解析：{exc}") from exc
-
-    parent: dict[ast.AST, ast.AST] = {}
-    for node in ast.walk(tree):
-        for _field, val in ast.iter_fields(node):
-            items = val if isinstance(val, list) else [val]
-            for item in items:
-                if isinstance(item, ast.AST):
-                    parent[item] = node
+    _src, tree, parent = _scanned(path)
 
     rel = path.relative_to(_REPO).as_posix()
     out: list[tuple[str, str]] = []

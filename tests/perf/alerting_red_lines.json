@@ -30,6 +30,11 @@
         "tests/test_failure_alerting.py",
         "assert _levels_for(caplog, marker) == [logging.WARNING], \\ f\"应恰有一条 WARNING（吞掉 ≠ 沉默），实得 {_levels_for(caplog, ma",
         0
+      ],
+      [
+        "tests/test_failure_alerting.py",
+        "assert _levels_for(caplog, marker) == [logging.WARNING], \\ f\"应恰有一条 WARNING（吞掉 ≠ 沉默），实得 {_levels_for(caplog, ma",
+        1
       ]
     ],
     "M5 nonfatal 的默认档降到 WARNING（数据没存进去 / 请求失败不再发邮件）": [
@@ -39,7 +44,7 @@
         0
       ]
     ],
-    "M6 nonfatal 吞掉之后重新抛出（非致命失败变成硬错误，兜底这件东西没了）": [
+    "M6 上报之后异常继续逃逸（非致命失败变成硬错误，兜底这件东西没了）": [
       [
         "tests/test_failure_alerting.py",
         "raise RuntimeError(\"warn-boom\")",
@@ -49,6 +54,11 @@
         "tests/test_failure_alerting.py",
         "raise RuntimeError(\"boom\")",
         0
+      ],
+      [
+        "tests/test_failure_alerting.py",
+        "raise RuntimeError(\"warn-boom\")",
+        1
       ]
     ],
     "M7 告警门槛降到 WARNING：已经兜底的后台动作也开始发信": [
@@ -56,6 +66,11 @@
         "tests/test_failure_alerting.py",
         "assert alerts == [], \"WARNING 记成了告警 —— 兜底动作失败会开始发邮件\"",
         0
+      ],
+      [
+        "tests/test_failure_alerting.py",
+        "assert alerts == [], \"WARNING 记成了告警 —— 兜底动作失败会开始发邮件\"",
+        1
       ]
     ],
     "M8 告警门槛升到 CRITICAL：线上 500 与「数据没存进去」都不再发信": [
@@ -102,6 +117,18 @@
       [
         "tests/test_failure_alerting.py",
         "assert sorted(found) == sorted(_KEPT_PRINTS), ( \"这些地方的失败只落在容器 stdout 里，面板与告警都看不见 —— \" f\"改用 nonfatal 或模块 logger",
+        0
+      ],
+      [
+        "tests/test_failure_alerting.py",
+        "raise AssertionError( \"宽 `except` 吞掉了失败却没有任何痕迹（面板与告警都看不见）。\\n\" \"先挑修法：窄化到具体类型 / 去掉 try 交给全局处理器 / 补 nonfatal（同步用 ",
+        0
+      ]
+    ],
+    "M14 一处宽 `except` 退回静默（连 stdout 都没有）→ 第 4 节的相等比较必须变红": [
+      [
+        "tests/test_failure_alerting.py",
+        "raise AssertionError( \"宽 `except` 吞掉了失败却没有任何痕迹（面板与告警都看不见）。\\n\" \"先挑修法：窄化到具体类型 / 去掉 try 交给全局处理器 / 补 nonfatal（同步用 ",
         0
       ]
     ]

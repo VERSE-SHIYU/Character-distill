@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""spec-119 变异矩阵驱动 —— 13 条变异打 `tests/test_failure_alerting.py` 的 12 条判别器。
+"""spec-119 变异矩阵驱动 —— 14 条变异打 `tests/test_failure_alerting.py` 的 16 条判别器。
 
 **为什么入库。** 本份交付报告里的「哪条变异红、红在哪句」全部来自这个脚本。数字若只骑在
 仓外脚本上，三个月后复现不了（§四：文档引用的数字，其产数脚本与原始产物也要入库）。
@@ -110,25 +110,29 @@ MUTATIONS = [
      "RED", "日志没说是哪个请求挂的"),
 
     # ── nonfatal 的级别口径（core/nonfatal.py）───────────────────────────────
+    # 锚点都在 `_report` / 签名行这类**全仓唯一**的位置上。判据 2（锚点恰一命中）
+    # 不是走过场：`except Exception as exc:` 那段在同步／异步两版里逐字相同，
+    # 锚在它上面必然命中两处 —— 从前靠「只存在一版」侥幸过关，抽出 `_report`、
+    # 补上同步版之后就不成立了，于是三条锚点全部改到唯一处。
     ("M4 nonfatal 忽略调用方给的 level，一律按 ERROR 记（兜底动作开始发邮件）",
      "tests/test_failure_alerting.py",
-     [("repl", NONFATAL, [('        _logger.log(\n            level,',
-                           '        _logger.log(\n            logging.ERROR,')])],
+     [("repl", NONFATAL, [('    _logger.log(\n        level,',
+                           '    _logger.log(\n        logging.ERROR,')])],
      "RED", "应恰有一条 WARNING"),
 
     ("M5 nonfatal 的默认档降到 WARNING（数据没存进去 / 请求失败不再发邮件）",
      "tests/test_failure_alerting.py",
      [("repl", NONFATAL, [
-         ('    source: str, what: str, *, level: int = logging.ERROR,',
-          '    source: str, what: str, *, level: int = logging.WARNING,'),
+         ('async def nonfatal(\n    source: str, what: str, *, level: int = logging.ERROR,',
+          'async def nonfatal(\n    source: str, what: str, *, level: int = logging.WARNING,'),
      ])],
      "RED", "不传 level 时必须是 ERROR"),
 
-    ("M6 nonfatal 吞掉之后重新抛出（非致命失败变成硬错误，兜底这件东西没了）",
+    ("M6 上报之后异常继续逃逸（非致命失败变成硬错误，兜底这件东西没了）",
      "tests/test_failure_alerting.py",
      [("repl", NONFATAL, [
-         ('    except Exception as exc:\n        outcome.failed = True\n',
-          '    except Exception as exc:\n        outcome.failed = True\n        raise\n'),
+         ('        exc_info=True,\n    )\n',
+          '        exc_info=True,\n    )\n    raise exc\n'),
      ])],
      "RED", ("RuntimeError: warn-boom", "RuntimeError: boom")),
 
@@ -187,6 +191,15 @@ MUTATIONS = [
           ''),
      ])],
      "RED", "改用 nonfatal 或模块 logger：[]"),
+
+    # ── 第 4 节锁自身（宽 `except` 的相等比较）───────────────────────────────
+    ("M14 一处宽 `except` 退回静默（连 stdout 都没有）→ 第 4 节的相等比较必须变红",
+     "tests/test_failure_alerting.py",
+     [("repl", CONTEXT, [
+         ('            logger.warning("Character filter failed: %s", exc, exc_info=True)\n',
+          '            pass\n'),
+     ])],
+     "RED", "宽 `except` 吞掉了失败却没有任何痕迹"),
 ]
 
 GROUPS = {"M": MUTATIONS}
