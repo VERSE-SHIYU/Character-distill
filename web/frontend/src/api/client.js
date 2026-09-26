@@ -379,8 +379,7 @@ export const adminAPI = {
   deletePost: (postId) => fetchWithTimeout(`/api/admin/posts/${postId}`, { method: 'DELETE' }).then(r => r.json()),
   banUser: (userId) => fetchWithTimeout(`/api/admin/users/${userId}/ban`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json()),
 
-  // ---- P1-2: System logs & Tasks ----
-  getLogs: () => fetchWithTimeout('/api/admin/logs').then(r => r.json()),
+  // ---- P1-2: Tasks ----
   getTasks: () => fetchWithTimeout('/api/admin/tasks').then(r => r.json()),
 
   // ---- P2: User Detail ----

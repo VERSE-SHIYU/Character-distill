@@ -19,7 +19,6 @@ from deps import get_config, get_sessions, get_storage, get_memory_manager, patc
 from storage.base import StorageBase
 from core.memory_manager import MemoryManager
 from core import roles
-from core.log_collector import get_recent_logs
 from limiter import limiter
 
 logger = logging.getLogger(__name__)
@@ -595,18 +594,8 @@ async def admin_ban_user(
 
 
 # ============================================================
-# P1-2: System logs & Task status
+# P1-2: Task status
 # ============================================================
-
-
-@router.get("/logs")
-@limiter.limit("30/minute")
-async def admin_logs(
-    request: Request,
-    _admin: dict = Depends(require_admin),
-) -> list[dict[str, Any]]:
-    """Return recent WARNING+ log entries from the ring buffer."""
-    return get_recent_logs(limit=100)
 
 
 @router.get("/tasks")

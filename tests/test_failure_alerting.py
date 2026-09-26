@@ -3,9 +3,9 @@
 
 **为什么单独一个文件。** 本份改的是「失败可见」这条链上的两处：往上抛的错误由
 `web/server.py` 的全局处理器统一记录，被吞掉的错误由各落点自己记录。两者的判据
-都要**装真的告警出口**才判得准 —— 面板（`RingBufferHandler`）只收 WARNING+，
-告警邮件只收 ERROR，于是「记没记」「记成哪一档」必须分开断言：只断言「有日志」
-的话，把 ERROR 写成 WARNING 照样绿，而那一档之差就是「发不发邮件」。
+都要**装真的告警出口**才判得准 —— 告警邮件与 GlitchTip 事件都只认 ERROR，WARNING
+只落 stdout，于是「记没记」「记成哪一档」必须分开断言：只断言「有日志」的话，把
+ERROR 写成 WARNING 照样绿，而那一档之差就是「发不发邮件、上不上 GlitchTip」。
 
 **仪器纪律**（与 test_alerting 同一套）：`_dispatch` 与 `send_email` 都替换在
 `core.alerting` 模块自身的名字上 —— 那是生产调用的同一个绑定；只 patch 一处绑定，

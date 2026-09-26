@@ -27,7 +27,7 @@ const NAV_GROUPS = [
     { id: 'featured', label: '推荐管理', icon: Star },
   ]},
   { label: '系统', items: [
-    { id: 'system', label: '系统日志', icon: Terminal },
+    { id: 'system', label: '蒸馏任务', icon: Terminal },
     { id: 'announcements', label: '公告', icon: Megaphone },
     { id: 'config', label: '配置中心', icon: Settings },
     { id: 'export', label: '数据导出', icon: Download },
@@ -72,7 +72,7 @@ export default function AdminPanel() {
       case 'usage': return <UsageTab />
       case 'reports': return <ReportsTab />
       case 'audit': return <ContentAuditTab />
-      case 'system': return <SystemLogTab />
+      case 'system': return <DistillTasksTab />
       case 'announcements': return <AnnouncementsTab />
       case 'config': return <ConfigTab />
       case 'export': return <ExportTab />
@@ -1613,27 +1613,23 @@ function ContentAuditTab() {
 }
 
 // ============================================================
-// P1-2: System Logs & Tasks
+// P1-2: Tasks
 // ============================================================
 
 // 后端任务只有四态（distill.py 的 _db_status 映射），文案在此收口，前端不做终态谓词复刻。
 const TASK_STATUS_LABEL = { running: '运行中', done: '完成', error: '失败', interrupted: '已中断' }
 
-function SystemLogTab() {
-  const [logs, setLogs] = useState([])
+function DistillTasksTab() {
   const [tasks, setTasks] = useState([])
   const [taskTotal, setTaskTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [subTab, setSubTab] = useState('logs')
-  const [logLevel, setLogLevel] = useState('all')
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const [l, t] = await Promise.all([adminAPI.getLogs(), adminAPI.getTasks()])
-      setLogs(l)
+      const t = await adminAPI.getTasks()
       setTasks(t.tasks)
       setTaskTotal(t.total)
     } catch (err) {
@@ -1645,115 +1641,74 @@ function SystemLogTab() {
 
   useEffect(() => { load() }, [load])
 
-  const filteredLogs = logLevel === 'all' ? logs : logs.filter(l => l.level === logLevel)
-  const levelCounts = logs.reduce((acc, l) => { acc[l.level] = (acc[l.level] || 0) + 1; return acc }, {})
   // 后端列表有上限，被裁过必须看得见 —— 不静默截断。
   const tasksTruncated = taskTotal > tasks.length
 
   return (
     <div className="admin-card">
-      <div className="admin-card-title">系统日志与任务</div>
+      <div className="admin-card-title">蒸馏任务</div>
       {error && (
         <div className="admin-error-banner">
           <span>{error}</span>
           <button className="admin-error-close" onClick={() => setError('')}><Close size={12} /></button>
         </div>
       )}
-      <div className="admin-subtabs">
-        <button className={`admin-subtab${subTab === 'logs' ? ' active' : ''}`} onClick={() => setSubTab('logs')}>日志</button>
-        <button className={`admin-subtab${subTab === 'tasks' ? ' active' : ''}`} onClick={() => setSubTab('tasks')}>蒸馏任务</button>
+      <div className="admin-stats-grid" style={{ marginBottom: 16 }}>
+        <div className="admin-stat-card">
+          <span className="admin-stat-value">{tasks.filter(t => !t.done).length}</span>
+          <span className="admin-stat-label">运行中</span>
+        </div>
+        <div className="admin-stat-card">
+          <span className="admin-stat-value">{tasks.filter(t => t.status === 'done').length}</span>
+          <span className="admin-stat-label">已完成</span>
+        </div>
+        <div className="admin-stat-card">
+          <span className="admin-stat-value">{tasks.filter(t => t.status === 'error').length}</span>
+          <span className="admin-stat-label">失败</span>
+        </div>
+        <div className="admin-stat-card">
+          <span className="admin-stat-value">{taskTotal}</span>
+          <span className="admin-stat-label">总计</span>
+        </div>
       </div>
-
-      {subTab === 'logs' ? (
-        <>
-          <div className="log-level-filter">
-            {['all', 'WARNING', 'ERROR', 'CRITICAL'].map(l => (
-              <button
-                key={l}
-                className={`log-level-btn${logLevel === l ? ' active' : ''}`}
-                onClick={() => setLogLevel(l)}
-              >
-                {l === 'all' ? '全部' : l}{l !== 'all' && levelCounts[l] != null ? ` (${levelCounts[l]})` : ''}
-              </button>
-            ))}
-          </div>
-          {loading ? (
-            <div className="admin-loading">加载中…</div>
-          ) : filteredLogs.length === 0 ? (
-            <p style={{ padding: '20px 16px', color: 'var(--text-secondary)', fontSize: 13 }}>暂无日志</p>
-          ) : (
-            <div className="log-list">
-              {filteredLogs.map((entry, i) => (
-                <div key={i} className={`log-entry log-level-${entry.level?.toLowerCase()}`}>
-                  <span className="log-time">{entry.time}</span>
-                  <span className={`log-badge log-badge-${entry.level?.toLowerCase()}`}>{entry.level}</span>
-                  <span className="log-name">{entry.name}</span>
-                  <span className="log-message">{entry.message}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
+      {!loading && tasksTruncated && (
+        <p style={{ padding: '0 0 10px', color: 'var(--text-secondary)', fontSize: 13 }}>
+          仅显示最近 {tasks.length} 条，共 {taskTotal} 条
+        </p>
+      )}
+      {loading ? (
+        <div className="admin-loading">加载中…</div>
+      ) : tasks.length === 0 ? (
+        <p style={{ padding: '20px 16px', color: 'var(--text-secondary)', fontSize: 13 }}>暂无任务</p>
       ) : (
-        <>
-          <div className="admin-stats-grid" style={{ marginBottom: 16 }}>
-            <div className="admin-stat-card">
-              <span className="admin-stat-value">{tasks.filter(t => !t.done).length}</span>
-              <span className="admin-stat-label">运行中</span>
-            </div>
-            <div className="admin-stat-card">
-              <span className="admin-stat-value">{tasks.filter(t => t.status === 'done').length}</span>
-              <span className="admin-stat-label">已完成</span>
-            </div>
-            <div className="admin-stat-card">
-              <span className="admin-stat-value">{tasks.filter(t => t.status === 'error').length}</span>
-              <span className="admin-stat-label">失败</span>
-            </div>
-            <div className="admin-stat-card">
-              <span className="admin-stat-value">{taskTotal}</span>
-              <span className="admin-stat-label">总计</span>
-            </div>
-          </div>
-          {!loading && tasksTruncated && (
-            <p style={{ padding: '0 0 10px', color: 'var(--text-secondary)', fontSize: 13 }}>
-              仅显示最近 {tasks.length} 条，共 {taskTotal} 条
-            </p>
-          )}
-          {loading ? (
-            <div className="admin-loading">加载中…</div>
-          ) : tasks.length === 0 ? (
-            <p style={{ padding: '20px 16px', color: 'var(--text-secondary)', fontSize: 13 }}>暂无任务</p>
-          ) : (
-            <div className="admin-table-wrap">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th style={{ minWidth: 80 }}>任务 ID</th>
-                    <th style={{ minWidth: 70 }}>状态</th>
-                    <th style={{ minWidth: 70 }}>进度</th>
-                    <th style={{ minWidth: 80 }}>角色</th>
-                    <th style={{ minWidth: 200 }}>消息</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tasks.map((t) => (
-                    <tr key={t.task_id}>
-                      <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{t.task_id?.slice(0, 8)}</td>
-                      <td>
-                        <span className={`admin-status${t.status === 'error' ? ' disabled' : ''}`}>
-                          {TASK_STATUS_LABEL[t.status] || t.status || '-'}
-                        </span>
-                      </td>
-                      <td>{t.progress_pct != null ? `${t.progress_pct}%` : '-'}</td>
-                      <td>{t.character || '-'}</td>
-                      <td style={{ fontSize: 13, color: 'var(--text-secondary)', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.message || '-'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th style={{ minWidth: 80 }}>任务 ID</th>
+                <th style={{ minWidth: 70 }}>状态</th>
+                <th style={{ minWidth: 70 }}>进度</th>
+                <th style={{ minWidth: 80 }}>角色</th>
+                <th style={{ minWidth: 200 }}>消息</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((t) => (
+                <tr key={t.task_id}>
+                  <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{t.task_id?.slice(0, 8)}</td>
+                  <td>
+                    <span className={`admin-status${t.status === 'error' ? ' disabled' : ''}`}>
+                      {TASK_STATUS_LABEL[t.status] || t.status || '-'}
+                    </span>
+                  </td>
+                  <td>{t.progress_pct != null ? `${t.progress_pct}%` : '-'}</td>
+                  <td>{t.character || '-'}</td>
+                  <td style={{ fontSize: 13, color: 'var(--text-secondary)', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.message || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )

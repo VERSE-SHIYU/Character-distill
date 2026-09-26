@@ -1,20 +1,18 @@
 # -*- coding: utf-8 -*-
 """主动告警：把 ERROR 级日志接到邮箱上。
 
-**为什么要有这个模块。** 后台日志面板（`core/log_collector.RingBufferHandler`）只在
-有人打开管理页时才被看见 —— SG「全员用量为 0 数月无人察觉」（AGENTS.md 缺陷 93）就是
-这个形态：失败**已经可见**了（缺陷 93 的修法把 `try/except + print` 换成了
-`core/nonfatal`，每条都上了面板），但可见与**被看见**是两件事，中间隔着「有没有人去
-看」。本模块补的是那一跳：ERROR 直接投递到人手上。
+**为什么要有这个模块。** 日志写出来了也得有人去翻才看得见 —— SG「全员用量为 0 数月
+无人察觉」（AGENTS.md 缺陷 93）就是这个形态：失败**已经可见**了（缺陷 93 的修法把
+`try/except + print` 换成了 `core/nonfatal`，每条都记了日志），但可见与**被看见**是
+两件事，中间隔着「有没有人去看」。本模块补的是那一跳：ERROR 直接投递到人手上。
 
-**与既有构造的分工。** `nonfatal` 负责「吞掉但留痕」，`RingBufferHandler` 负责
-「留在进程里等人来查」，本模块负责「推出去」。三者都挂在 root logger 上，各自只用
-`logging` 的标准接口，互不感知。
+**与既有构造的分工。** `nonfatal` 负责「吞掉但留痕」，Sentry 的 LoggingIntegration
+负责「把 ERROR 变成 GlitchTip 事件」，本模块负责「推去邮箱」。各自只用 `logging` 的
+标准接口，互不感知。
 
-**只依赖 `send_email`。** 本模块**不**并入 `log_collector`（那是「留存」，本模块是
-「投递」，混在一起会让面板的容量/清理逻辑与发信耦合），也**不**并入 `email_service`
-（那里是「怎么发」，本模块是「什么时候发、发给谁、发多勤」）。发信逻辑只有一份，
-在 `core.email_service.send_email`。
+**只依赖 `send_email`。** 本模块**不**并入 `email_service`（那里是「怎么发」，本模块是
+「什么时候发、发给谁、发多勤」）。发信逻辑只有一份，在
+`core.email_service.send_email`。
 
 **节流是必须的，不是优化。** 一个持续的故障（PG 拒写、上游 429）会在每个请求上各留
 一条 ERROR。不节流的话，一次故障就是几百封邮件 —— 收件人会先把告警规则静音，于是
@@ -158,9 +156,9 @@ def _compose(record: logging.LogRecord, suppressed: int) -> tuple[str, str]:
 def install_alert_handler() -> Callable[[], None]:
     """装配入口：把告警 handler 挂到 root logger 上；返回撤销。
 
-    生产在 `web/server.py` 的 lifespan 里调用，紧跟 `install_log_collector()`。
+    生产在 `web/server.py` 的 lifespan 里调用，紧跟 `install_stdout_logging()`。
 
-    `ALERT_EMAIL` 为空 → **不安装**，只记一条 WARNING（这条会进后台日志面板）。
+    `ALERT_EMAIL` 为空 → **不安装**，只记一条 WARNING（这条只落 stdout）。
     **不设默认收件人**：告警发到一个没人看的地址，比不发更坏 —— 它看起来像有人在收。
 
     两种「没装上」都返回空操作：`ALERT_EMAIL` 没配，以及根上已经有同**类**的 handler
@@ -169,7 +167,7 @@ def install_alert_handler() -> Callable[[], None]:
     to = alert_email()
     if not to:
         logging.getLogger(__name__).warning(
-            "ALERT_EMAIL 未配置，主动告警未启用（ERROR 仍进后台日志面板）"
+            "ALERT_EMAIL 未配置，主动告警未启用（ERROR 仍进 GlitchTip）"
         )
         return lambda: None
     root = logging.getLogger()

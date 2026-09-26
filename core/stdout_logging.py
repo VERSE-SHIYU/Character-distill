@@ -1,11 +1,12 @@
 """把 WARNING+ 记录写到 stdout，让 `docker logs` 留得住。
 
-根日志器一旦挂上环形缓冲，Python 的 lastResort 就不再生效（它只在「根上没有任何
-handler」时兜底）—— `logger.error/warning` 于是既不进 stdout 也不进 `docker logs`，
-线上排障时这些记录只活在进程内存里。本模块补上缺的那条出口。
+Python 的 lastResort 只在「根日志器上一个 handler 都没挂」时兜底，且只写 stderr ——
+根上挂了别的出口（告警、Sentry）之后它就不再生效，`logger.error/warning` 不会自己写去
+stdout。本模块补上缺的那条出口。
 
-与 `core/log_collector` 的分工：那个负责「留在进程里等人来查」（环形缓冲），本模块
-负责「推出去」（stdout → docker logs）。两者级别相同、互不替代。
+与 Sentry 的分工：本模块负责「推去 `docker logs`」（WARNING+ 都留得住），Sentry 的
+LoggingIntegration 负责「把 ERROR 变成 GlitchTip 事件」。两者级别不同、互不替代 ——
+记录进了 stdout 不等于上了 GlitchTip。
 """
 
 from __future__ import annotations

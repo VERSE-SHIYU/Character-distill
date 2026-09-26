@@ -51,7 +51,7 @@
 - **发现 spec 外 bug 先报告**：执行过程中发现未纳入当前 spec 的 bug — 停下，口头报告根因与修复方案，经确认后才单独立项修复
 - **存储改动只保证 PG（2026-09-24 起）**：新的存储改动只保证 PG 正确；SQLite 只同步到「接口还能跑」为止，不为它写用例。SQLite 自 2026-09-24 起不再测试、不再维护，计划择期退役。**迁移上有一条例外**：PG 新增**列**时，`storage/migrations/` 里补一份同语义的孪生迁移并登记进 `sqlite_store.py` 的迁移次序表，此外不加。理由是冻结后第一次加列暴露了「接口还能跑」与「不做迁移」互斥 —— 新列没有那个列就谈不上接口能跑，而两侧真库的列集锁（`tests/test_postgres_store.py::TestPgFreshSchemaClosure::test_fresh_sqlite_and_fresh_pg_have_the_same_columns`）要求列集相等且不许开豁免，**列集锁是二者的仲裁**
 - **跑测试前先起测试库**：本地一律 `docker compose -f docker-compose.test.yml up -d --wait`，测试连它的 `charsim_test`（55432）。`tests/conftest.py` 会话开始时核一次库名，不以 `_test` 结尾即整场中止 —— 开发库 `charsim` 不再有任何被测试碰到的路径
-- **失败必须进 logging，不许只 `print`**：`print` 写 fd 1，既不上面板（`core/log_collector.py` 的 `RingBufferHandler`，收 WARNING+）也不进告警邮件（`core/alerting.py` 的 `AlertHandler`，`ALERT_LEVEL = logging.ERROR`）—— 只 `print` 的失败等于只有翻容器 stdout 才看得见。
+- **失败必须进 logging，不许只 `print`**：`print` 写 fd 1，绕过整条 logging 管道 —— 既不进 GlitchTip（Sentry 的 LoggingIntegration，ERROR 生成事件），也不进告警邮件（`core/alerting.py` 的 `AlertHandler`，`ALERT_LEVEL = logging.ERROR`）。只 `print` 的失败等于只有翻容器 stdout 才看得见。
   - **往上抛的错误**不必逐处改：`web/server.py` 的全局异常处理器统一记一条带堆栈的 ERROR。**打印后 `raise` 的 `print` 保留不动。**
   - **吞掉的错误**必须走 `core/nonfatal.nonfatal`（异步、整块可失败后继续）或模块 `logger`（同步，或需要给调用方一个兜底返回值）。级别就是「发不发邮件」：**ERROR = 数据没有存进去，或者用户的请求失败了；WARNING = 已经兜底、不影响结果的后台动作**（好感度评估、阅读进度、预热、缓存）。
   - 判据是 `tests/test_failure_alerting.py::test_no_print_swallowed_failures_left_in_production_code`（扫 `storage/postgres_store.py` / `web` / `core`：「`print` 文本含 `fail` 且下一条语句不必然 `raise`」的结果必须为 0）。断言这类日志的用例走 `caplog`，**不要断言 stdout** —— 只断言「有日志」会让 ERROR 写成 WARNING 也照绿，而那一档之差就是发不发邮件
