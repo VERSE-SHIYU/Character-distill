@@ -110,10 +110,12 @@ MUTATIONS = [
      "RED", "日志没说是哪个请求挂的"),
 
     # ── nonfatal 的级别口径（core/nonfatal.py）───────────────────────────────
-    # 锚点都在 `_report` / 签名行这类**全仓唯一**的位置上。判据 2（锚点恰一命中）
-    # 不是走过场：`except Exception as exc:` 那段在同步／异步两版里逐字相同，
-    # 锚在它上面必然命中两处 —— 从前靠「只存在一版」侥幸过关，抽出 `_report`、
-    # 补上同步版之后就不成立了，于是三条锚点全部改到唯一处。
+    # 锚点都在**全仓唯一**的位置上：`_report` 的 log 调用、默认档常量、`_report` 的
+    # `exc_info=` 行。判据 2（锚点恰一命中）不是走过场：`except Exception as exc:` 那段
+    # 在同步／异步两版里逐字相同，锚在它上面必然命中两处 —— 从前靠「只存在一版」侥幸
+    # 过关，抽出 `_report`、补上同步版之后就不成立了，于是三条锚点全部改到唯一处。
+    # 默认档同理：原先两版签名各写一遍 `= logging.ERROR`，提成 `DEFAULT_LEVEL` 后
+    # 才既唯一、又真的覆盖「两版共用同一档」这件事。
     ("M4 nonfatal 忽略调用方给的 level，一律按 ERROR 记（兜底动作开始发邮件）",
      "tests/test_failure_alerting.py",
      [("repl", NONFATAL, [('    _logger.log(\n        level,',
@@ -123,8 +125,7 @@ MUTATIONS = [
     ("M5 nonfatal 的默认档降到 WARNING（数据没存进去 / 请求失败不再发邮件）",
      "tests/test_failure_alerting.py",
      [("repl", NONFATAL, [
-         ('async def nonfatal(\n    source: str, what: str, *, level: int = logging.ERROR,',
-          'async def nonfatal(\n    source: str, what: str, *, level: int = logging.WARNING,'),
+         ('DEFAULT_LEVEL = logging.ERROR', 'DEFAULT_LEVEL = logging.WARNING'),
      ])],
      "RED", "不传 level 时必须是 ERROR"),
 

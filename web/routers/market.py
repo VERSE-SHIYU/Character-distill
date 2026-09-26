@@ -546,7 +546,7 @@ async def publish_card(
     if not market_tags:
         try:
             cj = json.loads(card_json_str) if isinstance(card_json_str, str) else card_json_str
-            ai_tags = cj.get("tags", []) if isinstance(cj, dict) else []
+            ai_tags = cj.get("tags", [])
             if ai_tags:
                 market_tags = ",".join(ai_tags[:5])
         except json.JSONDecodeError:

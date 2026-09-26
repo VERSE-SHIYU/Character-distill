@@ -30,6 +30,10 @@ _logger = logging.getLogger(__name__)
 # 这几行就是那条判据的落点。
 _PASS_THROUGH = (KeyboardInterrupt, SystemExit, asyncio.CancelledError)
 
+# 两个版本的**同一个**默认档 —— 「数据没存进去 / 请求失败」会发告警邮件。提成常量是为了
+# 让这一档只有一处定义：两版各自的签名都引用它，就不会出现「同步版悄悄降档」的漂移。
+DEFAULT_LEVEL = logging.ERROR
+
 
 class NonFatalOutcome:
     """`nonfatal` 交给调用方的失败信号 —— 块内异常被吞掉后 `failed` 为 True。
@@ -62,7 +66,7 @@ def _report(exc: BaseException, source: str, what: str, level: int) -> None:
 
 @asynccontextmanager
 async def nonfatal(
-    source: str, what: str, *, level: int = logging.ERROR,
+    source: str, what: str, *, level: int = DEFAULT_LEVEL,
 ) -> AsyncIterator[NonFatalOutcome]:
     """吞掉块内异常，并以一条 ERROR 上报到日志面板；结果对象告知调用方成没成。
 
@@ -91,7 +95,7 @@ async def nonfatal(
 
 @contextmanager
 def nonfatal_sync(
-    source: str, what: str, *, level: int = logging.ERROR,
+    source: str, what: str, *, level: int = DEFAULT_LEVEL,
 ) -> Iterator[NonFatalOutcome]:
     """`nonfatal` 的同步版本 —— 契约、级别口径、放行规则完全一致，只是不用 `await`。
 
