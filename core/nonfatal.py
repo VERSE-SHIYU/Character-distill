@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from contextlib import asynccontextmanager, contextmanager
+from typing import AsyncIterator, Iterator
 
 _logger = logging.getLogger(__name__)
 
@@ -43,6 +43,21 @@ class NonFatalOutcome:
 
     def __init__(self) -> None:
         self.failed = False
+
+
+def _report(exc: BaseException, source: str, what: str, level: int) -> None:
+    """吞错点唯一的留痕出口 —— 同步／异步两版共用，好让级别与格式只有一处定义。
+
+    消息用 `%s` 占位而不是 f-string：告警面板与 GlitchTip 都按**消息模板**归并，
+    把变量拼进模板会把同一个故障拆成一堆各发一封邮件的问题。消息里只写 source /
+    what / 异常类型与消息，不写正文和用户输入。
+    """
+    _logger.log(
+        level,
+        "[%s] %s failed (non-fatal): %s: %s",
+        source, what, type(exc).__name__, exc,
+        exc_info=True,
+    )
 
 
 @asynccontextmanager
@@ -71,9 +86,28 @@ async def nonfatal(
         raise
     except Exception as exc:
         outcome.failed = True
-        _logger.log(
-            level,
-            "[%s] %s failed (non-fatal): %s: %s",
-            source, what, type(exc).__name__, exc,
-            exc_info=True,
-        )
+        _report(exc, source, what, level)
+
+
+@contextmanager
+def nonfatal_sync(
+    source: str, what: str, *, level: int = logging.ERROR,
+) -> Iterator[NonFatalOutcome]:
+    """`nonfatal` 的同步版本 —— 契约、级别口径、放行规则完全一致，只是不用 `await`。
+
+    **什么时候用它**：同步函数里的吞错点（`with nonfatal_sync(...)`）。异步上下文里
+    一律用 `nonfatal` —— 同步版套在 `await` 外面接不住对端抛出的异常，而调用方会
+    以为自己已经吞了。
+
+    `KeyboardInterrupt` / `SystemExit` / `CancelledError` 同样放行（共用
+    `_PASS_THROUGH`）。第三项在同步代码里仍会经过：协程被取消时异常可能落在同步
+    调用栈上，吞掉它会让任务停不下来。
+    """
+    outcome = NonFatalOutcome()
+    try:
+        yield outcome
+    except _PASS_THROUGH:
+        raise
+    except Exception as exc:
+        outcome.failed = True
+        _report(exc, source, what, level)

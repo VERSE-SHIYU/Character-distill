@@ -17,13 +17,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 import pytest
 
 import core.utils as utils
 import routers.chat as chat_router_mod
 from core.log_collector import get_recent_logs, install_log_collector
-from core.nonfatal import nonfatal
+from core.nonfatal import nonfatal, nonfatal_sync
 from core.text_manager import new_session_entry
 
 
@@ -92,6 +93,88 @@ def test_outcome_tells_the_caller_whether_the_block_failed():
         assert bad.failed is True, "块内抛了异常，调用方却以为成功"
 
     asyncio.run(_run())
+
+
+def test_sync_and_async_share_the_single_reporting_outlet(monkeypatch):
+    """同步版必须走 `_report` 这**一个**出口 —— 两版各写一遍格式，级别/模板迟早分叉。
+
+    只断言「面板上有一条」证明不了共用：各写一遍照样上一条。所以直接 patch 生产调用
+    的那个绑定（`core.nonfatal._report`），断言两版都经过它，且参数一致。
+    """
+    import core.nonfatal as nonfatal_mod
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        nonfatal_mod, "_report",
+        lambda exc, source, what, level: calls.append((type(exc).__name__, source, what, level)),
+    )
+    marker = "nonfatal-shared-probe"
+
+    with nonfatal_sync("sync-probe", marker, level=logging.WARNING):
+        raise RuntimeError("sync-boom")
+
+    async def _run() -> None:
+        async with nonfatal("async-probe", marker):
+            raise RuntimeError("async-boom")
+
+    asyncio.run(_run())
+
+    assert calls == [
+        ("RuntimeError", "sync-probe", marker, logging.WARNING),
+        ("RuntimeError", "async-probe", marker, logging.ERROR),
+    ], f"两版没有共用一个上报出口，实得 {calls}"
+
+
+# ── 1b. 同步版（`nonfatal_sync`）：契约与异步版逐条对齐 ────────────────────
+
+def test_sync_ordinary_exception_is_swallowed_and_reported_once():
+    """同步版与异步版同一条契约：吞掉，面板恰好 1 条 ERROR，带 source / what / 类型。"""
+    marker = "nonfatal-sync-ordinary"
+
+    with nonfatal_sync("clock", marker):
+        raise RuntimeError("tz-boom")
+
+    errs = _panel_errors(marker)
+    assert len(errs) == 1, f"面板上应有且只有 1 条，实得 {len(errs)}"
+    msg = errs[0]["message"]
+    assert "clock" in msg, "缺 source"
+    assert "RuntimeError" in msg, "异常类型没进消息文本 —— 面板上看不到是谁"
+    assert "tz-boom" in msg, "缺异常消息"
+
+
+def test_sync_clean_block_reports_nothing():
+    """正常走完不留记录 —— 与异步版一致，留痕不能变成噪音。"""
+    marker = "nonfatal-sync-clean"
+
+    with nonfatal_sync("clock", marker):
+        pass
+
+    assert _panel_errors(marker) == []
+
+
+def test_sync_outcome_tells_the_caller_whether_the_block_failed():
+    """同步版的 `as` 信号：成功 `False`、失败 `True`（调用方唯一能拿到的失败信号）。"""
+    with nonfatal_sync("clock", "nonfatal-sync-outcome-ok") as ok:
+        pass
+    assert ok.failed is False, "正常走完却报了失败"
+
+    with nonfatal_sync("clock", "nonfatal-sync-outcome-bad") as bad:
+        raise RuntimeError("boom")
+    assert bad.failed is True, "块内抛了异常，调用方却以为成功"
+
+
+@pytest.mark.parametrize(
+    "exc_type", [KeyboardInterrupt, SystemExit, asyncio.CancelledError]
+)
+def test_sync_control_flow_exceptions_pass_through(exc_type):
+    """同步版放行同一组控制流异常（共用 `_PASS_THROUGH`），且**不**进面板。"""
+    marker = f"nonfatal-sync-{exc_type.__name__}"
+
+    with pytest.raises(exc_type):
+        with nonfatal_sync("clock", marker):
+            raise exc_type()
+
+    assert _panel_errors(marker) == [], "控制流异常被当失败记了 —— 面板会被关闭噪音淹掉"
 
 
 @pytest.mark.parametrize(

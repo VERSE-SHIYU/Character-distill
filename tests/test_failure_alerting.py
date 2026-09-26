@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 import core.alerting as alerting
-from core.nonfatal import nonfatal
+from core.nonfatal import nonfatal, nonfatal_sync
 
 
 @pytest.fixture
@@ -102,6 +102,23 @@ def test_nonfatal_default_level_is_unchanged(alerts, caplog):
     assert _levels_for(caplog, marker) == [logging.ERROR], \
         f"不传 level 时必须是 ERROR，实得 {_levels_for(caplog, marker)}"
     assert len(alerts) == 1, "默认档（数据没存进去 / 请求失败）必须发得出告警"
+
+
+def test_nonfatal_sync_level_warning_is_recorded_but_sends_no_alert(alerts, caplog):
+    """同步版同一档口径：`level=WARNING` → 记 WARNING，且**不**发告警邮件。
+
+    共用 `_report` 只保证「格式与级别参数一致」；「这一档真的不过告警门槛」还得让
+    同步版也走一遍真 `AlertHandler` —— 门槛装在 root 上，判的是 `record.levelno`。
+    """
+    marker = "spec119-nonfatal-sync-warning"
+
+    with caplog.at_level(logging.WARNING):
+        with nonfatal_sync("probe", marker, level=logging.WARNING):
+            raise RuntimeError("warn-boom")
+
+    assert _levels_for(caplog, marker) == [logging.WARNING], \
+        f"应恰有一条 WARNING（吞掉 ≠ 沉默），实得 {_levels_for(caplog, marker)}"
+    assert alerts == [], "WARNING 记成了告警 —— 兜底动作失败会开始发邮件"
 
 
 # ── 2. 全局异常处理器：往上抛的错误必须留痕（并触发告警） ─────────────────────
