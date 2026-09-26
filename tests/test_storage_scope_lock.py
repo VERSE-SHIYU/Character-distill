@@ -67,6 +67,9 @@ UNSCOPED_ALLOWLIST = {
         "MCP stdio 通道无身份语境：进程级服务，按 card_id 路由，可服务任意已蒸馏卡",
     "mcp_server/client_demo.py:_case_a_routing_isolation":
         "演示脚本，无登录语境，按 card_id 取卡验证 toolkit 路由隔离",
+    "scripts/demo_seed.py:build_bundle":
+        "导出脚本无登录语境：text_id 由命令行传入，读它是为了先拿到属主，随后按属主读名单"
+        "（get_characters_owned）与卡（list_cards）—— 只有这一次引导读没有身份可用",
     "scripts/diag_tool_use.py:load_card":
         "诊断脚本，card_id 由命令行传入，无登录语境",
     "scripts/run_agent_eval.py:load_card":
