@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import asyncio
 import random
 import time
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import os
 
@@ -20,6 +21,9 @@ from openai import AsyncOpenAI, BadRequestError, OpenAI, Timeout
 
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 from core.utils import estimate_usage_from_chars  # 字符→token 估算的唯一出口
+
+if TYPE_CHECKING:
+    from core.concurrency import AdaptiveGate  # 只在注解里出现，适配器不构造闸
 
 logger = logging.getLogger(__name__)
 
@@ -782,7 +786,7 @@ class LLMAdapter:
                 time.sleep(budget.on_failure(exc))
 
     @T.async_spanned("llm.chat", op="chat", finalize=_async_infer_finalize)
-    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None, client: AsyncOpenAI | None = None, *, deadline_s: float = _GEN_BATCH_DEADLINE_S) -> tuple[str, dict | None]:
+    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None, client: AsyncOpenAI | None = None, *, deadline_s: float = _GEN_BATCH_DEADLINE_S, gate: "AdaptiveGate | None" = None) -> tuple[str, dict | None]:
         """异步非流式对话，用于 Map 阶段并发。最多重试3次（非429）或5次（429限流）。
 
         Args:
@@ -791,6 +795,10 @@ class LLMAdapter:
             deadline_s: 本调用的总墙钟。默认取批量预算 `_GEN_BATCH_DEADLINE_S`（够跑完
                         3 次 attempt + 退避）；交互式调用方（``achat``）传 `_GEN_DEADLINE_S`
                         维持 60s 封顶。
+            gate: 可选的自适应并发闸（`core.concurrency.AdaptiveGate`）。给了它就把**每一次**
+                create 包在闸内：429 报 `on_rate_limited`、成功报 `on_success`；退避睡眠落在
+                闸**外**（睡着的请求占着名额的话，上限永远探不上去）。不传则行为不变 ——
+                `achat`、群聊、审核那几条路都不传。
 
         Returns ``(result, usage)`` where *usage* is ``{"prompt_tokens": N,
         "completion_tokens": N}`` or *None*.  Callers are responsible for
@@ -806,15 +814,27 @@ class LLMAdapter:
         while True:
             timeout = budget.attempt_timeout()
             try:
-                completion = await _c.chat.completions.create(
-                    model=self._model,
-                    messages=payload,
-                    temperature=self._temperature,
-                    max_tokens=_mt,
-                    presence_penalty=self._presence_penalty,
-                    timeout=timeout,
-                    extra_body=self._request_options(),
-                )
+                # 闸只包**这一次** create。退避睡眠在闸外 —— 否则睡着的请求白占名额，
+                # 上限永远探不上去（WP14）。
+                async with (gate if gate is not None else contextlib.nullcontext()):
+                    try:
+                        completion = await _c.chat.completions.create(
+                            model=self._model,
+                            messages=payload,
+                            temperature=self._temperature,
+                            max_tokens=_mt,
+                            presence_penalty=self._presence_penalty,
+                            timeout=timeout,
+                            extra_body=self._request_options(),
+                        )
+                    except Exception as exc:
+                        # 乘性下调要在**还名额之前**落账：`__aexit__` 会唤醒等在闸外的片，
+                        # 它们读到旧上限就会按旧上限再冲一波 —— 下调晚一步，整波白撞一次。
+                        if gate is not None and _classify_retry(exc)[0]:
+                            await gate.on_rate_limited()
+                        raise
+                if gate is not None:
+                    await gate.on_success()
                 choices = completion.choices
                 if not choices:
                     raise RuntimeError("API returned empty choices")

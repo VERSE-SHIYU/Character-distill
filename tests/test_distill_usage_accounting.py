@@ -75,7 +75,7 @@ class _FakeLLM:
     def _make_async_client(self):
         return _FakeClient()
 
-    async def async_chat(self, system, messages, client=None):
+    async def async_chat(self, system, messages, client=None, gate=None):
         return "角色很沉默。", None
 
 

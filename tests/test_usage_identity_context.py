@@ -401,7 +401,7 @@ class _FakeLLM:
     def _make_async_client(self):
         return _FakeClient()
 
-    async def async_chat(self, system, messages, client=None):
+    async def async_chat(self, system, messages, client=None, gate=None):
         usage = {"prompt_tokens": 21, "completion_tokens": 5}
         # 识别 Map 原样送的就是这个常量（`_identify_over_chunks` 的 `_build_prompt` 直接
         # `return IDENTIFY_SYSTEM_PROMPT, chunk`）。**不能按「识别」二字筛** —— 识别系统

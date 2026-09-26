@@ -62,7 +62,7 @@ class _FakeLLM:
     def _make_async_client(self):
         return _FakeClient()
 
-    async def async_chat(self, system, messages, client=None):
+    async def async_chat(self, system, messages, client=None, gate=None):
         self.map_calls += 1
         return self._digest(messages[0]["content"]), None
 
@@ -296,11 +296,11 @@ class _FailingLLM(_FakeLLM):
         super().__init__()
         self.fail_marker = fail_marker
 
-    async def async_chat(self, system, messages, client=None):
+    async def async_chat(self, system, messages, client=None, gate=None):
         if self.fail_marker in messages[0]["content"]:
             self.map_calls += 1
             raise RuntimeError("simulated upstream failure")
-        return await super().async_chat(system, messages, client=client)
+        return await super().async_chat(system, messages, client=client, gate=gate)
 
 
 class TestFailedChunkNotCheckpointed:
@@ -438,7 +438,7 @@ class _FailFirstN(_FakeLLM):
         super().__init__()
         self._remaining = n
 
-    async def async_chat(self, system, messages, client=None):
+    async def async_chat(self, system, messages, client=None, gate=None):
         if self._remaining > 0:
             self._remaining -= 1      # 判减之间无 await，单线程 asyncio 下不可分割
             self.map_calls += 1

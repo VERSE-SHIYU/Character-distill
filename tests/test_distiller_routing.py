@@ -3,11 +3,15 @@
 import asyncio
 import json
 import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import adapters.llm_adapter as M
+from core.concurrency import AdaptiveGate
 from core.distiller import DistillError, Distiller
 from core.request_context import LLM_CALLER, Caller, current_user_id
 
@@ -241,7 +245,7 @@ class TestBatchThreadCarriesCallerIdentity:
                 yield "合并结果"
                 return {"prompt_tokens": 1, "completion_tokens": 1}
 
-            async def async_chat(self, system, messages, max_tokens=None, client=None):
+            async def async_chat(self, system, messages, max_tokens=None, client=None, gate=None):
                 seen.append((threading.get_ident(), current_user_id()))
                 return ("合并结果", {"prompt_tokens": 1, "completion_tokens": 1})
 
@@ -774,3 +778,178 @@ class TestFormatGroupFailureYieldsNoCard:
         errors = [f for f in frames if isinstance(f, dict) and "error" in f]
         assert len(errors) == 1, f"组失败没上屏 error 帧：{frames[-4:]}"
         assert not any(isinstance(f, str) for f in frames), "有组失败却拼出了卡"
+
+
+# ── WP14 A2：Map 并发按账户自适应（闸只在每次 create 外，退避不占名额）─────────
+
+
+def _reply(handler, status: int, payload: dict, headers: dict) -> None:
+    body = json.dumps(payload).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(body)))
+    for name, value in headers.items():
+        handler.send_header(name, value)
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+class _InflightUpstream:
+    """非流式假上游，按**在途请求数**限流：> `limit` 即 429（DeepSeek 原文形态）。
+
+    为什么必须是真 socket：A2 要判的是「闸把**同时**在途的请求数压住了」，而重叠只有
+    上游侧看得见 —— 桩 client 只能记「调了几次」，看不见两个请求有没有叠在一起。
+
+    `peak` 是整场的在途峰值；`tail_peak` 跳过前 `warm` 个请求之后才计（冷启动必然从
+    `map_concurrency` 探起 —— 那不是「没收敛」，是 AIMD 的第一探，故峰值判据只看尾部）；
+    `statuses` 按到达次序记每个请求的结果。
+
+    429 带 `Retry-After: 0`：走 `_classify_retry` 的「有则读」分支，退避瞬时，用例不必
+    真等 2/4/8s。取 0 是安全的 —— 乘性下调落在「还名额」之前，重发抢不到旧上限。
+
+    `hold_ms` 是每个请求占住连接的时间。**不是装饰**：本地回一个 JSON 只要几十微秒，
+    20 个并发请求在服务端几乎不重叠（实测峰值 2），那就什么也没测。撑开一个窗口，重叠
+    才成为看得见的事实 —— 实测 hold_ms=60 时 20 并发能看到峰值 20。
+    """
+
+    def __init__(self, limit: int, *, warm: int = 0, retry_after: int = 0,
+                 hold_ms: int = 60) -> None:
+        self.limit = limit
+        self.retry_after = retry_after
+        self.hold_ms = hold_ms
+        self.peak = 0
+        self.tail_peak = 0
+        self.statuses: list[int] = []
+        self._warm = warm
+        self._served = 0
+        self._inflight = 0
+        self._lock = threading.Lock()
+        outer = self
+
+        class _Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length", 0))
+                if n:
+                    self.rfile.read(n)
+                with outer._lock:
+                    outer._inflight += 1
+                    outer._served += 1
+                    outer.peak = max(outer.peak, outer._inflight)
+                    if outer._served > outer._warm:
+                        outer.tail_peak = max(outer.tail_peak, outer._inflight)
+                    throttled = outer._inflight > outer.limit
+                    outer.statuses.append(429 if throttled else 200)
+                try:
+                    time.sleep(outer.hold_ms / 1000.0)
+                    if throttled:
+                        _reply(self, 429, {"error": {
+                            "message": (
+                                "Too many requests. Your current concurrency is "
+                                f"{outer._inflight}, which exceeds your concurrency limit "
+                                f"of {outer.limit} based on your remaining balance."),
+                            "type": "rate_limit_error", "param": None,
+                            "code": "invalid_request_error",
+                        }}, {"Retry-After": str(outer.retry_after)})
+                    else:
+                        _reply(self, 200, {
+                            "id": "fake-upstream", "object": "chat.completion", "created": 0,
+                            "model": "fake-model",
+                            "choices": [{"index": 0, "finish_reason": "stop",
+                                         "message": {"role": "assistant", "content": "分析"}}],
+                            "usage": {"prompt_tokens": 1, "completion_tokens": 1,
+                                      "total_tokens": 2},
+                        }, {})
+                finally:
+                    with outer._lock:
+                        outer._inflight -= 1
+
+        self._srv = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self._srv.daemon_threads = True
+        threading.Thread(target=self._srv.serve_forever, daemon=True).start()
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self._srv.server_address[1]}/v1"
+
+    def adapter(self):
+        return M.LLMAdapter(api_key="sk-fake-local", base_url=self.base_url, model="fake-model")
+
+    def close(self) -> None:
+        self._srv.shutdown()
+        self._srv.server_close()
+
+
+class TestMapConcurrencyAdaptsToTheAccount:
+    """WP14 A2：上游「超过 N 路即 429」时 Map 零失败，且在途数收敛到 N 附近。
+
+    变异：闸只包整次调用（不进重试循环）—— 退避期间名额没还掉。`test_backoff_...`
+    读的就是退避那一刻的 `gate.inflight`，直接打红；端到端那条负责证明「零失败」。
+
+    片数取 80 而不是规格里写的 40：闸的初始上限就是 `map_concurrency`，冷启动那一波
+    必然把它探满（实测 40 片整场都还在这个过渡里，后半程峰值仍有 8）。片数不够，就
+    没有「收敛后」可判。峰值只看后半程，并列在失败信息里供复核。
+    """
+
+    CHUNKS = 80
+    LIMIT = 5
+    CAP = 20
+    WARM = CHUNKS // 2
+
+    async def test_map_finishes_with_zero_failures(self):
+        upstream = _InflightUpstream(self.LIMIT, warm=self.WARM)
+        llm = upstream.adapter()
+        try:
+            d = Distiller(llm=llm, config_path=None)
+            d._map_concurrency = self.CAP
+            client = llm._make_async_client()
+            try:
+                results, failures = await d._run_map_concurrent(
+                    [f"第{i}片正文" for i in range(self.CHUNKS)],
+                    lambda chunk: ("你是角色分析专家", f"分析：{chunk}"),
+                    "distill_map", client=client,
+                )
+            finally:
+                await client.close()
+        finally:
+            upstream.close()
+
+        n429 = upstream.statuses.count(429)
+        assert n429 > 0, "假上游一次都没限流 —— 这条锁没走到被锁的地方"
+        assert failures == [], f"限流把片打挂了：{failures[:3]}"
+        assert len(results) == self.CHUNKS
+        assert upstream.tail_peak <= self.LIMIT + 1, (
+            f"收敛后仍在途 {upstream.tail_peak}，超过上游上限 {self.LIMIT}（+1 是 AIMD 的探针："
+            f"不探到上限之上就永远学不到上限）；整场峰值 {upstream.peak}（含冷启动那波），"
+            f"429 共 {n429} 次")
+
+    async def test_backoff_does_not_hold_a_slot(self, monkeypatch):
+        """退避睡眠必须落在闸**外**：睡着的请求若占着名额，上限永远探不上去。
+
+        读数是「退避那一刻闸的在途数」—— 它不随墙钟变，只随「名额有没有提前还掉」变，
+        正是这条锁的对象。
+        """
+        upstream = _InflightUpstream(limit=0, retry_after=0)  # 永远 429
+        llm = upstream.adapter()
+        gate = AdaptiveGate(cap=8)
+        seen: list[int] = []
+        real_sleep = asyncio.sleep
+
+        async def _spy(seconds, *a, **kw):
+            seen.append(gate.inflight)
+            await real_sleep(0)  # 不真等退避
+
+        monkeypatch.setattr(M, "asyncio", SimpleNamespace(sleep=_spy))
+        try:
+            with pytest.raises(M.UpstreamFailure):
+                await llm.async_chat("sys", [{"role": "user", "content": "u"}], gate=gate)
+        finally:
+            upstream.close()
+
+        assert seen, "一次退避都没发生 —— 这条锁没走到被锁的地方"
+        assert seen == [0] * len(seen), f"退避时仍占着名额：{seen}"
+        assert gate.ceiling < 8, "429 没喂到闸上"

@@ -1572,30 +1572,33 @@ class Distiller:
         async loop each time a chunk finishes；``ok=False`` 的片结果是空串、且已计入
         failures —— 调用方据此决定该片要不要落 checkpoint（流式侧不落）。
         """
-        sem = asyncio.Semaphore(self._map_concurrency)
+        # 闸按**在途请求数**自适应（WP14）：上游的并发上限按账号计、随余额变，固定的
+        # `map_concurrency` 总会超过一部分账号。闸自己踩 429 下探、连续成功上探，这里只
+        # 给它上限。名额在 `async_chat` 里按**每一次尝试**取放，不在这里按整片包 —— 否则
+        # 重试退避期间名额被占着，闸的上探永远慢半拍。
+        gate = C.AdaptiveGate(self._map_concurrency)
         done_count = [0]
         lock = asyncio.Lock()
         failures: list[tuple[int, Exception]] = []
         usages: list[dict | None] = []
 
         async def _one(i: int, chunk: str) -> tuple[int, str]:
-            async with sem:
-                system, user = build_prompt(chunk)
-                usage = None
-                ok = True
-                try:
-                    result, usage = await self._llm.async_chat(
-                        system, [{"role": "user", "content": user}], client=client
-                    )
-                except Exception as exc:
-                    logger.warning("Map chunk %s failed: %s", i, exc, exc_info=True)
-                    # 失败分片照样烧了 token（重试墙下空烧 26–100s）—— prompt 侧按字符
-                    # 估算补记，completion 未知记 0 并标 estimated。只记成功 = 统计系统性偏低。
-                    usage = estimate_usage_from_chars(len(system) + len(user))
-                    async with lock:
-                        failures.append((i, exc))
-                    result = ""
-                    ok = False
+            system, user = build_prompt(chunk)
+            usage = None
+            ok = True
+            try:
+                result, usage = await self._llm.async_chat(
+                    system, [{"role": "user", "content": user}], client=client, gate=gate
+                )
+            except Exception as exc:
+                logger.warning("Map chunk %s failed: %s", i, exc, exc_info=True)
+                # 失败分片照样烧了 token（重试墙下空烧 26–100s）—— prompt 侧按字符
+                # 估算补记，completion 未知记 0 并标 estimated。只记成功 = 统计系统性偏低。
+                usage = estimate_usage_from_chars(len(system) + len(user))
+                async with lock:
+                    failures.append((i, exc))
+                result = ""
+                ok = False
             async with lock:
                 done_count[0] += 1
                 usages.append(usage)
