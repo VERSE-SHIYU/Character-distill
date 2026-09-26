@@ -196,7 +196,7 @@
 1. 原文与名单在 `texts` 同一行：写入口 `save_text`（`storage/postgres_store.py:285`）、`save_characters`（`:379`，带版本）；读 `get_characters_owned`（`:395`）按版本精确比对，不等即当无缓存、会重新识别。
 2. 卡片写入口 `save_card`（`:599`），按 (text_id, name, user_id) 命中则原地更新；`cards.text_id` 外键指向 `texts`，标签 / 开场白 / 苏醒台词都在 `card_json` 里。
 3. 向量的 key 只来自用户自己（`web/llm_resolution.py:95-123`，全局一档在运行代码里不可达）；演示判定只有 `role == 'guest'`（`core/roles.py:48`），门禁只拦 HTTP 写（`web/demo_gate.py:78`），不拦脚本写库。
-4. 两节点现无 guest 账号；SG 的 `offerPass` 名下有两本失败留下的副本 `cb455edd7ce6`、`b42f3d89ace4`（无名单、无向量）。私有卡不参与跨节点同步（`web/cross_border_sync.py` 只同步私信与公开卡）。
+4. 两节点现无 guest 账号；SG 的 `offerPass` 名下有两本失败留下的副本：`cb455edd7ce6`（有名单，版本 0）、`b42f3d89ace4`（无名单）；两本都无卡片、无向量。私有卡不参与跨节点同步（`web/cross_border_sync.py` 只同步私信与公开卡）。
 5. 先例：`scripts/migrate_data.py`（目标账号经环境变量 `TARGET_USERNAME` 传入，不写死 id）。
 
 **拍板结果**：只搬库里的数据；向量由 Shiyu 导入后用演示账号各开一次会话、在各节点生成（每节点约 1 元）；SG 两本旧副本软删；只搬宝玉、刘姥姥两张卡。
