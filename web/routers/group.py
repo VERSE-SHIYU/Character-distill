@@ -14,7 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from core.trash_service import hard_delete, restore, soft_delete
 from deps import get_storage, get_user_llm, get_sessions, get_group_sessions
@@ -94,8 +94,14 @@ async def _rebuild_group_session(
     # Inject per-user embedding config
     try:
         user_cfg = await storage.get_user_api_config(user_id) or {}
-    except Exception:
+    except Exception as exc:
         user_cfg = {}
+        # 读不到用户配置 → 静默用全局 embedding key（与 chat._ensure_session 同一形态）
+        logger.warning(
+            "Group session rebuild: per-user api config unreadable, falling back to "
+            "global key (user_id=%s group_id=%s): %r",
+            user_id, group_id, exc, exc_info=True,
+        )
     emb = resolve_embedding(user_cfg)
     if emb.key:
         rag_config["embedding_key"], rag_config["embedding_region"] = emb.key, emb.region
@@ -118,8 +124,13 @@ async def _rebuild_group_session(
                 if card_rec:
                     card = CharacterCard.model_validate_json(card_rec["card_json"])
                     played_card_name = card.name
-            except Exception:
-                pass
+            except Exception as exc:
+                # 取不到人设卡名 → played_card_name 留空，该卡在群里的展示名退化成 id。
+                # 这是装饰性字段，不中断重建。
+                logger.warning(
+                    "Group rebuild: played card name unreadable (group_id=%s card_id=%s): %r",
+                    group_id, card_id, exc, exc_info=True,
+                )
             continue
 
         card_rec = await storage.get_card_owned(card_id, user_id)
@@ -127,7 +138,9 @@ async def _rebuild_group_session(
             continue
         try:
             card = CharacterCard.model_validate_json(card_rec["card_json"])
-        except Exception:
+        except ValidationError:
+            # 窄化：只有「卡片 JSON 结构不合法」才当坏卡跳过。DB 故障（IO 等）不再被
+            # 这里吞掉 —— 那是真故障，该上抛给全局处理器。
             continue
 
         text_id = card_rec["text_id"]
@@ -146,7 +159,14 @@ async def _rebuild_group_session(
                     "text 集合不可用（向量维度不符/损坏），降级跳过场景检索、不自动重建：%s",
                     card_id, text_id, exc,
                 )
-            except Exception:
+            except Exception as exc:
+                # 非「维度不符」的加载失败：走 index() 重建，下次重建时集合已在，自愈。
+                # 失败被兜住了，但「为什么没直接加载成功」要留痕（否则每次重建都悄悄重烧 embed）。
+                logger.warning(
+                    "Group rebuild: rag load_existing failed, reindexing "
+                    "(group_id=%s text_id=%s): %r",
+                    group_id, text_id, exc, exc_info=True,
+                )
                 rag.index(text_rec["content"])
             text_rag_cache[text_id] = rag
 
@@ -306,8 +326,13 @@ async def create_group(
     # Inject per-user embedding config
     try:
         user_cfg = await storage.get_user_api_config(user_id) or {}
-    except Exception:
+    except Exception as exc:
         user_cfg = {}
+        # 读不到用户配置 → 静默用全局 embedding key（与 chat._ensure_session 同一形态）
+        logger.warning(
+            "Group create: per-user api config unreadable, falling back to global "
+            "key (user_id=%s): %r", user_id, exc, exc_info=True,
+        )
     emb = resolve_embedding(user_cfg)
     if emb.key:
         rag_config["embedding_key"], rag_config["embedding_region"] = emb.key, emb.region
@@ -429,8 +454,13 @@ async def _filter_valid_card_ids(groups: list[dict], user_id: str, storage: Stor
             card = await storage.get_card_owned(cid, user_id)
             if card:
                 valid.add(cid)
-        except Exception:
-            pass
+        except Exception as exc:
+            # 查询失败按「该卡无效」处理（保守侧：列表少一张卡，不 500）。
+            # 但「这张卡是被移除了还是没查出来」对排障是两回事，要留痕。
+            logger.warning(
+                "Group list: card lookup failed, treating as orphan (user_id=%s card_id=%s): %r",
+                user_id, cid, exc, exc_info=True,
+            )
 
     for g in groups:
         g["card_ids"] = [cid for cid in g.get("card_ids", []) if cid in valid]
@@ -473,8 +503,13 @@ async def cleanup_orphan_card_ids(
             card = await storage.get_card_owned(cid, user_id)
             if card:
                 valid.add(cid)
-        except Exception:
-            pass
+        except Exception as exc:
+            # 同 _filter_valid_card_ids：查询失败按无效处理。这个端点会**写库**，
+            # 所以「哪些 id 是因为查不出来而被删掉」必须留痕，否则误删无从追溯。
+            logger.warning(
+                "Orphan cleanup: card lookup failed, treating as orphan "
+                "(user_id=%s card_id=%s): %r", user_id, cid, exc, exc_info=True,
+            )
 
     stats = {"groups_checked": len(groups), "groups_cleaned": 0, "card_ids_removed": 0}
     for g in groups:
@@ -526,8 +561,12 @@ async def send_message(
             replied = next((m for m in history if m["id"] == req.reply_to_id), None)
             if replied:
                 reply_preview = (replied.get("speaker", "") + ": " + replied["content"])[:80]
-        except Exception:
-            pass
+        except Exception as exc:
+            # 只丢引用预览（装饰性字段），消息本体照发
+            logger.warning(
+                "Group message: reply preview unreadable (group_id=%s reply_to_id=%s): %r",
+                group_id, req.reply_to_id, exc, exc_info=True,
+            )
     user_speaker = req.speaker or group.speaker_name
     user_speaker_card_id = group.user_persona_card_id if group.user_persona_type == "character" else ""
 
@@ -633,8 +672,13 @@ async def broadcast_message(
                     replied = next((m for m in history if m["id"] == req.reply_to_id), None)
                     if replied:
                         reply_preview = (replied.get("speaker", "") + ": " + replied["content"])[:80]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # 只丢引用预览（装饰性字段），正文照流
+                    logger.warning(
+                        "Group stream: reply preview unreadable "
+                        "(group_id=%s reply_to_id=%s): %r",
+                        group_id, req.reply_to_id, exc, exc_info=True,
+                    )
 
             user_speaker = req.speaker or group.speaker_name
             user_speaker_card_id = group.user_persona_card_id if group.user_persona_type == "character" else ""
