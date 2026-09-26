@@ -1,6 +1,7 @@
 """Tests for long-context routing: token estimation + threshold branching."""
 
 import asyncio
+import json
 import threading
 
 import pytest
@@ -506,3 +507,241 @@ class TestFormatFieldGroups:
             assert set(sub.get("required", ())) <= set(fields), group
             # 嵌套模型定义必须带上，否则 $ref 解析不了
             assert "PsycheProfile" in sub.get("$defs", {}), group
+
+
+# ── WP7：格式化按字段组并行 ───────────────────────────────────────────────
+
+class _FakeAsyncClient:
+    """Map 阶段要 `_make_async_client()` 才跑得起来（建 client → 跑 → 关）。"""
+
+    async def close(self):
+        pass
+
+
+# 组模板里的键名互不重叠，故拿它认「这条调用是哪一组」。
+_FORMAT_GROUP_MARKERS = (
+    ("G1", '"name": "角色名"'),
+    ("G2", '"personality_traits"'),
+    ("G3", '"speaking_style"'),
+    ("G4", '"relationships"'),
+)
+_FORMAT_GROUP_ORDER = [g for g, _ in _FORMAT_GROUP_MARKERS]
+
+
+def _format_group_of(system: str) -> str | None:
+    """从格式化系统提示词认出组别；认不出返回 None（该断言的用例会因此变红）。"""
+    for group, marker in _FORMAT_GROUP_MARKERS:
+        if marker in system:
+            return group
+    return None
+
+_SAMPLE_FIELD_VALUES = {
+    "name": "角色",
+    "identity": "一句话身份",
+    "background": "背景摘要",
+    "personality_traits": ["特质（原文证据）"],
+    "values": ["价值观"],
+    "inner_tensions": ["内在矛盾"],
+    "emotional_patterns": ["情感模式"],
+    "decision_style": "谨慎型",
+    "speaking_style": {"tone": "冷淡", "sentence_pattern": "短句", "catchphrases": ["哼"],
+                       "vocabulary_level": "日常", "taboo_words": []},
+    "dialogue_examples": ["对方：你来了\n角色：嗯"],
+    "first_message": "你来了。",
+    "cognitive": {"education_level": "普通", "knowledge_scope": "常识",
+                  "speech_style": "平实", "vocabulary_level": "日常"},
+    "relationships": [{"target": "某人", "relation": "朋友", "attitude": "亲近",
+                       "note": "认识很久的朋友"}],
+    "key_memories": ["关键经历"],
+    "character_arc": ["阶段一"],
+    "psyche": {"openness": 3, "conscientiousness": 3, "extraversion": 3,
+               "agreeableness": 3, "neuroticism": 3, "affinity_baseline": 50,
+               "volatility": "适中", "grudge_inertia": "一般",
+               "triggers": ["雷点"], "soft_spots": ["软肋"]},
+}
+
+
+def _group_reply(group: str) -> str:
+    """按组回一份字段齐备的 JSON —— 组字段表从 schema 读，不另抄一份。"""
+    from core.schema import FORMAT_GROUPS as _FG
+
+    return json.dumps({k: _SAMPLE_FIELD_VALUES[k] for k in _FG[group]})
+
+
+class TestFormatGroupsRunInParallel:
+    """WP7 F1：4 组并行、各记各账、`formatting` 帧恰 1 次且在 4 组之前。
+
+    并行判据是 `threading.Barrier(4)` —— 串行实现等不到第 4 个，2 s 后破障，该组失败，
+    成品卡就出不来（无 str 帧）。记账判据是 4 条 `distill_format` 各带不同 usage。
+
+    变异：① 改回串行 ② 每组各发一次 `formatting`。
+    """
+
+    CHUNK = 3000
+    TEXT = "AB" * (1500 * 50)   # 150000 字符 → 50 片（≤80，走单次合并）
+
+    def test_four_groups_run_in_parallel_and_account_separately(self, monkeypatch):
+        barrier = threading.Barrier(4, timeout=2)
+        events: list[str] = []
+        rows: list[tuple[str, dict | None]] = []
+
+        def _record(*, storage, llm, action, usage, source):
+            rows.append((action, usage))
+
+        monkeypatch.setattr("core.distiller.try_record_usage", _record)
+
+        class _LLM:
+            last_usage = None
+            model = "m"
+
+            def _make_async_client(self):
+                return _FakeAsyncClient()
+
+            async def async_chat(self, system, messages, max_tokens=None, client=None, **kw):
+                return ("片段分析", {"prompt_tokens": 1, "completion_tokens": 1})
+
+            def chat_stream_long(self, system, messages, max_tokens=None, **kw):
+                if "你正在整合关于" in system:
+                    yield "合并结果"
+                    return {"prompt_tokens": 1, "completion_tokens": 1}
+                group = _format_group_of(system)
+                barrier.wait()            # 串行实现到这里等不齐 4 个 → 破障
+                idx = _FORMAT_GROUP_ORDER.index(group) if group else -1
+                events.append(f"group:{group}")
+                yield _group_reply(group)
+                return {"prompt_tokens": 10 + idx, "completion_tokens": idx}
+
+        d = Distiller(llm=_LLM(), config_path=None)
+        d._longctx_threshold = 0
+        d._chunk_size = self.CHUNK
+
+        frames = []
+        for f in d.distill_incremental_stream(
+            self.TEXT, "AB", aliases=[], text_type="story"
+        ):
+            frames.append(f)
+            if isinstance(f, dict) and f.get("status") == "formatting":
+                events.append("formatting")
+
+        fmt_rows = [u for a, u in rows if a == "distill_format"]
+        assert len(fmt_rows) == 4, f"distill_format 记账不是 4 条：{rows}"
+        assert len({json.dumps(u, sort_keys=True) for u in fmt_rows}) == 4, (
+            f"4 组账目分不开：{fmt_rows}"
+        )
+        assert events.count("formatting") == 1, f"formatting 帧不是恰 1 次：{events}"
+        assert events[0] == "formatting", f"formatting 帧不在 4 组调用之前：{events}"
+        assert sum(1 for e in events if e.startswith("group:")) == 4, events
+        assert sum(1 for f in frames if isinstance(f, str)) == 1, "成品卡不是恰 1 个 str 帧"
+
+
+class TestBatchCountDecidesTotalMerge:
+    """WP7 F2：批数决定是否先总合并。
+
+    100 片（2 批）→ 归并恰 2 次（**无总合并**），4 组输入都含两批结果；
+    50 片（1 批）→ 归并恰 1 次，4 组输入就是这次合并的输出。
+
+    变异：① 恢复总合并（100 片那条变 3 次）② 一律跳过合并（50 片那条变 0 次）。
+    """
+
+    CHUNK = 3000
+    MARK = "M-标记分析"
+    TEXT_100 = "AB" * (1500 * 80) + "CD" * (1500 * 20)   # 100 片，后 20 片带标记
+    TEXT_50 = "AB" * (1500 * 50)                          # 50 片
+    ALIASES = ["AB", "CD"]
+
+    def _run(self, text: str, aliases: list[str]) -> tuple[list[str], list[str]]:
+        seen = {"reduce": [], "format": []}
+        mark = self.MARK
+
+        class _LLM:
+            last_usage = None
+            model = "m"
+
+            def _make_async_client(self):
+                return _FakeAsyncClient()
+
+            async def async_chat(self, system, messages, max_tokens=None, client=None, **kw):
+                body = messages[0]["content"]
+                return ((mark if "CD" in body else "普通分析"),
+                        {"prompt_tokens": 1, "completion_tokens": 1})
+
+            def chat_stream_long(self, system, messages, max_tokens=None, **kw):
+                body = messages[0]["content"]
+                if "你正在整合关于" in system:
+                    reply = "合并乙" if mark in body else "合并甲"
+                    seen["reduce"].append(reply)
+                else:
+                    seen["format"].append(body)
+                    reply = _group_reply(_format_group_of(system))
+                yield reply
+                return {"prompt_tokens": 1, "completion_tokens": 1}
+
+        d = Distiller(llm=_LLM(), config_path=None)
+        d._longctx_threshold = 0
+        d._chunk_size = self.CHUNK
+        list(d.distill_incremental_stream(text, "角色", aliases=aliases, text_type="story"))
+        return seen["reduce"], seen["format"]
+
+    def test_two_batches_skip_the_total_merge(self):
+        reduces, formats = self._run(self.TEXT_100, self.ALIASES)
+
+        assert reduces == ["合并甲", "合并乙"] or reduces == ["合并乙", "合并甲"], (
+            f"分批归并次数不对（应恰 2 次、无总合并）：{reduces}"
+        )
+        assert len(formats) == 4, f"格式化不是 4 组：{len(formats)}"
+        for body in formats:
+            assert "合并甲" in body and "合并乙" in body, (
+                f"4 组没有直接读到两批归并结果：{body[-120:]}"
+            )
+
+    def test_single_batch_merges_once_then_formats_from_it(self):
+        reduces, formats = self._run(self.TEXT_50, [])
+
+        assert reduces == ["合并甲"], f"≤80 片应恰 1 次归并：{reduces}"
+        assert len(formats) == 4, f"格式化不是 4 组：{len(formats)}"
+        for body in formats:
+            assert body.endswith("合并甲"), (
+                f"4 组输入不是这次合并的输出：{body[-120:]}"
+            )
+
+
+class TestFormatGroupFailureYieldsNoCard:
+    """WP7 F5：任一组失败不拼半张卡 —— 有 error 帧、无 str 帧。
+
+    变异：失败组填 `{}` 继续（其余组合得出一张「看起来合法」的卡 → 出现 str 帧）。
+    """
+
+    CHUNK = 3000
+    TEXT = "AB" * (1500 * 50)
+
+    def test_third_group_failure_yields_error_and_no_card(self):
+        class _LLM:
+            last_usage = None
+            model = "m"
+
+            def _make_async_client(self):
+                return _FakeAsyncClient()
+
+            async def async_chat(self, system, messages, max_tokens=None, client=None, **kw):
+                return ("片段分析", {"prompt_tokens": 1, "completion_tokens": 1})
+
+            def chat_stream_long(self, system, messages, max_tokens=None, **kw):
+                if "你正在整合关于" in system:
+                    yield "合并结果"
+                    return {"prompt_tokens": 1, "completion_tokens": 1}
+                group = _format_group_of(system)
+                if group == "G3":
+                    raise RuntimeError("G3 组炸了")
+                yield _group_reply(group)
+                return {"prompt_tokens": 1, "completion_tokens": 1}
+
+        d = Distiller(llm=_LLM(), config_path=None)
+        d._longctx_threshold = 0
+        d._chunk_size = self.CHUNK
+        frames = list(d.distill_incremental_stream(
+            self.TEXT, "AB", aliases=[], text_type="story"
+        ))
+
+        errors = [f for f in frames if isinstance(f, dict) and "error" in f]
+        assert len(errors) == 1, f"组失败没上屏 error 帧：{frames[-4:]}"
+        assert not any(isinstance(f, str) for f in frames), "有组失败却拼出了卡"

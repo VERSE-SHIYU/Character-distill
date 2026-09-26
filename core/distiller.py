@@ -23,7 +23,7 @@ from openai import AsyncOpenAI
 
 from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_facing_error
 from core.chat_preprocessor import ChatPreprocessor
-from core.schema import CharacterCard, FORMAT_GROUPS, PRESET_TAGS
+from core.schema import CharacterCard, FORMAT_GROUPS, PRESET_TAGS, format_group_schema
 from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
 from core import telemetry as T  # OTel 埋点
 from core import concurrency as C  # 派生与上下文传播
@@ -2058,12 +2058,12 @@ class Distiller:
         # 缓存命中的 Map 片已并入 map_results，reduce 天然看到全集。
         if len(raw_analyses) <= self.SAFE_SINGLE_REDUCE:
             yield {"status": "merging", "current": 0, "total": 1}
-            profile_draft = ""
+            format_input = ""
             tc = 0
             for token in self._single_reduce_stream(raw_analyses, character_name):
                 if token == "\x00THINKING\x00":
                     continue
-                profile_draft += token
+                format_input += token
                 tc += 1
                 if tc % 50 == 0:
                     yield {"heartbeat": True}
@@ -2117,40 +2117,83 @@ class Distiller:
 
             yield {"heartbeat": True}
 
+            # WP7：>80 片时**跳过总合并** —— 4 组直接读各批归并结果（批数很少，拼起来
+            # 仍装得下）。总合并与格式化是串行的两次长输出，跳过后省掉一整段。批数多到
+            # 拼不下（>80 批，即 >6400 片）才回到 `_do_reduce` 再压一轮。
             if len(batch_results) <= self.SAFE_SINGLE_REDUCE:
-                profile_draft = ""
-                tc = 0
-                for token in self._single_reduce_stream(batch_results, character_name):
-                    if token == "\x00THINKING\x00":
-                        continue
-                    profile_draft += token
-                    tc += 1
-                    if tc % 50 == 0:
-                        yield {"heartbeat": True}
+                format_input = "\n\n".join(batch_results)
             else:
-                profile_draft = self._do_reduce(batch_results, character_name)
+                format_input = self._do_reduce(batch_results, character_name)
 
-        if not profile_draft.strip():
+        if not format_input.strip():
             yield {"error": "未能从文本中提取到角色信息"}
             return
 
-        # ── Phase 3: Format — streaming JSON generation ──
+        # ── Phase 3: Format — 4 组并行，合并校验后一次交出 ──
+        # 每组是一次长输出（共享前缀 + 组片段 + 该组子 schema），组数固定 4、彼此独立，
+        # 故并行发；组内仍串行。串行的代价是「最慢一组的耗时」而不是「4 组之和」。
+        # 4 条线程各走 `_chat_accounted(stream=True)`，用量各记各的（`_collect_stream`
+        # 在发起调用的那一级记账）。合并 → `CharacterCard.model_validate` → **一个**
+        # json.dumps 字符串 yield（两条消费路径都从累加串里 parse，见 web/routers/distill.py）。
+        # 任一组失败或校验不过：上屏 error 帧，不拼半张卡。
         yield {"status": "formatting"}
-        try:
-            schema_obj = CharacterCard.model_json_schema()
-            schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError) as exc:
-            print(f"生成 CharacterCard JSON Schema 失败：{exc}")
-            raise
 
-        system_prompt = (
-            DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
-        )
-        usage = yield from self._llm.chat_stream_long(
-            system_prompt,
-            [{"role": "user", "content":
-                f"以下是关于「{character_name}」的完整分析档案，严格按 JSON 格式输出角色卡：\n\n{profile_draft}"
-            }],
-            max_tokens=self.CARD_MAX_TOKENS,
-        )
-        self._try_record_usage("distill_format", usage)
+        fmt_queue: queue.Queue = queue.Queue()
+
+        def _format_one_group(group: str) -> None:
+            try:
+                sub_schema = json.dumps(
+                    format_group_schema(group), ensure_ascii=False, indent=2
+                )
+                system_prompt = (
+                    DISTILL_PROMPT_BEFORE_NAME + character_name
+                    + format_prompt_after(group) + sub_schema
+                )
+                messages = [{"role": "user", "content":
+                    f"以下是关于「{character_name}」的完整分析档案，"
+                    f"严格按 JSON 格式输出模板中的字段：\n\n{format_input}"
+                }]
+                reply, upstream_truncated = self._chat_accounted(
+                    system_prompt, messages, "最终格式化", "distill_format",
+                    stream=True, max_tokens=self.CARD_MAX_TOKENS,
+                )
+                data = self._parse_json_with_retry(
+                    reply, system_prompt, messages,
+                    action_label="distill_format",
+                    # 必填 = 该组字段：组模板列的就是这几个，缺一个说明这组没照模板来
+                    # （不查的话 `{}` 也能过，合并后被默认值填成一张空卡）。
+                    required_keys=FORMAT_GROUPS[group],
+                    upstream_truncated=upstream_truncated,
+                    stream=True, max_tokens=self.CARD_MAX_TOKENS,
+                )
+                fmt_queue.put(("ok", group, data))
+            except Exception as exc:
+                fmt_queue.put(("error", group, exc))   # 上屏口径交给下面统一出口
+
+        for _w in [
+            C.ctx_thread(_format_one_group, args=(group,), name=f"format-{group}")
+            for group in FORMAT_GROUPS
+        ]:
+            _w.start()
+
+        group_data: dict[str, dict[str, Any]] = {}
+        while len(group_data) < len(FORMAT_GROUPS):
+            kind, group, payload = fmt_queue.get()
+            if kind == "error":
+                print(f"[distiller] format group {group} aborted: {payload}")
+                yield {"error": user_facing_error(payload)}
+                return
+            group_data[group] = payload
+            yield {"heartbeat": True}   # 每组回来一次心跳，不新增状态值
+
+        merged: dict[str, Any] = {}
+        for group in FORMAT_GROUPS:      # 按 FORMAT_GROUPS 的顺序合并，与完成次序无关
+            merged.update(group_data[group])
+        try:
+            card = CharacterCard.model_validate(merged)
+        except ValidationError as exc:
+            print(f"Pydantic 校验 CharacterCard 失败：{exc}")
+            yield {"error": user_facing_error(exc)}
+            return
+
+        yield json.dumps(card.model_dump(), ensure_ascii=False)
