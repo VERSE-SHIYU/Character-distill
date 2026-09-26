@@ -52,7 +52,7 @@ async def list_users(
             try:
                 dt = __import__("datetime").datetime.fromisoformat(ts)
                 u["online"] = (now - dt.timestamp()) < 300  # 5 min
-            except Exception:
+            except (ValueError, TypeError):
                 u["online"] = False
         else:
             u["online"] = False
@@ -83,7 +83,7 @@ async def list_users_federated(
             try:
                 dt = __import__("datetime").datetime.fromisoformat(ts)
                 u["online"] = (now - dt.timestamp()) < 300
-            except Exception:
+            except (ValueError, TypeError):
                 u["online"] = False
         else:
             u["online"] = False
@@ -120,7 +120,7 @@ async def list_users_federated(
                     try:
                         dt = __import__("datetime").datetime.fromisoformat(ts)
                         u["online"] = (now - dt.timestamp()) < 300
-                    except Exception:
+                    except (ValueError, TypeError):
                         u["online"] = False
                 else:
                     u["online"] = False
@@ -128,7 +128,10 @@ async def list_users_federated(
             result["peer"] = peer_users
         else:
             result["peer_unreachable"] = True
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Federated admin: peer users unreachable: %r", exc, exc_info=True,
+        )
         result["peer_unreachable"] = True
 
     return result
@@ -665,7 +668,7 @@ async def admin_user_detail(
             try:
                 dt = __import__("datetime").datetime.fromisoformat(ts)
                 detail["online"] = (time.time() - dt.timestamp()) < 300
-            except Exception:
+            except (ValueError, TypeError):
                 detail["online"] = False
         else:
             detail["online"] = False
