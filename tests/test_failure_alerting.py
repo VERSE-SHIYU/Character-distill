@@ -412,8 +412,9 @@ _KEPT_BROAD_EXCEPTS: dict[tuple[str, str], tuple[int, str]] = {
         (1, "交给下游：同 chat 的 _RetryBudget"),
     ("adapters/llm_adapter.py", "chat_with_tools"):
         (1, "交给下游：同 chat 的 _RetryBudget"),
-    ("core/agent/tools.py", "execute"):
-        (1, "交给下游：SourceTrace(status=\"failed\") → agent_loop.evidence，随工具结果上屏"),
+    # 注：`core/agent/tools.py::execute` 曾是「交给下游：随 evidence 上屏」的登记项 ——
+    # 按「只上屏不算留痕」的规则改判为补日志 WARNING，已从本表移除（`logger.warning` 在
+    # 该分支里，判据不再把它算作静默）。
     ("core/distiller.py", "_thread_run"):
         (2, "交给下游：outcome 队列 → 消费端 raise payload / print+yield error 帧（identify 合入后改 logger.error）"),
     ("core/distiller.py", "_parse_json_with_retry"):

@@ -209,11 +209,14 @@ class _RetryBudget:
             # "failed after N attempts" / "rate limited (429)" 判据继续命中。
             user_message = _upstream_user_message(exc)
             if is_429:
-                print(f"{self._tag}Rate limited (429), all {self._total} attempts exhausted")
+                # 所有 LLM 失败的必经点：耗尽后必须落到 logger（print 只进容器 stdout，
+                # 面板与告警都看不见）。模板用 %s 占位，GlitchTip 才按同一模板归并。
+                logger.error("%sRate limited (429), all %s attempts exhausted", self._tag, self._total)
                 raise UpstreamFailure(
                     f"{self._err} rate limited (429) after {self._total} attempts: {exc}",
                     user_message=user_message)
-            print(f"{self._tag}All {self._total} attempts failed: {exc}")
+            logger.error("%sAll %s attempts failed: %s: %s",
+                         self._tag, self._total, type(exc).__name__, exc)
             raise UpstreamFailure(
                 f"{self._err} failed after {self._total} attempts: {exc}",
                 user_message=user_message)

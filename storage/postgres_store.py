@@ -4990,9 +4990,10 @@ class PostgresStore(StorageBase):
                 for k in set(list(old.keys()) + list(new_parsed.keys())):
                     if old.get(k) != new_parsed.get(k):
                         diff[k] = {"old": old.get(k, ""), "new": new_parsed.get(k, "")}
-            except Exception:
+            except json.JSONDecodeError:
                 # store-empty-ok: 同 export_session —— 存量 JSON 坏了不是「查询失败」，
                 # 降级在写入的 diff 里显式可见（{"_full": "parse error"}），写入本身照常进行。
+                # 窄到解析错误：连接/权限之类的真故障不再被这句降级掩盖。
                 diff = {"_full": "parse error"}
             diff_json = json.dumps(diff, ensure_ascii=False)
 

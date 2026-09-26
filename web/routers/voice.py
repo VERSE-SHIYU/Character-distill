@@ -62,14 +62,16 @@ async def voice_status(
         from speech.funasr_client import FunASRClient
         funasr_client = FunASRClient(url=funasr_url)
         funasr_ok = await funasr_client.is_available()
-    except Exception:
-        pass
+    except Exception as exc:
+        # `ok=False` 是答案，但「为什么 False」要留痕：健康检查失败与「服务没配」在面板上
+        # 必须分得开，否则「语音一直不可用」查不出是探针坏了还是对端没起。
+        logger.warning("Voice status: funasr health check failed: %r", exc, exc_info=True)
 
     gptsovits_ok = False
     try:
         gptsovits_ok = await voice_client.health_check()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Voice status: GPT-SoVITS health check failed: %r", exc, exc_info=True)
 
     return {
         "available": True,
@@ -154,7 +156,10 @@ async def upload_custom_voice(
         from mutagen import File as MutagenFile
         audio = MutagenFile(str(dest_path))
         duration = round(audio.info.length, 1) if audio and hasattr(audio.info, "length") else 0.0
-    except Exception:
+    except Exception as exc:
+        # 0.0 是错的兜底值（时长真的读不出来），但音色仍可用 —— 记 WARNING 不拦上传。
+        # mutagen 的异常面太宽（各格式解析器各抛各的），窄不到具体类型。
+        logger.warning("Voice upload: duration parse failed for %s: %r", voice_id, exc)
         duration = 0.0
 
     from datetime import datetime
@@ -229,7 +234,7 @@ async def voice_synthesize(
     """Synthesize speech. Uses GPT-SoVITS if ref audio exists, otherwise Edge TTS."""
     try:
         body = await request.json()
-    except Exception:
+    except json.JSONDecodeError:
         raise HTTPException(400, "JSON body required")
 
     text = body.get("text", "")

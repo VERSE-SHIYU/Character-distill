@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 from core import concurrency as C  # 派生与上下文传播（ctx_submit）
 from core.embeddings import embed_deadline  # D2：库内 embed 的 deadline scope
 from core.schema import EvidenceKind, SourceTrace
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # 仅类型标注用：避免 import 期把 chromadb 拖进工具模块
     from core.context_engine import RetrievalResult
@@ -205,6 +208,11 @@ class AgentToolkit:
                 f"工具执行超时（{entry.timeout}s）",
             )
         except Exception as exc:
+            # 交给下游的只有「折进 SourceTrace 随 evidence 上屏」—— 上屏不算留痕（面板与
+            # 告警都看不见）。此处补 WARNING：工具失败不致命（agent 拿到 failed 态继续），
+            # 但「哪件工具、为什么失败」要能查。
+            logger.warning("Agent tool %s failed: %s: %s", name, type(exc).__name__, exc,
+                           exc_info=True)
             return self._finish(
                 name, arguments, started,
                 SourceTrace(source=entry.source, status="failed", items=[]),
