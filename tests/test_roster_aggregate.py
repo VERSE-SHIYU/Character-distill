@@ -14,6 +14,7 @@
        判断模型的清单里也不列**当时**挂在 ≥2 组上的别名（泛称会诱导模型误并）。
   I3c  成员主名优先：「宝玉」是合并组的成员主名、又被甄宝玉组当别名 —— 只属于有它
        的那一组。只以别名身份挂在 ≥2 组上的，才从所有组移除。
+  I3d  别名至少两个字 —— 单字称呼（「他」「玉」「爷」）按子串匹配几乎命中每一片。
   I4   主次、排序、理由、不截断 —— 四个输入全是代码可数的。
 
 判定「歧义」的时机是本文件的中心：**并组做完、按最终分组计数**。放在并组之前，
@@ -195,6 +196,27 @@ class TestMemberNameBeatsAlias:
             "成员主名不进别组清单（本组它是主名，也不在别名里）")
         assert any("宝二爷" in aliases for _n, _c, aliases in sent), (
             "不属于任何组主名的独有别名照常送（过滤 ≠ 清空）")
+
+
+# 片1 宝玉 列了单字称呼「他」「玉」与唯一别名「宝二爷」。单字在下游按子串匹配
+# （`match_terms = [name] + aliases`）几乎命中每一片 —— 「他」实测覆盖 212/213 片。
+_SINGLE_CHAR_ALIASES = [
+    [{"name": "宝玉", "aliases": ["他", "玉", "宝二爷"]}],
+]
+
+
+class TestAliasLength:
+    """别名至少两个字 —— 单字称呼一律丢弃，判据只写一处。
+
+    变异对象 = ① 去掉长度判据（`aliases` 里留着「他」「玉」→ 红）
+              ② 只在一条路径上判（纯函数这条绿，`tests/test_identify_whole_book.py`
+                 `TestAliasLength` 的单分片那条红）
+    """
+
+    def test_single_char_aliases_are_dropped(self):
+        groups = group_identify_entries(_SINGLE_CHAR_ALIASES)
+
+        assert groups[0]["aliases"] == ("宝二爷",), "单字称呼按子串匹配几乎命中全书"
 
 
 # 40 片，10% = 4 片。X / Y / Z 各按一种边界摆：

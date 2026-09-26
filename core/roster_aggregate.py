@@ -63,11 +63,22 @@ def _norm(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
+def usable_alias(alias: str) -> bool:
+    """别名可用判据：**至少两个字**。多分片汇总与单分片路径都调这一处。
+
+    单字称呼在下游按**子串**匹配（蒸馏选片的 `match_terms = [name] + aliases`、
+    RAG 打标签）时几乎命中每一片 —— 实测「他」覆盖 212/213 片，等于把全书都判给
+    了一个人。主名不适用本判据：那是模型认定的名字，不是称呼。
+    """
+    return len(alias) >= 2
+
+
 def _observations(per_chunk: Sequence[Sequence[dict[str, Any]]]) -> list[_Obs]:
     """逐片条目 → 观测列表，按分片序、片内原序。
 
     模型在不同分片里可能多打一个空格，去空白之后才是同一个人。没有 `name` 的条目
-    直接丢（归不进任何组，下游也没有谁要它），别名等于主名的也丢。
+    直接丢（归不进任何组，下游也没有谁要它），别名等于主名的、以及单字的（判据见
+    `usable_alias`）也丢。
     """
     out: list[_Obs] = []
     for chunk, items in enumerate(per_chunk):
@@ -80,7 +91,7 @@ def _observations(per_chunk: Sequence[Sequence[dict[str, Any]]]) -> list[_Obs]:
             raw = item.get("aliases")
             aliases = list(dict.fromkeys(
                 a for a in (_norm(x) for x in (raw if isinstance(raw, list) else ()))
-                if a and a != name
+                if a and a != name and usable_alias(a)
             ))
             out.append(_Obs(
                 chunk, name, tuple(aliases), item.get("importance"), item.get("reason")))

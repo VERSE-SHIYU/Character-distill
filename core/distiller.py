@@ -28,6 +28,7 @@ from core.roster_aggregate import (
     finalize_identify_roster,
     group_identify_entries,
     merge_identify_groups,
+    usable_alias,
 )
 from core.schema import CharacterCard, PRESET_TAGS
 from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
@@ -987,8 +988,9 @@ class Distiller:
             落缓存：它是一次成功的识别结果。
 
         Raises:
-            DistillError: 识别失败 —— 单分片两次解析均失败，或多分片失败率越过容忍线。
-                失败走异常，因此**天然不会进缓存**，无需调用方额外判断。
+            DistillError: 识别失败 —— 单分片两次解析均失败，或多分片**任一分片**失败。
+                失败走异常，因此**天然不会进缓存、也不会落库**（`resolve_characters`
+                的 `save_characters` 在识别之后），无需调用方额外判断。
         """
         # 键必须覆盖全部决定输入：文本、模型、**识别口径版本**。少一个，命中就是错的。
         key = f"{text_fingerprint(text)}:{self._llm.model}:{self.IDENTIFY_VERSION}"
@@ -1022,14 +1024,23 @@ class Distiller:
 
     @staticmethod
     def _normalize_identify_items(parsed: Any) -> list[dict[str, Any]]:
-        """识别/合并结果的统一归一：补 aliases、丢掉非对象项（带告警）。"""
+        """识别/合并结果的统一归一：筛 aliases、丢掉非对象项（带告警）。
+
+        别名的长度判据与多分片汇总共用一处（`roster_aggregate.usable_alias`）——
+        单分片路径不经过归组，只走这里；判据漏了这一条，短文本的名单就带着单字
+        称呼落库，下游按子串选片时几乎命中每一片。
+        """
         if not isinstance(parsed, list):
             print("角色识别结果不是 JSON 数组")
             raise TypeError("expected JSON array")
         out: list[dict[str, Any]] = []
         for idx, item in enumerate(parsed):
             if isinstance(item, dict):
-                item.setdefault("aliases", [])
+                raw = item.get("aliases")
+                item["aliases"] = [
+                    a for a in (str(x).strip() for x in (raw if isinstance(raw, list) else ()))
+                    if a and usable_alias(a)
+                ]
                 out.append(item)
             else:
                 print(f"警告：角色识别数组第 {idx} 项不是对象，已跳过")
@@ -1084,11 +1095,15 @@ class Distiller:
     def _identify_over_chunks(self, chunks: list[str]) -> list[dict[str, Any]]:
         """逐片识别 → 代码归组 → 一次别名判断 → 出名单。**编排**，算的部分在 roster 里。
 
-        失败率（调用失败 + 结果解析失败）越过 ``_map_failure_exceeds_tolerance`` 即抛：
-        拿半本书的名单当全书名单，比报错更糟。未越线则继续 —— 后面的步骤只看拿到的名单。
+        **任一分片失败即整体失败**（调用失败 + 结果解析失败同权计）：名单会经
+        `resolve_characters` → `save_characters` **落库长期复用**（按「文本 + 版本」缓存），
+        用半本书建的名单会一直错下去，用户重试也没用 —— 因为下一次直接命中缓存，
+        根本没有第二次识别。实测（识别验收，2026-09-26）：121/242 片失败恰在 50% 的
+        ``_map_failure_exceeds_tolerance`` 线内（等号不算越线），名单是半本书建的。
+        所以这里不设容忍线，**蒸馏路径那条容忍线不动**：那边有续跑兜底，识别没有。
 
-        未越线、且每一片都解析成空名单 → 返回 ``[]``：这是**真的没有具名角色**，
-        不是识别失败。与单分片同口径 —— 空名单是合法结果，失败才抛。
+        每一片都解析成空名单 → 返回 ``[]``：这是**真的没有具名角色**，不是识别失败。
+        与单分片同口径 —— 空名单是合法结果，失败才抛。
 
         归组、并组、判主次、取理由都是纯计算（`core/roster_aggregate.py`）；模型只判一件
         需要判断力的事：哪些组其实是同一个人（`_identify_alias_pairs`）。
@@ -1117,7 +1132,7 @@ class Distiller:
                 per_chunk.append([])
 
         failed = len(failures) + parse_failed
-        if _map_failure_exceeds_tolerance(failed, total):
+        if failed:
             last_error = str(failures[-1][1]) if failures else "分片结果无法解析为角色数组"
             if "429" in last_error:
                 raise DistillError(
@@ -1128,12 +1143,10 @@ class Distiller:
                 "识别失败：部分片段处理失败，请重试",
                 f"{failed}/{total} 个分片识别失败；最后错误：{last_error}",
             )
-        if failed:
-            logger.warning("%s/%s identify chunks failed (within tolerance), continuing", failed, total)
 
         groups = group_identify_entries(per_chunk)
         if not groups:
-            # 每一片都解析成空名单（且失败率未越线）→ 真空名单，不是失败。
+            # 每一片都解析成空名单（且没有一片失败）→ 真空名单，不是失败。
             # 原先这里抛 DistillError，把「这本书没有具名角色」当成了故障。
             return []
         merged = merge_identify_groups(groups, self._identify_alias_pairs(groups))
