@@ -621,8 +621,14 @@ class ChatEngine:
                 self._prev_stage = self._stage
                 self._save_affinity_state()
                 return
-            except Exception:
-                pass
+            except Exception as exc:
+                # 全新会话的初始好感度算不出来 → 落到下面的 DB 兜底。用户看到的数值仍然
+                # 是「有出处的」（DB/默认），但初始个性丢了，要留痕才知道哪张卡没生效。
+                logger.warning(
+                    "Initial affinity failed, falling back to DB state "
+                    "(card_id=%s session_id=%s): %r",
+                    self._card_id, self._session_id, exc, exc_info=True,
+                )
         # 兜底：直接加载 DB 数据
         self._affinity_service.load(data)
 
@@ -694,8 +700,13 @@ class ChatEngine:
                 )
                 if session_data:
                     self._last_user_msg_at = _to_aware_utc(session_data.get("updated_at"))
-            except Exception:
-                pass
+            except Exception as exc:
+                # 拿不到上次互动时间 → 这一轮不发「久别」提示。是兜底，但「为什么没提示」
+                # 要能看出来，否则会被当成「这轮本来就不该有提示」。
+                logger.warning(
+                    "Departure notice: last-user-message lookup failed "
+                    "(session_id=%s): %r", self._session_id, exc, exc_info=True,
+                )
         if self._last_user_msg_at is not None:
             gap_hours = (datetime.now(timezone.utc) - self._last_user_msg_at).total_seconds() / 3600
             if WATCH_GAP_MIN_HOURS <= gap_hours < WATCH_GAP_MAX_HOURS:
@@ -1081,8 +1092,13 @@ class ChatEngine:
                             interval_desc = "你们已经好几天没说话了。"
                         else:
                             interval_desc = "你们已经很久没联系了。"
-            except Exception:
-                pass  # 兜底：拿不到间隔就跳过
+            except Exception as exc:
+                # 兜底：拿不到间隔就跳过这一句（时间感知块本身照出）。要留痕才知道
+                # 「这轮没提间隔」是没到条件还是没读出来。
+                logger.warning(
+                    "Time awareness: interval lookup failed, skipping the interval line "
+                    "(session_id=%s): %r", self._session_id, exc, exc_info=True,
+                )
 
         block = (
             "\n\n【此刻的现实感知】\n"
@@ -1367,7 +1383,13 @@ class ChatEngine:
             result = llm.chat(prompt, [{"role": "user", "content": "请判断"}])
             self._try_record_usage("chat_retract_gate", llm=llm)
             return "true" in result.strip().lower()
-        except Exception:
+        except Exception as exc:
+            # 撤回是修饰动作，判不了就当「不撤回」。调用方（web/routers/chat.py）
+            # 为此不再包一层 try —— 所以失败的理由只在这里记一次。
+            logger.warning(
+                "Retract gate failed, treating as no-retract (session_id=%s): %r",
+                self._session_id, exc, exc_info=True,
+            )
             return False
 
     def generate_reunion_greeting(
@@ -1486,7 +1508,13 @@ class ChatEngine:
 
             _reunion_dates[self._session_id] = today
             return greeting
-        except Exception:
+        except Exception as exc:
+            # 生成失败 → 这轮不发重逢问候（返回空串是契约）。留痕才能把「没触发」与
+            # 「触发了但生成挂了」分开。
+            logger.warning(
+                "Reunion greeting generation failed (session_id=%s): %r",
+                self._session_id, exc, exc_info=True,
+            )
             return ""
 
     def _build_reunion_memories(self) -> str:

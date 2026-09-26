@@ -272,7 +272,9 @@ class RAGEngine:
         name = collection_name or self._collection_name
         try:
             self._client.delete_collection(name=name)
-        except Exception:
+        except NotFoundError:
+            # 唯一预期的失败：集合还不存在（首次索引）。窄化到 chromadb 自己的
+            # 「没找到」类型 —— 不再把权限/连接之类的真故障也咽掉。
             pass
 
         try:

@@ -155,7 +155,10 @@ def judge_card(card: dict, llm: LLMAdapter, timeout: float = 60.0,
             return GuardVerdict(flagged=[], error=True, error_msg=box.get("err", "judge failed"))
         try:
             return GuardVerdict(flagged=_parse_flagged(box["text"]))
-        except Exception as exc:  # noqa: BLE001
+        except json.JSONDecodeError as exc:
+            # `_parse_flagged` 里除了 `json.loads` 没有别的可抛点：窄化到解析错误，
+            # 返回体不是合法 JSON 就按「判词形状非法」处理。其余异常（真·代码故障）
+            # 落到外层，由下面那处交给 text_manager 记「待人工复核」。
             return GuardVerdict(flagged=[], error=True, error_msg=f"parse failed: {exc}")
     except Exception as exc:  # noqa: BLE001
         return GuardVerdict(flagged=[], error=True, error_msg=f"judge crashed: {exc}")

@@ -9,6 +9,8 @@ import hashlib
 import re
 from typing import Any
 
+from chromadb.errors import NotFoundError
+
 from core.rag import CollectionUnusableError, RAGEngine, characters_tag
 
 # 简单情感关键词映射（可扩充）
@@ -87,7 +89,8 @@ class SceneIndexer:
 
         try:
             rag._client.delete_collection(name=name)
-        except Exception:
+        except NotFoundError:
+            # 同 core/rag.py::index：集合还不存在是唯一预期失败，其余真故障照旧上抛
             pass
 
         collection = rag._client.create_collection(
