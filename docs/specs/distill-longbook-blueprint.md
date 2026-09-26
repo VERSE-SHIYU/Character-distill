@@ -216,6 +216,16 @@ DeepSeek 把 `finish_reason` 与 `usage` 放在**同一个**末 chunk（OpenAI �
 
 **测试**：第 8 节 S6。
 
+### WP14 [core + adapter + distiller] Map 并发按账户自适应（AIMD，2026-09-26）
+**根因**：DeepSeek 官方文档：并发按账号计、一个请求从发出到响应完成记为一个并发、超限返回 429，429 的处置是「合理控制请求节奏」；文档写 v4-pro 上限 500，但实测 429 原文为「concurrency limit of 18 based on your remaining balance」——上限实际随余额动态变化，属未写进文档的运行时行为。固定 `map_concurrency` 总会超过部分账户的上限（250 并发 429×510；60 并发、上限 18 的账户 429×328、11 片失败）。
+1. **自适应闸**：`core/concurrency.py` 新增一个小类（asyncio 原生），按**在途请求数**控制（与官方「并发」定义一致，不做每分钟限速）：初始上限 = min(账户已学到的值, `map_concurrency`)；每次尝试前 acquire、结束后 release；收到 429 → 上限 ×0.75 向下取整、最低 1；连续成功次数达到当前上限 → 上限 +1、不超过 `map_concurrency`；上限下调后，新的 acquire 等在途数降到上限以下。系数官方未给，取业界默认值（NVIDIA NeMo DataDesigner 与 AIMD 通用做法），只影响收敛快慢、不影响收敛结果。
+2. **接入每次尝试**：`async_chat` 加可选参数 `gate=`（与 `client=` 同一用法）。闸包在**每一次 `create()`** 外（重试循环内），退避睡眠期间不占名额；429 调 `on_rate_limited()`，成功调 `on_success()`。不传 `gate` 时行为不变（`achat`、群聊、审核不受影响）。官方未约定 `Retry-After`，现有「有则读、无则退避」不改。
+3. **账户记忆**：`LLMAdapter` 加实例属性记录该账户学到的上限；每轮 Map 以它为初值、结束写回（实例按 user_id 缓存，`web/deps.py` 的 `_user_llm_cache`）。
+4. **Map 接线**：`_run_map_with_client` 每轮建一个闸替换固定 `asyncio.Semaphore`，传给 `async_chat`，结束写回。
+- 不解析 429 文案里的数字（未写进文档、随时可变）；不新增配置项（`map_concurrency` 含义改为上限）。分批合并与格式化（≤4 路）不接闸，超限时由现有 429 重试兜住。
+
+**测试**：第 8 节 A1–A3。
+
 ### WP9 真实验收
 第 10 节。合并进 main 前必须做完；拆分执行时，放在最后一个触及蒸馏路径的执行 spec 里。
 
@@ -291,6 +301,9 @@ DeepSeek 把 `finish_reason` 与 `usage` 放在**同一个**末 chunk（OpenAI �
 | S4 | 流式末 chunk 的终态与用量同块时终态不被跳过 | `tests/test_llm_adapter_finish_reason.py` | `fake_sse` 默认 `usage_shape="same"`（终态 + usage 同一末 chunk）：`tokens=["a","b"]` + `finish_reason="length"` → `chat_stream_long` 抛 `IncompleteResponseError`；`finish_reason="stop"` → 正文全交付、`last_usage` == 厂商值（pt 1 / ct 2）、输出无「未识别 finish_reason」告警；再以 `usage_shape="separate"`（OpenAI）跑 length 一条仍绿 | ① 读流循环改回 `if chunk.usage: … continue` ② 终态校验加 `and chunk.usage is None`（同块即跳过终态） |
 | S5 | `async_chat` 的重试不被总墙钟饿死；交互路径仍封顶 60s | `tests/test_llm_adapter_retry.py` | 假时钟（`_FakeClock` 注入 `M.time`）：前两次 attempt 各吃满 `_GEN_ATTEMPT_S` 才超时、第 3 次成功 → `async_chat` 返回、create 3 次（旧 60 s 总闸下第 3 次分不到时间）；`achat` 同场景 → 第 2 次后即失败（交互封顶未放宽） | ① `async_chat` 的 `deadline_s` 改回 `_GEN_DEADLINE_S` ② 推导式只按单次算（`_GEN_ATTEMPT_S`）③ `achat` 改传批量预算 |
 | S6 | 单次合并的输出上限 = `CARD_MAX_TOKENS` | `tests/test_distiller_routing.py` | 桩 `chat_stream_long` 记录 `max_tokens`；`list(d._single_reduce_stream(["分析一","分析二"], "角色"))` → 记录值 == `Distiller.CARD_MAX_TOKENS`（8192），正文照常交付 | 删掉 `max_tokens=self.CARD_MAX_TOKENS` |
+| A1 | 闸本身 | 已有并发测试文件（先 grep，无则 `tests/test_concurrency.py`） | 429 → 上限 ×0.75 向下取整、最低 1；连续成功达上限 → +1、不超过上限；上限低于在途数时新 acquire 等待 | 429 不下调 / 无下限 / 无上限 |
+| A2 | Map 在「超过 N 路即 429」的上游下零失败 | `tests/test_distiller_routing.py` | 假服务在途 > 5 时回 429（DeepSeek 原文形态）；`map_concurrency=20` 跑 40 片 → 0 失败，在途峰值收敛到 ≤ 5 | 闸只包整次调用、不进重试循环 / 退避期间占着名额 |
+| A3 | 账户记忆 | `tests/test_distiller_routing.py` | 同一 adapter 连跑两轮：第二轮初值 = 第一轮学到的上限，429 次数明显少于第一轮 | 不写回 |
 
 ### WP3
 纯函数测试放 `tests/test_roster_aggregate.py`（直接喂列表）；编排测试放 `tests/test_identify_whole_book.py`（`TestWholeBookCoverage` 按新口径重写，其余两类保留）。
