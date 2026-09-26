@@ -41,8 +41,10 @@ async def _get_ip_location(client_ip: str) -> str:
             if data.get("status") == "success":
                 parts = [data.get("regionName") or data.get("city") or ""]
                 return "".join(parts)
-    except Exception:
-        pass
+    except Exception as exc:
+        # 查不到就空着（角标不显示），但「查不到」要留痕：外部 ip-api 的真实失败率与
+        # 「这个 IP 本来就没有地理位置」在面板上必须分得开。IP 本身是用户输入，不写进消息。
+        logger.warning("Market: ip location lookup failed: %s: %s", type(exc).__name__, exc)
     return ""
 
 
@@ -244,7 +246,9 @@ async def get_author(
             try:
                 dt = datetime.fromisoformat(ts)
                 online = (time.time() - dt.timestamp()) < 300
-            except Exception:
+            except (ValueError, TypeError):
+                # 时间戳格式坏 → 在线状态留 False，是这一档的答案，不是查询失败。
+                # 只吞解析错误：属性/TZ 数据库之类的问题不再被这句掩盖。
                 pass
         last_active_at = author.get("last_active_at")
 
@@ -426,7 +430,9 @@ def _card_json_obj(card: dict) -> dict:
     if isinstance(cj, str):
         try:
             return json.loads(cj)
-        except Exception:
+        except json.JSONDecodeError:
+            # 存量 JSON 坏了 → 当空卡面，是这一档的答案；窄到解析错误，
+            # 别的毛病不再被这句吞成空。
             return {}
     return cj if isinstance(cj, dict) else {}
 
@@ -517,8 +523,11 @@ async def publish_card(
         from storage.base import new_review_id as _rid
         try:
             await storage.save_review_log(_rid(), card_id, user["id"], "flag", f"[publish-injection] 审核异常：{exc}"[:300])
-        except Exception:
-            pass
+        except Exception as exc:
+            # 已经对用户说了「已转人工复核」，复核记录却没落库 —— 队列里根本没这条，
+            # 用户被误导、审计链断掉，且不会自愈。故记 ERROR（会发告警邮件）。
+            logger.error("Market: review log write failed for card %s: %s", card_id, exc,
+                         exc_info=True)
         raise HTTPException(403, "审核服务异常，该卡片已转人工复核")
     if outcome == "reject":
         raise HTTPException(400, reason)
@@ -537,10 +546,12 @@ async def publish_card(
     if not market_tags:
         try:
             cj = json.loads(card_json_str) if isinstance(card_json_str, str) else card_json_str
-            ai_tags = cj.get("tags", [])
+            ai_tags = cj.get("tags", []) if isinstance(cj, dict) else []
             if ai_tags:
                 market_tags = ",".join(ai_tags[:5])
-        except Exception:
+        except json.JSONDecodeError:
+            # 自动补标签只是锦上添花，解不出来就留空（用户自己填）。窄到解析错误：
+            # 让这段 try 真的只负责「JSON 坏了」这一件事。
             pass
 
     ok = await storage.publish_card(
