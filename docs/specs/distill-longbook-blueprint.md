@@ -192,6 +192,28 @@
 
 **测试**：第 8 节 C1–C4。
 
+### WP11 [adapter] 流式末 chunk 的终态与用量同块，不得跳过终态
+DeepSeek 把 `finish_reason` 与 `usage` 放在**同一个**末 chunk（OpenAI 是终态 chunk 之后另起一个 `choices` 为空的纯用量 chunk）。`adapters/llm_adapter.py:874-881` 的读流循环遇 `chunk.usage` 就 `continue`，把同一 chunk 的 `choices` 一起跳过 —— 终态永远读不到（实测 6/6 `finish_reason=None`；识别、蒸馏的合并与格式化、聊天流都在流式路径上）。后果：`length` 截断从未在任何流式路径上被识别，「截断即失败」（WP5）与格式化、别名判断的截断守卫全部空转，半截内容静默交付。
+- 修法：该 chunk 先记 `usage`，再**照常处理 `choices`**（终态校验、交付 content），不 `continue`。终态缺失告警因此只在真正缺失时出现。
+- 测试桩：`tests/conftest.py` 的 `fake_sse` 支持两种末尾形态 —— `usage_shape="same"`（DeepSeek，**默认**：终态与用量同一 chunk、`choices` 非空）；`usage_shape="separate"`（OpenAI：终态挂末个正文 chunk + 纯用量 chunk）。
+- 依赖：WP13 必须与本项同批上线（见 WP13）。
+
+**测试**：第 8 节 S4。
+
+### WP12 [adapter] `async_chat` 用生成轮的墙钟预算，重试不再被 60 s 总闸饿死
+`async_chat` 复用 `_GEN_ATTEMPTS=3` × `_GEN_ATTEMPT_S=45` 的重试，却只给 `_GEN_DEADLINE_S=60` 的总墙钟（`adapters/llm_adapter.py:74/101/112`）。第 1 次 attempt 一旦吃满 45 s，退避之后只剩约 9 s 给第 2 次，第 3 次分不到时间 —— 重试等于没有（实测：02:56:16 第 1 次超时 → 02:56:31「2 次尝试均失败」；同一片单发 10 s 完成，60 并发整轮 31 s 零失败，本可被重试吸收）。
+- 修法：`async_chat` 用**自己的**总墙钟，由现有常量推导：`_GEN_ATTEMPTS × _GEN_ATTEMPT_S + Σ(每次退避上界) + _ATTEMPT_TIMEOUT_MARGIN_S`，每次退避上界按 `_RetryBudget.on_failure` 的实现（非 429：`_GEN_BACKOFF_S × k + 1`，k = 1…`_GEN_ATTEMPTS−1`）。推导式写进模块常量处的注释，**不新增 env 出口**。
+- `chat()` 的总墙钟维持 `_GEN_DEADLINE_S`（交互式，刻意封顶）不变。`achat` 是 `async_chat` 的另一调用方（群聊、审核），也维持 60 s：`async_chat` 增加仅关键字的 `deadline_s` 形参，默认取推导出的批量预算，`achat` 显式传 `_GEN_DEADLINE_S`。
+
+**测试**：第 8 节 S5。
+
+### WP13 [distiller] 单次合并的输出上限与分批合并/格式化对齐
+同是「合并」这一操作，上限却有两套：≤ `SAFE_SINGLE_REDUCE`（80）片的单次合并 `_single_reduce_stream`（`core/distiller.py:1625`）调 `chat_stream_long` **不传** `max_tokens` → 落到 `llm.max_tokens=4096`；而分批合并（`_single_reduce_async`，`:1616`）与格式化（`:2123`）都传 `CARD_MAX_TOKENS=8192`。普通书（相关片 ≤80）走的就是前者，合并被 4096 封顶。
+- 修法：`_single_reduce_stream` 显式传 `max_tokens=self.CARD_MAX_TOKENS`，与另两处同一份常量，不加新常量、不加新配置。
+- 必须与 WP11 同批：WP11 之前，4096 截断在流式路径上根本不被识别（静默交半截档案）；WP11 之后截断变成硬失败，不改这里的话，普通书的合并会开始报错。
+
+**测试**：第 8 节 S6。
+
 ### WP9 真实验收
 第 10 节。合并进 main 前必须做完；拆分执行时，放在最后一个触及蒸馏路径的执行 spec 里。
 
@@ -264,6 +286,9 @@
 | S1 | 长输出流容忍 prefill 静默，聊天流不变 | `tests/test_llm_adapter_retry.py` | 假服务先回 200 头、静默 1.0 s 再吐内容；monkeypatch `_STREAM_ATTEMPT_S=0.5`、`_STREAM_DEADLINE_S=1.5`：`chat_stream_long` → 成功；`chat_stream` → 读超时。`test_timeout_family_defaults_unchanged` 补 `_BATCH_STREAM_READ_S == 300.0` | ① `chat_stream_long` 的 `read_s` 改回 ceiling ② 放宽时把 connect 也放大（断言 connect 仍 = ceiling） |
 | S2 | 蒸馏只用长输出流 | `tests/test_llm_adapter_retry.py`（已落此处） | AST：`core/distiller.py` 中没有对 LLM 接收者的 `.chat_stream(` 调用；形态锁原有断言保持绿 | 任一处改回 `chat_stream` |
 | S3 | 流中断 → 503 + 上屏文案；边界锁覆盖全部 LLM 异常类 | `tests/test_chat_stream_error.py` | 参数化两例（真 openai 客户端 + 真 socket）：假服务吐一片后断连；假服务静默超过聊天读超时（生产现场的 `ReadTimeout`）。最小 app 装 `register_domain_error_handlers`，路由消费 `chat_stream` → 503，`detail` == 「模型服务暂时不可用，请稍后重试」（与兜底文案差一词，有分辨力），`__cause__` 是 `httpx2` 异常；边界锁改为扫 `llm_error_types()` 全部类名 | ① 不包装 ② 包装面放宽成 `except Exception`（喂一个循环体内的 `AttributeError`，断言仍非 503） ③ `_TRANSPORT_ERRORS` 去掉 `APIConnectionError`（用例：桩一个抛 `openai.APIConnectionError(request=httpx2.Request("POST","http://x"))` 的流） ④ `llm_error_types` 不含 `UpstreamFailure` ⑤ 不登记 503 ⑥ `_upstream_user_message` 不认传输层（断言建流阶段网络错误重试耗尽后的文案 == 读流中断的文案） ⑦ 边界锁改回字面量 |
+| S4 | 流式末 chunk 的终态与用量同块时终态不被跳过 | `tests/test_llm_adapter_finish_reason.py` | `fake_sse` 默认 `usage_shape="same"`（终态 + usage 同一末 chunk）：`tokens=["a","b"]` + `finish_reason="length"` → `chat_stream_long` 抛 `IncompleteResponseError`；`finish_reason="stop"` → 正文全交付、`last_usage` == 厂商值（pt 1 / ct 2）、输出无「未识别 finish_reason」告警；再以 `usage_shape="separate"`（OpenAI）跑 length 一条仍绿 | ① 读流循环改回 `if chunk.usage: … continue` ② 终态校验加 `and chunk.usage is None`（同块即跳过终态） |
+| S5 | `async_chat` 的重试不被总墙钟饿死；交互路径仍封顶 60s | `tests/test_llm_adapter_retry.py` | 假时钟（`_FakeClock` 注入 `M.time`）：前两次 attempt 各吃满 `_GEN_ATTEMPT_S` 才超时、第 3 次成功 → `async_chat` 返回、create 3 次（旧 60 s 总闸下第 3 次分不到时间）；`achat` 同场景 → 第 2 次后即失败（交互封顶未放宽） | ① `async_chat` 的 `deadline_s` 改回 `_GEN_DEADLINE_S` ② 推导式只按单次算（`_GEN_ATTEMPT_S`）③ `achat` 改传批量预算 |
+| S6 | 单次合并的输出上限 = `CARD_MAX_TOKENS` | `tests/test_distiller_routing.py` | 桩 `chat_stream_long` 记录 `max_tokens`；`list(d._single_reduce_stream(["分析一","分析二"], "角色"))` → 记录值 == `Distiller.CARD_MAX_TOKENS`（8192），正文照常交付 | 删掉 `max_tokens=self.CARD_MAX_TOKENS` |
 
 ### WP3
 纯函数测试放 `tests/test_roster_aggregate.py`（直接喂列表）；编排测试放 `tests/test_identify_whole_book.py`（`TestWholeBookCoverage` 按新口径重写，其余两类保留）。
@@ -321,6 +346,7 @@
 1. `docker compose -f docker-compose.test.yml up -d --wait`（端口 55432，`tests/conftest.py:27-32` 强制连它）。
 2. 每步只跑以下文件：
    - WP1 + WP2：`test_llm_adapter_retry.py test_usage_accounting_lock.py test_chat_stream_error.py test_llm_adapter_finish_reason.py test_domain_exception_exit.py test_exception_pickle_lock.py`
+   - WP11–13：`test_llm_adapter_finish_reason.py test_llm_adapter_retry.py test_chat_stream_error.py test_distiller_routing.py test_distill_usage_accounting.py test_identify_whole_book.py`
    - WP3：`test_identify_whole_book.py test_roster_aggregate.py test_character_roster.py test_identify_failure_channels.py test_usage_identity_context.py test_distill_usage_accounting.py test_usage_accounting_lock.py test_distill_task_api.py`
    - WP4 + WP5：`test_distiller_routing.py test_distill_usage_accounting.py test_usage_accounting_lock.py test_llm_access_gate.py test_distill_resume.py test_llm_adapter_finish_reason.py`
    - WP8：`test_distill_task_api.py test_postgres_store.py test_storage.py test_distill_resume.py`
