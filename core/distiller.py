@@ -90,7 +90,7 @@ DISTILL_PROMPT_BEFORE_NAME = """你是一个角色分析专家。从给定文本
 # 按本表顺序拼出；组提示词（流式按字段组并行）= 共享片段 + 本组片段，组名取
 # FORMAT_GROUPS 的键。片段的「归属」是它讲哪一组字段，None = 共享（每组都带）；模板
 # 条目的归属由字段名查 _FORMAT_FIELD_GROUP 得到，不另写第二份字段→组映射。
-_FORMAT_HEADER = '\\" 的完整人格档案。'
+_FORMAT_HEADER = '" 的完整人格档案。'
 _FORMAT_IRON_LAWS = (
     '## 分析铁律\n'
     '1. 跨场景验证：一个特质必须在至少2个不同场景出现才能写入\n'
@@ -121,7 +121,7 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ),
     ("G2", 'G. 内在矛盾（1-3个）：此人身上自相矛盾之处，以及矛盾如何影响行为'),
     ("G3", 'H. 开场白：以此角色的口吻写一句开场白，用于对话开始时'),
-    ("G3", 'I. 对话示例（2-3轮）：从原文中提取最能体现此角色说话风格的2-3组对话交互。格式为"对方：xxx\\n角色：xxx"。选择的对话必须能展示角色的口癖、语气、态度。如果原文有动作描写，用（）包裹保留，如"（冷笑）你以为你是谁？"'),
+    ("G3", 'I. 对话示例（2-3轮）：从原文中提取最能体现此角色说话风格的2-3组对话交互。格式为"对方：xxx\n角色：xxx"。选择的对话必须能展示角色的口癖、语气、态度。如果原文有动作描写，用（）包裹保留，如"（冷笑）你以为你是谁？"'),
     ("G2", 'J. 情感模式（2-3个）：什么情况下会生气、开心、沉默、逃避？触发条件是什么？'),
     ("G2", 'K. 决策风格：面对选择时是冲动还是谨慎？靠情感还是逻辑？举例说明。'),
     ("G4", 'L. 角色弧线：此人从故事开始到结束经历了怎样的变化？分2-4个阶段描述，每阶段一句话。如果无明显变化则写"无明显变化"。'),
@@ -146,7 +146,7 @@ _FORMAT_OUTPUT_RULES = (
     '## 输出要求\n'
     '严格按以下 JSON 格式输出，不要输出任何其他内容（不要 markdown 代码块标记）。把结论和关键依据（含出处）浓缩进一句话，出处用括号附句尾。严禁输出 {trait:..., description:...} 这种嵌套对象。'
 )
-_FORMAT_TEMPLATE_INTRO = '完整 JSON 模板（所有字段必须包含，psyche 为必需嵌套对象）：'
+_FORMAT_TEMPLATE_INTRO = 'JSON 模板（所有字段必须包含）：'
 _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("name", '  "name": "角色名"'),
     ("identity", '  "identity": "一句话身份"'),
@@ -170,7 +170,7 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("inner_tensions", '  "inner_tensions": ["内在矛盾1（原文出处）", "内在矛盾2（原文出处）"]'),
     ("background", '  "background": "背景摘要"'),
     ("first_message", '  "first_message": "角色开场白"'),
-    ("dialogue_examples", '  "dialogue_examples": ["对方：xxx\\n角色：xxx"]'),
+    ("dialogue_examples", '  "dialogue_examples": ["对方：xxx\n角色：xxx"]'),
     ("emotional_patterns", '  "emotional_patterns": ["情感模式1（原文出处）", "情感模式2（原文出处）"]'),
     ("decision_style", '  "decision_style": "决策风格描述（含原文依据）"'),
     ("character_arc", '  "character_arc": ["阶段1变化", "阶段2变化"]'),
@@ -215,9 +215,10 @@ _FORMAT_FIELD_GROUP: dict[str, str] = {
 def format_prompt_after(group: str | None = None) -> str:
     """拼装格式化提示词。
 
-    ``group=None`` → 完整提示词（与改前逐字一致，仅「list 元素是一句字符串」那句改写
-    为不点字段名的通用句）。``group="G1".."G4"`` → 共享前缀 + 该组片段（该组维度说明、
-    该组「重要」规则、该组 JSON 模板），供流式按组并行调用。
+    ``group=None`` → 完整提示词（与改前逐字一致，仅两句改写：「list 元素」那句改为不点
+    字段名的通用句；模板引导句去掉 psyche —— psyche 的要求归 G4，引导句进每组提示词时
+    不能再点它）。``group="G1".."G4"`` → 共享前缀 + 该组片段（该组维度说明、该组「重要」
+    规则、该组 JSON 模板），供流式按组并行调用。
     """
     if group is not None and group not in FORMAT_GROUPS:
         raise ValueError(f"未知字段组：{group!r}（应为 {list(FORMAT_GROUPS)} 之一）")
@@ -2180,7 +2181,8 @@ class Distiller:
         while len(group_data) < len(FORMAT_GROUPS):
             kind, group, payload = fmt_queue.get()
             if kind == "error":
-                print(f"[distiller] format group {group} aborted: {payload}")
+                # 与校验失败那一处同口径：上屏给用户的同时，模块 logger 留痕（spec-119）
+                logger.error("format group %s aborted: %s", group, payload)
                 yield {"error": user_facing_error(payload)}
                 return
             group_data[group] = payload
