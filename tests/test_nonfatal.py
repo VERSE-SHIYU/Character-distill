@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""`core/nonfatal` 的契约：吞掉异常，但**必须**在后台日志面板上留一条 ERROR。
+"""`core/nonfatal` 的契约：吞掉异常，但**必须**在日志里留一条 ERROR。
 
-面板（`core/log_collector.RingBufferHandler`，装在 root logger 上）只收 WARNING+，
-且只存 `record.getMessage()`。所以「吞掉数据写入失败」若只 print 到 stdout，面板上一片
-干净 —— SG「全员用量为 0 数月无人察觉」就是这个形态（AGENTS.md 缺陷 93）。本文件锁的
-是那条可见性：**吞掉 ≠ 沉默**。
+留痕的出口就是 `logging` 本身（生产上由 stdout handler 与 Sentry 收走），判据用
+`caplog` 直接看记录。所以「吞掉数据写入失败」若只 print 到 stdout，日志里一片干净
+—— SG「全员用量为 0 数月无人察觉」就是这个形态（AGENTS.md 缺陷 93）。本文件锁的是那条
+可见性：**吞掉 ≠ 沉默**。
 
 两类用例：
   1. 构造本身（吞什么、放行什么、记几条）；
-  2. 真正被改的吞错点（用量写库、非流式消息落库）在失败时确实上了面板，且调用方不受影响。
+  2. 真正被改的吞错点（用量写库、非流式消息落库）在失败时确实留下了记录，且调用方不受影响。
 
-RingBufferHandler 是模块级单例、跨用例共享，所以每条断言都用一个本用例独有的 marker
-去筛记录，不假设缓冲区里只有自己。
+每条断言都用一个本用例独有的 marker 去筛记录：同一次调用里的多笔非致命失败（队列首写 +
+重试）各留一条，marker 把它们与别处的记录分开。
 """
 from __future__ import annotations
 
@@ -23,30 +23,28 @@ import pytest
 
 import core.utils as utils
 import routers.chat as chat_router_mod
-from core.log_collector import get_recent_logs, install_log_collector
 from core.nonfatal import nonfatal, nonfatal_sync
 from core.text_manager import new_session_entry
 
 
-@pytest.fixture(autouse=True)
-def _panel_installed():
-    """把面板装到 root logger 上 —— 生产里由 web/server.py 的 lifespan 装。"""
-    install_log_collector()
+def _errors(records: list[logging.LogRecord], marker: str) -> list[logging.LogRecord]:
+    """筛出本用例关心的那几条 —— 级别与 marker 一起判，缺一个都会把噪音算进来。
 
-
-def _panel_errors(marker: str) -> list[dict]:
+    `caplog` 是按用例取的，所以不需要像从前那样假设「缓冲区里还有别人的记录」。
+    """
     return [
-        e for e in get_recent_logs(500)
-        if e["level"] == "ERROR" and marker in e["message"]
+        r for r in records
+        if r.levelno == logging.ERROR and marker in r.getMessage()
     ]
 
 
 # ── 1. 构造本身 ──────────────────────────────────────────────────────
 
-def test_ordinary_exception_is_swallowed_and_reported_once():
-    """块内抛普通异常 → 被吞，面板恰好收到 1 条 ERROR，且带 source / what / 异常类型。
+def test_ordinary_exception_is_swallowed_and_reported_once(caplog):
+    """块内抛普通异常 → 被吞，恰好 1 条 ERROR，且带 source / what / 异常类型。
 
-    面板只存 getMessage()，所以异常类型必须**拼进消息文本**（exc_info 单独给是看不见的）。
+    异常类型必须**拼进消息文本** —— `exc_info` 给的是堆栈，`getMessage()` 看不见它，
+    而消息模板正是按「谁在哪一步失败」归并的那一项。
     """
     marker = "nonfatal-probe-ordinary"
 
@@ -56,15 +54,15 @@ def test_ordinary_exception_is_swallowed_and_reported_once():
 
     asyncio.run(_run())
 
-    errs = _panel_errors(marker)
-    assert len(errs) == 1, f"面板上应有且只有 1 条，实得 {len(errs)}"
-    msg = errs[0]["message"]
+    errs = _errors(caplog.records, marker)
+    assert len(errs) == 1, f"应有且只有 1 条，实得 {len(errs)}"
+    msg = errs[0].getMessage()
     assert "chat" in msg, "缺 source"
-    assert "RuntimeError" in msg, "异常类型没进消息文本 —— 面板上看不到是谁"
+    assert "RuntimeError" in msg, "异常类型没进消息文本 —— 日志里看不到是谁"
     assert "boom" in msg, "缺异常消息"
 
 
-def test_clean_block_reports_nothing():
+def test_clean_block_reports_nothing(caplog):
     """正常走完不留记录 —— 留痕不能变成每轮一行噪音。"""
     marker = "nonfatal-probe-clean"
 
@@ -73,7 +71,7 @@ def test_clean_block_reports_nothing():
             pass
 
     asyncio.run(_run())
-    assert _panel_errors(marker) == []
+    assert _errors(caplog.records, marker) == []
 
 
 def test_outcome_tells_the_caller_whether_the_block_failed():
@@ -98,7 +96,7 @@ def test_outcome_tells_the_caller_whether_the_block_failed():
 def test_sync_and_async_share_the_single_reporting_outlet(monkeypatch):
     """同步版必须走 `_report` 这**一个**出口 —— 两版各写一遍格式，级别/模板迟早分叉。
 
-    只断言「面板上有一条」证明不了共用：各写一遍照样上一条。所以直接 patch 生产调用
+    只断言「有一条记录」证明不了共用：各写一遍照样留一条。所以直接 patch 生产调用
     的那个绑定（`core.nonfatal._report`），断言两版都经过它，且参数一致。
     """
     import core.nonfatal as nonfatal_mod
@@ -127,29 +125,29 @@ def test_sync_and_async_share_the_single_reporting_outlet(monkeypatch):
 
 # ── 1b. 同步版（`nonfatal_sync`）：契约与异步版逐条对齐 ────────────────────
 
-def test_sync_ordinary_exception_is_swallowed_and_reported_once():
-    """同步版与异步版同一条契约：吞掉，面板恰好 1 条 ERROR，带 source / what / 类型。"""
+def test_sync_ordinary_exception_is_swallowed_and_reported_once(caplog):
+    """同步版与异步版同一条契约：吞掉，恰好 1 条 ERROR，带 source / what / 类型。"""
     marker = "nonfatal-sync-ordinary"
 
     with nonfatal_sync("clock", marker):
         raise RuntimeError("tz-boom")
 
-    errs = _panel_errors(marker)
-    assert len(errs) == 1, f"面板上应有且只有 1 条，实得 {len(errs)}"
-    msg = errs[0]["message"]
+    errs = _errors(caplog.records, marker)
+    assert len(errs) == 1, f"应有且只有 1 条，实得 {len(errs)}"
+    msg = errs[0].getMessage()
     assert "clock" in msg, "缺 source"
-    assert "RuntimeError" in msg, "异常类型没进消息文本 —— 面板上看不到是谁"
+    assert "RuntimeError" in msg, "异常类型没进消息文本 —— 日志里看不到是谁"
     assert "tz-boom" in msg, "缺异常消息"
 
 
-def test_sync_clean_block_reports_nothing():
+def test_sync_clean_block_reports_nothing(caplog):
     """正常走完不留记录 —— 与异步版一致，留痕不能变成噪音。"""
     marker = "nonfatal-sync-clean"
 
     with nonfatal_sync("clock", marker):
         pass
 
-    assert _panel_errors(marker) == []
+    assert _errors(caplog.records, marker) == []
 
 
 def test_sync_outcome_tells_the_caller_whether_the_block_failed():
@@ -166,22 +164,22 @@ def test_sync_outcome_tells_the_caller_whether_the_block_failed():
 @pytest.mark.parametrize(
     "exc_type", [KeyboardInterrupt, SystemExit, asyncio.CancelledError]
 )
-def test_sync_control_flow_exceptions_pass_through(exc_type):
-    """同步版放行同一组控制流异常（共用 `_PASS_THROUGH`），且**不**进面板。"""
+def test_sync_control_flow_exceptions_pass_through(exc_type, caplog):
+    """同步版放行同一组控制流异常（共用 `_PASS_THROUGH`），且**不**记成失败。"""
     marker = f"nonfatal-sync-{exc_type.__name__}"
 
     with pytest.raises(exc_type):
         with nonfatal_sync("clock", marker):
             raise exc_type()
 
-    assert _panel_errors(marker) == [], "控制流异常被当失败记了 —— 面板会被关闭噪音淹掉"
+    assert _errors(caplog.records, marker) == [], "控制流异常被当失败记了 —— 日志会被关闭噪音淹掉"
 
 
 @pytest.mark.parametrize(
     "exc_type", [KeyboardInterrupt, SystemExit, asyncio.CancelledError]
 )
-def test_control_flow_exceptions_pass_through(exc_type):
-    """取消／关闭不是「失败」：照常上抛，且**不**进面板。
+def test_control_flow_exceptions_pass_through(exc_type, caplog):
+    """取消／关闭不是「失败」：照常上抛，且**不**记成失败。
 
     必须走真的 `async with` 语句 —— 手搓 `cm.__aexit__(typ, ...)` 测不出这条：
     `_AsyncGeneratorContextManager.__aexit__` 对「生成器原样重抛同一个实例」返回 False，
@@ -195,7 +193,7 @@ def test_control_flow_exceptions_pass_through(exc_type):
 
     with pytest.raises(exc_type):
         asyncio.run(_run())
-    assert _panel_errors(marker) == [], "控制流异常被当失败记了 —— 面板会被关闭噪音淹掉"
+    assert _errors(caplog.records, marker) == [], "控制流异常被当失败记了 —— 日志会被关闭噪音淹掉"
 
 
 # ── 2. 真正改过的吞错点 ───────────────────────────────────────────────
@@ -210,8 +208,8 @@ class _StubLLM:
     last_usage = {"prompt_tokens": 1, "completion_tokens": 2}
 
 
-async def test_try_record_usage_reports_write_failure(monkeypatch):
-    """`storage.record_usage` 抛异常 → 面板收到 ERROR，且 `try_record_usage` 自身不抛。
+async def test_try_record_usage_reports_write_failure(monkeypatch, caplog):
+    """`storage.record_usage` 抛异常 → 留一条 ERROR，且 `try_record_usage` 自身不抛。
 
     投递出去的那段生产里跑在主 loop 上，这里直接 await 它 —— 断言的是那段协程体，
     不是调度器（调度器的契约在 core/scheduling 那边）。
@@ -228,9 +226,9 @@ async def test_try_record_usage_reports_write_failure(monkeypatch):
     assert "coro" in captured, "没投递出去 —— 写库失败根本轮不到被吞"
     await captured["coro"]
 
-    errs = _panel_errors("usageprobe")
-    assert len(errs) == 1, f"用量写库失败必须上一条 ERROR，实得 {len(errs)}"
-    assert "usage db down" in errs[0]["message"]
+    errs = _errors(caplog.records, "usageprobe")
+    assert len(errs) == 1, f"用量写库失败必须留一条 ERROR，实得 {len(errs)}"
+    assert "usage db down" in errs[0].getMessage()
 
 
 class _Engine:
@@ -294,15 +292,15 @@ def _wire(monkeypatch, **engine_kwargs):
     return session
 
 
-def test_do_chat_save_failure_reaches_the_panel(monkeypatch):
-    """非流式落库失败 → 面板收到 ERROR。这是本次改动的交付物（失败可见）。
+def test_do_chat_save_failure_is_logged(monkeypatch, caplog):
+    """非流式落库失败 → 留一条 ERROR。这是本次改动的交付物（失败可见）。
 
     调用**自身不炸**（缺陷 98 已修：`user_rec` / `char_rec` 有初值，取值统一走
-    `_msg_fields`）。这里只断言交付物：面板收到了那一条 —— 换成 `pytest.raises`
+    `_msg_fields`）。这里只断言交付物：那条记录确实留下了 —— 换成 `pytest.raises`
     会与「失败不影响主流程」这条相反，两条判据分属不同用例。
 
     `source` 从 `chat` 变成了 `outbox`：消息写入现在由队列代劳，异常在队列那一层被
-    吞掉。文案仍是同一处 `nonfatal` 出口，故面板上照样看得见。
+    吞掉。文案仍是同一处 `nonfatal` 出口，故日志里照样看得见。
     """
     _wire(monkeypatch)
     asyncio.run(
@@ -311,8 +309,8 @@ def test_do_chat_save_failure_reaches_the_panel(monkeypatch):
         )
     )
 
-    errs = _panel_errors("message db down")
-    assert errs, "消息落库失败没上面板 —— 又回到「失败只 print」的老样子"
+    errs = _errors(caplog.records, "message db down")
+    assert errs, "消息落库失败没留痕 —— 又回到「失败只 print」的老样子"
 
 
 def test_do_chat_returns_normally_when_save_fails(monkeypatch):
@@ -524,7 +522,7 @@ def test_hidden_has_no_user_save_field(monkeypatch):
     assert st.saved == ["char"], f"hidden 却写了用户消息：{st.saved}"
 
 
-def test_stream_summary_read_failure_does_not_break_the_turn(monkeypatch):
+def test_stream_summary_read_failure_does_not_break_the_turn(monkeypatch, caplog):
     """摘要那段的**读**失败也不能打断已流完的回复（改前 `get_messages` 裸露在块外）。
 
     改前形态：读抛在大 try 里 → 正文已整段流给用户，收尾却发 error 帧、没有 done 帧。
@@ -536,11 +534,11 @@ def test_stream_summary_read_failure_does_not_break_the_turn(monkeypatch):
     _assert_no_error_frame(frames)
     _done_frame(frames)
     assert "".join(f.get("token", "") for f in frames) == "回复", "正文没流出来"
-    errs = _panel_errors("summary read down")
-    assert len(errs) == 1, f"摘要读失败没上日志面板，实得 {len(errs)} 条"
+    errs = _errors(caplog.records, "summary read down")
+    assert len(errs) == 1, f"摘要读失败没留下记录，实得 {len(errs)} 条"
 
 
-def test_stream_summary_save_failure_does_not_break_the_turn(monkeypatch):
+def test_stream_summary_save_failure_does_not_break_the_turn(monkeypatch, caplog):
     """摘要**写**失败：不中断、不上屏，但必须留痕（吞掉 ≠ 沉默，本文件的主题）。
 
     这里**是两条**：队列对「库可达、这一条写不进去」重试一次才判死，两次都留痕。
@@ -551,5 +549,5 @@ def test_stream_summary_save_failure_does_not_break_the_turn(monkeypatch):
 
     _assert_no_error_frame(frames)
     _done_frame(frames)
-    errs = _panel_errors("summary save down")
+    errs = _errors(caplog.records, "summary save down")
     assert len(errs) == 2, f"摘要写失败（首写 + 重试）应留 2 条，实得 {len(errs)} 条"

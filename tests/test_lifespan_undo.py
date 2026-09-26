@@ -18,12 +18,11 @@ import core.scheduling as scheduling
 import deps
 import server
 from core.alerting import AlertHandler
-from core.log_collector import RingBufferHandler
 from core.stdout_logging import _StdoutHandler
 
 #: 本仓挂到根日志器上的 handler 类型。按**类型**认人：pytest 自己也往根上挂 handler，
 #: 按对象身份或整张表比会把那些算进来。
-_OUR_HANDLERS = (RingBufferHandler, _StdoutHandler, AlertHandler)
+_OUR_HANDLERS = (_StdoutHandler, AlertHandler)
 
 
 def _ours_on_root() -> list[logging.Handler]:
