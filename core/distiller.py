@@ -2192,7 +2192,9 @@ class Distiller:
         try:
             card = CharacterCard.model_validate(merged)
         except ValidationError as exc:
-            print(f"Pydantic 校验 CharacterCard 失败：{exc}")
+            # 模块 logger，不是 print：print 只进容器 stdout（不进日志面板、不发告警），
+            # 而这条上屏的是用户可见的报错帧 —— 服务端这一半必须留痕（spec-119 口径）。
+            logger.error("Pydantic 校验 CharacterCard 失败：%s", exc)
             yield {"error": user_facing_error(exc)}
             return
 
