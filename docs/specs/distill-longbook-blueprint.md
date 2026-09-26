@@ -189,6 +189,30 @@
 
 **测试**：第 8 节 C1–C4。
 
+### WP15 [scripts] 把验收产出的书与卡片搬进两个节点的演示账号（2026-09-26 拍板）
+**目标**：把本地验收产出的红楼梦（原文 + 版本 3 的名单）与宝玉、刘姥姥两张卡，导入 SZ、SG 各自的演示账号 `offerPass`，零模型调用、不搬向量。
+
+**已查实的约束**（main `4908a73`；执行方 S0 逐条复核，不成立即停）
+1. 原文与名单在 `texts` 同一行：写入口 `save_text`（`storage/postgres_store.py:285`）、`save_characters`（`:379`，带版本）；读 `get_characters_owned`（`:395`）按版本精确比对，不等即当无缓存、会重新识别。
+2. 卡片写入口 `save_card`（`:599`），按 (text_id, name, user_id) 命中则原地更新；`cards.text_id` 外键指向 `texts`，标签 / 开场白 / 苏醒台词都在 `card_json` 里。
+3. 向量的 key 只来自用户自己（`web/llm_resolution.py:95-123`，全局一档在运行代码里不可达）；演示判定只有 `role == 'guest'`（`core/roles.py:48`），门禁只拦 HTTP 写（`web/demo_gate.py:78`），不拦脚本写库。
+4. 两节点现无 guest 账号；SG 的 `offerPass` 名下有两本失败留下的副本 `cb455edd7ce6`、`b42f3d89ace4`（无名单、无向量）。私有卡不参与跨节点同步（`web/cross_border_sync.py` 只同步私信与公开卡）。
+5. 先例：`scripts/migrate_data.py`（目标账号经环境变量 `TARGET_USERNAME` 传入，不写死 id）。
+
+**拍板结果**：只搬库里的数据；向量由 Shiyu 导入后用演示账号各开一次会话、在各节点生成（每节点约 1 元）；SG 两本旧副本软删；只搬宝玉、刘姥姥两张卡。
+
+**步骤**（每步独立 commit）
+1. **[scripts] `scripts/demo_seed.py`，两个子命令**，都**经 storage 层现有写入口**落库，不写裸 SQL：
+   - `export`（本地，只读）：给定 `--text-id` 与 `--cards 宝玉,刘姥姥`，导出原文与元数据、名单（含 `characters_version`）、两张卡的 `card_json`，打成一个 JSON 包，附条数与 sha256。
+   - `import`（在目标节点的 app 容器内跑）：目标账号取自 `TARGET_USERNAME`。**默认只试运行**，报告将写入什么；加 `--apply` 才写。检查：账号存在；运行中代码的 `IDENTIFY_VERSION` 等于包里的版本；同一账号下已有同一原文（按 `text_fingerprint`）就复用那一行、不重复建；已有同名卡且内容一致则跳过、不一致则停下报告。`--soft-delete-text-ids` 显式给出要软删的旧副本 id，只软删**属于目标账号**的那几行。
+2. **[tests]** 用 Docker 起的测试 PG 与一份小数据跑通：试运行零写入；`--apply` 后原文、版本号、两张卡都归到目标账号；再跑一次不重复；版本不等 / 账号不存在即停；软删只作用于目标账号名下的指定 id。
+
+**执行顺序**（脚本现在就可以用假数据写好；真正导出、导入等两次验收通过、部署之后）：两次验收通过 → 合入 main → 部署 → Shiyu 在两节点开好 `offerPass`、填好 embedding key（region cn）、改成 guest → 本地 `export` → 两节点各 `import`（先试运行，再 `--apply`，SG 带软删参数）→ Shiyu 登录演示账号，对两张卡各开一次会话预热向量。
+
+**测试**：本地只跑受影响的测试文件，再加一次 `npm test`；库用 Docker 起的 PG；合并门是分支 CI；合并只做 git 操作，不跑测试、不等 CI。
+
+**范围规矩**：执行中新发现的问题，属于本段改动面的直接修；只有会撞车或需要 Shiyu 拍板时才停下报告，不自行记账。
+
 ### WP9 真实验收
 第 10 节。合并进 main 前必须做完；拆分执行时，放在最后一个触及蒸馏路径的执行 spec 里。
 
