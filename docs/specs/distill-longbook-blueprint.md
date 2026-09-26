@@ -167,7 +167,7 @@
 4. 代码合并 4 组结果 → `CharacterCard.model_validate` 校验 → 以**一个** `json.dumps` 字符串 `yield`（与第 1 节第 17 条的两种消费方式兼容）。任一组失败或校验不过：按现有重修/报错口径处理，不拼半张卡。
 5. 格式化进度：并行开始时 `yield {"status": "formatting"}`，每组完成可发一次心跳；不新增状态值。
 - **分组定案（WP7 S0 后裁决，2026-09-25）**：G1 身份与背景 = name、identity、background；G2 内在 = personality_traits、values、inner_tensions、emotional_patterns、decision_style；G3 语言 = speaking_style、dialogue_examples、first_message、cognitive；G4 关系与经历 = relationships、key_memories、character_arc、psyche。`cognitive`（认知/语言画像，含 speech_style、vocabulary_level）归 G3，与 speaking_style 同组，消除两处语义重叠。`tags`、`awakening_message` 本来就由后置步骤生成（`_auto_tag`、`_generate_awakening`），不进 4 组。分组与后置字段都在 `core/schema.py` 定义一处（紧挨 `CharacterCard`），F3 断言「4 组 ∪ 后置字段 == `model_fields`，两两无交集」。
-- **提示词装配**：现有格式化提示词拆成「共享前缀 + 4 个组片段」，只定义一次。共享前缀 = 分析铁律、输出要求、「所有字段按模板输出、不加自定义字段」，以及把「list 元素是一句字符串」改写成不点字段名的通用句。组片段 = 该组的维度说明、该组专属的「重要」规则、该组的 JSON 模板片段；「前置步骤（枚举全部有名字角色）」归 G4。非流式 `distill_incremental` 仍用完整提示词，由同一批片段按原顺序拼出，拼出的文本除「list 元素」那一句外与改前逐字一致（本次核对一次、报 diff，不加钉子测试）。子 schema 由 `CharacterCard` 按组字段取，不手写。
+- **提示词装配**：现有格式化提示词拆成「共享前缀 + 4 个组片段」，只定义一次。共享前缀 = 分析铁律、输出要求、「所有字段按模板输出、不加自定义字段」，以及把「list 元素是一句字符串」改写成不点字段名的通用句。组片段 = 该组的维度说明、该组专属的「重要」规则、该组的 JSON 模板片段；「前置步骤（枚举全部有名字角色）」归 G4。非流式 `distill_incremental` 仍用完整提示词，由同一批片段按原顺序拼出，拼出的文本除两句外与改前逐字一致：「list 元素」那句改为通用句；模板引导句「完整 JSON 模板（所有字段必须包含，psyche 为必需嵌套对象）：」改为「JSON 模板（所有字段必须包含）：」（psyche 的要求已在 G4 的「重要」规则里，引导句进每组提示词时不能再点 psyche）。本次核对一次、报 diff，不加钉子测试。子 schema 由 `CharacterCard` 按组字段取，不手写。
 - 测试：第 8 节 F1–F5。
 
 ### WP8 [router + storage + distiller] 失败任务也可续跑
