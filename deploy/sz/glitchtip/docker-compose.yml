@@ -2,9 +2,9 @@
 # GlitchTip 报错收集（SZ 专属，独立于主站 compose）
 #
 # 为什么不并进主 compose / 发版流水线：
-#   - 镜像 tag 钉死成完整版本号（`6.2.6`）而不是浮动的 `6` —— 上游的 tag 可变，发布者能
-#     把同一个 tag 指向新镜像。它与主站 commit sha 仍无对应关系；混进 deploy.yml 会让
-#     「当前运行版 = commit_sha」这条规则失效（rollback 也会指向错的镜像）。
+#   - 镜像按 digest 钉死，不按 tag —— 上游的 tag 可变，发布者能把同一个 tag 指向新镜像，
+#     只有 digest 指向唯一一份内容。它与主站 commit sha 仍无对应关系；混进 deploy.yml
+#     会让「当前运行版 = commit_sha」这条规则失效（rollback 也会指向错的镜像）。
 #   - 2G 机器上它是可摘除件：隔离验证要求「停掉 glitchtip，主站照常」。
 #   落点与更新方式见同目录 README.md。
 #
@@ -14,7 +14,8 @@ name: glitchtip
 
 services:
   glitchtip:
-    image: glitchtip/glitchtip:6.2.6
+    # 6.2.6（GLITCHTIP_VERSION）
+    image: glitchtip/glitchtip@sha256:a3d8eb1b36c1e1603d55ab32711ea3dd8115874742a781a57391a62a16e0dff6
     environment:
       # all_in_one = web + worker + migrate 同进程。官方文档里以
       # `SERVER_ROLE=all_in_one` 的形式给出（等价于旧写法 GLITCHTIP_EMBED_WORKER）。

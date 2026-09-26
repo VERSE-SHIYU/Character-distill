@@ -1,10 +1,16 @@
 # SZ 专属文件（手工落盘，不走发版）
 
 本目录下的文件由人工 scp 到深圳主机，**不参与** `build.yml` / `deploy.yml`：
-`docker-compose.yml` 用的镜像是上游的 `glitchtip/glitchtip:6.2.6`，tag 与主站的 commit sha
+`docker-compose.yml` 用的镜像是上游的 `glitchtip/glitchtip`，**按 digest 钉死**（不按 tag ——
+tag 可变，发布者能把同一个 tag 指向新镜像；digest 指向唯一一份内容），与主站的 commit sha
 没有任何对应关系，一旦并进发版流水线，「当前运行版 = commit_sha」这条规则（以及 rollback
 指向的镜像）就失去意义；同时它是 2G 机器上的可摘除件，要求「停掉它主站照常」。所以它的
 落点、升级、回滚都由这份说明管，不由流水线管。
+
+**钉 digest 的后果**：本机已有那份镜像时 digest 引用直接解析、不触发拉取（这也是选它而
+不选 tag 的原因之一）；换成**新** digest（比如将来升级）则必须能从镜像源拉到。所以改动
+`image:` 之后，先跑 `docker compose -p glitchtip config --images` 看解析结果是哪个 digest，
+再决定要不要 `up`。
 
 | 仓库路径 | 服务器落点 |
 | --- | --- |
