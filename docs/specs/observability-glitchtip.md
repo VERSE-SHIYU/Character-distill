@@ -249,7 +249,100 @@ commit：`fix(lifespan): pair every process-wide registration with its undo`
 ### E 段验证
 只跑 `tests/test_message_backfill.py`、`tests/test_llm_access_gate.py`、`tests/test_usage_identity_context.py`、`tests/test_stdout_logging.py`，以及本步新增的用例；合并门是分支 CI。
 
-## D 段：51 处静默吞错补日志（等 119 残留合入后补写本节）
+## D 段：静默吞错补日志（70 处待判），并加回归锁（123、119 均已合入；B 段已上线）
+
+### 已查实的约束（基线 origin/main `91e8b0b`）
+1. **扫描口径与锁的判据一致**：新锁用 `_always_raises` 判断是否必然抛出，所以统计也按同一口径做，不能用「分支里出现过 `raise` 就排除」这种更宽的口径，否则统计出来的数目和锁找到的对不上。
+   - 扫描范围：`storage/postgres_store.py`、`web/`、`core/`、`adapters/`
+   - 只看宽 `except`：`Exception`、`BaseException`、裸 `except`，或元组里含这两者之一
+   - 排除：`_always_raises(分支体)` 为真（必然抛出；注意 `raise HTTPException` 不算抛出）；分支里有 `print`（归第 3 节 119 的锁管，新锁跳过这类分支，避免同一处被两把锁重复判）；调用了 logger 的任一级别，或用了 `nonfatal`
+   - **在 `91e8b0b` 上的结果：共 70 处要处理。** 行号会漂，以开工时重跑为准：
+   - (a) 分支里完全没有 `raise`，也没用到异常变量，**51 处**：
+     - `storage/postgres_store.py`：update_published_card:4993
+     - `web/cross_border_sync.py`：forward_dm_to_peer:54、forward_card_to_peer:77、forward_card_to_peer:104、forward_invite_code_to_peer:201、forward_invite_code_delete_to_peer:229、forward_user_profile_to_peer:263
+     - `web/geo_guard.py`：is_whitelisted_base_url:189
+     - `web/routers/admin.py`：list_users_federated:131、list_users:55、list_users_federated:86、admin_user_detail:668、list_users_federated:123
+     - `web/routers/auth.py`：test_embedding:698、get_user_online_status:916
+     - `web/routers/card.py`：export_card:84
+     - `web/routers/chat.py`：_decide_retraction:117、_ensure_session:179
+     - `web/routers/distill.py`：start_session:1340
+     - `web/routers/group.py`：_rebuild_group_session:97、create_group:309、_rebuild_group_session:130、_filter_valid_card_ids:432、cleanup_orphan_card_ids:476、send_message:529、_rebuild_group_session:121、_rebuild_group_session:149、event_generator:636
+     - `web/routers/history.py`：resume_session:215
+     - `web/routers/market.py`：_get_ip_location:44、_card_json_obj:429、publish_card:543、get_author:247、publish_card:520
+     - `web/routers/voice.py`：voice_status:65、voice_status:71、upload_custom_voice:157
+     - `web/server.py`：<module>:20
+     - `core/alerting.py`：emit:111
+     - `core/chat_engine.py`：_should_retract:1370、generate_reunion_greeting:1489、load_affinity:624、_evaluate_affinity:697、_build_time_awareness_block:1084
+     - `core/clock.py`：_safe_zone:25、is_valid_timezone:41
+     - `core/rag.py`：index:275、_peek_dimension:546
+     - `core/scene_indexer.py`：index_scenes:90
+     - `adapters/llm_adapter.py`：_classify_retry:44、aclose:685
+   - (b) 分支里有 `raise`，但不必然抛出，**5 处**。身份线原先的口径把它们漏掉了；其中后两处是 `raise HTTPException`，失败只剩给用户的 500，服务端不留痕：
+     - `core/distiller.py`：_parse_json_with_retry:955、_parse_json_with_retry:998
+     - `core/embeddings.py`：_call_api_bounded:296
+     - `web/routers/history.py`：export_session:108
+     - `web/routers/voice.py`：voice_synthesize:232
+   - (c) 用到了异常变量，疑似「交给下游」，**14 处**。要逐处确认交给了谁：
+     - `web/llm_resolution.py`：resolve_llm:75
+     - `core/agent/tools.py`：execute:207
+     - `core/alerting.py`：_send:119
+     - `core/distiller.py`：_thread_run:372、_thread_run:1983、_format_one_group:2171、_reduce_thread:2092
+     - `core/moderation/card_guard.py`：judge_card:160、judge_card:158、_run:145
+     - `adapters/llm_adapter.py`：chat:769、async_chat:816、_stream:868、chat_with_tools:999
+2. **现成的锁**：`tests/test_failure_alerting.py` 第 3 节，负责「`print` 后吞掉」这一种形态。
+   - 可复用的部分：`_SCAN_ROOTS`、`_always_raises`、`_is_http_exception`、`_enclosing_scope`、父节点表的构造、`_scan_files`
+   - 豁免表 `_KEPT_PRINTS` 以 `(路径, 函数名)` 为键、理由跟着条目走，找到的结果与豁免表做**相等**比较（新增违规和豁免失效都会变红）
+3. **现成的「吞掉但留痕」构造**：`core/nonfatal.py::nonfatal(source, what, level=...)`，模块注释自称是这个意图的「唯一定义」。仓内已有 16 处在用。**它只有 async 版本**（`@asynccontextmanager`）
+4. **身份线读过代码、确认有意吞掉的**：
+   - `core/alerting.py::emit`：告警处理器自身出错不能写日志，否则递归
+   - `web/server.py` 模块级：启动时重设 stdout 编码，日志系统还没装好
+   - `core/clock.py::is_valid_timezone`：校验函数，异常本身就是「不合法」这个结果
+   - `adapters/llm_adapter.py::_classify_retry`：尽力解析 `Retry-After`，解析不出就用默认退避
+   - `adapters/llm_adapter.py::aclose`：尽力关闭客户端
+5. **可能有意、但需要读代码判断的**：`web/geo_guard.py::is_whitelisted_base_url`、`core/clock.py::_safe_zone`（身份线建议补 WARNING：它意味着库里存了坏数据）、`core/rag.py::_peek_dimension`、`web/routers/market.py::_get_ip_location`
+6. **与 C 段的关系**：`core/alerting.py` 在 C 段会整个退役，它的两个豁免条目届时一并删除
+7. **与 distill 线可能撞车**：`core/distiller.py` 有 6 处在本段范围内（(b) 2 处、(c) 4 处），而 distill 线正在频繁修改这个文件。锁的豁免表按函数名登记，那边一旦改名或挪动函数，本锁就会变红
+
+### 级别口径（已定）
+- **ERROR**：用户拿到的结果是错的，或者数据没写进去 / 没同步过去，而且不会自愈。例如跨节点同步失败导致两地数据不一致。这类会进 GlitchTip 并发邮件
+- **WARNING**：有兜底，用户拿到的结果仍然正确，或者下次会自愈；只是降级。这类只进 stdout 和日志面板，在 GlitchTip 里只作为面包屑
+- **豁免**：异常本身就是返回结果（校验函数）；位于日志链自身；发生在日志系统装好之前。每一条都要写明理由
+- 日志消息里写 `source` / `what` 和定位信息（session_id、card_id、路径），**不写正文和用户输入**
+
+### 约束
+- **锁只有一套判据**：在 `tests/test_failure_alerting.py` 里新增一个测试，复用上面第 2 条列出的那些函数，不另起新文件、不另写一份扫描器
+- **新锁的规则**：宽 `except` 如果不必然抛出（按 `_always_raises` 判），分支里就必须调用 logger 或 `nonfatal`；否则必须登记在新的豁免表里，写明理由
+- 「交给下游」的 14 处**也要登记**进豁免表，理由写清交给了谁（队列、返回值、重试预算……）。不用「用到了异常变量」来自动放行，那等于给以后的静默吞错留了一个口子
+- 同一个函数里有多处的，豁免表按处数登记，比较时要能区分数量
+- 补日志时优先用 `nonfatal`，不在各处手写格式。同步函数里 `nonfatal` 用不了，这一处见步骤 10 的 S1
+- **补日志不是唯一修法，先判断这个宽 `except` 该不该存在**，按下面顺序选，前面的能用就不用后面的：
+  1. **能窄化就窄化**：捕获的其实是可预期的输入错误，就只捕获那个具体类型，不再是宽 `except`，也就不用补日志。例：`voice.py::voice_synthesize` 捕获的是请求体不是合法 JSON，应只捕获 JSON 解析错误，返回 400 是对的
+  2. **能去掉就去掉**：捕获后只是把真故障包装成别的响应，就删掉这个 `try`，交给全局异常处理器（`server.py` 的 `_global_exception_handler`，已经会记日志、返回 500）。例：`history.py::export_session` 把数据库故障伪装成 404「会话不存在」，用户和服务端都被误导；`get_session_owned` 找不到时本来就返回空，不需要这个 `try`
+  3. 以上都不适用，确实要吞掉继续跑，才补 `nonfatal` 或 logger
+  - S1 的分类表加一列「修法：窄化 / 去掉 / 补日志 / 豁免」
+- 只改这 70 处，其它代码不动；每个文件的改动都要能说清是哪一类、为什么
+- 开工前（S1）先查 distill 线有没有未合并的分支改到了 `core/distiller.py` 里上述函数（`git log origin/main..<distill 分支> -- core/distiller.py`，并看 diff 是否碰到这几个函数）。碰到了就在 S1 报告里列出来，由我协调顺序；不自行给这几处开临时豁免，也不在锁里排除 distiller.py
+- distiller 的 4 处 (c) 只需要登记豁免、不改 distiller.py 的代码，不会与 distill 线的代码冲突；以后那边改名或挪动这些函数时锁会变红，这正是锁该做的事。所以锁的失败信息要写清「去豁免表里改登记，并写明理由」，让任何一条线看到红都知道怎么处理
+
+### 步骤 10：[core/web/adapters/storage] 静默吞错补日志 + 回归锁
+
+**S1（只读，出分类表，停下等审计）**
+- 在当时的 main 上用上面的口径重跑扫描，报 (a)(b)(c) 三类的数目，以及与第 1 条的逐项差异
+- 逐处读代码，给出一张表，每行：`路径 · 函数 · 修法（窄化 / 去掉 / 补日志 / 豁免）· 级别（补日志时填 ERROR 或 WARNING）· 一句理由`
+- 统计需要补日志的**同步函数**有几处，并给出建议：是给 `nonfatal` 加一个同步版本（两者共用同一个上报函数，格式只有一份），还是同步处直接用模块 logger。给出理由，由我裁决
+- S1 不改任何文件
+
+**S2（审计通过后实施）**
+- 先写锁：新测试 `test_no_silent_broad_except_left_in_production_code`，此时应该是红的，红的内容正好是 S1 表里的全部条目
+- 再按分类表逐文件改，每改完一个文件跑一次锁，看剩余列表在减少
+- 豁免表最终的条目 = 分类表里的「豁免」+「交给下游」
+- 鉴别力自测：随便挑一处已补的日志删掉 → 锁变红；随便删掉一条豁免 → 锁变红
+
+commit：先 `test(failure-alerting): lock silent broad excepts`（锁 + 豁免表，此时红），再按文件分组若干个 `fix(<模块>): log the failures that were swallowed silently`，最后一个 commit 让锁变绿。中间 commit 锁为红是预期的，所以全部改完再一次推送，推送后分支 CI 必须全绿
+
+### D 段验证
+- 只跑 `tests/test_failure_alerting.py`，加上被改文件对应的已有测试文件；不跑全量；合并门是分支 CI；合并只做 git 操作，不跑测试
+- 合并后：GlitchTip 里观察一天，确认没有被新的 ERROR 刷屏。如果刷屏，说明哪一处的级别定错了，回来改级别，不是去关告警
 
 ## C 段：退役自建组件
 B 段线上验证通过、Shiyu 确认之后再开，另行补充到本文件。
