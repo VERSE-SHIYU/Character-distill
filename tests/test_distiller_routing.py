@@ -128,6 +128,35 @@ class TestBatchReduceUsesTheLongOutputStream:
         assert out == "合并结果", f"分批归并没有走流式长输出（2.0s 静默被当故障）：{out!r}"
 
 
+class TestSingleReduceUsesTheCardOutputCap:
+    """WP13 S6：单次归并（≤80 片，每本普通书都走这条）的输出上限 = `CARD_MAX_TOKENS`。
+
+    `_single_reduce_stream` 原先不传 `max_tokens` → 适配器落回 4096，只有分批归并
+    （`_single_reduce_async`）与格式化的一半。WP11 起 `length` 截断是硬失败，这条
+    就成了普通书蒸馏的必红路径 —— 所以两处必须同批上线。
+
+    变异：删掉 `max_tokens=self.CARD_MAX_TOKENS` → 记录到 None，本条红。
+    """
+
+    def test_single_reduce_passes_card_max_tokens(self):
+        seen: list = []
+
+        class _LLM:
+            last_usage = None
+
+            def chat_stream_long(self, system, messages, max_tokens=None):
+                seen.append(max_tokens)
+                yield "档案"
+                return {"prompt_tokens": 1, "completion_tokens": 1}
+
+        d = Distiller(llm=_LLM(), config_path=None)
+        out = "".join(d._single_reduce_stream(["分析一", "分析二"], "角色"))
+
+        assert out == "档案"
+        assert seen == [Distiller.CARD_MAX_TOKENS], (
+            f"单次归并的输出上限没对齐 CARD_MAX_TOKENS：{seen}")
+
+
 class TestAnyBatchFailureFailsTheWholeReduce:
     """WP5 R2：任一批失败即整体失败 —— 不落半张卡、不进格式化（D3）。
 

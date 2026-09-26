@@ -1628,6 +1628,9 @@ class Distiller:
         usage = yield from self._llm.chat_stream_long(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
+            # 显式给上限：漏传会落回适配器默认的 4096，只有分批归并/格式化的一半，
+            # 而这条是每本普通书（≤80 片）的必经路径（WP13）。
+            max_tokens=self.CARD_MAX_TOKENS,
         )
         self._try_record_usage("distill_reduce", usage)
 
