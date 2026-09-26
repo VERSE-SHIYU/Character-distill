@@ -122,6 +122,9 @@ class AdaptiveGate:
 
     上调会让等在 `__aenter__` 里的协程立刻可进，故 `on_success` 需 `notify_all`；
     下调相反（更严），不唤醒任何等待者，等 `__aexit__` 释放名额时自然复查。
+
+    加性上探只在**满载**时发生（RFC 7661：未用满拥塞窗口的发送方 MUST NOT 增大窗口）
+    —— 见 `on_success`。
     """
 
     def __init__(self, cap: int, initial: int | None = None) -> None:
@@ -133,6 +136,9 @@ class AdaptiveGate:
         # 代数：每下调一次 +1。一波并发同时撞 429 时，只有「当时代数仍是当前代数」的那个
         # 下调 —— 否则 N 个 429 会按次数连乘（20 × 0.75^15 → 1），闸当场自锁。
         self._generation = 0
+        # 最近一次**进闸**时闸是否满载。缺省 True：还没有过任何准入就不抑制 —— 生产路径
+        # 上每次 on_success 前必有一次 `__aenter__`，此缺省只对直接驱动闸的算术用例可见。
+        self._admitted_full = True
         self._cond = asyncio.Condition()
 
     @property
@@ -152,9 +158,14 @@ class AdaptiveGate:
 
     async def __aenter__(self) -> AdaptiveGate:
         async with self._cond:
+            # 进闸时记下「此刻是否满载」：在途 + 1 ≥ 上限（本请求占的是最后的名额），
+            # 或已经排过队（需求超过上限）—— 见 on_success 的 RFC 7661 说明。
+            full = self._inflight + 1 >= self._ceiling
             while self._inflight >= self._ceiling:
                 await self._cond.wait()
+                full = True
             self._inflight += 1
+            self._admitted_full = full
         return self
 
     async def __aexit__(self, *_exc) -> None:
@@ -163,8 +174,15 @@ class AdaptiveGate:
             self._cond.notify_all()
 
     async def on_success(self) -> None:
-        """一次尝试成功。连续成功次数达到当前上限即加性 +1，不超过 cap。"""
+        """一次尝试成功。连续成功次数达到当前上限即加性 +1，不超过 cap。
+
+        只在**满载**时计数（RFC 7661：未用满拥塞窗口的发送方 MUST NOT 增大窗口）。
+        满载与否取自最近一次进闸（`_admitted_full`）—— 排水期的分片在途数已低于上限，
+        成功只说明收尾顺利，不代表还有余量，照旧计数会把写回的账户记忆抬高。
+        """
         async with self._cond:
+            if not self._admitted_full:
+                return
             self._ok += 1
             if self._ok >= self._ceiling and self._ceiling < self._cap:
                 self._ceiling += 1

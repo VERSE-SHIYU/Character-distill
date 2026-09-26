@@ -20,6 +20,35 @@ async def _spin(n: int = 5) -> None:
         await asyncio.sleep(0)
 
 
+async def _burst(g: AdaptiveGate, limit: int) -> list[int]:
+    """一波按当前上限放出的尝试：前 limit 个成功，其余 429。返回每个的结果码。
+
+    上游模型：一波 n 个尝试同时进闸，前 `limit` 个在限内（200），其余（在途 > limit）
+    回 429 —— 与 A2 的假上游同一规则，只是这里不需要真 socket。A5、A6 共用。
+    """
+    n = g.ceiling
+    statuses: list[int | None] = [None] * n
+
+    async def attempt(i: int) -> None:
+        async with g:
+            # 代数在**进闸时**记下，不是报 429 时现读 —— `async_chat` 就是
+            # `gen = gate.generation` 取在 create 之前（见 adapters/llm_adapter.py
+            # 的 `gen = gate.generation`）。现读的话每次拿到的都是最新代数，判据
+            # 恒等成立，一波 15 个 429 照样连乘到 1 —— 仪器没复现被测形态。
+            gen = g.generation
+            # 让整波都先进闸再判——不然 gather 逐个跑，在途数永远只有 1
+            await asyncio.sleep(0)
+            if i < limit:
+                statuses[i] = 200
+                await g.on_success()
+            else:
+                statuses[i] = 429
+                await g.on_rate_limited(gen)
+
+    await asyncio.gather(*(attempt(i) for i in range(n)))
+    return statuses
+
+
 class TestRateLimitedShrinksTheCeiling:
     async def test_429_multiplies_the_ceiling_by_three_quarters_flooring(self):
         g = AdaptiveGate(cap=100, initial=8)
@@ -115,8 +144,7 @@ class TestABurstOfRateLimitsDecreasesTheCeilingOnlyOnce:
     事实的 N 次重复，不是 N 个新事实。闸用「代数」区分：进闸时记下当时代数，报 429 时
     代数已经变了，说明同波已经有人下调过，本次不再连乘。
 
-    上游模型：一波 n 个尝试同时进闸，前 `LIMIT` 个在限内（200），其余（在途 > LIMIT）
-    回 429 —— 与 A2 的假上游同一规则，只是这里不需要真 socket。
+    上游模型见模块级 `_burst`（与 A6 共用）。
 
     变异：`on_rate_limited` 去掉代数判据（每次 429 都下调）→ `ceilings[0]` 塌到 1。
     """
@@ -125,37 +153,12 @@ class TestABurstOfRateLimitsDecreasesTheCeilingOnlyOnce:
     CAP = 20
     WAVES = 8
 
-    @staticmethod
-    async def _burst(g: AdaptiveGate, limit: int) -> list[int]:
-        """一波按当前上限放出的尝试：前 limit 个成功，其余 429。返回每个的结果码。"""
-        n = g.ceiling
-        statuses: list[int | None] = [None] * n
-
-        async def attempt(i: int) -> None:
-            async with g:
-                # 代数在**进闸时**记下，不是报 429 时现读 —— `async_chat` 就是
-                # `gen = gate.generation` 取在 create 之前（见 adapters/llm_adapter.py
-                # 的 `gen = gate.generation`）。现读的话每次拿到的都是最新代数，判据
-                # 恒等成立，一波 15 个 429 照样连乘到 1 —— 仪器没复现被测形态。
-                gen = g.generation
-                # 让整波都先进闸再判——不然 gather 逐个跑，在途数永远只有 1
-                await asyncio.sleep(0)
-                if i < limit:
-                    statuses[i] = 200
-                    await g.on_success()
-                else:
-                    statuses[i] = 429
-                    await g.on_rate_limited(gen)
-
-        await asyncio.gather(*(attempt(i) for i in range(n)))
-        return statuses
-
     async def test_first_burst_leaves_the_ceiling_at_three_quarters(self):
         g = AdaptiveGate(cap=self.CAP, initial=self.CAP)
         ceilings: list[int] = []
         seen_429 = 0
         for _ in range(self.WAVES):
-            statuses = await self._burst(g, self.LIMIT)
+            statuses = await _burst(g, self.LIMIT)
             seen_429 += statuses.count(429)
             ceilings.append(g.ceiling)
 
@@ -169,3 +172,47 @@ class TestABurstOfRateLimitsDecreasesTheCeilingOnlyOnce:
         # 首波那一次下调之后，还得容许它按 0.75 逐波走完，那些波的上限当然高于上限值。
         assert max(ceilings[-3:]) <= self.LIMIT + 1, (
             f"数波之后上限没收敛到上游限附近：{ceilings}（+1 是 AIMD 的探针）")
+
+
+class TestSuccessesOnlyCountWhileTheGateIsFull:
+    """WP14 A6（二审后第二次补充）：未用满窗口的成功不上探 —— RFC 7661。
+
+    规范原文：未用满拥塞窗口的发送方「MUST NOT」增大窗口。这里窗口就是闸的上限：
+    尾部分片在途数已低于上限，它们的成功**不代表还有余量**，只是收尾。若照旧计数，
+    `_ok` 攒够 `ceiling` 就 +1，逐格把写回的账户记忆抬高（实测偶发到 9，真上限 5）。
+
+    实现：进闸时记下「此刻是否满载」（在途 + 1 ≥ 上限，本请求占的是最后的名额；或
+    已经在排队，说明需求超过上限），`on_success` 只在满载时计数。
+
+    上游模型与 A5 共用 `_burst`：满载跑到上限收敛在上游真上限附近（此刻远低于 cap），
+    再撤到 2 路在途 —— 一有抬升就看得见。
+
+    变异：`on_success` 去掉满载判据（不看 `_admitted_full` 一律计数，即修复前的行为）
+    → 排水尾 50 次成功把上限从收敛值抬到 cap。
+    """
+
+    LIMIT = 6
+    CAP = 10
+    WAVES = 8
+
+    async def test_a_drain_tail_does_not_probe_upward(self):
+        g = AdaptiveGate(cap=self.CAP, initial=self.LIMIT)
+        ceilings: list[int] = []
+        seen_429 = 0
+        for _ in range(self.WAVES):
+            statuses = await _burst(g, self.LIMIT)
+            seen_429 += statuses.count(429)
+            ceilings.append(g.ceiling)
+
+        assert seen_429 > 0, "一波都没回 429 —— 闸压根没被打到，这条锁空转"
+        settled = g.ceiling
+        assert settled < self.CAP, (
+            f"满载跑到上限已顶到 cap={self.CAP}，排水尾就没区分度了：{ceilings}")
+
+        # 排水尾：只剩 2 路在途（上限 settled ≥ 5），连续成功。空闸里的成功不是余量。
+        async with g, g:
+            for _ in range(50):
+                await g.on_success()
+        assert g.ceiling == settled, (
+            f"排水尾 2 路在途（上限 {settled}）连续 50 次成功把上限抬到 {g.ceiling}"
+            f"—— 未用满窗口不应上探，写回的账户记忆会假高；全程 {ceilings}")
