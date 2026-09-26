@@ -33,7 +33,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from adapters.llm_adapter import IncompleteResponseError, _extract_content
 from core.distiller import Distiller
+from core.schema import FORMAT_GROUPS
 from core.utils import estimate_usage_from_chars, try_record_usage
+
+# WP7：格式化改成按字段组并行（4 组），桩 LLM 得按组回 JSON 才走得完那一阶段。
+# 认组 / 造回复都复用 WP7 那批件，不另抄一份字段样例 —— 抄一份就是第二处「组字段表」。
+from test_distiller_routing import _format_group_of, _group_reply
 
 # CharacterCard 只有 name 是必填
 CARD = '{"name": "角色"}'
@@ -396,6 +401,23 @@ class _ReturnUsageLLM(_FakeLLM):
         return {"prompt_tokens": 1, "completion_tokens": 404, "estimated": False}
 
 
+class _FormatGroupReturnUsageLLM(_ReturnUsageLLM):
+    """格式化那一跳回**该组**的 JSON；归并那一跳照基类吐 `"x"`。
+
+    回 `"x"` 的话每组会被 `_parse_json_with_retry` 重修两次 —— 账上是每组 3 条，
+    「一次调用恰一条」这条判据就淹没在重试里（实测 12 条）。组也别靠调用次序认：
+    4 组是并发发的，次序不定。
+    """
+
+    def chat_stream_long(self, system, messages, max_tokens=None):
+        if "你正在整合关于" in system:            # 归并那一跳
+            yield from super().chat_stream_long(system, messages, max_tokens)
+            return
+        yield _group_reply(_format_group_of(system))
+        self.last_usage = {"prompt_tokens": 1, "completion_tokens": 999, "estimated": False}
+        return {"prompt_tokens": 1, "completion_tokens": 404, "estimated": False}
+
+
 class TestStreamReturnValueAccounting:
     """这三处的共同判据：账上的数取自 `yield from` / 迭代拿到的**返回值**。
 
@@ -429,22 +451,25 @@ class TestStreamReturnValueAccounting:
         self._assert_404(records, "distill_reduce")
 
     def test_incremental_format_stream_accounts_returned_usage(self, records):
-        """流式格式化（第 5 个流式记账点）：账取 `yield from` 的返回值。
+        """流式格式化：4 组各一条，账取 `_collect_stream` 收下的返回值。
 
         `distill_incremental_stream` 要整条跑完才到得了 Phase 3 —— 这条同时当「那一处确实
         跑到了」的仪器：`fmt` 为空即说明本轮根本没走到格式化，红的是覆盖面而不是取值。
+        组数从 `FORMAT_GROUPS` 读（WP7 起是 4 组并行，每组一次 `_chat_accounted`）。
         Reduce 那一段（`_single_reduce_stream`）也落一条 `distill_reduce`，两个站点在本轮
         都不许读共享属性，故两处变异各自会红一条：断言只挑 `distill_format`，免得一个站点的
         变异把另一站点的用例也染色（那就分不清是谁坏了）。
         """
-        d = Distiller(_ReturnUsageLLM([]), config_path=None)
+        d = Distiller(_FormatGroupReturnUsageLLM([]), config_path=None)
         d._longctx_threshold = 1          # 强制落到 MapReduce 分支，否则短文本路由去长上下文
         d._chunk_size = 200
 
         list(d.distill_incremental_stream(TEXT, "角色", text_type="story"))
 
         fmt = [u for a, u in records if a == "distill_format"]
-        assert len(fmt) == 1, f"没跑到流式格式化，或记了 {len(fmt)} 条：{records}"
-        assert fmt[0] is not None, "没把返回值交给 _try_record_usage，落回了共享属性"
-        assert fmt[0]["completion_tokens"] == 404, (
-            f"记的是共享属性（999）而不是本次调用返回的那一份：{fmt[0]}")
+        assert len(fmt) == len(FORMAT_GROUPS), (
+            f"没跑到流式格式化（或组数不对）：{len(fmt)} 条，应为 {len(FORMAT_GROUPS)}")
+        assert all(u is not None for u in fmt), (
+            f"有组没把返回值交给 _try_record_usage，落回了共享属性：{fmt}")
+        assert all(u["completion_tokens"] == 404 for u in fmt), (
+            f"记的是共享属性（999）而不是本次调用返回的那一份：{fmt}")

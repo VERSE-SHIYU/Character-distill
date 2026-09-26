@@ -30,6 +30,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from core.distiller import Distiller, _resume_hit, text_fingerprint
 from storage.sqlite_store import SQLiteStore
 
+# WP7：流式格式化改按 4 组并行，每组只要**本组**字段 —— 桩得按组回 JSON，否则每组
+# 的 `required_keys` 都不过。认组别与样例值复用 WP7 那批件，不另抄一份字段样例
+# （cross-module import 在本仓有先例：test_postgres_store 引 test_published_from_backfill）。
+from test_distiller_routing import _format_group_of, _group_reply
+
 
 CHUNK_SIZE = 40
 # 12 段、每段都含目标角色名 → relevant = 全部分片
@@ -64,7 +69,12 @@ class _FakeLLM:
     def chat_stream(self, system, messages, max_tokens=None):
         # reduce 与 format 都走这里；输出 = f(输入)
         self.stream_inputs.append(messages[0]["content"])
-        yield '{"name": "角色", "identity": "' + self._digest(messages[0]["content"]) + '"}'
+        group = _format_group_of(system)     # reduce 的提示词不含组标记 → None
+        if group is not None:
+            # 格式化那一跳：WP7 按组并行，每组只回本组字段（样例值是常量，逐字节可复现）
+            yield _group_reply(group)
+        else:
+            yield '{"name": "角色", "identity": "' + self._digest(messages[0]["content"]) + '"}'
         return {"prompt_tokens": 1, "completion_tokens": 1, "estimated": False}
 
     # 长输出入口在生产里是 chat_stream 的薄委托（只放宽读超时）：桩共用同一份记录

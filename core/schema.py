@@ -88,6 +88,40 @@ class CharacterCard(BaseModel):
     awakening_message: str = ""  # 蒸馏完成时生成的苏醒台词
 
 
+# ── 格式化字段分组（WP7）──────────────────────────────────────────────
+# 流式蒸馏的格式化按 4 组并行生成；非流式 distill_incremental 仍用完整提示词。
+# 这里是分组的**唯一出处**：提示词片段、子 schema 都从这里派生，不另存副本
+# （两份手维护清单必然漂移）。F3 断言「4 组 ∪ POST_FORMAT_FIELDS ==
+# CharacterCard.model_fields，两两无交集」。组序即提示词片段顺序，别随意调。
+FORMAT_GROUPS: dict[str, tuple[str, ...]] = {
+    "G1": ("name", "identity", "background"),
+    "G2": ("personality_traits", "values", "inner_tensions",
+           "emotional_patterns", "decision_style"),
+    "G3": ("speaking_style", "dialogue_examples", "first_message", "cognitive"),
+    "G4": ("relationships", "key_memories", "character_arc", "psyche"),
+}
+
+# 后置步骤产出的字段（_auto_tag / _generate_awakening），不进 4 组。
+POST_FORMAT_FIELDS: tuple[str, ...] = ("tags", "awakening_message")
+
+
+def format_group_schema(group: str) -> dict[str, Any]:
+    """按组取 CharacterCard 的 JSON Schema 子集 —— 只留该组字段（可属性的）。
+
+    不给模型整张卡的 schema：那会让每一组都以为要输出全部字段。``$defs`` 整体带上，
+    不按引用裁剪 —— 多带的定义只是几行噪声，裁错一条就是 ``$ref`` 解析不了的硬伤。
+    """
+    full = CharacterCard.model_json_schema()
+    fields = FORMAT_GROUPS[group]
+    return {
+        "title": f"CharacterCard[{group}]",
+        "type": "object",
+        "properties": {k: v for k, v in full["properties"].items() if k in fields},
+        "required": [k for k in full.get("required", []) if k in fields],
+        "$defs": full.get("$defs", {}),
+    }
+
+
 # ── Evidence：检索来源的结构化契约 ─────────────────────────────────────
 # 命名消歧：仓里 `evidence` 一词已被 `docs/evidence/` + `evidence_writer` +
 # `test_evidence_integrity` 占用（审计探针的产物）。此处 `EvidenceItem` 指
