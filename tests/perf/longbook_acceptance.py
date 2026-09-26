@@ -75,6 +75,9 @@ LOG_PATTERNS = (
     ("5xx", r'"\s*5\d\d\s'),
     ("读取流式响应失败", r"读取流式响应失败"),
     ("Reduce batch", r"Reduce batch"),
+    # §10 D2「任一分片最终失败」：`Map chunk %s failed` 是 Map 里某片重试墙后仍未成的
+    # 唯一落点（`core/distiller.py` 的 `_run_map_concurrent._one`），全仓只此一处。
+    ("分片失败", r"Map chunk \d+ failed"),
 )
 
 
@@ -123,7 +126,7 @@ def fetch(dsn: str, sql: str, *args) -> list:
 
 
 def count_log(path: str | None) -> dict[str, int | str]:
-    """D1：数服务端日志里的 429 / 5xx / 读取流式响应失败 / Reduce batch。
+    """D1：数服务端日志里的 429 / 5xx / 读取流式响应失败 / Reduce batch / 分片失败。
 
     日志由调用方用 `--app-log` 给出（例如 `docker compose logs app > app.log`）；
     没给就如实报「未提供」，不假装是 0 —— 0 与「没数过」是两件事。
@@ -627,9 +630,11 @@ def over_limit(stats: dict, counts: dict, env: dict) -> list[str]:
         for i, b in enumerate((stats.get("stages") or {}).get("batches") or []):
             if (b.get("tok") or 0) >= CARD_MAX_TOKENS:
                 why.append(f"批{i + 1} completion {b['tok']} ≥ {CARD_MAX_TOKENS}（疑截断）")
+    # 429 不再是停下条件：WP14 把 map 并发压到闸以下之后，收敛途中打 429 是**正常信号**，
+    # 次数由 `print_logs` 照报，不作判据。分片失败才是 —— 那片结果是空串，会一路污染合并。
     # 计数只在「数过」时才算命中：没给日志时值是「未提供」这个字符串，直接当布尔用
     # 会把「没数过」报成「命中了」。
-    for label in ("429", "5xx"):
+    for label in ("分片失败", "5xx"):
         n = counts.get(label)
         if isinstance(n, int) and n > 0:
             why.append(f"{label} × {n}")
