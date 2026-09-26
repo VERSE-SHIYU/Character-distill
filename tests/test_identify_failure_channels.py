@@ -34,11 +34,17 @@ from fastapi.testclient import TestClient
 import deps
 import server
 from core.distiller import DistillError, Distiller
+from core.schema import CharacterCard
 from core.text_manager import TextManager
 from deps import get_storage
 from routers import distill as D
 from routers.auth import get_current_user
 from storage.sqlite_store import SQLiteStore
+
+# WP7 F4 复用 WP7 那批格式化件（认组别 + 按组回 JSON），不另抄一份字段样例：
+# 抄一份就是第二处「组字段表」，组一变就漂。cross-module import 在本仓有先例
+# （test_postgres_store 引 test_published_from_backfill）。
+from test_distiller_routing import _FakeAsyncClient, _format_group_of, _group_reply
 
 # 三通道共用的期望文案。改动被锁的是「定义文案的那一处」（character_roster），
 # 所以这里必须是复制过来的字面量 —— 从源码 import 就自证自明，变异杀不掉。
@@ -373,3 +379,109 @@ class TestNamedRunKeepsIdentifyFailure:
         assert r.status_code == 400, r.text
         assert r.json()["detail"] == FAILURE_TEXT
         assert r.json()["detail"] != EMPTY_ROSTER_TEXT, "上游故障被渲染成了「没有角色」"
+
+
+# ── 6. WP7：4 组并行的产物在两条消费路径上都是「一张能解析的卡」 ──────────
+
+
+class _FormattingLLM:
+    """真 `Distiller` 的桩 LLM —— 识别 / 分片 / 归并 / 4 组格式化各回各的。
+
+    用**真 `Distiller`** 而不是桩：本组判的正是「4 组的产物怎么被交出去」，桩掉蒸馏器
+    就把被测的那一段换掉了（同上面 `_NonJSONLLM` 的理由）。
+    """
+
+    model = "fake-model-wp7-format"
+    last_usage = None
+
+    def __init__(self) -> None:
+        self.format_groups: list[str] = []
+
+    def _make_async_client(self):
+        return _FakeAsyncClient()            # Map 阶段：建 client → 跑 → 关
+
+    def chat(self, system, messages):
+        """识别（与 `_auto_tag`）那一跳 —— 名字得在正文里出现过，分片才被选中。"""
+        return json.dumps([{"name": "角色"}])
+
+    async def async_chat(self, system, messages, max_tokens=None, client=None, **kw):
+        return ("片段分析", {"prompt_tokens": 1, "completion_tokens": 1})
+
+    def chat_stream_long(self, system, messages, max_tokens=None, **kw):
+        if "你正在整合关于" in system:
+            yield "合并档案"
+            return {"prompt_tokens": 1, "completion_tokens": 1}
+        group = _format_group_of(system)
+        self.format_groups.append(group)
+        yield _group_reply(group)
+        return {"prompt_tokens": 1, "completion_tokens": 1}
+
+
+def _card_distiller() -> Distiller:
+    d = Distiller(llm=_FormattingLLM(), config_path=None)
+    d._longctx_threshold = 0        # 本组要的是 Format 阶段，短正文也走分片那条
+    d._chunk_size = 3000
+    return d
+
+
+class _SavingTM:
+    """只让收尾那跳过得去（`save_distilled_card`）；本组不考落库与会话。"""
+
+    def __init__(self) -> None:
+        self.saved: list[CharacterCard] = []
+
+    async def save_distilled_card(self, text_id, card, user_id, **kw):
+        self.saved.append(card)
+        return {"card_id": f"card_{uuid.uuid4().hex[:8]}"}
+
+
+class TestOneParseableCardOnBothChannels:
+    """WP7 F4：4 组并行后**恰一个** str 帧，两条消费路径都从累加串里 parse 出卡。
+
+    两条路径收非 dict 帧的写法不同，但都假定「所有 str 帧拼起来正好是一个 JSON」：
+    `_run_distill_task` 先 `json.loads(整串)` 再退到「首个顶层 `{}`」，`_event_gen`
+    退到「首个 `{` 到末个 `}`」。4 组各 yield 一次的话（本组变异）两种退路都拼不出
+    一张完整的卡 —— 前者只会捞到 G1 那一组，后者连 JSON 都不是。
+
+    桩 LLM 按组回 JSON，认组复用 WP7 那批件（`_format_group_of` / `_group_reply`），
+    不另抄一份字段样例 —— 抄一份就是第二处「组字段表」。
+    """
+
+    def _assert_all_groups_landed(self, card: CharacterCard) -> None:
+        """四个组各自的代表字段都得在卡上 —— 少一组说明那个组的帧没并进来。"""
+        assert card.name == "角色"                                    # G1
+        assert card.decision_style == "谨慎型"                         # G2
+        assert card.speaking_style.tone == "冷淡"                      # G3
+        assert [r.target for r in card.relationships] == ["某人"]        # G4
+
+    def test_bg_task_accumulates_one_card(self, store, user_id, monkeypatch):
+        tid = _seed_text(store, user_id)
+        tm = _SavingTM()
+        monkeypatch.setattr(deps, "get_text_manager", lambda *a, **kw: tm)
+        distiller = _card_distiller()
+
+        row = _run_bg(store, user_id, tid, distiller, monkeypatch)
+
+        assert row["status"] == "done", row
+        assert len(tm.saved) == 1, f"落库的卡不是一张：{len(tm.saved)}"
+        # 落库前 `CharacterCard.model_validate(累加串)` 已过；再拿四个组各自的字段核
+        # 一遍「四段都并进来了」——只核 name 的话，逐组 yield 走的「首个顶层 {}」退路
+        # 也能捞出一张只有 G1 的卡。
+        self._assert_all_groups_landed(tm.saved[0])
+        assert sorted(distiller._llm.format_groups) == ["G1", "G2", "G3", "G4"], (
+            f"4 组没都跑：{distiller._llm.format_groups}"
+        )
+
+    def test_sse_accumulates_exactly_one_str_frame(self, store, user_id, monkeypatch):
+        tid = _seed_text(store, user_id)
+        client = _build_client(
+            store, user_id, monkeypatch, distiller=_card_distiller(), tm=_SavingTM())
+
+        r = client.post("/api/distill/run_stream", json={"text_id": tid})
+
+        assert r.status_code == 200
+        frames = [json.loads(l[len("data: "):]) for l in r.text.splitlines()
+                  if l.startswith("data: ")]
+        tokens = [f["token"] for f in frames if "token" in f]
+        assert len(tokens) == 1, f"成品卡的 str 帧不是恰 1 个：{len(tokens)}"
+        self._assert_all_groups_landed(CharacterCard.model_validate(json.loads(tokens[0])))

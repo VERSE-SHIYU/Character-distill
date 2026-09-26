@@ -23,7 +23,7 @@ from openai import AsyncOpenAI
 
 from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_facing_error
 from core.chat_preprocessor import ChatPreprocessor
-from core.schema import CharacterCard, PRESET_TAGS
+from core.schema import CharacterCard, FORMAT_GROUPS, PRESET_TAGS, format_group_schema
 from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
 from core import telemetry as T  # OTel 埋点
 from core import concurrency as C  # 派生与上下文传播
@@ -85,106 +85,165 @@ IDENTIFY_MERGE_PROMPT = (
 
 DISTILL_PROMPT_BEFORE_NAME = """你是一个角色分析专家。从给定文本中精确提取角色 \""""
 
-DISTILL_PROMPT_AFTER_NAME = """\" 的完整人格档案。
+# ── 格式化提示词片段（WP7）────────────────────────────────────────────
+# 提示词只在这里定义一次。完整提示词（非流式 distill_incremental 等路径）= 全部片段
+# 按本表顺序拼出；组提示词（流式按字段组并行）= 共享片段 + 本组片段，组名取
+# FORMAT_GROUPS 的键。片段的「归属」是它讲哪一组字段，None = 共享（每组都带）；模板
+# 条目的归属由字段名查 _FORMAT_FIELD_GROUP 得到，不另写第二份字段→组映射。
+_FORMAT_HEADER = '" 的完整人格档案。'
+_FORMAT_IRON_LAWS = (
+    '## 分析铁律\n'
+    '1. 跨场景验证：一个特质必须在至少2个不同场景出现才能写入\n'
+    '2. 有预测力：提取的特质能预测此人在新情境下的反应\n'
+    '3. 保留矛盾：矛盾是真实人格的标志，不准美化、不准调和\n'
+    '4. 忠于原文：他是什么样就是什么样。不添加、不美化、不删减'
+)
+_FORMAT_PRESTEP = (
+    '## 前置步骤\n'
+    '先通读全文，枚举出所有【有名字且有对话或行为描写】的角色（包括前任、现任、配角等次要角色，戏份少也要算）；同一人有多个称呼的归为一组。后续维度 F 必须覆盖这里枚举出的全部角色。'
+)
+_FORMAT_DIMS_HEADING = '## 分析维度（每个维度必须给出原文证据）'
+_FORMAT_DIMS: tuple[tuple[str, str], ...] = (
+    ("G1", 'A. 基本信息：名字、身份、背景'),
+    ("G2", 'B. 核心性格（3-5个）：每个特质 + 原文中的具体场景作为证据'),
+    ("G3", 'C. 说话风格：语气、句式、口癖（直接从原文对话提取）、用词水平。禁忌用词（taboo_words）：根据角色性格，推断他绝对不会说出口的话或词（如违背人设的示弱话、不符其语言习惯的词）。从原文和人设推断，确实没有才留空。'),
+    ("G2", 'D. 价值观（2-4个）：什么对他最重要？两难时怎么选？'),
+    ("G4", 'E. 关键记忆（3-5个）：塑造此人的重要经历'),
+    ("G4",
+        'F. 人际关系（站在本角色自己的视角，单向抽取）：\n'
+        '   覆盖前置步骤中枚举的【所有】有名字角色，逐一独立成条，不遗漏次要角色（前任/现任/配角），不合并不同角色，不列入宠物等非人物。\n'
+        '   关键：只写【本角色对对方的看法】，不要写"对方怎么看本角色"。关系可以不对称——A把B当挚友，B可能对A别有心思，各自视角各自抽，这是合理的。\n'
+        '   每条给出：\n'
+        '   - target：对方名（必须用前置步骤中的标准名，确保能和其他角色卡对上）\n'
+        '   - relation：关系类型（挚友/前队友/仇人/暗恋对象...）\n'
+        '   - attitude：态度描述（体现情感变化）\n'
+        '   - note：一句话口径——站在本角色的角度，"我和ta是什么关系、我怎么看ta"，这句会在对话中直接喂给模型当固定立场，要自然、口语、能直接用。'
+    ),
+    ("G2", 'G. 内在矛盾（1-3个）：此人身上自相矛盾之处，以及矛盾如何影响行为'),
+    ("G3", 'H. 开场白：以此角色的口吻写一句开场白，用于对话开始时'),
+    ("G3", 'I. 对话示例（2-3轮）：从原文中提取最能体现此角色说话风格的2-3组对话交互。格式为"对方：xxx\n角色：xxx"。选择的对话必须能展示角色的口癖、语气、态度。如果原文有动作描写，用（）包裹保留，如"（冷笑）你以为你是谁？"'),
+    ("G2", 'J. 情感模式（2-3个）：什么情况下会生气、开心、沉默、逃避？触发条件是什么？'),
+    ("G2", 'K. 决策风格：面对选择时是冲动还是谨慎？靠情感还是逻辑？举例说明。'),
+    ("G4", 'L. 角色弧线：此人从故事开始到结束经历了怎样的变化？分2-4个阶段描述，每阶段一句话。如果无明显变化则写"无明显变化"。'),
+    ("G3",
+        'N. 认知/语言画像：基于原文中角色的实际话语和行为，判断以下四项：\n'
+        '   - education_level（文化程度）：文盲/识字不多/普通/受过良好教育/学者。从句式复杂度、用词丰富度、会不会用成语典故判断。原文证据：引一句原文中角色说的话作为判断依据。\n'
+        '   - knowledge_scope（知识边界）：这个角色的时代/阶层/见识决定他知道什么、不知道什么。如"古代农妇，不懂现代科技与时事", 或"现代都市白领，对古代文学不了解"。从角色身份、背景、行为推断。\n'
+        '   - speech_style（说话腔调）：用词雅俗、长短句风格、会不会用成语/专业词、口头禅、方言口音感。从原文对话提取最典型的说话特征。\n'
+        '   - vocabulary_level（用词层次）：粗白（市井/底层）/日常（普通人）/文雅（读书人/官员）/书面（学者/文人）。从原文用词直接判断。'
+    ),
+)
+_FORMAT_DIM_M = (
+    'M. 心理画像（用于情感动力学建模 — 依据 Kuppens 情感动力学 + PsyPlay 大五离散化）：\n'
+    '   - 大五人格：基于全文行为，给 openness/conscientiousness/extraversion/agreeableness/neuroticism 各 1-5 分（1 极低 5 极高）。必须符合真实人格分布，避免矛盾组合（如高神经质又高宜人性需有原文支撑才可同高）。\n'
+    '   - affinity_baseline（0-100）：此角色对一个新认识的人，默认会停在的关系基线。高冷/谨慎者低（25-40），热情/外向者高（55-70），多数人 45-55。\n'
+    '   - volatility：情绪波动幅度，平稳/适中/剧烈（高神经质偏剧烈）。\n'
+    '   - grudge_inertia：受到负面对待后多久消化，大度/一般/记仇（低宜人性或高神经质偏记仇）。\n'
+    '   - triggers（1-3 条）：碰了会让 ta 情绪激烈下降的具体雷点，从原文冲突场景提取。\n'
+    '   - soft_spots（1-3 条）：戳中会让 ta 心软/好感上升的点，从原文提取。'
+)
+_FORMAT_OUTPUT_RULES = (
+    '## 输出要求\n'
+    '严格按以下 JSON 格式输出，不要输出任何其他内容（不要 markdown 代码块标记）。把结论和关键依据（含出处）浓缩进一句话，出处用括号附句尾。严禁输出 {trait:..., description:...} 这种嵌套对象。'
+)
+_FORMAT_TEMPLATE_INTRO = 'JSON 模板（所有字段必须包含）：'
+_FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
+    ("name", '  "name": "角色名"'),
+    ("identity", '  "identity": "一句话身份"'),
+    ("personality_traits", '  "personality_traits": ["特质1（原文证据）", "特质2（原文证据）", "特质3（原文证据）"]'),
+    ("speaking_style",
+        '  "speaking_style": {\n'
+        '    "tone": "语气描述",\n'
+        '    "sentence_pattern": "句式特点描述",\n'
+        '    "catchphrases": ["口癖1", "口癖2"],\n'
+        '    "vocabulary_level": "文雅/日常/粗白",\n'
+        '    "taboo_words": ["禁忌词1", "禁忌词2"]\n'
+        '  }'
+    ),
+    ("values", '  "values": ["核心价值观1", "核心价值观2"]'),
+    ("key_memories", '  "key_memories": ["关键经历1（原文出处）", "关键经历2（原文出处）"]'),
+    ("relationships",
+        '  "relationships": [\n'
+        '    {"target": "对方名", "relation": "关系类型", "attitude": "态度描述", "note": "一句话口径——本角色怎么看对方"}\n'
+        '  ]'
+    ),
+    ("inner_tensions", '  "inner_tensions": ["内在矛盾1（原文出处）", "内在矛盾2（原文出处）"]'),
+    ("background", '  "background": "背景摘要"'),
+    ("first_message", '  "first_message": "角色开场白"'),
+    ("dialogue_examples", '  "dialogue_examples": ["对方：xxx\n角色：xxx"]'),
+    ("emotional_patterns", '  "emotional_patterns": ["情感模式1（原文出处）", "情感模式2（原文出处）"]'),
+    ("decision_style", '  "decision_style": "决策风格描述（含原文依据）"'),
+    ("character_arc", '  "character_arc": ["阶段1变化", "阶段2变化"]'),
+    ("psyche",
+        '  "psyche": {\n'
+        '    "openness": 3,\n'
+        '    "conscientiousness": 3,\n'
+        '    "extraversion": 3,\n'
+        '    "agreeableness": 3,\n'
+        '    "neuroticism": 3,\n'
+        '    "affinity_baseline": 50,\n'
+        '    "volatility": "适中",\n'
+        '    "grudge_inertia": "一般",\n'
+        '    "triggers": ["雷点1（原文冲突场景）", "雷点2（原文冲突场景）"],\n'
+        '    "soft_spots": ["软肋1（原文出处）", "软肋2（原文出处）"]\n'
+        '  }'
+    ),
+    ("cognitive",
+        '  "cognitive": {\n'
+        '    "education_level": "文盲/识字不多/普通/受过良好教育/学者",\n'
+        '    "knowledge_scope": "此角色的知识边界描述",\n'
+        '    "speech_style": "说话腔调描述（含原文例证）",\n'
+        '    "vocabulary_level": "粗白/日常/文雅/书面"\n'
+        '  }'
+    ),
+)
+_FORMAT_IMPORTANCE_HEADING = '重要：'
+_FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
+    ("G4", '- psyche 是必需嵌套对象，triggers 和 soft_spots 放在 psyche 内部，不在顶层'),
+    (None, '- 数组字段的元素形态按模板来：模板里写成【一句字符串】的，就输出一句字符串，不要改成对象'),
+    ("G4", '- relationships 的每个元素是【对象】，含 target/relation/attitude/note 四个字段'),
+    ("G4", '- 数字字段（openness/conscientiousness 等）输出整数，不要加引号'),
+    (None, '- 所有字段必须按此模板输出，不要添加自定义字段'),
+)
 
-## 分析铁律
-1. 跨场景验证：一个特质必须在至少2个不同场景出现才能写入
-2. 有预测力：提取的特质能预测此人在新情境下的反应
-3. 保留矛盾：矛盾是真实人格的标志，不准美化、不准调和
-4. 忠于原文：他是什么样就是什么样。不添加、不美化、不删减
 
-## 前置步骤
-先通读全文，枚举出所有【有名字且有对话或行为描写】的角色（包括前任、现任、配角等次要角色，戏份少也要算）；同一人有多个称呼的归为一组。后续维度 F 必须覆盖这里枚举出的全部角色。
-
-## 分析维度（每个维度必须给出原文证据）
-
-A. 基本信息：名字、身份、背景
-B. 核心性格（3-5个）：每个特质 + 原文中的具体场景作为证据
-C. 说话风格：语气、句式、口癖（直接从原文对话提取）、用词水平。禁忌用词（taboo_words）：根据角色性格，推断他绝对不会说出口的话或词（如违背人设的示弱话、不符其语言习惯的词）。从原文和人设推断，确实没有才留空。
-D. 价值观（2-4个）：什么对他最重要？两难时怎么选？
-E. 关键记忆（3-5个）：塑造此人的重要经历
-F. 人际关系（站在本角色自己的视角，单向抽取）：
-   覆盖前置步骤中枚举的【所有】有名字角色，逐一独立成条，不遗漏次要角色（前任/现任/配角），不合并不同角色，不列入宠物等非人物。
-   关键：只写【本角色对对方的看法】，不要写"对方怎么看本角色"。关系可以不对称——A把B当挚友，B可能对A别有心思，各自视角各自抽，这是合理的。
-   每条给出：
-   - target：对方名（必须用前置步骤中的标准名，确保能和其他角色卡对上）
-   - relation：关系类型（挚友/前队友/仇人/暗恋对象...）
-   - attitude：态度描述（体现情感变化）
-   - note：一句话口径——站在本角色的角度，"我和ta是什么关系、我怎么看ta"，这句会在对话中直接喂给模型当固定立场，要自然、口语、能直接用。
-G. 内在矛盾（1-3个）：此人身上自相矛盾之处，以及矛盾如何影响行为
-H. 开场白：以此角色的口吻写一句开场白，用于对话开始时
-I. 对话示例（2-3轮）：从原文中提取最能体现此角色说话风格的2-3组对话交互。格式为"对方：xxx\n角色：xxx"。选择的对话必须能展示角色的口癖、语气、态度。如果原文有动作描写，用（）包裹保留，如"（冷笑）你以为你是谁？"
-J. 情感模式（2-3个）：什么情况下会生气、开心、沉默、逃避？触发条件是什么？
-K. 决策风格：面对选择时是冲动还是谨慎？靠情感还是逻辑？举例说明。
-L. 角色弧线：此人从故事开始到结束经历了怎样的变化？分2-4个阶段描述，每阶段一句话。如果无明显变化则写"无明显变化"。
-N. 认知/语言画像：基于原文中角色的实际话语和行为，判断以下四项：
-   - education_level（文化程度）：文盲/识字不多/普通/受过良好教育/学者。从句式复杂度、用词丰富度、会不会用成语典故判断。原文证据：引一句原文中角色说的话作为判断依据。
-   - knowledge_scope（知识边界）：这个角色的时代/阶层/见识决定他知道什么、不知道什么。如"古代农妇，不懂现代科技与时事", 或"现代都市白领，对古代文学不了解"。从角色身份、背景、行为推断。
-   - speech_style（说话腔调）：用词雅俗、长短句风格、会不会用成语/专业词、口头禅、方言口音感。从原文对话提取最典型的说话特征。
-   - vocabulary_level（用词层次）：粗白（市井/底层）/日常（普通人）/文雅（读书人/官员）/书面（学者/文人）。从原文用词直接判断。
-
-M. 心理画像（用于情感动力学建模 — 依据 Kuppens 情感动力学 + PsyPlay 大五离散化）：
-   - 大五人格：基于全文行为，给 openness/conscientiousness/extraversion/agreeableness/neuroticism 各 1-5 分（1 极低 5 极高）。必须符合真实人格分布，避免矛盾组合（如高神经质又高宜人性需有原文支撑才可同高）。
-   - affinity_baseline（0-100）：此角色对一个新认识的人，默认会停在的关系基线。高冷/谨慎者低（25-40），热情/外向者高（55-70），多数人 45-55。
-   - volatility：情绪波动幅度，平稳/适中/剧烈（高神经质偏剧烈）。
-   - grudge_inertia：受到负面对待后多久消化，大度/一般/记仇（低宜人性或高神经质偏记仇）。
-   - triggers（1-3 条）：碰了会让 ta 情绪激烈下降的具体雷点，从原文冲突场景提取。
-   - soft_spots（1-3 条）：戳中会让 ta 心软/好感上升的点，从原文提取。
-
-## 输出要求
-严格按以下 JSON 格式输出，不要输出任何其他内容（不要 markdown 代码块标记）。把结论和关键依据（含出处）浓缩进一句话，出处用括号附句尾。严禁输出 {trait:..., description:...} 这种嵌套对象。
-
-完整 JSON 模板（所有字段必须包含，psyche 为必需嵌套对象）：
-{
-  "name": "角色名",
-  "identity": "一句话身份",
-  "personality_traits": ["特质1（原文证据）", "特质2（原文证据）", "特质3（原文证据）"],
-  "speaking_style": {
-    "tone": "语气描述",
-    "sentence_pattern": "句式特点描述",
-    "catchphrases": ["口癖1", "口癖2"],
-    "vocabulary_level": "文雅/日常/粗白",
-    "taboo_words": ["禁忌词1", "禁忌词2"]
-  },
-  "values": ["核心价值观1", "核心价值观2"],
-  "key_memories": ["关键经历1（原文出处）", "关键经历2（原文出处）"],
-  "relationships": [
-    {"target": "对方名", "relation": "关系类型", "attitude": "态度描述", "note": "一句话口径——本角色怎么看对方"}
-  ],
-  "inner_tensions": ["内在矛盾1（原文出处）", "内在矛盾2（原文出处）"],
-  "background": "背景摘要",
-  "first_message": "角色开场白",
-  "dialogue_examples": ["对方：xxx\n角色：xxx"],
-  "emotional_patterns": ["情感模式1（原文出处）", "情感模式2（原文出处）"],
-  "decision_style": "决策风格描述（含原文依据）",
-  "character_arc": ["阶段1变化", "阶段2变化"],
-  "psyche": {
-    "openness": 3,
-    "conscientiousness": 3,
-    "extraversion": 3,
-    "agreeableness": 3,
-    "neuroticism": 3,
-    "affinity_baseline": 50,
-    "volatility": "适中",
-    "grudge_inertia": "一般",
-    "triggers": ["雷点1（原文冲突场景）", "雷点2（原文冲突场景）"],
-    "soft_spots": ["软肋1（原文出处）", "软肋2（原文出处）"]
-  },
-  "cognitive": {
-    "education_level": "文盲/识字不多/普通/受过良好教育/学者",
-    "knowledge_scope": "此角色的知识边界描述",
-    "speech_style": "说话腔调描述（含原文例证）",
-    "vocabulary_level": "粗白/日常/文雅/书面"
-  }
+_FORMAT_FIELD_GROUP: dict[str, str] = {
+    key: group for group, keys in FORMAT_GROUPS.items() for key in keys
 }
 
-重要：
-- psyche 是必需嵌套对象，triggers 和 soft_spots 放在 psyche 内部，不在顶层
-- personality_traits/values/key_memories/inner_tensions/emotional_patterns/character_arc/dialogue_examples 的每个元素是【一句字符串】，不是对象
-- relationships 的每个元素是【对象】，含 target/relation/attitude/note 四个字段
-- 数字字段（openness/conscientiousness 等）输出整数，不要加引号
-- 所有字段必须按此模板输出，不要添加自定义字段
-"""
+
+def format_prompt_after(group: str | None = None) -> str:
+    """拼装格式化提示词。
+
+    ``group=None`` → 完整提示词（与改前逐字一致，仅两句改写：「list 元素」那句改为不点
+    字段名的通用句；模板引导句去掉 psyche —— psyche 的要求归 G4，引导句进每组提示词时
+    不能再点它）。``group="G1".."G4"`` → 共享前缀 + 该组片段（该组维度说明、该组「重要」
+    规则、该组 JSON 模板），供流式按组并行调用。
+    """
+    if group is not None and group not in FORMAT_GROUPS:
+        raise ValueError(f"未知字段组：{group!r}（应为 {list(FORMAT_GROUPS)} 之一）")
+    keep = (lambda owner: True) if group is None else (
+        lambda owner: owner is None or owner == group
+    )
+    parts: list[str] = [
+        _FORMAT_HEADER,
+        _FORMAT_IRON_LAWS,
+        _FORMAT_PRESTEP if keep("G4") else "",
+        _FORMAT_DIMS_HEADING,
+        "\n".join(text for owner, text in _FORMAT_DIMS if keep(owner)),
+        _FORMAT_DIM_M if keep("G4") else "",
+        _FORMAT_OUTPUT_RULES,
+        _FORMAT_TEMPLATE_INTRO + "\n{\n" + ",\n".join(
+            text for key, text in _FORMAT_TEMPLATE_KEYS if keep(_FORMAT_FIELD_GROUP[key])
+        ) + "\n}",
+        _FORMAT_IMPORTANCE_HEADING + "\n" + "\n".join(
+            text for owner, text in _FORMAT_IMPORTANCE if keep(owner)
+        ),
+    ]
+    return "\n\n".join(p for p in parts if p) + "\n"
+
+
+DISTILL_PROMPT_AFTER_NAME = format_prompt_after()
 
 
 class DistillError(ValueError):
@@ -2000,12 +2059,12 @@ class Distiller:
         # 缓存命中的 Map 片已并入 map_results，reduce 天然看到全集。
         if len(raw_analyses) <= self.SAFE_SINGLE_REDUCE:
             yield {"status": "merging", "current": 0, "total": 1}
-            profile_draft = ""
+            format_input = ""
             tc = 0
             for token in self._single_reduce_stream(raw_analyses, character_name):
                 if token == "\x00THINKING\x00":
                     continue
-                profile_draft += token
+                format_input += token
                 tc += 1
                 if tc % 50 == 0:
                     yield {"heartbeat": True}
@@ -2059,40 +2118,86 @@ class Distiller:
 
             yield {"heartbeat": True}
 
+            # WP7：>80 片时**跳过总合并** —— 4 组直接读各批归并结果（批数很少，拼起来
+            # 仍装得下）。总合并与格式化是串行的两次长输出，跳过后省掉一整段。批数多到
+            # 拼不下（>80 批，即 >6400 片）才回到 `_do_reduce` 再压一轮。
             if len(batch_results) <= self.SAFE_SINGLE_REDUCE:
-                profile_draft = ""
-                tc = 0
-                for token in self._single_reduce_stream(batch_results, character_name):
-                    if token == "\x00THINKING\x00":
-                        continue
-                    profile_draft += token
-                    tc += 1
-                    if tc % 50 == 0:
-                        yield {"heartbeat": True}
+                format_input = "\n\n".join(batch_results)
             else:
-                profile_draft = self._do_reduce(batch_results, character_name)
+                format_input = self._do_reduce(batch_results, character_name)
 
-        if not profile_draft.strip():
+        if not format_input.strip():
             yield {"error": "未能从文本中提取到角色信息"}
             return
 
-        # ── Phase 3: Format — streaming JSON generation ──
+        # ── Phase 3: Format — 4 组并行，合并校验后一次交出 ──
+        # 每组是一次长输出（共享前缀 + 组片段 + 该组子 schema），组数固定 4、彼此独立，
+        # 故并行发；组内仍串行。串行的代价是「最慢一组的耗时」而不是「4 组之和」。
+        # 4 条线程各走 `_chat_accounted(stream=True)`，用量各记各的（`_collect_stream`
+        # 在发起调用的那一级记账）。合并 → `CharacterCard.model_validate` → **一个**
+        # json.dumps 字符串 yield（两条消费路径都从累加串里 parse，见 web/routers/distill.py）。
+        # 任一组失败或校验不过：上屏 error 帧，不拼半张卡。
         yield {"status": "formatting"}
-        try:
-            schema_obj = CharacterCard.model_json_schema()
-            schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError) as exc:
-            print(f"生成 CharacterCard JSON Schema 失败：{exc}")
-            raise
 
-        system_prompt = (
-            DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
-        )
-        usage = yield from self._llm.chat_stream_long(
-            system_prompt,
-            [{"role": "user", "content":
-                f"以下是关于「{character_name}」的完整分析档案，严格按 JSON 格式输出角色卡：\n\n{profile_draft}"
-            }],
-            max_tokens=self.CARD_MAX_TOKENS,
-        )
-        self._try_record_usage("distill_format", usage)
+        fmt_queue: queue.Queue = queue.Queue()
+
+        def _format_one_group(group: str) -> None:
+            try:
+                sub_schema = json.dumps(
+                    format_group_schema(group), ensure_ascii=False, indent=2
+                )
+                system_prompt = (
+                    DISTILL_PROMPT_BEFORE_NAME + character_name
+                    + format_prompt_after(group) + sub_schema
+                )
+                messages = [{"role": "user", "content":
+                    f"以下是关于「{character_name}」的完整分析档案，"
+                    f"严格按 JSON 格式输出模板中的字段：\n\n{format_input}"
+                }]
+                reply, upstream_truncated = self._chat_accounted(
+                    system_prompt, messages, "最终格式化", "distill_format",
+                    stream=True, max_tokens=self.CARD_MAX_TOKENS,
+                )
+                data = self._parse_json_with_retry(
+                    reply, system_prompt, messages,
+                    action_label="distill_format",
+                    # 必填 = 该组字段：组模板列的就是这几个，缺一个说明这组没照模板来
+                    # （不查的话 `{}` 也能过，合并后被默认值填成一张空卡）。
+                    required_keys=FORMAT_GROUPS[group],
+                    upstream_truncated=upstream_truncated,
+                    stream=True, max_tokens=self.CARD_MAX_TOKENS,
+                )
+                fmt_queue.put(("ok", group, data))
+            except Exception as exc:
+                fmt_queue.put(("error", group, exc))   # 上屏口径交给下面统一出口
+
+        for _w in [
+            C.ctx_thread(_format_one_group, args=(group,), name=f"format-{group}")
+            for group in FORMAT_GROUPS
+        ]:
+            _w.start()
+
+        group_data: dict[str, dict[str, Any]] = {}
+        while len(group_data) < len(FORMAT_GROUPS):
+            kind, group, payload = fmt_queue.get()
+            if kind == "error":
+                # 与校验失败那一处同口径：上屏给用户的同时，模块 logger 留痕（spec-119）
+                logger.error("format group %s aborted: %s", group, payload)
+                yield {"error": user_facing_error(payload)}
+                return
+            group_data[group] = payload
+            yield {"heartbeat": True}   # 每组回来一次心跳，不新增状态值
+
+        merged: dict[str, Any] = {}
+        for group in FORMAT_GROUPS:      # 按 FORMAT_GROUPS 的顺序合并，与完成次序无关
+            merged.update(group_data[group])
+        try:
+            card = CharacterCard.model_validate(merged)
+        except ValidationError as exc:
+            # 模块 logger，不是 print：print 只进容器 stdout（不进日志面板、不发告警），
+            # 而这条上屏的是用户可见的报错帧 —— 服务端这一半必须留痕（spec-119 口径）。
+            logger.error("Pydantic 校验 CharacterCard 失败：%s", exc)
+            yield {"error": user_facing_error(exc)}
+            return
+
+        yield json.dumps(card.model_dump(), ensure_ascii=False)
