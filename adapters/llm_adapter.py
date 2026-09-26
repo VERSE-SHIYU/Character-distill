@@ -666,6 +666,11 @@ class LLMAdapter:
         self._presence_penalty = float(llm_cfg.get("presence_penalty", 0.3))
         self._dialect = _detect_dialect(self._base_url, self._model)
         self.last_usage: dict | None = None
+        # 该账号上一轮学到的并发上限（WP14 A3）。放在 adapter 上而不是 map_concurrency
+        # 里：它是**账号**的属性（按余额变），adapter 又是按 user_id 缓存的
+        # （web/deps.py），一轮 Map 结束写回、下一轮从它起步，冷启动那波不必再撞一遍。
+        # `None` = 还没学过，闸从配的 `map_concurrency` 起。
+        self.learned_map_concurrency: int | None = None
 
         resolved_key = api_key or llm_cfg.get("api_key") or os.getenv("DEEPSEEK_API_KEY")
         self._api_key = resolved_key

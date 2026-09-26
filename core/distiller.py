@@ -1576,7 +1576,11 @@ class Distiller:
         # `map_concurrency` 总会超过一部分账号。闸自己踩 429 下探、连续成功上探，这里只
         # 给它上限。名额在 `async_chat` 里按**每一次尝试**取放，不在这里按整片包 —— 否则
         # 重试退避期间名额被占着，闸的上探永远慢半拍。
-        gate = C.AdaptiveGate(self._map_concurrency)
+        # 初值取上一轮学到的上限（A3）：第一轮从 `map_concurrency` 探起、末尾写回，之后
+        # 每轮冷启动直接落在该账号的真实上限附近，不必再逐轮把 429 撞一遍。`getattr`
+        # 是因为测试桩只鸭子类型地提供 `async_chat`，不必也长出这个字段。
+        gate = C.AdaptiveGate(self._map_concurrency,
+                              initial=getattr(self._llm, "learned_map_concurrency", None))
         done_count = [0]
         lock = asyncio.Lock()
         failures: list[tuple[int, Exception]] = []
@@ -1608,6 +1612,9 @@ class Distiller:
 
         tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(chunks)]
         results = await asyncio.gather(*tasks)
+        # 写回本轮的收敛上限（A3）：失败片也算数 —— 闸的估计来自每一次尝试的 429/成功，
+        # 与分片成败无关，整轮都挂了也该把「这个账号到不了 N 路」记下来。
+        self._llm.learned_map_concurrency = gate.ceiling
         # Map 是 MapReduce 里最烧 token 的一段：整阶段汇总一条 + 调用次数（不是分片数 ——
         # 续跑命中/重试会让二者不一致，chunk_count 数的是真的调了几次）。
         merged = aggregate_usage(usages, len(usages))

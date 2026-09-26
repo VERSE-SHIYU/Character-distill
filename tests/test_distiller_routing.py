@@ -953,3 +953,67 @@ class TestMapConcurrencyAdaptsToTheAccount:
         assert seen, "一次退避都没发生 —— 这条锁没走到被锁的地方"
         assert seen == [0] * len(seen), f"退避时仍占着名额：{seen}"
         assert gate.ceiling < 8, "429 没喂到闸上"
+
+
+class TestMapConcurrencyRemembersTheAccount:
+    """WP14 A3：同一个 adapter 连跑两轮，第二轮从第一轮学到的上限起步。
+
+    判据是**行为**：第二轮只在冷启动那一波露初值，故第二轮只跑 `COLD` 片 —— 一次波，
+    初值是多少峰值就是多少。等长两轮的「429 明显更少」实测比值在 1.6–3.1x 之间乱摆
+    （第二轮自己也在探针上撞），那种计数比会 flaky，不拿来当判据。只读
+    `llm.learned_map_concurrency` 非空也不足以证明第二轮**用了**它 —— 初值没接上时那个
+    属性照样有值，退回的是 cap。
+
+    峰值界取 `max(learned, LIMIT) + 1` 而不是 `learned + 1`：第一轮学到的值可能**低于**
+    上游真实上限（负载下多撞几下就偏低），第二轮从那儿合法地继续上探到 `LIMIT` 再撞一次
+    探针 —— 那是 AIMD 在工作，不是缺陷。`+1` 仍是「必须探到上限之上才学得到上限」。
+
+    三条变异各打红一处：不写回 → 属性为 None；写了但不作初值 → 峰值回到 `COLD`（10 片
+    在 cap=20 下全放，界只有 6）；写回的是配置值而非收敛值 → 学到的不再 ≤ `LIMIT + 1`。
+    """
+
+    LEARN_CHUNKS = 60
+    COLD = 10
+    LIMIT = 5
+    CAP = 20
+
+    async def _round(self, d, llm, tag: str, n: int):
+        client = llm._make_async_client()
+        try:
+            return await d._run_map_concurrent(
+                [f"{tag}{i}片正文" for i in range(n)],
+                lambda chunk: ("你是角色分析专家", f"分析：{chunk}"),
+                "distill_map", client=client,
+            )
+        finally:
+            await client.close()
+
+    async def test_the_second_round_starts_from_the_learned_ceiling(self):
+        upstream = _InflightUpstream(self.LIMIT)
+        llm = upstream.adapter()
+        try:
+            d = Distiller(llm=llm, config_path=None)
+            d._map_concurrency = self.CAP
+
+            await self._round(d, llm, "一", self.LEARN_CHUNKS)
+            learned = llm.learned_map_concurrency
+            first_429 = upstream.statuses.count(429)
+            upstream.peak = 0
+            upstream.tail_peak = 0
+            upstream.statuses.clear()
+
+            _, failures = await self._round(d, llm, "二", self.COLD)
+            second_429 = upstream.statuses.count(429)
+        finally:
+            upstream.close()
+
+        assert learned is not None, "第一轮没把学到的上限写回 adapter"
+        assert failures == []
+        assert learned <= self.LIMIT + 1, (
+            f"学到的上限 {learned} 高于上游真实上限 {self.LIMIT} + 1 —— 写回的是配置值"
+            f"cap={self.CAP} 而不是闸收敛出来的值")
+        bound = max(learned, self.LIMIT) + 1
+        assert upstream.peak <= bound, (
+            f"第二轮冷启动在途峰值 {upstream.peak}，高于 {bound}（= max(学到的 {learned}, "
+            f"上游上限 {self.LIMIT}) + 1）—— 没有从学到的上限起步，10 片一起放了。"
+            f"第一轮 60 片 {first_429} 次 429、第二轮 {self.COLD} 片 {second_429} 次")
