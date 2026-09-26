@@ -344,10 +344,94 @@ commit：先 `test(failure-alerting): lock silent broad excepts`（锁 + 豁免�
 - 只跑 `tests/test_failure_alerting.py`，加上被改文件对应的已有测试文件；不跑全量；合并门是分支 CI；合并只做 git 操作，不跑测试
 - 合并后：GlitchTip 里观察一天，确认没有被新的 ERROR 刷屏。如果刷屏，说明哪一处的级别定错了，回来改级别，不是去关告警
 
-## C 段：退役自建组件
-B 段线上验证通过、Shiyu 确认之后再开，另行补充到本文件。
+## C 段：退役自建组件（分两步：C1 现在做，C2 等 GlitchTip 官方修复后做）
 
-已知的改动面：
-- 代码：`core/log_collector.py`、`core/alerting.py`、`web/routers/admin.py:22/:599`、`web/server.py:107-110`、`core/nonfatal.py`（docstring）、`core/email_service.py`
-- 测试：`tests/test_log_collector.py`、`tests/test_alerting.py`、`tests/test_failure_alerting.py`、`tests/test_nonfatal.py`、`tests/test_router_unified_exits.py`、`tests/perf/alerting_mutations.py`、`tests/perf/alerting_level_census.py`
-- 文档：`DEPLOY.md`、`README.md`、`AGENTS.md`、`docs/TECHNICAL_REPORT.md`
+### 已定决策（Shiyu 拍板，2026-09-26）
+- **日志面板整个删掉**，不留跳转链接：报错只在 GlitchTip 一处看，GlitchTip 的地址收藏在浏览器里即可
+- **`ALERT_EMAIL` 下发链路和旧邮件告警一起删**，但推迟到 C2：
+  - 查实：我们镜像里的 `django-vtasks` 是 3.1.0，**不含**官方修复 !27（调度器遇到一次瞬时的数据库错误就会永久退出，之后报错照收、告警不发，外面看不出异常）
+  - 在官方修复装上之前，旧邮件告警是两台服务器各自独立发信、不经过 GlitchTip 的兜底渠道
+- **GlitchTip 自身的监控用轻量方案，不在深圳新增任何常驻组件**（深圳可用内存约 609MB）：
+  - 网站和 GlitchTip 能否访问 → 阿里云站点监控（外部探测，深圳零内存），报警走短信
+  - 调度器 bug → 靠官方修复根治：先固定镜像版本，官方发布含修复的版本后再升级
+  - 不做「监控系统本身的死人开关」（Prometheus、采集代理、边车容器）：内存和规模都不值得。已知的剩余风险：官方修复没有覆盖「嵌入式运行时进程半死不活」这一边角情况，接受
+- **GlitchTip 通知的用法**：修好的问题在 GlitchTip 里标「已解决」，复发时会再通知（查实：复发时会删掉旧的通知记录，所以同一条规则会重新发）；已知但暂时不修的，标「忽略」，不要标「已解决」
+
+### 已查实的约束（基线：observability 分支 `fc39f0c`，即 D 段头部；已与最新 main `d226a20` 比对：自 D 段分叉点 `91e8b0b` 以来，main 没有改动本段涉及的任何文件）
+1. **日志面板（C1 要删）**：
+   - `core/log_collector.py`：`install_log_collector`（:41）、`get_recent_logs`（:58）
+   - `web/server.py:78` import，`:125` `stack.callback(install_log_collector())`
+   - `web/routers/admin.py:22` import，`:602` 路由 `GET /api/admin/logs`（:609 调用）
+   - 前端：`web/frontend/src/api/client.js:383` `getLogs`；`components/AdminPanel.jsx` 的 `SystemLogTab`（约 :1622）用 `Promise.all` 同时加载日志和蒸馏任务，两者共用 loading 和错误提示，标题是「系统日志与任务」。只删日志部分，**蒸馏任务保留**，加载函数和状态要跟着拆干净，标题改为「蒸馏任务」
+   - 测试：`tests/test_log_collector.py` 整个删；`tests/test_nonfatal.py:26/34/39` 靠 `get_recent_logs` 判断「失败留下了痕迹」，改用 `caplog` 判断同一件事；`tests/test_lifespan_undo.py:21` 引用 `RingBufferHandler`，去掉相应断言
+   - 注释：`core/nonfatal.py:3`、`core/stdout_logging.py:7`、`core/alerting.py:4/14/161` 提到面板的句子要改写
+   - 我查过，前端没有针对这一页的测试
+2. **GlitchTip 镜像（C1 要固定版本）**：`deploy/sz/glitchtip/docker-compose.yml:16` 是浮动标签 `glitchtip/glitchtip:6`。Docker 官方文档说明，标签可变，发布者可以把同一个标签指向新镜像。执行方之前读过运行中镜像的源码，版本是 6.2.6
+3. **旧邮件告警（C2 要删）**：
+   - `core/alerting.py`：`AlertHandler`、`install_alert_handler`，读 `ALERT_EMAIL`（:38）；`web/server.py:80` import，`:128` 起挂载
+   - 下发链路：`deploy.yml:49-53`（注释和 `ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}`）、`:176` 和 `:370` 的 `envs`；`deploy.yml:54` 的注释写着「机制同 ALERT_EMAIL」，要改成独立说明；`docker-compose.prod.yml:91`、`DEPLOY.md:153`
+   - 注释：`core/email_service.py:72` 把告警列为发信的使用方
+   - 测试：`tests/test_alerting.py` 整个删；`tests/test_failure_alerting.py` 的 `alerts` 夹具（:31）装的是真的 `AlertHandler`；`tests/perf/alerting_mutations.py:140` 那条变异改的是 `alerting.ALERT_LEVEL`；`tests/test_message_backfill.py` 引用了 alerting
+   - 现成的替代接收端：`tests/test_error_reporting.py:58` 的 `recorder` 夹具（把录制用的 transport 注入 `sentry_sdk.init`，全程不出网）
+   - D 段豁免表里 `core/alerting.py::emit`、`::_send` 两条
+   - **不改**：`tests/perf/alerting_level_census.py`。它是按 git 历史回放、复现台账 119 数字的产数脚本，不 import 要删的模块；改了它，历史读数就复现不出来了
+4. **日志路径上的现有机制（C1、C2 都是从这条路径上拿掉组件，逐个核对前提）**：
+   - 根日志器级别：全仓没有 `setLevel` / `basicConfig`，保持默认 WARNING，INFO 记录在进入 handler 之前就被丢弃
+   - 根上现有的出口：环形缓冲（WARNING+，C1 删）、stdout（WARNING+，保留）、`AlertHandler`（ERROR，按「出错模块 + 异常类型」每小时最多一封，C2 删）、Sentry 的 LoggingIntegration（ERROR 生成事件，保留）
+   - **前提一**：根上只要还挂着至少一个 handler，Python 的 lastResort 就不生效（A 段步骤 1 的依据）。C1、C2 之后根上仍有 stdout handler（A 段审计过，它是独立模块，不依赖环形缓冲），这个前提不变
+   - **前提二**：E 段的 `AsyncExitStack` 按注册的逆序撤销，各项撤销互不依赖。去掉 `install_log_collector` 的那一项不改变其余项的顺序关系；`test_lifespan_undo.py` 里涉及它的断言按约束 1 一并去掉
+   - **前提三**：Sentry 的 LoggingIntegration 是 sentry-sdk 自带的，不知道也不依赖我们的环形缓冲或 `AlertHandler`
+5. **规模与时限**：
+   - C2 升级 GlitchTip：当前实际占用 173–198MiB，硬上限 384MB；深圳可用约 609MB。升级后三个数字要重新实测
+   - 阿里云站点监控：5 分钟探测一次，两个探测点都失败才报警，所以从出事到收到短信**最长约 10 分钟**。这个延迟可以接受，因为它防的是「几小时甚至几天没人发现」
+6. **其余文档**：`README.md`、`AGENTS.md`、`docs/TECHNICAL_REPORT.md`、`DEPLOY.md` 中描述日志面板或邮件告警的段落，按 C1、C2 各自删掉的内容分别更新
+
+### 约束（C1、C2 共用）
+- 只删本段列出的东西，其余不动；新发现属于改动面的直接修；只有会与其它线撞车、或需要 Shiyu 拍板时才停下报告；不自行记账
+- 删掉的是机制，不是日志：stdout 和 Sentry 两个出口不动
+
+### 步骤 11（C1）：删除日志面板 + 固定 GlitchTip 镜像版本
+**S0（只读，几分钟）**：在分支头部复核约束 1、2 的坐标；服务器上用 `docker inspect` 读出 GlitchTip 容器实际运行的镜像版本，确认是 6.2.6。任何一条不成立就停下报告。
+
+- 分支：从 D 段头部另开 `worktree-observability-retire`，在同一个 worktree 里切过去做。**合并顺序：D 先合，C1 后合**
+- **删日志面板**，按约束 1 的清单：
+  - 先改测试：`test_nonfatal.py` 改用 `caplog`、`test_lifespan_undo.py` 去掉 `RingBufferHandler` 的断言，这时应该依然全绿
+  - 再删 `core/log_collector.py`、lifespan 里的挂载、`/api/admin/logs`、前端的日志部分和 `getLogs`，删 `test_log_collector.py`，改注释和文档
+- **固定版本**：`deploy/sz/glitchtip/docker-compose.yml:16` 改成 S0 读到的完整版本号（`glitchtip/glitchtip:6.2.6`），不做升级
+  - 服务器上按 `deploy/sz/README.md` 的「scp 覆盖 + diff 验证」流程同步
+  - 因为版本号没变，这一步**不需要**重建 GlitchTip 容器；报告里贴出 diff 与仓库一致的证据即可
+- 残留检查：`git grep -n "log_collector\|get_recent_logs\|RingBufferHandler\|getLogs"`，除 `docs/specs/` 和台账的历史记录外零命中
+
+commit：`test: check nonfatal traces via caplog`、`refactor(observability): retire the ring-buffer log panel`、`chore(glitchtip): pin the image to the running version`
+
+**C1 验证**：本地只跑本段改动或删除涉及的测试文件（库用 docker 起的 PG），加上 `npm test` 里 AdminPanel 相关的文件；不跑全量；合并门是分支 CI；合并只做 git 操作，不跑测试。上线后确认管理后台只剩「蒸馏任务」，页面没有报错。
+
+### Shiyu 的手动步骤（C1 之后做，阿里云控制台，不涉及服务器）
+在阿里云「云监控 → 站点监控」建两个 HTTPS 探测任务，**2 个国内探测点、每 5 分钟一次，两个点都失败才报警**，报警联系人设为你的手机号：
+1. `https://errors.bookecho-shiyu.cn/`：GlitchTip 是否能访问
+2. `https://bookecho-shiyu.cn/health`：主站（nginx 把 `/health` 转发到 `/api/health`，`nginx/nginx.conf:92`）
+按阿里云的计费，国内探测点每 1 万次 10 元，两个任务合计约 35 元/月。
+
+### 步骤 12（C2）：删除旧邮件告警与 `ALERT_EMAIL` 链路（等官方修复）
+**开工条件**：GlitchTip 发布了包含 vtasks 修复的版本。判断办法：拉取新版本镜像，在里面 `grep -n "Scheduler loop failed" .../django_vtasks/scheduler.py`，有命中才算包含修复。
+
+**S0**：复核约束 3 的坐标，行号以届时为准。
+
+1. **先升级 GlitchTip**：
+   - `deploy/sz/glitchtip/docker-compose.yml` 改为新的完整版本号，scp 覆盖 + diff 验证，然后 `docker compose -p glitchtip up -d`
+   - 升级后用 `docker stats` 实测：GlitchTip 仍在 384MB 上限内，深圳可用内存没有明显下降；否则回退到旧版本并报告
+   - 容器里复查：告警调度任务的上次运行时间在 2 分钟以内
+2. **合并前闸门**（开 PR 之前做，结果写进报告）：
+   - 在生产**两台**各触发一条后端测试错误、一条前端测试错误
+   - 核对 GlitchTip 里出现了对应事件，region 分别是 `cn-shenzhen` 和 `sg-singapore`；`bookecho@163.com` 收到了 GlitchTip 发的告警邮件（由 Shiyu 确认）
+   - 两台都通过才开 PR；任何一台没接住就停下报告
+3. **删除**，按约束 3 的清单：
+   - 先改测试：把 `recorder` 从 `test_error_reporting.py` 移到 `tests/conftest.py`，两个文件共用；`test_failure_alerting.py` 的 `alerts` 夹具改为录制 Sentry 事件。各条断言的含义不变（ERROR 产生一个事件，WARNING 不产生；未捕获的 500 产生一个事件），这时应该依然全绿
+   - 变异 `alerting_mutations.py:140` 的目标会消失：在 `init_error_reporting` 里把 LoggingIntegration 的事件门槛显式写出来，复用 `core/nonfatal.py` 的 `DEFAULT_LEVEL`，让这条变异改为针对它
+   - 再删 `core/alerting.py`、lifespan 里的挂载、`ALERT_EMAIL` 下发链路、D 段豁免表里 alerting 的两条、`test_alerting.py`，改注释和文档
+   - 重新生成 `alerting_red_lines.json`，贴出 lock_coverage 的通过输出
+   - 残留检查：`git grep -n "AlertHandler\|install_alert_handler\|ALERT_EMAIL"`，除 `docs/specs/` 和台账的历史记录外零命中
+
+commit：`chore(glitchtip): upgrade to <版本> with the scheduler fix`、`test: record alerts as GlitchTip events`、`refactor(observability): retire email alerting`、`chore(deploy): drop the ALERT_EMAIL delivery`
+
+**C2 验证**：同 C1。上线后两台 app 的启动日志里没有 `ALERT_EMAIL` 相关的 WARNING。GitHub 上的仓库变量 `ALERT_EMAIL` 由 Shiyu 自行删除或保留，不影响运行。
