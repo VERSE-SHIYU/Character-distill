@@ -111,6 +111,17 @@ _BATCH_STREAM_READ_S = 300.0
 _DECISION_DEADLINE_S = _env_timeout_s("LLM_DECISION_DEADLINE_S", 6.0, _ATTEMPT_WINDOW_S)
 _GEN_DEADLINE_S = _env_timeout_s("LLM_GEN_DEADLINE_S", 60.0, _ATTEMPT_WINDOW_S)
 _STREAM_DEADLINE_S = _env_timeout_s("LLM_STREAM_DEADLINE_S", 8.0, _ATTEMPT_WINDOW_S)
+# `async_chat`（批量 Map）的总墙钟：**不是**交互式的 _GEN_DEADLINE_S，而是整条重试链的
+# 上界 —— 3 次 attempt 各可能吃满 _GEN_ATTEMPT_S，中间还夹着退避。按 60s 给的话，第 1 次
+# 吃满 45s 后第 3 次根本轮不到（生产实测：45s 超时 → 15s 后「2 次尝试均失败」）。
+# 推导 = attempts×ceiling + Σ(每次退避上界) + margin；退避上界按 _RetryBudget.on_failure：
+# 非 429 为 `_GEN_BACKOFF_S × k + random.uniform(0, 1)`（取上界 +1），k = 1…attempts−1
+# （最后一次 attempt 不睡）。改退避公式时这里要一起改。
+_GEN_BATCH_DEADLINE_S = (
+    _GEN_ATTEMPTS * _GEN_ATTEMPT_S
+    + sum(_GEN_BACKOFF_S * k + 1 for k in range(1, _GEN_ATTEMPTS))
+    + _ATTEMPT_TIMEOUT_MARGIN_S
+)
 
 
 class _RetryBudget:
@@ -728,7 +739,8 @@ class LLMAdapter:
         置 ``None``（显式「无数据」），不能保留上一次的值 —— 否则记账方会把上一轮
         的 token 当成这一轮的，比不记更糟（错数据冒充真实值）。
         """
-        result, usage = await self.async_chat(system_prompt, messages, max_tokens=max_tokens)
+        result, usage = await self.async_chat(system_prompt, messages, max_tokens=max_tokens,
+                                              deadline_s=_GEN_DEADLINE_S)
         self.last_usage = usage
         return result
 
@@ -770,12 +782,15 @@ class LLMAdapter:
                 time.sleep(budget.on_failure(exc))
 
     @T.async_spanned("llm.chat", op="chat", finalize=_async_infer_finalize)
-    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None, client: AsyncOpenAI | None = None) -> tuple[str, dict | None]:
+    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None, client: AsyncOpenAI | None = None, *, deadline_s: float = _GEN_BATCH_DEADLINE_S) -> tuple[str, dict | None]:
         """异步非流式对话，用于 Map 阶段并发。最多重试3次（非429）或5次（429限流）。
 
         Args:
             client: 可选的自定义 AsyncOpenAI，用于 per-asyncio-run 场景；
                     不传时使用 self._async_client（默认共享实例）。
+            deadline_s: 本调用的总墙钟。默认取批量预算 `_GEN_BATCH_DEADLINE_S`（够跑完
+                        3 次 attempt + 退避）；交互式调用方（``achat``）传 `_GEN_DEADLINE_S`
+                        维持 60s 封顶。
 
         Returns ``(result, usage)`` where *usage* is ``{"prompt_tokens": N,
         "completion_tokens": N}`` or *None*.  Callers are responsible for
@@ -785,7 +800,7 @@ class LLMAdapter:
         _c = client or self._async_client
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
-        budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
+        budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=deadline_s,
                               ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
                               log_prefix="LLMAdapter async", err_prefix="Async LLM")
         while True:
