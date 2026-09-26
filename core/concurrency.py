@@ -21,6 +21,7 @@ OTEL 开还是关走**同一条**路径：载体在开关关闭时三步皆 no-o
 """
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import threading
 from typing import Any, Callable, Protocol
@@ -101,5 +102,68 @@ def ctx_submit(pool, fn: Callable, *args, **kwargs):
 
 __all__ = [
     "ContextCarrier", "register_context_carrier", "get_context_carriers",
-    "set_context_carriers", "ctx_thread", "ctx_submit",
+    "set_context_carriers", "ctx_thread", "ctx_submit", "AdaptiveGate",
 ]
+
+
+class AdaptiveGate:
+    """按**在途请求数**自适应的并发闸（AIMD）。
+
+    为什么不是固定 `Semaphore`：上游的并发上限按账号计、随余额动态变化（一台上限
+    18 的账号拿到 60 并发就 429×328、11 片失败），固定的 `map_concurrency` 总会
+    超过一部分账号。闸把上限当估计值：踩到 429 乘性下探，连续成功加性上探，收敛到
+    该账号当前的真实上限附近。不解析 429 文案里的数字 —— 那是未写进文档、随时会变
+    的运行时行为。
+
+    用法：`async with gate:` 包住**每一次尝试**（不是整次带重试的调用）；成功调
+    `await gate.on_success()`、429 调 `await gate.on_rate_limited()`。退避睡眠必须
+    在 `async with` **之外** —— 睡着的请求若占着名额，上限永远探不上去。
+
+    上调会让等在 `__aenter__` 里的协程立刻可进，故 `on_success` 需 `notify_all`；
+    下调相反（更严），不唤醒任何等待者，等 `__aexit__` 释放名额时自然复查。
+    """
+
+    def __init__(self, cap: int, initial: int | None = None) -> None:
+        """*cap* 是上限（`map_concurrency`）；*initial* 是该账户已学到的上限，缺省从 cap 起。"""
+        self._cap = max(1, int(cap))
+        self._ceiling = self._cap if initial is None else min(self._cap, max(1, int(initial)))
+        self._inflight = 0
+        self._ok = 0
+        self._cond = asyncio.Condition()
+
+    @property
+    def ceiling(self) -> int:
+        """当前上限 —— 允许同时在途的请求数。"""
+        return self._ceiling
+
+    @property
+    def inflight(self) -> int:
+        """当前在途请求数。"""
+        return self._inflight
+
+    async def __aenter__(self) -> AdaptiveGate:
+        async with self._cond:
+            while self._inflight >= self._ceiling:
+                await self._cond.wait()
+            self._inflight += 1
+        return self
+
+    async def __aexit__(self, *_exc) -> None:
+        async with self._cond:
+            self._inflight -= 1
+            self._cond.notify_all()
+
+    async def on_success(self) -> None:
+        """一次尝试成功。连续成功次数达到当前上限即加性 +1，不超过 cap。"""
+        async with self._cond:
+            self._ok += 1
+            if self._ok >= self._ceiling and self._ceiling < self._cap:
+                self._ceiling += 1
+                self._ok = 0
+                self._cond.notify_all()
+
+    async def on_rate_limited(self) -> None:
+        """一次 429。乘性下调（×0.75 向下取整），最低 1。"""
+        async with self._cond:
+            self._ceiling = max(1, int(self._ceiling * 0.75))
+            self._ok = 0
