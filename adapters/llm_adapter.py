@@ -878,7 +878,9 @@ class LLMAdapter:
                         "estimated": False,
                     }
                     self.last_usage = usage
-                    continue
+                    # 不 continue：DeepSeek 把终态与 usage 放在**同一个**末 chunk，跳过它
+                    # 等于永远读不到 finish_reason（实测 6/6 None，截断从未被识别）。
+                    # OpenAI 形态下这个 chunk 的 choices 为空，下一行的 `not choices` 会跳过。
                 choices = chunk.choices
                 if not choices:
                     continue

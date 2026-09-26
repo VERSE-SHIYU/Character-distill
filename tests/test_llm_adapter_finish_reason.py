@@ -15,6 +15,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from openai import OpenAI as _REAL_OPENAI
 
 import adapters.llm_adapter as M
 from adapters.llm_adapter import IncompleteResponseError, LLMAdapter
@@ -314,3 +315,47 @@ class TestSpanUsageSource:
 
         assert sp.attrs["ctok"] == 3, f"非流式那半不该跟着流式改没了：{sp.attrs}"
         assert sp.attrs["ptok"] == 7
+
+
+# ── WP11 S4：终态与用量同块（DeepSeek 形态）不得被跳过 ──────────────────────
+#
+# DeepSeek 把 finish_reason 与 usage 放在**同一个**末 chunk（OpenAI 是终态 chunk 之后
+# 另起一个 choices 为空的纯用量 chunk）。旧读流循环遇 usage 就 continue，把同块的
+# choices 一起跳过 → 终态永远读不到（实测 6/6 finish_reason=None），length 截断因此
+# 从未在任何流式路径上被识别，半截内容静默交付。假上游默认吐 DeepSeek 形态。
+
+
+def _sse_llm(fake_sse, monkeypatch):
+    # 本文件的 autouse `_no_real_openai` 把 M.OpenAI 换成了不做事的假构造；
+    # 指向假上游的**真** adapter 需要真客户端。
+    monkeypatch.setattr(M, "OpenAI", _REAL_OPENAI)
+    return fake_sse.adapter()
+
+
+def test_s4_length_terminal_shares_chunk_with_usage(fake_sse, monkeypatch):
+    """同块上的 length 终态仍须被逮住 —— 不能因该 chunk 带了 usage 就放行。"""
+    llm = _sse_llm(fake_sse, monkeypatch)
+    fake_sse.plan.update(tokens=["a", "b"], usage_shape="same", finish_reason="length")
+
+    with pytest.raises(IncompleteResponseError):
+        list(llm.chat_stream_long("sys", _MSGS))
+
+
+def test_s4_stop_terminal_shares_chunk_with_usage(fake_sse, monkeypatch, capsys):
+    """同块上的 stop + usage：正文照常交付、用量照常记账，且不算「缺终态」。"""
+    llm = _sse_llm(fake_sse, monkeypatch)
+    fake_sse.plan.update(tokens=["a", "b"], usage_shape="same", finish_reason="stop")
+
+    assert list(llm.chat_stream_long("sys", _MSGS)) == ["a", "b"]
+    assert llm.last_usage == {"prompt_tokens": 1, "completion_tokens": 2, "estimated": False}
+    out = capsys.readouterr().out
+    assert "未识别的 finish_reason" not in out, f"终态在同块上却被当成缺失：{out}"
+
+
+def test_s4_openai_separate_shape_still_works(fake_sse, monkeypatch):
+    """OpenAI 形态（终态挂末个正文 chunk + 纯用量 chunk）不得因这次改动变红。"""
+    llm = _sse_llm(fake_sse, monkeypatch)
+    fake_sse.plan.update(tokens=["a", "b"], usage_shape="separate", finish_reason="length")
+
+    with pytest.raises(IncompleteResponseError):
+        list(llm.chat_stream_long("sys", _MSGS))

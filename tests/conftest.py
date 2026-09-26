@@ -392,18 +392,29 @@ class _FakeSSEHandler(BaseHTTPRequestHandler):
         base = {"id": "fake-sse", "object": "chat.completion.chunk", "created": 0,
                 "model": "fake-model"}
         tokens = plan["tokens"]
+        # 终态放哪：`same`（DeepSeek，默认）= 终态与 usage 同在**一个**末 chunk（choices 非空）；
+        # `separate`（OpenAI）= 终态挂末个正文 chunk，usage 另起一个 choices 为空的 chunk。
+        same_chunk = plan["usage_shape"] == "same"
         for i, tok in enumerate(tokens):
             last = i == len(tokens) - 1
             self._sse({**base, "choices": [
                 {"index": 0, "delta": {"content": tok},
-                 "finish_reason": plan["finish_reason"] if last else None}]})
+                 "finish_reason": plan["finish_reason"] if last and not same_chunk else None}]})
             if plan["disconnect_after"] == i + 1:
                 self.connection.close()
                 return
+        usage_block = None
         if plan["usage"]:
-            self._sse({**base, "choices": [], "usage": {
-                "prompt_tokens": 1, "completion_tokens": len(tokens),
-                "total_tokens": len(tokens) + 1}})
+            usage_block = {"prompt_tokens": 1, "completion_tokens": len(tokens),
+                           "total_tokens": len(tokens) + 1}
+        if same_chunk:
+            terminal = {**base, "choices": [
+                {"index": 0, "delta": {}, "finish_reason": plan["finish_reason"]}]}
+            if usage_block is not None:
+                terminal["usage"] = usage_block
+            self._sse(terminal)
+        elif usage_block is not None:
+            self._sse({**base, "choices": [], "usage": usage_block})
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 
@@ -419,7 +430,9 @@ class FakeSSE:
       silent_ms        回 200 头之后、吐第一个 token 之前的静默时长（模拟 prefill）
       tokens           逐 token 内容；每片一个 SSE content chunk，末片带 finish_reason=stop
       disconnect_after 吐完第 N 片后断开连接（None = 正常收尾）
-      usage            末尾是否补一个 usage 尾块（不补则 adapter 走字符估算并打一行提示）
+      usage            是否回 usage（不补则 adapter 走字符估算并打一行提示）
+      usage_shape      末尾形态："same"（默认，DeepSeek：终态与 usage 同在末 chunk，choices 非空）
+                       / "separate"（OpenAI：终态挂末个正文 chunk + 纯用量 chunk）
       finish_reason    末片的 finish_reason（默认 "stop"；给 "length" 造截断）
       body_rules       [(请求体含此串, 覆盖哪些 plan 字段), ...] —— 按请求体挑行为。
                        `tokens: []` 配 `usage: True` = 交付一个空正文的合法收尾。
@@ -427,6 +440,7 @@ class FakeSSE:
 
     def __init__(self) -> None:
         self.plan = {"silent_ms": 0, "tokens": ["mock-tok"], "disconnect_after": None,
+                     "usage_shape": "same",
                      "usage": True, "finish_reason": "stop", "body_rules": ()}
         self._srv = _FakeSSEServer(("127.0.0.1", 0), _FakeSSEHandler)
         self._srv.plan = self.plan
