@@ -35,6 +35,7 @@ from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_us
 from core import telemetry as T  # OTel 埋点
 from core import concurrency as C  # 派生与上下文传播
 from core.nonfatal import nonfatal
+from core.request_context import current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -1615,6 +1616,15 @@ class Distiller:
         # 写回本轮的收敛上限（A3）：失败片也算数 —— 闸的估计来自每一次尝试的 429/成功，
         # 与分片成败无关，整轮都挂了也该把「这个账号到不了 N 路」记下来。
         self._llm.learned_map_concurrency = gate.ceiling
+        # 上限被上游按账户压下来才记：这是「需求 > 该账户此刻的并发上限」的降级，warning
+        # 语义正确；收敛到配置值（没被限流）不记 —— 验收据此读有没有被限流。不能用 info：
+        # 本项目只把 WARNING+ 推到 stdout（core/stdout_logging.py 的文件头）。
+        if gate.ceiling < self._map_concurrency:
+            logger.warning(
+                "Map gate settled at %s (< cap %s); learned_map_concurrency=%s; user=%s",
+                gate.ceiling, self._map_concurrency,
+                self._llm.learned_map_concurrency, current_user_id(),
+            )
         # Map 是 MapReduce 里最烧 token 的一段：整阶段汇总一条 + 调用次数（不是分片数 ——
         # 续跑命中/重试会让二者不一致，chunk_count 数的是真的调了几次）。
         merged = aggregate_usage(usages, len(usages))
