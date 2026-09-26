@@ -115,9 +115,10 @@ class AdaptiveGate:
     该账号当前的真实上限附近。不解析 429 文案里的数字 —— 那是未写进文档、随时会变
     的运行时行为。
 
-    用法：`async with gate:` 包住**每一次尝试**（不是整次带重试的调用）；成功调
-    `await gate.on_success()`、429 调 `await gate.on_rate_limited()`。退避睡眠必须
-    在 `async with` **之外** —— 睡着的请求若占着名额，上限永远探不上去。
+    用法：`async with gate:` 包住**每一次尝试**（不是整次带重试的调用）；进闸时记下
+    `gate.generation`，成功调 `await gate.on_success()`、429 调
+    `await gate.on_rate_limited(gen)`。退避睡眠必须在 `async with` **之外** —— 睡着的
+    请求若占着名额，上限永远探不上去。
 
     上调会让等在 `__aenter__` 里的协程立刻可进，故 `on_success` 需 `notify_all`；
     下调相反（更严），不唤醒任何等待者，等 `__aexit__` 释放名额时自然复查。
@@ -129,6 +130,9 @@ class AdaptiveGate:
         self._ceiling = self._cap if initial is None else min(self._cap, max(1, int(initial)))
         self._inflight = 0
         self._ok = 0
+        # 代数：每下调一次 +1。一波并发同时撞 429 时，只有「当时代数仍是当前代数」的那个
+        # 下调 —— 否则 N 个 429 会按次数连乘（20 × 0.75^15 → 1），闸当场自锁。
+        self._generation = 0
         self._cond = asyncio.Condition()
 
     @property
@@ -140,6 +144,11 @@ class AdaptiveGate:
     def inflight(self) -> int:
         """当前在途请求数。"""
         return self._inflight
+
+    @property
+    def generation(self) -> int:
+        """当前代数 —— 进闸时记下它，报 429 时交回 `on_rate_limited`。"""
+        return self._generation
 
     async def __aenter__(self) -> AdaptiveGate:
         async with self._cond:
@@ -162,8 +171,15 @@ class AdaptiveGate:
                 self._ok = 0
                 self._cond.notify_all()
 
-    async def on_rate_limited(self) -> None:
-        """一次 429。乘性下调（×0.75 向下取整），最低 1。"""
+    async def on_rate_limited(self, generation: int) -> None:
+        """一次 429。乘性下调（×0.75 向下取整），最低 1。
+
+        *generation* 是本次尝试**进闸时**记下的代数；它已不是当前代数，说明这一波里
+        已经有别的请求下调过了（闸更严了，在途的那批是按旧上限发的），本次不再连乘。
+        """
         async with self._cond:
+            if generation != self._generation:
+                return
+            self._generation += 1
             self._ceiling = max(1, int(self._ceiling * 0.75))
             self._ok = 0

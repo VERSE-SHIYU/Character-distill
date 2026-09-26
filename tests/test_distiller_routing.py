@@ -891,14 +891,17 @@ class TestMapConcurrencyAdaptsToTheAccount:
     读的就是退避那一刻的 `gate.inflight`，直接打红；端到端那条负责证明「零失败」。
 
     片数取 80 而不是规格里写的 40：闸的初始上限就是 `map_concurrency`，冷启动那一波
-    必然把它探满（实测 40 片整场都还在这个过渡里，后半程峰值仍有 8）。片数不够，就
-    没有「收敛后」可判。峰值只看后半程，并列在失败信息里供复核。
+    必然把它探满，片数不够就没有「收敛后」可判。峰值只看后半程，并列在失败信息里供复核。
     """
 
     CHUNKS = 80
     LIMIT = 5
     CAP = 20
-    WARM = CHUNKS // 2
+    # 尾部窗口跳过的是**上游请求数**（不是分片数）。AIMD 一波只下调一次（同波其余 429
+    # 已被时代代数拦掉），20 → 15 → 11 → 8 → 6 → 4 要 5 波才收敛完，而每波都带回重试，
+    # `served` 涨得比分片快 —— 实测收敛点在 served≈65（80 片整场 served≈155）。窗口从
+    # 100 起，跳过整段下降过程；实测尾峰值稳定在 LIMIT+1。
+    WARM = 100
 
     async def test_map_finishes_with_zero_failures(self):
         upstream = _InflightUpstream(self.LIMIT, warm=self.WARM)
@@ -922,6 +925,7 @@ class TestMapConcurrencyAdaptsToTheAccount:
         assert n429 > 0, "假上游一次都没限流 —— 这条锁没走到被锁的地方"
         assert failures == [], f"限流把片打挂了：{failures[:3]}"
         assert len(results) == self.CHUNKS
+        assert upstream.tail_peak > 0, "尾部窗口一个请求都没量到 —— 这条锁空转"
         assert upstream.tail_peak <= self.LIMIT + 1, (
             f"收敛后仍在途 {upstream.tail_peak}，超过上游上限 {self.LIMIT}（+1 是 AIMD 的探针："
             f"不探到上限之上就永远学不到上限）；整场峰值 {upstream.peak}（含冷启动那波），"
@@ -958,9 +962,9 @@ class TestMapConcurrencyAdaptsToTheAccount:
 class TestMapConcurrencyRemembersTheAccount:
     """WP14 A3：同一个 adapter 连跑两轮，第二轮从第一轮学到的上限起步。
 
-    判据是**行为**：第二轮只在冷启动那一波露初值，故第二轮只跑 `COLD` 片 —— 一次波，
-    初值是多少峰值就是多少。等长两轮的「429 明显更少」实测比值在 1.6–3.1x 之间乱摆
-    （第二轮自己也在探针上撞），那种计数比会 flaky，不拿来当判据。只读
+    判据是**行为**：第二轮只在冷启动那一波露初值，故第二轮只跑 `COLD` 片 —— 冷启动那
+    一波就是初值本身。等长两轮的「429 明显更少」实测比值在 1.6–3.1x 之间乱摆（第二轮
+    自己也在探针上撞），那种计数比会 flaky，不拿来当判据。只读
     `llm.learned_map_concurrency` 非空也不足以证明第二轮**用了**它 —— 初值没接上时那个
     属性照样有值，退回的是 cap。
 
@@ -968,12 +972,12 @@ class TestMapConcurrencyRemembersTheAccount:
     上游真实上限（负载下多撞几下就偏低），第二轮从那儿合法地继续上探到 `LIMIT` 再撞一次
     探针 —— 那是 AIMD 在工作，不是缺陷。`+1` 仍是「必须探到上限之上才学得到上限」。
 
-    三条变异各打红一处：不写回 → 属性为 None；写了但不作初值 → 峰值回到 `COLD`（10 片
-    在 cap=20 下全放，界只有 6）；写回的是配置值而非收敛值 → 学到的不再 ≤ `LIMIT + 1`。
+    三条变异各打红一处：不写回 → 属性为 None；写了但不作初值 → 冷启动峰值从 `learned`
+    变成 `COLD`（20 片在 cap=20 下全放）；写回的是配置值而非收敛值 → `learned` 顶到 cap。
     """
 
-    LEARN_CHUNKS = 60
-    COLD = 10
+    LEARN_CHUNKS = 120
+    COLD = 20
     LIMIT = 5
     CAP = 20
 
@@ -1009,11 +1013,73 @@ class TestMapConcurrencyRemembersTheAccount:
 
         assert learned is not None, "第一轮没把学到的上限写回 adapter"
         assert failures == []
-        assert learned <= self.LIMIT + 1, (
-            f"学到的上限 {learned} 高于上游真实上限 {self.LIMIT} + 1 —— 写回的是配置值"
+        # 界不是拍的：146 次采样（60 / 120 片各半）实测落在 4–7，只在机器负载高时见过
+        # 一次 9（尾部排水期变长，闸把「没撞 429」读成余量、继续加性上探）。取「真实上限
+        # 的两倍」把收敛值与配置值分开 —— 写回 cap 的变异给的是 20，余量还有一半。
+        assert learned <= self.LIMIT * 2, (
+            f"学到的上限 {learned} 超过上游真实上限 {self.LIMIT} 的两倍 —— 写回的是配置值"
             f"cap={self.CAP} 而不是闸收敛出来的值")
         bound = max(learned, self.LIMIT) + 1
         assert upstream.peak <= bound, (
             f"第二轮冷启动在途峰值 {upstream.peak}，高于 {bound}（= max(学到的 {learned}, "
-            f"上游上限 {self.LIMIT}) + 1）—— 没有从学到的上限起步，10 片一起放了。"
-            f"第一轮 60 片 {first_429} 次 429、第二轮 {self.COLD} 片 {second_429} 次")
+            f"上游上限 {self.LIMIT}) + 1）—— 没有从学到的上限起步，{self.COLD} 片一起放了。"
+            f"第一轮 {self.LEARN_CHUNKS} 片 {first_429} 次 429、"
+            f"第二轮 {self.COLD} 片 {second_429} 次")
+
+
+class TestQueueingDoesNotEatTheCallDeadline:
+    """WP14 A4：等闸（排队）不占本调用的总时限。
+
+    缺陷形态（修前的 :816/:824）：`_RetryBudget` 在**进闸之前**就建好、时钟当场起算，
+    排队时长直接吃总预算 —— 尾部分片可能一次 create 都没发出去就被判「没时间了」。
+    真机形态：红楼梦 242 片、账号上限 18，末尾的片光排队就超过 153s 的总预算。
+
+    判据是**行为**：每片只给 2s 的总预算（比它自己的一次调用长得多），但整场 40 片在
+    上限 3 的闸后排队必然远超 2s —— 顺延生效时 40 片全成；不生效时尾部的片判超时。
+
+    变异：去掉 `async_chat` 里 `budget.extend_deadline(...)` 那一行 → 尾部分片红。
+
+    不走 `_run_map_concurrent`：它不接受单片预算，而 `_GEN_BATCH_DEADLINE_S` 是**函数定义
+    时**绑进 `async_chat` 形参默认值的（monkeypatch 模块常量改不动它）。直接以 `gate=` +
+    `deadline_s=` 调 `async_chat` 走的是同一段代码，且落在真正的接缝上。
+    """
+
+    N = 40
+    LIMIT = 3        # 上游：在途 > 3 即 429
+    CAP = 8
+    DEADLINE_S = 2.0
+    HOLD_MS = 200
+
+    async def test_tail_chunks_survive_the_queue(self):
+        upstream = _InflightUpstream(self.LIMIT, hold_ms=self.HOLD_MS)
+        llm = upstream.adapter()
+        # 初值就给上游上限、而不是从 cap 探起：从 8 探起时首波 5 片同时 429，个别片
+        # 会在 _RATE_LIMIT_ATTEMPTS 内被连撞（实测 1/40 片耗尽预算），那是 AIMD 冷启动
+        # 的噪声，会把 A4 的判据搅成 flaky。从 3 起只有一个 3↔4 的探针，每片最多撞一次。
+        gate = AdaptiveGate(cap=self.CAP, initial=self.LIMIT)
+        client = llm._make_async_client()
+        t0 = time.monotonic()
+        try:
+            results = await asyncio.gather(*[
+                llm.async_chat("sys", [{"role": "user", "content": f"第{i}片"}],
+                               client=client, gate=gate, deadline_s=self.DEADLINE_S)
+                for i in range(self.N)
+            ], return_exceptions=True)
+        finally:
+            await client.close()
+            upstream.close()
+        elapsed = time.monotonic() - t0
+
+        failures = [r for r in results if isinstance(r, BaseException)]
+        # 判据放在空转门**之前**：去掉顺延的变异下，挂掉的片跑得快，整场反而不到 2s，
+        # 空转门会先炸、把真正的红源（片被判超时）盖掉。顺序只影响报错信息，判绿判红不变。
+        notime = sum("no time for an attempt" in repr(f) for f in failures)
+        assert failures == [], (
+            f"排队把 {len(failures)} 片判成超时，其中 {notime} 片是「预算里挤不出一次 "
+            f"attempt」（修复前正是这样挂的，尾部那批）：{failures[:2]!r}")
+        assert upstream.statuses.count(429) > 0, (
+            "假上游一次都没限流 —— 闸没被钉在上游上限附近，排队压力没形成")
+        assert elapsed > self.DEADLINE_S, (
+            f"整场只跑了 {elapsed:.2f}s ≤ 单片预算 {self.DEADLINE_S}s —— 排队没超过单片预算，"
+            f"这条锁空转")
+        assert len(results) == self.N

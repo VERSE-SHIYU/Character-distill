@@ -24,20 +24,20 @@ class TestRateLimitedShrinksTheCeiling:
     async def test_429_multiplies_the_ceiling_by_three_quarters_flooring(self):
         g = AdaptiveGate(cap=100, initial=8)
 
-        await g.on_rate_limited()
+        await g.on_rate_limited(g.generation)
         assert g.ceiling == 6, "8 × 0.75"
 
-        await g.on_rate_limited()
+        await g.on_rate_limited(g.generation)
         assert g.ceiling == 4, "6 × 0.75"
 
-        await g.on_rate_limited()
+        await g.on_rate_limited(g.generation)
         assert g.ceiling == 3, "4 × 0.75"
 
     async def test_the_ceiling_never_drops_below_one(self):
         g = AdaptiveGate(cap=100, initial=3)
 
         for _ in range(6):
-            await g.on_rate_limited()
+            await g.on_rate_limited(g.generation)
 
         assert g.ceiling == 1, "3 → 2 → 1 → 1 …，不降到 0"
         async with g:  # 降到 0 会让这里永远取不到名额（死锁）
@@ -70,7 +70,7 @@ class TestConsecutiveSuccessesRaiseTheCeilingByOne:
             await g.on_success()
         assert g.ceiling == 10, "9 < 10，还没到 +1 的门槛"
 
-        await g.on_rate_limited()
+        await g.on_rate_limited(g.generation)
         assert g.ceiling == 7, "10 × 0.75"
 
         for _ in range(6):
@@ -85,7 +85,7 @@ class TestAcquireWaitsWhileTheCeilingSitsBelowInflight:
             await g.__aenter__()
         assert g.inflight == 5
 
-        await g.on_rate_limited()  # 5 × 0.75 → 3，而在途仍是 5
+        await g.on_rate_limited(g.generation)  # 5 × 0.75 → 3，而在途仍是 5
         assert (g.ceiling, g.inflight) == (3, 5)
 
         pending = asyncio.create_task(g.__aenter__())
@@ -104,3 +104,68 @@ class TestAcquireWaitsWhileTheCeilingSitsBelowInflight:
         await _spin()
         assert pending.done()
         assert g.inflight == 3
+
+
+class TestABurstOfRateLimitsDecreasesTheCeilingOnlyOnce:
+    """WP14 A5：一波并发同时撞 429，只下调一次 —— 不按次数连乘。
+
+    缺陷形态：60 路同时撞 429，每片各报一次 → 20 × 0.75^15 → 1，闸当场自锁（在途 1，
+    并发退回串行，整本蒸馏退化成逐片跑）。依据是 NVIDIA DataDesigner 的做法：一波
+    429 里只有**第一个**该下调 —— 在途那批是按**旧**上限发出去的，它们的 429 是同一个
+    事实的 N 次重复，不是 N 个新事实。闸用「代数」区分：进闸时记下当时代数，报 429 时
+    代数已经变了，说明同波已经有人下调过，本次不再连乘。
+
+    上游模型：一波 n 个尝试同时进闸，前 `LIMIT` 个在限内（200），其余（在途 > LIMIT）
+    回 429 —— 与 A2 的假上游同一规则，只是这里不需要真 socket。
+
+    变异：`on_rate_limited` 去掉代数判据（每次 429 都下调）→ `ceilings[0]` 塌到 1。
+    """
+
+    LIMIT = 5
+    CAP = 20
+    WAVES = 8
+
+    @staticmethod
+    async def _burst(g: AdaptiveGate, limit: int) -> list[int]:
+        """一波按当前上限放出的尝试：前 limit 个成功，其余 429。返回每个的结果码。"""
+        n = g.ceiling
+        statuses: list[int | None] = [None] * n
+
+        async def attempt(i: int) -> None:
+            async with g:
+                # 代数在**进闸时**记下，不是报 429 时现读 —— `async_chat` 就是
+                # `gen = gate.generation` 取在 create 之前（见 adapters/llm_adapter.py
+                # 的 `gen = gate.generation`）。现读的话每次拿到的都是最新代数，判据
+                # 恒等成立，一波 15 个 429 照样连乘到 1 —— 仪器没复现被测形态。
+                gen = g.generation
+                # 让整波都先进闸再判——不然 gather 逐个跑，在途数永远只有 1
+                await asyncio.sleep(0)
+                if i < limit:
+                    statuses[i] = 200
+                    await g.on_success()
+                else:
+                    statuses[i] = 429
+                    await g.on_rate_limited(gen)
+
+        await asyncio.gather(*(attempt(i) for i in range(n)))
+        return statuses
+
+    async def test_first_burst_leaves_the_ceiling_at_three_quarters(self):
+        g = AdaptiveGate(cap=self.CAP, initial=self.CAP)
+        ceilings: list[int] = []
+        seen_429 = 0
+        for _ in range(self.WAVES):
+            statuses = await self._burst(g, self.LIMIT)
+            seen_429 += statuses.count(429)
+            ceilings.append(g.ceiling)
+
+        assert seen_429 > 0, "一波都没回 429 —— 闸压根没被打到，这条锁空转"
+        first = ceilings[0]
+        assert first == 15, (
+            f"首波 20 个并发里 15 个 429，上限应只乘一次 0.75 落到 15（实际 {first}）"
+            f"—— 15 次连乘会落到 1，闸自锁。全程：{ceilings}")
+        assert min(ceilings) >= 3, f"上限塌到 {min(ceilings)} —— 一波里的 429 被连乘了：{ceilings}"
+        # 收敛要 5 波：一波只下调一次，20→15→11→8→6→4。只看尾部（末 3 波）—— 数完
+        # 首波那一次下调之后，还得容许它按 0.75 逐波走完，那些波的上限当然高于上限值。
+        assert max(ceilings[-3:]) <= self.LIMIT + 1, (
+            f"数波之后上限没收敛到上游限附近：{ceilings}（+1 是 AIMD 的探针）")

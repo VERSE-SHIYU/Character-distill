@@ -161,6 +161,15 @@ class _RetryBudget:
     def remaining_s(self) -> float:
         return max(0.0, self._deadline - time.monotonic())
 
+    def extend_deadline(self, seconds: float) -> None:
+        """把等闸（排队）耗掉的墙钟顺延回总时限 —— 排队不是本调用自己的时间。
+
+        `_deadline` 在**创建预算时**就定死了，那是「调用内不排队」（排队在 Map 外层
+        `Semaphore`）时代的假设。闸搬进 `async_chat` 之后，尾部分片可能排到自己之前
+        预算就尽了（242 片 / 上限 18 时实测），一次 create 都发不出去。
+        """
+        self._deadline += max(0.0, seconds)
+
     def attempt_timeout(self) -> float:
         """本次 create 应传的 timeout（秒）。剩余撑不起一次有效 attempt 则抛（不发出会假失败的 create）。
 
@@ -817,11 +826,20 @@ class LLMAdapter:
                               ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
                               log_prefix="LLMAdapter async", err_prefix="Async LLM")
         while True:
-            timeout = budget.attempt_timeout()
-            try:
-                # 闸只包**这一次** create。退避睡眠在闸外 —— 否则睡着的请求白占名额，
-                # 上限永远探不上去（WP14）。
-                async with (gate if gate is not None else contextlib.nullcontext()):
+            queue_t0 = time.monotonic()
+            # 闸只包**这一次** create（连同它之前的等名额与超时计算）。退避睡眠落在
+            # `async with` **之外** —— 睡着的请求若占着名额，上限永远探不上去。
+            async with (gate if gate is not None else contextlib.nullcontext()):
+                if gate is not None:
+                    # 排队等名额不是本调用的时间：尾部分片可能一次没发就把总预算排光
+                    # （红楼梦 242 片 / 账号上限 18）。等闸时长顺延回总时限，单次超时也在
+                    # **进闸之后**才算 —— 否则那个窗口是从「还没排到队」的时刻起算的。
+                    budget.extend_deadline(time.monotonic() - queue_t0)
+                # 抛「没时间了」要出闸上抛，不能被下面的 on_failure 重包装成上游故障：
+                # 预算耗尽是本地判定，与上游无关。
+                timeout = budget.attempt_timeout()
+                gen = gate.generation if gate is not None else None
+                try:
                     try:
                         completion = await _c.chat.completions.create(
                             model=self._model,
@@ -832,29 +850,34 @@ class LLMAdapter:
                             timeout=timeout,
                             extra_body=self._request_options(),
                         )
+                    except IncompleteResponseError:
+                        raise  # 截断：确定性失败，不烧重试预算
                     except Exception as exc:
                         # 乘性下调要在**还名额之前**落账：`__aexit__` 会唤醒等在闸外的片，
                         # 它们读到旧上限就会按旧上限再冲一波 —— 下调晚一步，整波白撞一次。
+                        # 同一波只下调一次（`gen` 不等于当前代数 = 同波已有人报过）：60 路
+                        # 同时 429 若按次数连乘，20 × 0.75^15 → 1，闸当场自锁。
                         if gate is not None and _classify_retry(exc)[0]:
-                            await gate.on_rate_limited()
+                            await gate.on_rate_limited(gen)
                         raise
-                if gate is not None:
-                    await gate.on_success()
-                choices = completion.choices
-                if not choices:
-                    raise RuntimeError("API returned empty choices")
-                result = _extract_content(choices[0], where="async_chat")
-                usage = None
-                if completion.usage:
-                    usage = {
-                        "prompt_tokens": completion.usage.prompt_tokens or 0,
-                        "completion_tokens": completion.usage.completion_tokens or 0,
-                    }
-                return result, usage
-            except IncompleteResponseError:
-                raise  # 截断：确定性失败，不烧重试预算
-            except Exception as exc:
-                await asyncio.sleep(budget.on_failure(exc))
+                    if gate is not None:
+                        await gate.on_success()
+                    choices = completion.choices
+                    if not choices:
+                        raise RuntimeError("API returned empty choices")
+                    result = _extract_content(choices[0], where="async_chat")
+                    usage = None
+                    if completion.usage:
+                        usage = {
+                            "prompt_tokens": completion.usage.prompt_tokens or 0,
+                            "completion_tokens": completion.usage.completion_tokens or 0,
+                        }
+                    return result, usage
+                except IncompleteResponseError:
+                    raise
+                except Exception as exc:
+                    failure = exc
+            await asyncio.sleep(budget.on_failure(failure))
 
     def _stream(self, system_prompt: str, messages: list[dict[str, Any]],
                 max_tokens: int | None = None, *,
