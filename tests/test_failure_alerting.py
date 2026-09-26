@@ -299,13 +299,20 @@ def _print_swallows_in(path: Path) -> list[tuple[str, str]]:
 
 
 def _scan_files():
+    """扫描根下的 Python 源文件。
+
+    排除 `node_modules`：`web/frontend/node_modules/` 里有第三方包自带的 `.py`
+    （如 `flatted/python/flatted.py`）。它们不受本仓的吞错口径约束，却会被
+    `rglob` 收进来 —— 一旦那个包改了实现，锁会拿别人的代码判我们违规。
+    """
     for root in _SCAN_ROOTS:
         p = _REPO / root
         if p.is_file():
             yield p
         else:
             yield from sorted(
-                q for q in p.rglob("*.py") if "__pycache__" not in q.parts
+                q for q in p.rglob("*.py")
+                if "__pycache__" not in q.parts and "node_modules" not in q.parts
             )
 
 
