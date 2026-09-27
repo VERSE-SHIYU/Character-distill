@@ -409,7 +409,7 @@ commit：`test: check nonfatal traces via caplog`、`refactor(observability): re
 ### Shiyu 的手动步骤（C1 之后做，阿里云控制台，不涉及服务器）
 在阿里云「云监控 → 站点监控」建两个 HTTPS 探测任务，**2 个国内探测点、每 5 分钟一次，两个点都失败才报警**，报警联系人设为你的手机号 **〔2026-09-27 修订：通知方式改为邮件 `bookecho@163.com`，见 W 段〕**：
 1. `https://errors.bookecho-shiyu.cn/`：GlitchTip 是否能访问
-2. `https://bookecho-shiyu.cn/health`：主站（nginx 把 `/health` 转发到 `/api/health`，`nginx/nginx.conf:92`）
+2. ~~`https://bookecho-shiyu.cn/health`~~ → **`https://bookecho-shiyu.cn/api/health`**：主站存活 **〔S0 后修订：`/health` 被 `nginx/nginx.conf:92-96` 限为 127.0.0.1，公网必 403，见 W 段「S0 后定稿」〕**
 按阿里云的计费，国内探测点每 1 万次 10 元，两个任务合计约 35 元/月。
 
 ### 步骤 12（C2）：删除旧邮件告警与 `ALERT_EMAIL` 链路（等官方修复）
@@ -449,8 +449,8 @@ commit：`chore(glitchtip): upgrade to <版本> with the scheduler fix`、`test:
   - 官方修复 !27 自述**不覆盖**：嵌入式模式的半死、broker 卡住（stall）、#7 的永久卡死原因未明。有出处：MR !27 描述。所以即使将来升到含修复的版本，看门狗仍有用
   - 不选：Prometheus（常驻，否决过）、自建镜像换 vtasks 3.2.0（约 700 行未经官方配套测试的改动，且仍不覆盖嵌入式半死）、第三方心跳服务（多一个外部依赖）、短信（Shiyu 定：邮件足够）
 - **组成**（深圳不新增常驻组件、不新增容器）：
-  1. **看门狗**：宿主机 cron 每 5 分钟跑一个脚本，只读查询两个数：调度器心跳秒龄、最老可执行 QUEUED 任务秒龄
-  2. **自愈**：任一超阈值 → `docker restart` GlitchTip 容器一次；冷却期内再次超阈值 → 不再重启，经 Resend 发邮件给 `bookecho@163.com`
+  1. **看门狗**：宿主机 cron **每 1 分钟**跑一个脚本 〔S0 后修订，见「S0 后定稿」〕，只读查询两个数：调度器心跳秒龄、最老可执行 QUEUED 任务秒龄
+  2. **自愈**：任一超阈值 → `docker restart` GlitchTip 容器一次；冷却期内再次超阈值 → 不再重启，发邮件给 `bookecho@163.com` 〔S0 后修订：发信复用 GlitchTip 容器自己的邮件配置，见「S0 后定稿」〕
   3. **反向心跳**：两个数都正常 → POST 一次 GlitchTip 自带 Heartbeat 监控的地址；收不到 → GlitchTip 发邮件（发现看门狗或 cron 自身失效）
   4. **整机宕机**：阿里云站点监控，通知改邮件（C 段 Shiyu 手动步骤同步修订）
 - **已知剩余风险（接受）**：GlitchTip 半死与看门狗失效**同时**发生时无人察觉（两个互不相关故障的叠加）
@@ -494,20 +494,18 @@ commit：`chore(glitchtip): upgrade to <版本> with the scheduler fix`、`test:
    | 主站 PG | 两库共用一个实例 | 看门狗只做一条只读查询，35ms |
 
 7. **真实规模的数字**（带「待 S0」的以实读为准）：
-   - 告警调度间隔 60 秒（交接文档实测，待 S0 复核）；心跳阈值 300 秒 = 5 个周期
-   - 检测延迟上限：出事 → 心跳秒龄过 300 秒 → 等下一次 cron（≤ 300 秒）→ **最迟约 10 分钟触发重启**；队列阈值 600 秒 → 最迟约 15 分钟
+   - ~~告警调度间隔 60 秒；心跳阈值 300 秒；最迟约 10 分钟触发重启~~ 〔S0 后修订，见「S0 后定稿」〕
    - 冷却期 1 小时：1 小时内第二次异常就发邮件，不再重启 → 最多 1 小时一次重启，不会反复重启
-   - 看门狗每天 288 次、每次约 35ms / 11.6MB，无常驻
+   - 看门狗每次约 35ms / 11.6MB，无常驻（次数见「S0 后定稿」）
 
-### 约束
+### 约束（S0 后定稿版）
 - 不改 GlitchTip 镜像、不改主站代码与发版流水线；新增文件全部放 `deploy/sz/`，落盘走 README 的「scp 覆盖 + diff 验证」
-- 看门狗对 PG **只读**；查询失败（PG 不可用）时**不重启、不 ping**，只记一行日志。PG 挂了主站也挂，由站点监控报警
-- **凭据**：Resend 密钥与 Heartbeat 地址存 `/root/.glitchtip_watchdog`（`chmod 600`，仿 `/root/.backup_key`），不入库、不写进 crontab、不打印；比对只打 sha256 前 12 位
+- 看门狗对 PG **只读**
+- **凭据**：宿主机上只有一项——心跳地址，存 `/root/.glitchtip_watchdog`（`chmod 600`，仿 `/root/.backup_key`）。发信复用 GlitchTip 容器已有的邮件配置，宿主机**不解析、不复制**任何发信凭据。不入库、不打印；比对只打 sha256 前 12 位
 - 重启只用容器级命令（`docker restart <GlitchTip 容器>`）
-- 脚本写得可测：`docker`、`psql`、`curl` 的调用都可经环境变量替换为桩；判定逻辑集中在一处，不散落
 - 新发现属于本段改动面的直接修；只有会撞车或需要拍板时才停下报告；不自行记账
 
-### 步骤 13-S0：只读调查（服务器与镜像，不改任何东西）
+### 步骤 13-S0：只读调查（已完成，报告见 `docs/specs/observability-w-s0.md`）
 逐条查实，**结果写成 `docs/specs/observability-w-s0.md` 上传**；任何一条与上文「已查实的约束」不符，就停下报告。
 1. 在最新 main 上复核约束 1–4 的坐标
 2. 深圳容器名：GlitchTip 容器、主站 PG 容器（`docker ps --format`）
@@ -520,12 +518,76 @@ commit：`chore(glitchtip): upgrade to <版本> with the scheduler fix`、`test:
 9. 深圳到 Resend 的线路：GlitchTip 的 `EMAIL_URL` 是 SMTP 还是 API（只报类型和主机，不打印密钥）；从宿主机 `curl` 连 `api.resend.com:443` 能否握手（不发信）
 10. 从宿主机经本机 nginx 访问 GlitchTip：`curl --resolve errors.bookecho-shiyu.cn:443:127.0.0.1 -so /dev/null -w '%{http_code}' https://errors.bookecho-shiyu.cn/`；以及宿主机上 cron 在不在跑（`systemctl is-active cron`，`crontab -l` 只报有几行，不贴内容）
 
-### 步骤 13：实现（S0 之后补全参数，Shiyu 拍板再做）
-- 文件：`deploy/sz/glitchtip/watchdog.sh`（判定、重启、ping、发信）；`deploy/sz/README.md` 增加落盘、凭据文件、crontab 行、回滚办法（删一行 crontab）
-- 测试：`tests/test_glitchtip_watchdog.py`，用桩替换 `docker` / `psql` / `curl`，按比例复刻真实的时间关系（心跳秒龄 = 阈值的 0.5 倍 / 1 倍 / 5 倍，冷却期内和冷却期外）。覆盖以下情况：正常时只 ping；心跳过期时重启并写状态；冷却期内再次过期时只发信不重启；队列积压时重启；PG 查询失败时什么都不做；ping 失败不影响判定
+### S0 后定稿（2026-09-27，Shiyu 拍板；依据 `docs/specs/observability-w-s0.md`，下称「报告」）
+与上文冲突处一律以本节为准。
+
+**S0 查实的新事实**（GlitchTip 6.2.6 容器内坐标，报告有逐行引用）：
+1. 调度表 `/code/glitchtip/settings.py:971-1000`：`send-alert-notifications` 60 秒；`uptime-dispatch-checks` **1 秒**，本机已启用
+2. 报警评估 `/code/apps/alerts/tasks.py:53-67`：只看最近 `timespan_minutes` 内的事件，本机两条告警均为 **5 分钟**；已通知过的不重发（`:65`）。→ **出事到恢复必须 < 5 分钟**，否则停摆早期报错的通知永久丢失
+3. 重启实测（报告第 7 节）：首页 13.4 秒恢复；`memory.peak` 230.6 / 384 MiB；主站不受影响；`RestartCount` 不记手动重启；重启后只看秒龄会误判，**要看值有没有前进**
+4. Heartbeat 监控（`/code/apps/uptime/utils.py:70-87`、`api.py:189-191`、`tasks.py:273-279`）：宽限期 == `interval`；心跳地址 `auth=None`，URL 即凭据；邮件需要项目上有 `uptime=true` 的告警与 email 收件人——**目前三样都没有**
+5. 线路（报告第 9、10 节）：GlitchTip 的 `EMAIL_URL` 是 Resend SMTP，宿主机到 `smtp.resend.com:465` 通；经本机 nginx 访问 GlitchTip 200；cron 在跑，只有备份 1 行
+6. `/health` 公网 403（`nginx/nginx.conf:92-96`）；`/api/health` 在 `PUBLIC_PATHS`（`web/server.py:331`），只看存活、不查库（`:482-490`）
+
+**设计原则**（Shiyu 定：不过度工业化、不打补丁、隔离、抽象、复用、可维护）：
+- **判定与动作分离**：一个纯函数 `decide(读数, 状态, 现在) → 动作`，不碰 IO；执行动作的外壳很薄，外部调用经一个可注入的执行器，测试替换它
+- **复用现成的，不自己造**：
+  - 发信 → `docker exec` 进 GlitchTip 容器，用它自己的 Django 邮件配置（`EMAIL_URL`、`DEFAULT_FROM_EMAIL` 已在 compose `:36`、`:39`）调 `send_mail`。Django 发信不需要连库，PG 挂了也能发
+  - 防叠跑 → crontab 行里用系统自带的 `flock -n`，脚本里不写锁
+  - 重启 → `docker restart`；通知去重 → GlitchTip 自己管，看门狗只做最粗的限流
+- **能不要的状态就不要**：状态文件只存两个时间戳（上次自动重启、上次发信）
+
+**每分钟一次的流程**：
+1. 读数：`docker exec <PG 容器> psql` 跑一条只读 SQL，得到心跳秒龄与队列秒龄。**失败** → 通知「PG 不可用」，结束
+2. 两项都正常 → POST 心跳地址，结束
+3. 异常，且 1 小时内已经自动重启过 → 通知「重启后仍异常」，结束（不再重启）
+4. 异常，1 小时内没重启过 → `docker restart`，记下时间；**在同一次运行里**每 5 秒读一次心跳值，最多等 90 秒：值前进 → 通知「已自动重启并恢复」；不前进 → 通知「重启未恢复」
+5. 所有通知共用限流：1 小时最多 1 封
+
+没有单独的「静默期」和「失败计数」：重启后的确认在同一次运行里完成（按「值前进」判定，对应事实 3），下一次运行看到的已经是新值。
+
+**参数与真实规模**：
+
+| 项 | 值 | 依据 / 计算 |
+|---|---|---|
+| cron | 每 1 分钟，`flock -n` | 最坏发现 = 60 秒阈值 + 60 秒 cron；加 13.4 秒重启 ≈ 2.3 分钟 < 5 分钟窗口（事实 2） |
+| 心跳判据 | `vtasks_last_run:uptime-dispatch-checks` 秒龄 > 60 | 事实 1；报告第 6 节正常恒为 0–1 |
+| 队列判据 | 最老可执行 QUEUED > 600 秒 | 报告第 6 节日常恒为 0 |
+| 重启后确认 | 最多 90 秒，每 5 秒读一次 | 13.4 秒恢复 + 15 秒调度锁 ttl，留 3 倍余量 |
+| 自动重启上限 | 1 小时 1 次 | 原定 |
+| 通知限流 | 1 小时 1 封 | 每分钟跑，持续故障不能每分钟一封 |
+| 反向心跳 | 正常时每次都 ping；GlitchTip 监控 `interval` 10 分钟 | 事实 4；10 分钟 > 一次最长运行 + 漏跑几次 |
+| 外呼超时 | `curl --max-time 10`；发信的 `docker exec` 限 30 秒 | 单次最坏 ≈ 11 秒重启 + 90 秒确认 + 30 秒发信 ≈ 131 秒 → `flock -n` 让随后 2 次 cron 直接退出，不叠跑 |
+| 次数与开销 | 每天 1440 次；正常一次约 35ms 查询 + 38ms ping | 演练与报告第 10 节 |
+
+**依赖的外部兜底**（本段不做，写明而已）：GlitchTip 容器完全退出时 `docker exec` 发不了信 → 由 `restart: unless-stopped`（compose `:47`）拉起；持续起不来则首页不可达 → 阿里云站点监控发邮件。
+
+**Shiyu 在 GlitchTip 网页上建（执行方不碰 Shiyu 账户）**：
+1. `backend` 项目下新建 Heartbeat 监控，`interval` 10 分钟
+2. `backend` 项目新建一条勾选 uptime 的告警，收件方式 email：`bookecho@163.com`
+3. 心跳地址存本机文件，告诉执行方路径
+
+**站点监控**（C 段手动步骤同步修订）：探测 `https://errors.bookecho-shiyu.cn/` 与 `https://bookecho-shiyu.cn/api/health`，通知走邮件，不用短信。
+
+**实现前复核**（有一条不成立就停下报告）：
+- 本节引用的 `nginx/nginx.conf:92-96`、`web/server.py:331`、`:482-490`、`deploy/sz/glitchtip/docker-compose.yml:36`、`:39`、`:47` 在最新 main 上逐条复核
+- 公网 `curl https://bookecho-shiyu.cn/api/health` 返回 200
+- GlitchTip 对 `MonitorCheck` 有没有定期清理（文件和行号）；没有就停下报告（每天 1440 行）
+- 宿主机 `python3 --version`（脚本只用标准库）
+
+### 步骤 13：实现（参数以「S0 后定稿」为准，Shiyu 已拍板）
+> 提示词开头带上：`@tdd @incremental-implementation`
+
 - 分支 `worktree-observability-watchdog`，基于最新 main
+- 文件：
+  - `deploy/sz/glitchtip/watchdog.py`：Python 3 标准库，一个文件。结构：`decide()` 纯函数；读数、重启、ping、发信四个动作经一个注入的执行器；`main()` 只负责把它们接起来
+  - `deploy/sz/README.md`：落盘、心跳地址文件、crontab 行（含 `flock -n`）、回滚办法（删掉那一行 crontab）
+- 测试 `tests/test_glitchtip_watchdog.py`，先写：
+  - `decide()`，按比例复刻真实时间关系：心跳秒龄取阈值的 0.5 / 1 / 5 倍；队列同理；1 小时重启上限的内与外；限流窗口的内与外；PG 读数失败
+  - 重启确认，用假执行器加注入的时钟：心跳值前进 → 通知「已恢复」；90 秒内不前进 → 通知「未恢复」；两种情况都写状态
+  - 不测 `flock`、`docker` 本身（系统工具，不是我们的代码）
 - commit：`feat(glitchtip): host watchdog restarts a stalled GlitchTip`、`docs(sz): install and roll back the GlitchTip watchdog`
 
-**W 段验证**：本地只跑 `tests/test_glitchtip_watchdog.py`；合并门是分支 CI；合并只做 git 操作。上线后做两项验收：
-1. 进 GlitchTip 容器让调度器停摆（做法在 S0 后定，不动 PG），确认 10 分钟内被重启且心跳恢复；
-2. 临时注释掉 crontab 那一行，确认收到 GlitchTip 的心跳缺席邮件，然后恢复。
+**W 段验证**：本地只跑 `tests/test_glitchtip_watchdog.py`（本段不改前端，不跑 `npm test`；不连 PG，全用假执行器）；合并门是分支 CI；合并只做 git 操作。上线后验收：
+1. 手动跑一次，把心跳阈值临时覆盖为 0（命令行参数，不改文件）：确认执行了容器级重启、90 秒内心跳值前进、写了状态、`bookecho@163.com` 收到「已自动重启并恢复」（同时证明发信复用路径可用）
+2. 临时注释掉 crontab 那一行：约 10 分钟内收到 GlitchTip 的心跳缺席邮件，然后恢复
