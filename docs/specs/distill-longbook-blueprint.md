@@ -361,6 +361,92 @@ Map 调用路径上已有的机制（分支 `worktree-distill-identify` @ `28267
 - 补充验证：复用已付费的 2 次输出，再调 3 次凑满 5 次（同输入、同提示词）。合格线：5 票多数的结果使 A–D 全对。每个 A–D 项的票数另行报告，不作门槛。
 - 实现步骤与「测试」一节在验证通过后补入本节。
 
+### WP16 修订：识别目标改为「可蒸馏人物」（2026-09-27，Shiyu 拍板；取代本节此前 WP16 补充中的别名分类、A–D 清单与 5 票别名判定）
+
+**目标**：识别出能蒸馏出性格准确卡片的人物。由卡片规格倒推三个条件：(1) 本人有原话且分布在多个场景——说话风格与对话示例直接取自原文对话（`_FORMAT_DIMS` 的 C、I）；(2) 言行分布在足够多的不同场景——铁律 1「一个特质至少在 2 个不同场景出现」× 核心性格至少 3 个（`_FORMAT_IRON_LAWS`、维度 B）⇒ 至少 6 个不同分片里有本人说话；(3) 指一个具体的人。
+
+**数据**（审计用公开一百二十回本估算：正文约 88.5 万字，按 5000 字切 191 片；说话标记「道/说：“」10205 处，按句内首个人名归属 89%，抽查 31 条全对）：说话分片 ≥ 6 的具体人物 59 人（≥ 20 的 21 人）；B2 的 12 人全部 ≥ 7；「和尚」仅 2 片；婆子、小丫头、小厮过线但不是具体一人。版本 3 的 66 个主要人物中 16 个不足 6 片（和尚、元春、北静王等），另有 9 个 ≥ 6 片却被判为次要（尤二姐、巧姐等）。
+
+**改动**（只改识别线现有代码，不新增模块）
+1. 逐片提示词 `IDENTIFY_SYSTEM_PROMPT`：每项加 `spoke`（本段中此人是否亲口说了话）。`importance` 保留（单分片路径仍用），多分片路径不再读它。
+2. `core/roster_aggregate.py`：`_Obs` 以 `spoke`（仅当条目的 `spoke` 为 JSON `true`，即 Python `is True`）取代 `importance`；`_assemble_group` 的组加 `speak_count`（本人说话的不同分片数）与 `impersonal`（缺省 False）；`finalize_identify_roster(groups)` 判主次改为「`speak_count ≥ MIN_SPEAK_CHUNKS`（= 6，注释写明出处即上面的目标 (2)）且非 impersonal」，排序按 `speak_count` 再按 `chunk_count` 降序；输出每项恰为 `name`、`aliases`、`importance`、`reason`、`speak_chunks` 五个键；理由取自本人说话的分片，没有再取第一条非空理由。删除旧判据（被判为主要的分片 ≥ 2 或出现分片 ≥ 10%）、`_MAIN_MARK` 与 `total_chunks` 参数。计数在最终分组上做（并组在前）。名单仍保留全部组（RAG 打标签用全名单），泛称组标为次要，不删除。
+3. 全书判定：`_identify_alias_pairs` / `IDENTIFY_ALIAS_PROMPT` 改名为 `_judge_groups` / `IDENTIFY_JUDGE_PROMPT`。输入与现清单相同（`alias_prompt_rows`），输出 `{"merge": [...], "impersonal": [...]}`。同一输入独立调用 `IDENTIFY_JUDGE_SAMPLES = 5` 次，经现有 `_run_map_with_client` 并发；执行器报失败的调用（含截断抛出的 `IncompleteResponseError`）与不合法样本（不是 JSON 对象，或两键不都是数组）都不计票；合法样本不足 `IDENTIFY_JUDGE_QUORUM = 3` 份即抛 `DistillError`。计票是 `roster_aggregate` 里的纯函数：每份样本里每条 merge 拆成两两组对、每个组对每份样本只计一票，impersonal 按主名计票，≥ 3 票生效。impersonal 按并组前的组名标注，并组后「所并各组全为 impersonal」才算。依据：本节上文 5 次实测中，泛称组 婆子/小丫头 5/5、小厮 4/5，B 清单 23 个真人物 0/5；单次调用约 1/5 的概率漏标小厮，错并（藕官/豆官）仅 1/5。
+4. 生效的合并组对与 impersonal 各打印一行，前缀分别为 `[distill] identify judge merge=` 与 `[distill] identify judge impersonal=`，与本文件现有诊断输出同一方式（`print`，如 `core/distiller.py:1073`），用于定位尤二姐被并入尤氏组的环节。
+5. `IDENTIFY_VERSION` 保持 4（未合入 main，库中无 `characters_version = 4` 的行）；注释补一行说明本修订。
+
+**全书判定提示词原文**（逐字）：
+```
+下面是从同一部作品的不同片段里各自识别出的角色分组清单，每组一行。
+这些组已经按「主名相同」和「别名唯一指向另一个主名」归过一轮。请只列出下面两类例外，其余一律不列：
+1. merge —— 同一个人在不同片段里用了两个都像主名的称呼，被分成了两组。拿不准的一律不合并：把两个人并成一个，比漏并更糟。
+2. impersonal —— 主名不指书中某一个具体的人：职业、身份、类别的通称，或一群人。称呼里含姓或名，或是只指一个人的专有封号、法号、绰号，都算具体的人，不要列。例：「店小二」「众好汉」要列；「王婆」「林教头」「花和尚」不列。拿不准的不列。
+只返回一个 JSON 对象，格式：
+{"merge": [["主名A", "主名B"]], "impersonal": ["主名"]}
+某一类没有时写空数组。不要返回任何其他内容。
+```
+**逐片提示词改动**（逐字）：在「只返回 JSON 数组，格式：」那一行之前加一行
+```
+spoke：本段中此人是否亲口说了话（原文里有他本人说的直接引语）；只被别人提到、或只有动作没有说话，填 false。
+```
+格式行改为
+```
+[{"name": "主名", "aliases": ["别名1", "别名2"], "importance": "主要/次要", "spoke": true, "reason": "简述"}]
+```
+
+**已查实的约束**（基线 `80823ae`，代码与 `defc776` 相同；执行方 S0 逐条复核）
+1. `IDENTIFY_SYSTEM_PROMPT`（`core/distiller.py:67-82`）由单分片（`:1139`、`:1149`）与多分片（`:1181`）共用。
+2. `IDENTIFY_ALIAS_PROMPT`（`:89-100`）只被 `_identify_alias_pairs`（`:1224`）使用，经 `_chat_accounted(stream=True)`（`:1243`）与 `_parse_json_with_retry`（`:1247-1251`）。
+3. `_identify_over_chunks`（`:1164`）：Map 经 `_run_map_with_client`（`:1183`），任一分片失败即 `DistillError`（`:1204-1214`），归组 `:1216`，并组与出名单 `:1221-1222`。
+4. `_run_map_with_client`（`:1541`）→ `_run_map_concurrent`（`:1566`）：每次尝试经 `async_chat`（`adapters/llm_adapter.py:803`），`max_tokens` 缺省取 `llm.max_tokens`（`:824`；`config.example.yaml:12` 为 4096），单次尝试上限 `_GEN_ATTEMPT_S` 45 s（`:105`），整条重试链上限 `_GEN_BATCH_DEADLINE_S`（`:124`，约 152 s），排队时间顺延（`:837`）；整阶段用量汇总记一行（`core/distiller.py:1639`）。
+5. `core/roster_aggregate.py`：`_MAIN_MARK`（`:29`）、`_Obs`（`:32`）、`_observations`（`:76`）、`_assemble_group`（`:114`）、`alias_prompt_rows`（`:240`）、`_strip_ambiguous`（`:258`，`{**group, "aliases": …}` 保留其余键）、`merge_identify_groups`（`:270`）、`_reason`（`:309`）、`finalize_identify_roster`（`:321`，主次判据 `:335-339`）。
+6. 前端只读 `importance`、`reason`（`web/frontend/src/components/CharCard.jsx:467-476`）；`target_character_name` 取名单首项（`core/character_roster.py:75-87`），名单顺序即缺省蒸馏对象。
+7. 验收脚本 identify 模式：`main` 按主名 ∪ 别名解析，要求恰 1 组且为主要（`tests/perf/longbook_acceptance.py:298-305`）；`generics` 要求不是任何组的 name（`:317`），与本修订（泛称组保留为次要）不兼容，本段验收传空；主要人物名单由 `major_names`（`:331`）读出。
+8. `tests/test_identify_whole_book.py:10-12`、`:161-203` 锁的是「合并阶段 1 次、走 chat_stream_long」，本修订按设计改变，相应测试替换。
+
+**路径机制与本改动**
+| 机制 | 现有前提 | 是否改变 → 处理 |
+|---|---|---|
+| 执行器输出上限 4096 | 输出短 | 判定只列例外；5 次实测含别名分类时 774–3414 tokens，去掉后更短；最坏把 352 个组名全列约 2.5k < 4096 |
+| 单次尝试 45 s | 45 s 内生成完 | 常态 5–10 s（实测 5351 输入 / 774 输出用 7.5 s）；最坏 2.5k tokens 约 35 s，仍在限内 |
+| 自适应并发闸 | 按账号上限 | 5 路远低于上限；上限更低时排队，排队时间顺延总时限 |
+| 用量记账 | 一次执行器调用记一行 | 判定 5 次汇总成一行（原先合并调用 1 次一行） |
+| 重修环 | 原合并调用失败时再修 2 次 | 判定不走重修环：失败或不合法的样本不计票，合法 < 3 份即整体失败 |
+| 失败语义 | 任一环节失败即整体失败，不进缓存、不落库 | 不变 |
+| memo | 键含 `IDENTIFY_VERSION` | 版本不变；库中无 v4 名单；验收前重建后端容器，进程内 memo 清空 |
+
+**真实规模核算**（242 片；上次成功识别实测：Map 输入 692097 / 输出 156313 tokens，合并调用输入 8043 / 输出 100；DeepSeek 空闲时段 输入 4.5 元/百万、输出 13.5 元/百万）
+- 逐片：每片平均输出约 646 tokens；`spoke` 每人约 +6 tokens，按每片约 12 人估 +11% ⇒ Map 约 90–120 s（原 80–110 s），花费上界约 5.4 元（未计缓存折扣，上次实扣约 4 元）。
+- 判定：5 × 8k 输入约 0.18 元，输出可忽略；5 路并行约 10 s；最坏（重试链耗尽）152 s。
+- 整请求：常态约 2–2.5 分钟；最坏约 120 + 152 = 272 s，小于 480 s 验收门与 600 s 时限。
+
+**测试**（本地只跑受影响的文件 + `npm test`，库用 Docker 起的 PG；合并门是分支 CI；合并只做 git 操作）
+- 删除或替换：锁旧判据（≥ 2 个主要分片 / ≥ 10%）的测试，锁「合并走流式 1 次」「重修也走流式」的测试。受影响文件以 grep 定位（`IDENTIFY_ALIAS_PROMPT`、`_identify_alias_pairs`、`finalize_identify_roster`、`merge_identify_groups`、`IDENTIFY_SYSTEM_PROMPT`、`_MAIN_MARK`、`group_identify_entries`、`importance`）。
+- 纯函数（`tests/test_roster_aggregate.py`）：
+  - T1：说话分片 5 → 次要，6 → 主要；
+  - T2：impersonal 组即使说话 40 片也是次要，且仍在名单里；
+  - T3：两组各自说话 4 片（分片不重叠）经组对合并 → 8 片、主要；重叠分片只计一次；
+  - T4：impersonal 随并组传递——泛称组并入具体人物组 → 不是；两个泛称组互并 → 仍是；
+  - T5：计票——组对 3/5 生效、2/5 不生效；一条含 3 个主名的 merge 拆成 3 个组对计票；impersonal 3/5 生效；
+  - T8：输出每项恰为五个键（含 `speak_chunks`），按说话分片数降序；理由取自本人说话的分片；
+  - T9：出现 30 片、说话 2 片 → 次要（「和尚」形态：出场多不等于能蒸馏）；
+  - T10：`spoke` 为字符串 `"false"` / `"true"`、数字 `1`、缺省时都不计入说话分片（只认 JSON `true`）。
+- 编排（`tests/test_identify_whole_book.py`，LLM 桩）：
+  - T6：5 份判定只有 2 份合法 → `DistillError`，结果不进 memo；
+  - T7：5 次判定并发——桩对判定提示词每次睡 0.3 s，判定阶段总耗时 < 1.0 s（串行为 1.5 s），按比例复刻「5 路并行约等于单次」；
+  - T11：从 `identify_characters` 入口走完整条链路：7 片，甲在 6 片 `spoke: true` → 主要且排在名单首项；乙出现 7 片、只在 1 片说话 → 次要；判定恰好调 5 次，每次系统提示词为 `IDENTIFY_JUDGE_PROMPT`，5 次 user 内容相同，且不含任何分片的 `reason` 与正文；标准输出含 `[distill] identify judge merge=` 与 `[distill] identify judge impersonal=` 两行；
+  - T12：判定 5 次中 2 次由执行器报失败（其中 1 次为 `IncompleteResponseError`）、3 次合法 → 正常出名单；3 次失败 → `DistillError`；
+  - T13：用量——非空名单的一次识别记恰好 2 行 `distill_identify`（逐片汇总 1 行、判定汇总 1 行，判定那行的调用次数为 5）；
+  - T14：单分片文本不调判定（0 次判定调用），名单原样返回模型给的 `importance`。
+
+**真实模型小样**（全书识别之前；约 10 次真实调用、约 0.1 元）
+- 从本地库 `texts.id = 9e469e693f76` 的原文里，取行首为「第三十九回」的标题起、到行首为「第四十二回」的标题前的全文（刘姥姥二进荣国府），用临时脚本 `e2e/scratch/wp16_spoke_probe.py`（不提交）以真实适配器直接调 `Distiller.identify_characters`（不经路由、不写库）。
+- 同一段原文按生产切片（`Distiller._split_chunks`，`chunk_size` 与生产一致）用正则数「本人说话的分片」作对照：人名 +（至多 8 个非标点字符）+「道：」或「说：」+ 左引号（“ 或 「），正则为 `(名字)[^，。！？“”「」：；\n]{0,8}(?:道|说)：[“「]`；名字取：刘姥姥；贾母；王熙凤 → 「凤姐」「王熙凤」。
+- 门槛：S1 调用成功、5 份判定至少 3 份合法；S2 刘姥姥、贾母、王熙凤三人名单中的 `speak_chunks` 各自 ≥ 正则计数 − 1（正则命中是高精度的正例，模型漏标超过 1 片即判为召回不足）。任一不成立：停下报告，不做全书识别。
+
+**全书验收**（小样通过之后；授权恰好 1 次全书识别请求，约 4.5–5.5 元，空闲时段；失败即停，不重试）
+- 重建后端容器后跑 `tests/perf/longbook_acceptance.py --mode identify --text-id 9e469e693f76`，criteria 为：`{"main": ["贾宝玉", "林黛玉", "薛宝钗", "王熙凤", "贾母", "王夫人", "袭人", "晴雯", "平儿", "探春", "妙玉", "刘姥姥"], "same_group": [], "generics": [], "generic_not_on": []}`。
+- 门槛（全部成立才过）：G1 请求成功且整请求 ≤ 8 分钟；G2 `main_ok` 为 12/12；G3「和尚」「婆子」「小丫头」「小厮」都不在 `major_names` 里。
+- 只报告、不设门槛：主要人物总数与名单（审计估算约 59 人，来自不同版本，仅作参照）；尤二姐是否单独成组及其主次；判定打印的两行；库中名单全部主要人物的 `speak_chunks`；本次用量行。
 ### WP9 真实验收
 第 10 节。合并进 main 前必须做完；拆分执行时，放在最后一个触及蒸馏路径的执行 spec 里。
 
