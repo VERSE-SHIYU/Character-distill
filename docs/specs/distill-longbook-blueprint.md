@@ -502,7 +502,7 @@ spoke：本段中此人是否亲口说了话（原文里有他本人说的直接
 3. **默认模型**（`bb030af`）：`config.example.yaml` 的 `model: deepseek-v4-pro → deepseek-flash`。
 4. **分组**：`relationships` 从 G4 拆成 G5（`d7f7517`）—— 见 §4 WP7 的「分组更正」，本文件其余「4 组」一律读作 5 组。
 
-依据：DeepSeek 官方 Models & Pricing（v4-pro 上下文 1M / 最大输出 384K）<https://api-docs.deepseek.com/quick_start/pricing>；Context Caching 指南（前缀匹配）<https://api-docs.deepseek.com/guides/kv_cache>；V4.1-Flash 公告（2026-09-10）<https://api-docs.deepseek.com/zh-cn/updates/>。
+依据：DeepSeek 官方 Models & Pricing（v4-pro 上下文 1M / 最大输出 384K）<https://api-docs.deepseek.com/quick_start/pricing>；Context Caching 指南（前缀匹配）<https://api-docs.deepseek.com/guides/kv_cache>；V4.1-Flash 发布公告（2026-09-10）<https://api-docs.deepseek.com/news/news260910> —— 该页宣布 2026-09-14 起把 `deepseek-v4-pro` 路由到 V4.1-Flash，但更新日志 2026-09-10 条随后改为「9 月 14 日之后继续提供 V4 Pro API，计费方式不变」（<https://api-docs.deepseek.com/updates>）；换默认模型依据的是新闻页的多方测试结论与 V4-Pro 逐步下线的计划。
 
 ## 7. 时间推导
 

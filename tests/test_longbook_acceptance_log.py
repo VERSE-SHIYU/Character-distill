@@ -135,3 +135,21 @@ def test_a_task_that_did_not_end_done_stops_the_run():
 def test_a_task_that_ended_done_does_not_trip_the_final_state_stop():
     """基线：终态 done 时这条判据不发声 —— 否则它会盖住真正该报的判据。"""
     assert acc.over_limit(_stats(final="done"), acc.count_log(None), _clean_env()) == []
+
+
+def test_a_batch_over_the_merge_cap_stops_the_run():
+    """批次的疑截断线取自 `Distiller.LONG_OUTPUT_MAX_TOKENS`，不在脚本里另存一份。
+
+    批次 completion 是**归并**的产物，上限定义在 `core/distiller.py`。脚本原先自己写
+    8192 —— 那是**格式化各组**的上限，归并早已改成 16384：这条判据于是两头都错，
+    10000 的批次（已超归并上限、没到 16384）被判成没截断。变异：把线写回 8192 → 本条红。
+    """
+    def _with_batch(tok: int) -> dict:
+        s = _stats()
+        s["stages"] = {"batches": [{"tok": tok}]}
+        return s
+
+    assert acc.over_limit(_with_batch(10_000), acc.count_log(None), _clean_env()) == []
+    why = acc.over_limit(
+        _with_batch(acc.Distiller.LONG_OUTPUT_MAX_TOKENS), acc.count_log(None), _clean_env())
+    assert len(why) == 1 and "疑截断" in why[0], why
