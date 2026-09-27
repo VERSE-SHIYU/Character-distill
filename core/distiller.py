@@ -413,6 +413,12 @@ class Distiller:
 
     SAFE_SINGLE_REDUCE = 80
     CARD_MAX_TOKENS = 8192  # 角色卡 JSON 长输出需要更大 token 上限
+    #: 一次读完（`_distill_longcontext*`）与合并（`_single_reduce*`）的输出上限 ——
+    #: 这两处的产物是**整份档案**，不是卡的分片。官方给定 deepseek-v4-pro 最大输出
+    #: 384K token（https://api-docs.deepseek.com/quick_start/pricing），16384 是它的
+    #: 1/24：够装一份完整档案，又给「输出跑飞」留了封顶代价。格式化各组仍用
+    #: `CARD_MAX_TOKENS` —— 每组只出卡的一部分，上限不必跟着放大。
+    LONG_OUTPUT_MAX_TOKENS = 16384
     #: 归并/压缩结果的字数上限。DeepSeek 官方换算 1 个中文字符 ≈ 0.6 token，8000 字
     #: ≈ 4800 tokens，是 `CARD_MAX_TOKENS` 的 59% —— 剩下一半给提示词、JSON 骨架与
     #: 格式化阶段，归并正文才不至于顶到输出上限被 `finish_reason=length` 截断（缺陷：
@@ -477,7 +483,10 @@ class Distiller:
         distill_cfg = data["distill"]
         self._chunk_size: int = int(distill_cfg.get("chunk_size", 3000))
         self._max_profile_len: int = int(distill_cfg.get("max_profile_len", 2000))
-        self._longctx_threshold: int = int(distill_cfg.get("longctx_threshold", 150000))
+        # 官方给定 deepseek-v4-pro 上下文 1M token（https://api-docs.deepseek.com/quick_start/pricing）；
+        # 90 万是留给提示词与输出的余量。分片路径留给超过 90 万 token 的书 —— 实测红楼梦
+        # 866,149 字 ≈ 519,689 token（app 日志原文），整本一次读完即可，不必再拆。
+        self._longctx_threshold: int = int(distill_cfg.get("longctx_threshold", 900000))
         self._map_concurrency: int = max(1, int(distill_cfg.get("map_concurrency", 30)))
 
     def _try_record_usage(self, action: str = "distill", usage: dict | None = None) -> None:
@@ -1523,7 +1532,10 @@ class Distiller:
         )
 
         user_messages = [{"role": "user", "content": user_content}]
-        reply, upstream_truncated = self._chat_accounted(system_prompt, user_messages, "整本蒸馏", "distill_longcontext")
+        reply, upstream_truncated = self._chat_accounted(
+            system_prompt, user_messages, "整本蒸馏", "distill_longcontext",
+            max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
+        )
 
         data = self._parse_json_with_retry(
             reply, system_prompt, user_messages,
@@ -1544,19 +1556,24 @@ class Distiller:
             print(f"生成 CharacterCard JSON Schema 失败：{exc}")
             raise
 
+        # 「全文在前、角色相关指令在后」是为了同一本书的不同角色共享前缀、命中 Context
+        # Caching：官方规则是**前缀**匹配，共享段必须落在请求最前面（
+        # https://api-docs.deepseek.com/guides/kv_cache：「A subsequent request can only
+        # hit the cache if it fully matches a cache prefix unit」）。原先角色名写在系统
+        # 提示开头，同一本书换个角色从第 1 个 token 就分叉，正文永远进不了共享前缀。
+        # 因而正文放在**系统段**：它是唯一排在 user 消息之前的位置。
         system_prompt = (
-            DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
+            "以下是完整的文本内容：\n\n" + text + "\n\n"
+            + DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
         )
-        user_content = (
-            f"以下是完整的文本内容，请基于全文为「{character_name}」生成角色卡。\n\n{text}"
-        )
+        user_content = f"请基于以上全文为「{character_name}」生成角色卡。"
 
         yield {"status": "formatting"}
         tc = 0
         usage: dict | None = None
         stream = self._llm.chat_stream_long(
             system_prompt, [{"role": "user", "content": user_content}],
-            max_tokens=self.CARD_MAX_TOKENS,
+            max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
         )
         while True:
             try:

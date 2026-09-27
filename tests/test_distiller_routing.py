@@ -346,6 +346,54 @@ class TestRouting:
                 pass
             mock_long.assert_not_called()
 
+    # ── 默认阈值（上面每个用例都把 150000 钉死了，默认值只有这里看得到）──
+
+    def test_a_book_at_hongloumeng_scale_takes_one_pass_at_the_default_threshold(self):
+        """默认阈值下：52 万 token 走一次读完，95 万 token 走分片。
+
+        挡住：把默认值退回 150000 —— 红楼梦（实测 519,689 token）会掉进分片路径，
+        也就是归并撞输出上限那条路。判据只看**走哪条路**，不看阈值是几。
+        """
+        d = Distiller(llm=self.distiller._llm, config_path=None)
+        text = "测试" * 100
+        with patch.object(Distiller, "_estimate_tokens", return_value=519_689):
+            with patch.object(d, "_distill_longcontext_stream", return_value=iter([])) as one_pass:
+                list(d.distill_incremental_stream(text, "角色"))
+            one_pass.assert_called_once()
+        with patch.object(Distiller, "_estimate_tokens", return_value=950_000):
+            with patch.object(d, "_distill_longcontext_stream") as one_pass:
+                try:
+                    list(d.distill_incremental_stream(text, "角色"))
+                except Exception:
+                    pass
+            one_pass.assert_not_called()
+
+    def test_the_one_pass_request_puts_the_whole_text_before_the_character_name(self):
+        """一次读完的请求里，全文排在角色名之前 —— 否则跨角色前缀不共享，缓存恒不命中。
+
+        Context Caching 按**前缀**匹配（命中要求从头逐 token 相同，
+        https://api-docs.deepseek.com/guides/kv_cache），所以共享的正文必须落在请求
+        最前面。挡住：把角色名放回系统提示开头（改前的结构，同一本书换个角色从第 1
+        个 token 就分叉）。
+        """
+        llm = MagicMock()
+        llm.last_usage = None
+        seen: list[tuple] = []
+        llm.chat_stream_long.side_effect = lambda system, messages, max_tokens=None: (
+            seen.append((system, messages, max_tokens)), iter([])
+        )[1]
+        d = Distiller(llm=llm, config_path=None)
+        text = "此处是正文。" * 40
+        name = "独一无二的测试角色"
+        with patch.object(Distiller, "_estimate_tokens", return_value=1_000):
+            list(d.distill_incremental_stream(text, name))
+
+        system, messages, max_tokens = seen[0]
+        assert text in system, "全文不在一次读完请求里"
+        assert system.index(text) < system.index(name), "角色名出现在全文之前，前缀无法共享"
+        assert text not in "".join(m["content"] for m in messages), "全文被送了两遍（system 里一份、user 里又一份）"
+        assert max_tokens == Distiller.LONG_OUTPUT_MAX_TOKENS
+
 
 class TestAsyncChatClientParam:
     """async_chat(client=...) uses the right client without affecting the default."""
