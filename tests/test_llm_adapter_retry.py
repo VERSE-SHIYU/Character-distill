@@ -331,6 +331,51 @@ def test_async_chat_500_storm_capped(monkeypatch):
     assert fake.chat.completions.calls == 3
 
 
+# ── WP12 S5：async_chat 用生成轮墙钟预算，重试不被 60s 总闸饿死 ──────────────
+#
+# 旧 `async_chat` 复用 `_GEN_DEADLINE_S=60`：第 1 次 attempt 吃满 45s ceiling 一晃掉，
+# 退避后第 2 次只剩约 9s、第 3 次分不到时间（生产：02:56:16 超时 → 02:56:31「2 次
+# 尝试均失败」；同一片单发 10s 就完了，60 并发整轮 31s 零失败）。假时钟把「等 45s」
+# 变成拨表，不真等墙钟。
+
+
+def _starved_retry_llm(monkeypatch, succeed_on: int):
+    """前 `succeed_on - 1` 次 attempt 各吃满 `_GEN_ATTEMPT_S` 才超时，之后成功。"""
+    clock = _FakeClock()
+    monkeypatch.setattr(M, "time", SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep))
+    llm = _make_llm()
+    calls = {"n": 0}
+
+    def behavior():
+        calls["n"] += 1
+        if calls["n"] < succeed_on:
+            clock.now += M._GEN_ATTEMPT_S           # 该 attempt 用满 ceiling 才超时
+            raise RuntimeError("upstream read timeout")
+        return _Resp("ok")
+
+    llm._async_client = _AsyncClient(behavior)
+    return llm, calls
+
+
+def test_async_chat_retry_not_starved_by_total_deadline(monkeypatch):
+    llm, calls = _starved_retry_llm(monkeypatch, succeed_on=3)
+
+    result, _usage = asyncio.run(llm.async_chat("sys", [{"role": "user", "content": "hi"}]))
+
+    assert result == "ok"
+    assert calls["n"] == 3, "重试被总墙钟饿死：第 3 次没轮到"
+
+
+def test_achat_keeps_the_interactive_deadline(monkeypatch):
+    """群聊 / 审核走 `achat`，仍按交互式 60s 封顶 —— 长预算只给批量 Map。"""
+    llm, calls = _starved_retry_llm(monkeypatch, succeed_on=3)
+
+    with pytest.raises(RuntimeError, match="failed after 2 attempts"):
+        asyncio.run(llm.achat("sys", [{"role": "user", "content": "hi"}]))
+
+    assert calls["n"] == 2
+
+
 def test_chat_stream_retries_create_once_then_streams(monkeypatch):
     monkeypatch.setattr(M, "_STREAM_BACKOFF_S", 0.01)
     llm = _make_llm()

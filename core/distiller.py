@@ -23,11 +23,20 @@ from openai import AsyncOpenAI
 
 from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_facing_error
 from core.chat_preprocessor import ChatPreprocessor
+from core.roster_aggregate import (
+    alias_prompt_rows,
+    finalize_identify_roster,
+    group_identify_entries,
+    merge_identify_groups,
+    tally_judge_samples,
+    usable_alias,
+)
 from core.schema import CharacterCard, FORMAT_GROUPS, PRESET_TAGS, format_group_schema
 from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
 from core import telemetry as T  # OTel 埋点
 from core import concurrency as C  # 派生与上下文传播
 from core.nonfatal import nonfatal
+from core.request_context import current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -41,46 +50,58 @@ _IDENTIFY_CACHE: OrderedDict[str, tuple[list[dict[str, Any]], float]] = OrderedD
 _IDENTIFY_CACHE_LOCK = threading.Lock()
 
 
-#: 别名收录规则：识别与合并**共用这一段文本**，不写两份。
+#: 别名收录规则：只喂给**逐片识别**那一步。合并那一步不再让模型收录别名 —— 一个人的
+#: 多个称呼由代码从各组已收录的别名里取，有歧义的按最终分组移除（`core/roster_aggregate.py`
+#: 的 `merge_identify_groups`），模型不经手别名。
 #: 别名在下游是按子串匹配用的（蒸馏选片 `any(t in c for t in match_terms)`、RAG 打标签
 #: `rag.py:_tag_characters`），所以一个多人共用的称呼一旦进了 aliases，就会把别人的场景
 #: 误标给此人。判据交给 LLM，代码里不加子串/规则推断。
 ALIAS_UNIQUENESS_RULE = (
-    "aliases 只收录在全文范围内唯一指向此人的称呼；"
-    "多人共用的泛称（如「二爷」同时指宝玉和贾琏、「太太」「老爷」「奶奶」）一律不收录。"
+    "aliases 只收录在全文范围内唯一指向此人的名字变体（可带称号）；"
+    "多人共用的泛称（如「二爷」同时指宝玉和贾琏、「太太」「老爷」「奶奶」）、"
+    "代词、通称、纯关系称呼一律不收录。"
 )
 
+#: 「有名字」的定义（WP16）：文献里的人物清单只保留有专名提及的共指簇，通称不与专名共指。
+#: 不写死定义，模型会照日常语感把泛称也当人物收进来 —— 版本 3 的实测名单里就有「和尚」
+#: 和一个名为「婆子」的组。
 IDENTIFY_SYSTEM_PROMPT = (
     "阅读以下文本，找出所有有名字且有对话或行为描写的角色。\n"
-    "关键要求：如果同一个人有多个称呼（全名、昵称、绰号、姓氏、官职、敬称、代称），"
+    "「有名字」指称呼里含姓、名，或只指一人的专有封号/法号："
+    "「刘姥姥」「王夫人」「贾母」「凤姐」「周瑞家的」「北静王」「警幻仙姑」算；"
+    "「婆子」「和尚」「丫头」「老嬷嬷」不算 —— 谁都能用、指不特定一人的称呼不是名字。\n"
+    "关键要求：如果同一个人有多个称呼（全名、昵称、绰号、姓氏、官职、敬称），"
     "必须归为一组。选最常用的全名作 name，其余放入 aliases。\n"
     + ALIAS_UNIQUENESS_RULE + "\n"
     '例如：魏无羡/魏婴/夷陵老祖 → name: "魏无羡", aliases: ["魏婴", "夷陵老祖"]\n'
     '例如：汪东城/大东 → name: "汪东城", aliases: ["大东"]\n'
     "\n"
+    "spoke：本段中此人是否亲口说了话（原文里有他本人说的直接引语）；"
+    "只被别人提到、或只有动作没有说话，填 false。\n"
     "只返回 JSON 数组，格式：\n"
     '[{"name": "主名", "aliases": ["别名1", "别名2"], '
-    '"importance": "主要/次要", "reason": "简述"}]\n'
+    '"importance": "主要/次要", "spoke": true, "reason": "简述"}]\n'
     "不要返回任何其他内容。"
 )
 
-#: 多分片识别的合并提示：各分片各列各的名单，同一人会在不同分片里被反复列出、
-#: 且各分片看不到对方的判断——归组与主次必须在这一步按**全书**重判。输出格式与
-#: ``IDENTIFY_SYSTEM_PROMPT`` 相同（都是 JSON 数组），故沿用同一个解析器。
-IDENTIFY_MERGE_PROMPT = (
-    "以下是从同一部作品的不同片段中各自识别出的角色名单，片段之间可能有重复。\n"
-    "请合并为一份全书名单：\n"
-    "1. 同一个人在不同片段里的不同称呼（全名、昵称、绰号、姓氏、官职、敬称、代称）"
-    "必须归为一组，不要因为分片而重复列出；\n"
-    "2. 选最常用的全名作 name，其余称呼放入 aliases；\n"
-    "3. " + ALIAS_UNIQUENESS_RULE + "\n"
-    "4. importance（主要/次要）按此人在**全书**中的戏份判，不按单个片段里的出现次数；\n"
-    "5. reason 保留最具体的一条。\n"
-    "\n"
-    "只返回 JSON 数组，格式：\n"
-    '[{"name": "主名", "aliases": ["别名1", "别名2"], '
-    '"importance": "主要/次要", "reason": "简述"}]\n'
-    "不要返回任何其他内容。"
+#: 全书判定的提示：逐片名单已经在代码里归过一轮组（同名必同组、唯一别名并组、
+#: 有歧义的别名已移除），剩下两类代码认不出来 —— 同一个人在不同分片里用了两个都像
+#: 主名的称呼（merge），以及主名根本不指某一个具体的人（impersonal，泛称组要留但
+#: 不能当蒸馏对象）。
+#: **不送**理由、正文、主次：那些都由代码算（`core/character_roster.py`），送了不但
+#: 白烧 token，还会把判断从「这是不是一个人」拖到「谁戏份多」。
+IDENTIFY_JUDGE_PROMPT = (
+    "下面是从同一部作品的不同片段里各自识别出的角色分组清单，每组一行。\n"
+    "这些组已经按「主名相同」和「别名唯一指向另一个主名」归过一轮。"
+    "请只列出下面两类例外，其余一律不列：\n"
+    "1. merge —— 同一个人在不同片段里用了两个都像主名的称呼，被分成了两组。"
+    "拿不准的一律不合并：把两个人并成一个，比漏并更糟。\n"
+    "2. impersonal —— 主名不指书中某一个具体的人：职业、身份、类别的通称，或一群人。"
+    "称呼里含姓或名，或是只指一个人的专有封号、法号、绰号，都算具体的人，不要列。"
+    "例：「店小二」「众好汉」要列；「王婆」「林教头」「花和尚」不列。拿不准的不列。\n"
+    "只返回一个 JSON 对象，格式：\n"
+    '{"merge": [["主名A", "主名B"]], "impersonal": ["主名"]}\n'
+    "某一类没有时写空数组。不要返回任何其他内容。"
 )
 
 DISTILL_PROMPT_BEFORE_NAME = """你是一个角色分析专家。从给定文本中精确提取角色 \""""
@@ -386,19 +407,24 @@ class Distiller:
 
     SAFE_SINGLE_REDUCE = 80
     CARD_MAX_TOKENS = 8192  # 角色卡 JSON 长输出需要更大 token 上限
-    #: 合并全书名单的输出上限 —— 整本书的花名册装不进 CARD_MAX_TOKENS。
-    #: 依据：DeepSeek 官方 deepseek-v4-pro 最大输出 384K
-    #: （https://api-docs.deepseek.com/quick_start/pricing）；红楼梦级名单估算 2–3 万字符
-    #: ≈ 1.5–2 万 tokens，取约 3 倍余量。流式没有总时长上限（核实见
-    #: adapters/llm_adapter.py:720-738：budget 只包 create() 返回前），故这个值只受模型
-    #: 输出上限约束，不被生成轮 45s/60s 的墙钟夹逼。**只给合并用**：不改 config.yaml，
-    #: 也不动其他路径的 CARD_MAX_TOKENS。真撞上限仍按截断路径抛，不加兜底。
-    IDENTIFY_MERGE_MAX_TOKENS = 65536
     #: 角色识别算法的版本：口径（提示词 / 覆盖范围 / 合并规则）一改就 +1。
     #: 名单落库时带此版本，读回时版本不符即当无缓存 —— 旧版本的名单是残缺的
     #: （只覆盖前 1 万字那版只认头两章），沿用比重算更糟。值是**唯一定义**，
     #: 存储层与 `core/character_roster.py` 都从这里取，不许各写各的字面量。
-    IDENTIFY_VERSION = 2
+    #: 3：合并从「模型重写整份名单」改成「代码归组 + 模型只判别名」—— 主次与理由的
+    #: 算法也换了（原先由模型按全书重判，现在按出现分片数与判主次的分片数计）。
+    #: 4：提示词给「有名字」下了定义（WP16）—— 只收含姓/名/专有封号法号的称呼与名字
+    #: 变体别名，泛称、代词、纯关系称呼不收。口径变了，旧名单必须失效。
+    #: 4（同版修订，未合入 main）：逐片提示词加 `spoke`，主次改由「本人说话的不同
+    #: 分片数 ≥ MIN_SPEAK_CHUNKS 且非泛称」判定；全书判定输出改 `merge` / `impersonal`
+    #: 两键、取 5 次独立采样的多数票。
+    IDENTIFY_VERSION = 4
+
+    #: 全书判定的独立采样次数：同一输入、同一提示词下单次调用的例外清单随采样大幅
+    #: 漂移（实测两次交集很小），故按 self-consistency（Wang et al., ICLR 2023）取多数票。
+    IDENTIFY_JUDGE_SAMPLES = 5
+    #: 生效所需票数。合法样本不足这个数即整体失败 —— 拿一两份当结论比不判更糟。
+    IDENTIFY_JUDGE_QUORUM = 3
 
     def __init__(
         self,
@@ -624,10 +650,13 @@ class Distiller:
     def _unfinished_kind(exc: BaseException) -> tuple[str, str]:
         """未完成终态的**唯一**判据 —— ``(kind, content)``，``kind`` ∈ ``{"", "truncated", "fatal"}``。
 
-        全仓只此一处读 `incomplete_response_info`、也只此一处把 finish_reason 与
+        **判处置**只此一处读 `incomplete_response_info`、也只此一处把 finish_reason 与
         ``length`` 比。下游两个问题都从这一个结果派生，判法不会在两处分叉：
         `_truncation_evidence` 问「有没有可修的截断证据」，`_unfinished_disposition`
         问「重修环该不该上抛」。``content`` 只在 ``"truncated"`` 时可能非空。
+
+        `_judge_groups` 另有一处**纯诊断**读取（判定样本截断时记一条日志），不含任何
+        判法分支 —— 分档口径仍只在这里。
 
         - ``"truncated"``：``length`` 终态（含空正文那一格）；
         - ``"fatal"``：其余未完成终态（``content_filter`` 要改输入、资源不足可稍后重试）；
@@ -801,6 +830,7 @@ class Distiller:
         list_item_keys: tuple[str, ...] | None = None,
         stream: bool = False,
         max_tokens: int | None = None,
+        allow_empty: bool = False,
     ) -> dict[str, Any] | list[dict[str, Any]]:
         """增强 JSON 解析：清理 → fix_reply → 重调 LLM，最多 3 次尝试。
 
@@ -816,14 +846,15 @@ class Distiller:
             upstream_truncated: 上游是否已确定截断（`_chat_accounted` 拿到 length
                 终态时为 True）。确定信号预置 ``truncated``，无需再从文本形状猜；
                 厂商不回 finish_reason 时保持 False，由 `_looks_truncated` 兜底。
-            list_item_keys: 目标形态切到**数组**——非空、每项都是含这些字段的 dict。
-                不给时是角色卡（dict + ``required_keys``）。识别结果的合并走这一支：
-                它与 ``IDENTIFY_SYSTEM_PROMPT`` 输出同格式（JSON 数组），所以共用这
-                同一个重修环，而不是再写一份。
-            stream: 两次重修调用是否走流式。初次调用已经是流式的长输出（合并），
+            list_item_keys: 目标形态切到**数组**——默认非空、每项都是含这些字段的 dict。
+                不给时是角色卡（dict + ``required_keys``）。识别结果的**别名判断**走这一支：
+                它输出的是组对数组，借同一个重修环，而不是再写一份。
+            stream: 两次重修调用是否走流式。初次调用已经是流式的长输出（别名判断），
                 重修若退回非流式就还是会撞 45s/60s 的生成墙钟上限——通道必须一致。
-            max_tokens: 重修调用的输出上限，默认 ``CARD_MAX_TOKENS``。长输出（合并）
-                要显式抬高：上限不够时重修出来还是半截，重试没有意义。
+            max_tokens: 重修调用的输出上限，默认 ``CARD_MAX_TOKENS``。
+            allow_empty: ``list_item_keys`` 那支里空数组算不算合格。默认不算——「合并把整本
+                书的角色丢光了」是失败；别名判断的「谁都不用并」恰好是**正确**答案，空集
+                必须收下：不收就是拿一张好答卷进重修环，让模型把对的改成错的。
 
         Returns:
             解析后的 dict（默认）或 list[dict]（``list_item_keys`` 给定时）。
@@ -852,11 +883,13 @@ class Distiller:
             schema_hint = "，必须包含字段：" + "、".join(required_keys) if required_keys else ""
         else:
             def _accept(data: Any) -> bool:
-                # 空数组不算合格：合并把整本书的角色丢光了，是失败不是答案
-                return (
-                    isinstance(data, list) and len(data) > 0
-                    and all(_shape_ok(item, list_item_keys) for item in data)
-                )
+                if not isinstance(data, list):
+                    return False
+                if not data:
+                    # 空数组默认不算合格：合并把整本书的角色丢光了，是失败不是答案。
+                    # `allow_empty` 是给「答案本来就可能是空集」的调用开的（别名判断）。
+                    return allow_empty
+                return all(_shape_ok(item, list_item_keys) for item in data)
 
             def _is_shape_candidate(data: Any) -> bool:
                 return isinstance(data, list)
@@ -1041,8 +1074,9 @@ class Distiller:
             落缓存：它是一次成功的识别结果。
 
         Raises:
-            DistillError: 识别失败 —— 单分片两次解析均失败，或多分片失败率越过容忍线。
-                失败走异常，因此**天然不会进缓存**，无需调用方额外判断。
+            DistillError: 识别失败 —— 单分片两次解析均失败，或多分片**任一分片**失败。
+                失败走异常，因此**天然不会进缓存、也不会落库**（`resolve_characters`
+                的 `save_characters` 在识别之后），无需调用方额外判断。
         """
         # 键必须覆盖全部决定输入：文本、模型、**识别口径版本**。少一个，命中就是错的。
         key = f"{text_fingerprint(text)}:{self._llm.model}:{self.IDENTIFY_VERSION}"
@@ -1076,14 +1110,23 @@ class Distiller:
 
     @staticmethod
     def _normalize_identify_items(parsed: Any) -> list[dict[str, Any]]:
-        """识别/合并结果的统一归一：补 aliases、丢掉非对象项（带告警）。"""
+        """识别/合并结果的统一归一：筛 aliases、丢掉非对象项（带告警）。
+
+        别名的长度判据与多分片汇总共用一处（`roster_aggregate.usable_alias`）——
+        单分片路径不经过归组，只走这里；判据漏了这一条，短文本的名单就带着单字
+        称呼落库，下游按子串选片时几乎命中每一片。
+        """
         if not isinstance(parsed, list):
             print("角色识别结果不是 JSON 数组")
             raise TypeError("expected JSON array")
         out: list[dict[str, Any]] = []
         for idx, item in enumerate(parsed):
             if isinstance(item, dict):
-                item.setdefault("aliases", [])
+                raw = item.get("aliases")
+                item["aliases"] = [
+                    a for a in (str(x).strip() for x in (raw if isinstance(raw, list) else ()))
+                    if a and usable_alias(a)
+                ]
                 out.append(item)
             else:
                 print(f"警告：角色识别数组第 {idx} 项不是对象，已跳过")
@@ -1136,13 +1179,20 @@ class Distiller:
                 )
 
     def _identify_over_chunks(self, chunks: list[str]) -> list[dict[str, Any]]:
-        """逐片识别 + 合并。
+        """逐片识别 → 代码归组 → 一次别名判断 → 出名单。**编排**，算的部分在 roster 里。
 
-        失败率（调用失败 + 结果解析失败）越过 ``_map_failure_exceeds_tolerance`` 即抛：
-        拿半本书的名单当全书名单，比报错更糟。未越线则继续 —— 合并那一步只看拿到的名单。
+        **任一分片失败即整体失败**（调用失败 + 结果解析失败同权计）：名单会经
+        `resolve_characters` → `save_characters` **落库长期复用**（按「文本 + 版本」缓存），
+        用半本书建的名单会一直错下去，用户重试也没用 —— 因为下一次直接命中缓存，
+        根本没有第二次识别。实测（识别验收，2026-09-26）：121/242 片失败恰在 50% 的
+        ``_map_failure_exceeds_tolerance`` 线内（等号不算越线），名单是半本书建的。
+        所以这里不设容忍线，**蒸馏路径那条容忍线不动**：那边有续跑兜底，识别没有。
 
-        未越线、且每一片都解析成空名单 → 返回 ``[]``：这是**真的没有具名角色**，
-        不是识别失败。与单分片同口径 —— 空名单是合法结果，失败才抛。
+        每一片都解析成空名单 → 返回 ``[]``：这是**真的没有具名角色**，不是识别失败。
+        与单分片同口径 —— 空名单是合法结果，失败才抛。
+
+        归组、并组、判主次、取理由都是纯计算（`core/roster_aggregate.py`）；模型只判两件
+        需要判断力的事：哪些组其实是同一个人、哪些主名不指具体的人（`_judge_groups`）。
         """
         def _build_prompt(chunk: str) -> tuple[str, str]:
             return IDENTIFY_SYSTEM_PROMPT, chunk
@@ -1153,22 +1203,22 @@ class Distiller:
 
         total = len(chunks)
         parse_failed = 0
-        parts: list[str] = []
+        # 逐片条目按分片序排好交给纯函数：`_run_map_concurrent` 的 gather 保序，空片
+        # （调用失败 / 解析失败）补一个空列表占位，下标即分片号。
+        per_chunk: list[list[dict[str, Any]]] = []
         for _idx, raw in map_results:
             if not raw.strip():
-                continue          # 该片已在 failures 里计过
+                per_chunk.append([])   # 该片已在 failures 里计过
+                continue
             try:
-                items = self._parse_identify_list(raw)
+                per_chunk.append(self._parse_identify_list(raw))
             except Exception as exc:
                 logger.warning("Identify chunk parse failed: %s", exc, exc_info=True)
                 parse_failed += 1
-                continue
-            if items:
-                # 重新序列化：交给合并的是**已归一**的名单，格式统一、可直接被解析
-                parts.append(json.dumps(items, ensure_ascii=False))
+                per_chunk.append([])
 
         failed = len(failures) + parse_failed
-        if _map_failure_exceeds_tolerance(failed, total):
+        if failed:
             last_error = str(failures[-1][1]) if failures else "分片结果无法解析为角色数组"
             if "429" in last_error:
                 raise DistillError(
@@ -1179,40 +1229,86 @@ class Distiller:
                 "识别失败：部分片段处理失败，请重试",
                 f"{failed}/{total} 个分片识别失败；最后错误：{last_error}",
             )
-        if failed:
-            logger.warning("%s/%s identify chunks failed (within tolerance), continuing", failed, total)
 
-        if not parts:
-            # 每一片都解析成空名单（且失败率未越线）→ 真空名单，不是失败。
+        groups = group_identify_entries(per_chunk)
+        if not groups:
+            # 每一片都解析成空名单（且没有一片失败）→ 真空名单，不是失败。
             # 原先这里抛 DistillError，把「这本书没有具名角色」当成了故障。
             return []
-        return self._identify_merge(parts)
+        pairs, impersonal = self._judge_groups(groups)
+        merged = merge_identify_groups(groups, pairs, impersonal)
+        return finalize_identify_roster(merged)
 
-    def _identify_merge(self, parts: list[str]) -> list[dict[str, Any]]:
-        """把各分片的名单合并成一份全书名单：归组、按全书重判主次。"""
-        body = (
-            "以下是从同一部作品的不同片段中各自识别出的角色名单：\n\n"
-            + "\n\n---片段分隔---\n\n".join(
-                f"[分片 {i + 1}]\n{p}" for i, p in enumerate(parts)
+    def _judge_groups(
+        self, groups: list[dict[str, Any]],
+    ) -> tuple[list[tuple[str, str]], set[str]]:
+        """问多次模型：哪些组是同一个人（merge）、哪些主名不指具体的人（impersonal）。
+
+        **只送主名、别名、出现分片数。** 不送 reason、不送原文：模型只判「这是不是
+        一个人」，归组与主次已经在代码里定完。送正文不但白烧 token，还会把判断从
+        「这两个称呼是否指同一人」拖到「谁戏份多」。
+
+        别名也做了筛选：当时挂在 ≥2 组上的泛称不进清单（`alias_prompt_rows`）——
+        摆进去只会诱导模型把两个人并成一个。
+
+        同一输入独立采样 `IDENTIFY_JUDGE_SAMPLES` 次、经 `_run_map_with_client` 并发
+        （与逐片 Map 同一条骨架，整阶段汇总一条用量行）。单次调用的例外清单随采样大幅
+        漂移，故按 self-consistency 取多数票。执行器报错的调用与不合法样本（不是 JSON
+        对象，或两键不都是数组）都不计票；合法样本不足 `IDENTIFY_JUDGE_QUORUM` 份即
+        整体失败 —— 拿一两份当结论比不判更糟。
+
+        返回（生效的合并组对，生效的泛称主名）。
+        """
+        body = "各组如下：\n" + "\n".join(
+            f"- {name}（出现 {chunks} 个分片；"
+            f"别名：{'、'.join(aliases) or '无'}）"
+            for name, chunks, aliases in alias_prompt_rows(groups)
+        )
+        samples = [body] * self.IDENTIFY_JUDGE_SAMPLES
+        results, failures = self._run_map_with_client(
+            samples, lambda chunk: (IDENTIFY_JUDGE_PROMPT, chunk), "distill_identify",
+            log_label="Identify judge sample",
+        )
+        failed_idx: set[int] = set()
+        for idx, exc in failures:
+            failed_idx.add(idx)
+            # 未完成终态（截断等）时把 finish_reason 与已生成开头记下来 —— 验收实测
+            # 每份输入约 8791 tokens，输出撞 4096 上限会真截断；不记内容就无从判断
+            # 是「输出本来就这么长」还是「上限压得太低」。
+            info = incomplete_response_info(exc)
+            if info is not None:
+                finish_reason, content = info
+                logger.warning(
+                    "Identify judge sample %s incomplete: finish_reason=%s, "
+                    "generated %d chars: %r",
+                    idx, finish_reason, len(content), content[:300],
+                )
+        parsed: list[dict[str, Any]] = []
+        for idx, raw in results:
+            if idx in failed_idx:
+                continue    # 执行器已记过失败（含截断），不重复记日志
+            try:
+                item = json.loads(self._extract_json(raw))
+            except Exception as exc:
+                logger.warning("Identify judge sample %s unparseable: %s", idx, exc)
+                continue
+            if not isinstance(item, dict) or not (
+                isinstance(item.get("merge"), list)
+                and isinstance(item.get("impersonal"), list)
+            ):
+                logger.warning("Identify judge sample %s malformed: %r", idx, item)
+                continue
+            parsed.append(item)
+        if len(parsed) < self.IDENTIFY_JUDGE_QUORUM:
+            raise DistillError(
+                "识别失败：全书角色分组判定未能取得一致结论，请重试",
+                f"判定合法样本 {len(parsed)}/{self.IDENTIFY_JUDGE_SAMPLES} 份"
+                f"（执行器失败 {len(failures)} 次），不足 {self.IDENTIFY_JUDGE_QUORUM} 份",
             )
-        )
-        messages: list[dict[str, Any]] = [{"role": "user", "content": body}]
-        # 走 _chat_accounted：它把账记进唯一出口（缺陷 16），且能把上游确定的 length
-        # 截断信号带进重修环，而不是让半截 JSON 直接抛。
-        # stream=True：红楼梦级的名单合并不是非流式那 45s/60s 墙钟能装下的输出。
-        # max_tokens 显式抬到 IDENTIFY_MERGE_MAX_TOKENS：CARD_MAX_TOKENS 装不下全书名单，
-        # 初次调用与重修都用它（重修上限不够时重修出来还是半截）。
-        reply, upstream_truncated = self._chat_accounted(
-            IDENTIFY_MERGE_PROMPT, messages, "角色识别合并", "distill_identify",
-            stream=True, max_tokens=self.IDENTIFY_MERGE_MAX_TOKENS,
-        )
-        merged = self._parse_json_with_retry(
-            reply, IDENTIFY_MERGE_PROMPT, messages,
-            action_label="distill_identify", list_item_keys=("name",),
-            upstream_truncated=upstream_truncated, stream=True,
-            max_tokens=self.IDENTIFY_MERGE_MAX_TOKENS,
-        )
-        return self._normalize_identify_items(merged)
+        pairs, impersonal = tally_judge_samples(parsed, self.IDENTIFY_JUDGE_QUORUM)
+        print(f"[distill] identify judge merge={pairs}")
+        print(f"[distill] identify judge impersonal={sorted(impersonal)}")
+        return pairs, impersonal
 
     @staticmethod
     def _split_chunks(text: str, chunk_size: int) -> list[str]:
@@ -1507,6 +1603,7 @@ class Distiller:
         build_prompt: _cabc.Callable[[str], tuple[str, str]],
         usage_action: str,
         on_chunk_done: "callable | None" = None,
+        log_label: str = "Map chunk",
     ) -> tuple[list[tuple[int, str]], list[tuple[int, Exception]]]:
         """建 async client → 跑 Map → 关掉它。**同步侧调 Map 的唯一姿势。**
 
@@ -1519,6 +1616,7 @@ class Distiller:
             try:
                 return await self._run_map_concurrent(
                     chunks, build_prompt, usage_action, on_chunk_done, client=run_client,
+                    log_label=log_label,
                 )
             finally:
                 async with nonfatal("distiller", "close map client", level=logging.WARNING):
@@ -1533,6 +1631,7 @@ class Distiller:
         usage_action: str,
         on_chunk_done: "callable | None" = None,
         client: AsyncOpenAI | None = None,
+        log_label: str = "Map chunk",
     ) -> tuple[list[tuple[int, str]], list[tuple[int, Exception]]]:
         """Core Map — concurrent chunk analysis shared by sync and stream.
 
@@ -1540,35 +1639,46 @@ class Distiller:
         人格证据」，识别是「列出全书角色名单」，提示词不同、并发与记账骨架相同。
         ``usage_action`` 是整阶段汇总落账的 action 名。
 
+        失败日志的前缀由 ``log_label`` 给：验收脚本按「Map chunk N failed」数**逐片**
+        分片失败，判定那 5 份样本走的是同一条骨架 —— 前缀不改，判定样本的失败就会被
+        数进逐片失败里（假象：逐片坏了一片，实际全书逐片一片没坏）。
+
         Returns (ordered [(index, analysis_text), ...], [(index, exception), ...]).
         ``on_chunk_done(index, result, ok)`` is called synchronously within the
         async loop each time a chunk finishes；``ok=False`` 的片结果是空串、且已计入
         failures —— 调用方据此决定该片要不要落 checkpoint（流式侧不落）。
         """
-        sem = asyncio.Semaphore(self._map_concurrency)
+        # 闸按**在途请求数**自适应（WP14）：上游的并发上限按账号计、随余额变，固定的
+        # `map_concurrency` 总会超过一部分账号。闸自己踩 429 下探、连续成功上探，这里只
+        # 给它上限。名额在 `async_chat` 里按**每一次尝试**取放，不在这里按整片包 —— 否则
+        # 重试退避期间名额被占着，闸的上探永远慢半拍。
+        # 初值取上一轮学到的上限（A3）：第一轮从 `map_concurrency` 探起、末尾写回，之后
+        # 每轮冷启动直接落在该账号的真实上限附近，不必再逐轮把 429 撞一遍。`getattr`
+        # 是因为测试桩只鸭子类型地提供 `async_chat`，不必也长出这个字段。
+        gate = C.AdaptiveGate(self._map_concurrency,
+                              initial=getattr(self._llm, "learned_map_concurrency", None))
         done_count = [0]
         lock = asyncio.Lock()
         failures: list[tuple[int, Exception]] = []
         usages: list[dict | None] = []
 
         async def _one(i: int, chunk: str) -> tuple[int, str]:
-            async with sem:
-                system, user = build_prompt(chunk)
-                usage = None
-                ok = True
-                try:
-                    result, usage = await self._llm.async_chat(
-                        system, [{"role": "user", "content": user}], client=client
-                    )
-                except Exception as exc:
-                    logger.warning("Map chunk %s failed: %s", i, exc, exc_info=True)
-                    # 失败分片照样烧了 token（重试墙下空烧 26–100s）—— prompt 侧按字符
-                    # 估算补记，completion 未知记 0 并标 estimated。只记成功 = 统计系统性偏低。
-                    usage = estimate_usage_from_chars(len(system) + len(user))
-                    async with lock:
-                        failures.append((i, exc))
-                    result = ""
-                    ok = False
+            system, user = build_prompt(chunk)
+            usage = None
+            ok = True
+            try:
+                result, usage = await self._llm.async_chat(
+                    system, [{"role": "user", "content": user}], client=client, gate=gate
+                )
+            except Exception as exc:
+                logger.warning("%s %s failed: %s", log_label, i, exc, exc_info=True)
+                # 失败分片照样烧了 token（重试墙下空烧 26–100s）—— prompt 侧按字符
+                # 估算补记，completion 未知记 0 并标 estimated。只记成功 = 统计系统性偏低。
+                usage = estimate_usage_from_chars(len(system) + len(user))
+                async with lock:
+                    failures.append((i, exc))
+                result = ""
+                ok = False
             async with lock:
                 done_count[0] += 1
                 usages.append(usage)
@@ -1578,6 +1688,18 @@ class Distiller:
 
         tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(chunks)]
         results = await asyncio.gather(*tasks)
+        # 写回本轮的收敛上限（A3）：失败片也算数 —— 闸的估计来自每一次尝试的 429/成功，
+        # 与分片成败无关，整轮都挂了也该把「这个账号到不了 N 路」记下来。
+        self._llm.learned_map_concurrency = gate.ceiling
+        # 上限被上游按账户压下来才记：这是「需求 > 该账户此刻的并发上限」的降级，warning
+        # 语义正确；收敛到配置值（没被限流）不记 —— 验收据此读有没有被限流。不能用 info：
+        # 本项目只把 WARNING+ 推到 stdout（core/stdout_logging.py 的文件头）。
+        if gate.ceiling < self._map_concurrency:
+            logger.warning(
+                "Map gate settled at %s (< cap %s); learned_map_concurrency=%s; user=%s",
+                gate.ceiling, self._map_concurrency,
+                self._llm.learned_map_concurrency, current_user_id(),
+            )
         # Map 是 MapReduce 里最烧 token 的一段：整阶段汇总一条 + 调用次数（不是分片数 ——
         # 续跑命中/重试会让二者不一致，chunk_count 数的是真的调了几次）。
         merged = aggregate_usage(usages, len(usages))
@@ -1660,6 +1782,9 @@ class Distiller:
         usage = yield from self._llm.chat_stream_long(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
+            # 显式给上限：漏传会落回适配器默认的 4096，只有分批归并/格式化的一半，
+            # 而这条是每本普通书（≤80 片）的必经路径（WP13）。
+            max_tokens=self.CARD_MAX_TOKENS,
         )
         self._try_record_usage("distill_reduce", usage)
 

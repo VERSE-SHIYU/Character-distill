@@ -1297,7 +1297,7 @@ PROBE_IMAGE         false
   - 回调契约由「2 参、指纹在回调内算」改为「3 参；指纹仍由本侧从 `relevant[idx]` 现算」（只有生成器侧拿得到原文）。
   - 失败率**分母不变**，仍是全书相关片数 `total_chunks = len(relevant)`（流式 `:1952`、同步 `:1712`）—— 命中片不进原语但仍计入分母，否则续跑会让失败率虚高、越线整批 bail。该口径已补注释锁在 `:1950-1951`。
   - 文档陈旧行号随本步修正：`_resume_hit` docstring（`:237`）改述主屏障在流式侧（失败 Map 片不落 checkpoint，`ok=False` 即不回调落库）。
-- **判据命令**：`git grep -n "Semaphore(self._map_concurrency)" -- core/` → **1** 处（`core/distiller.py:1478`；修复前 2 处）；`git grep -n "_map_with_progress" -- core/` → 零命中（余 1 处在本条「形态（修复前）」的叙述里）。
+- **判据命令**：`git grep -n "Semaphore(self._map_concurrency)" -- core/` → **零命中**（2026-09-26 WP14 用 `AdaptiveGate` 替换掉了最后一处 —— 原先 `core/distiller.py:1478` 那处固定上限的并发墙，随本行改动面一起更新，不另记账）；`git grep -n "_map_with_progress" -- core/` → 零命中（余 1 处在本条「形态（修复前）」的叙述里）。
 - **锁与红源**：先按「现有测试能打红的变异不新增锁」把 L1–L4 逐条打到既有用例上，每条变异跑完把 `core/distiller.py` 按字节还原（逐字节回到原状，无半改残留）。各条变异**改了什么**与读数：
   - **L1｜预扫直通**：把预扫改成命中片也进 `miss_indices`（先 append 再判 `hit is None` 才 continue），即整条 `relevant` 交给原语 → 红 **8** 条，全在 `tests/test_distill_resume.py`；代表读数 `assert 12 == 0`「全命中不该再发任何 Map 调用」。
   - **L2｜回调 `ok` 恒真**：`on_chunk_done(i, result, ok)` → `on_chunk_done(i, result, True)`，失败片被当成功 → 红 **2** 条：`TestFailedChunkNotCheckpointed::test_failed_chunk_is_not_checkpointed`（失败片落了 checkpoint）、新锁 `TestFailureRateDenominator::test_hits_still_count_in_the_denominator`。

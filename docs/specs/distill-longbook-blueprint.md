@@ -63,7 +63,7 @@
 1. 不新增配置项：并发只改 `config.example.yaml` 里已有的 `map_concurrency` 的值。
 2. 识别结果的对外形状 `{name, aliases, importance, reason}` 不变，前端零改动。
 3. 逐片 Map 的提示词与调用方式（识别、蒸馏两处）不改。
-4. 不新建模块：汇总逻辑放在 `core/distiller.py` 或 `core/character_roster.py` 现有文件内，按职责就近放。
+4. 新模块只允许一个：`core/roster_aggregate.py`（WP3 的纯函数，理由见 WP3「落点」）；其余逻辑按职责放在现有文件内。
 5. 不做上传时预识别（识别改后约 1–3 分钟，在 10 分钟上限内）。
 6. WP8 不新增表、不加列：只改续跑的查找条件与分片缓存键。
 
@@ -72,14 +72,14 @@
 | 层 | 模块 | 本线之后的职责 |
 |---|---|---|
 | 适配器 | `adapters/llm_adapter.py` | 长输出读超时（WP1）；上游失败归类（WP2）；`chat_stream` 以返回值交出本次用量（WP4） |
-| 纯计算 | `core/character_roster.py` | 名单汇总、并组、判主次、取理由（WP3，纯函数，不碰 LLM） |
+| 纯计算 | `core/roster_aggregate.py`（新） | 名单汇总、并组、判主次、取理由（WP3，纯函数，不 import 任何项目模块） |
 | 数据定义 | `core/schema.py` | 角色卡 4 组字段划分，定义一处（WP7） |
 | 编排 | `core/distiller.py` | 识别：逐片 → 汇总 → 别名判断 → 出名单；蒸馏：逐片 → 分批合并（任一批失败即整体失败）→ 4 组并行格式化；长输出一律走 `_chat_accounted(stream=True)` → `_collect_stream`，这是唯一的长输出与记账出口；分片缓存键 `chunk_cache_key`（WP8） |
 | 路由 | `web/routers/distill.py` | `/start` 续跑：可复用 `interrupted` 与 `error` 两种任务（WP8） |
 | 存储 | `storage/*_store.py` | `find_resumable_distill`（由 `find_interrupted_distill` 改名并放宽状态条件，WP8） |
 
-**落点细则（红线 4「按职责就近放」的具体化）**
-- WP3：汇总、并组、判主次、取理由是**纯计算**，写成 `core/character_roster.py` 里的纯函数（输入逐片条目 + 别名判断给出的组对 + 全书分片数，输出名单）；`_identify_over_chunks` 只做编排：逐片调用 → 纯函数建组 → 别名判断调用 → 纯函数出名单。测试直接喂列表测纯函数，不需要 LLM 桩。
+**落点细则（红线 4 的具体化）**
+- WP3：汇总、并组、判主次、取理由是**纯计算**，写成 `core/roster_aggregate.py`（新）里的纯函数（输入逐片条目 + 别名判断给出的组对 + 全书分片数，输出名单）；`_identify_over_chunks` 只做编排：逐片调用 → 纯函数建组 → 别名判断调用 → 纯函数出名单。测试直接喂列表测纯函数，不需要 LLM 桩。
 - WP7：4 组字段划分只在 `core/schema.py` 定义一处（紧挨 `CharacterCard`），格式化与测试都读它；合并后仍由 `CharacterCard.model_validate` 统一校验，不另写校验。
 
 ## 4. 工作包
@@ -118,8 +118,12 @@
 
 1. **汇总（纯代码）**：以每片解析出的条目为输入。名字与别名做规范化（去空白）后建组：
    - 同一 `name` 必归一组；
-   - 某别名只在**一个**主名下出现过时，按别名并组；同一别名挂在 ≥2 个不同主名下（如「二爷」）视为**有歧义**，不据此并组，交第 2 步。
-   - **有歧义的别名从所有组的 `aliases` 中移除**（不只是不并组）：别名在下游按子串选片、打 RAG 标签（第 1 节第 9 条），留一个泛称就会污染蒸馏。别名判断确认两组是同一人后，合并组的别名同样只保留唯一指向此人的称呼。
+   - 某别名等于另一个主名、且此刻只挂在**一个组**上时，两组合并；反复做到不再有新合并为止（不动点）。
+   - **歧义按「组」判，不按「主名」判**（WP3 审计更正）：同一个人在不同分片里常用不同主名（一片叫「贾宝玉」、一片叫「宝玉」），两片都列了「宝二爷」；按主名数它挂在两个名下，但这两个名归并后是同一组，不算歧义。只有挂在 ≥2 个**不同组**上的别名（如「二爷」同时在宝玉组与贾琏组）才有歧义：不据此并组。
+   - **有歧义的别名从组的 `aliases` 中移除，在最后一步统一做**：别名判断把两组并成一组后，原先两组共有的称呼就只指向这一个人，应保留。所以移除放在别名判断合并之后，按最终分组计数，挂在 ≥2 个最终组上的一律移除。送给别名判断模型的清单里，也不列当时挂在 ≥2 组上的别名（泛称会诱导模型误并）。别名在下游按子串选片、打 RAG 标签（第 1 节第 9 条），留一个泛称就会污染蒸馏。
+   - **成员主名优先**（WP3 二审补充）：一个称呼若是某组的成员主名（有分片以它为主名列出此人），它只属于这一组——从其余组的 `aliases` 中移除，本组保留（即使它不是显示名）。只以别名身份出现、挂在 ≥2 个组上的称呼，才从所有组移除。数「挂在几组」时，各组的主名与成员主名都要算进去；送给别名判断模型的清单用同一口径过滤。例：贾宝玉组（成员 贾宝玉、宝玉）与甄宝玉组（别名 宝玉）→「宝玉」留在贾宝玉组，从甄宝玉组移除。
+   - **别名至少两个字**（识别验收后补充，2026-09-26）：单字称呼（实测出现「他」「玉」「爷」）在下游按子串匹配时几乎命中每一片（「他」覆盖 212/213 片），一律丢弃。判据写在 `core/roster_aggregate.py` 一处（如 `usable_alias`），多分片汇总与单分片路径 `_normalize_identify_items` 都调用它。
+   - **识别不容忍分片失败**（识别验收后补充）：名单会写进库长期复用（`resolve_characters` → `save_characters`，按文本 + 版本缓存），用半本书建的名单会一直错下去（实测 121/242 片失败仍在 50% 容忍线内，妙玉因此被判次要）。识别路径任一分片失败即整体失败（沿用现有 `DistillError` 文案口径与 429 专用文案），不写内存 memo、不写库，用户重试。蒸馏路径的容忍线不变（它有续跑兜底）。
    - 逐片 `importance` 先规范化：含「主」计为主要，其余一律按次要计。
 2. **别名判断（一次模型调用）**：只把「组的主名 + 别名 + 出现分片数」列表（不含理由、不含正文）交给模型，问「哪些组其实是同一个人」，只输出需要合并的组对。走 `_chat_accounted(stream=True)` 长输出路径（WP1 已放宽读超时）。模型未明确判定为同一人的，**一律保持分开**。
 3. **主次（纯代码）**：每组统计 `chunk_count`（出现的**不同**分片数，同片重复只计一次）与 `main_count`（被逐片识别判为「主要」的分片数）。
@@ -130,7 +134,7 @@
 5. 别名判断调用经 `_chat_accounted` 记账，动作沿用 `distill_identify`（唯一出口，缺陷 16）；受影响的用量行数断言按新的调用次数更新，并在报告里逐条说明。
 6. `IDENTIFY_VERSION` 从 2 升到 3（新口径的名单不能复用旧缓存）；更新其注释。
 7. 删除不再使用的 `IDENTIFY_MERGE_PROMPT` / `IDENTIFY_MERGE_MAX_TOKENS` 及其专属测试；新的别名判断提示词只描述第 2 点这一件事。
-- 落点：汇总、并组、判主次、取理由写成 `core/character_roster.py` 的纯函数（见第 3 节）。
+- 落点（WP3 审计更正，2026-09-25）：汇总、并组、判主次、取理由写成新模块 `core/roster_aggregate.py` 的纯函数，不 import 任何项目模块；`Distiller` 在模块顶层 import 它。**不放 `core/character_roster.py`**：那个模块是名单生命周期层，位于 `Distiller` 之上（它 import `Distiller`，文件头写明「不管 LLM 细节」），`Distiller` 反过来依赖它就是层级倒置，函数内 import 只是把循环藏起来。纯函数测试相应放 `tests/test_roster_aggregate.py`。
 - 测试：第 8 节 I1–I5。
 
 ### WP4 [adapter + distiller] 流式用量随调用返回（独立 commit，排在 WP5 之前）
@@ -156,6 +160,7 @@
 
 ### WP6 [config] 并发
 `config.example.yaml` 的 `map_concurrency` 从 30 改为 250（官方上限 500/账号；242 片、宝玉 207 片基本一次发完，逐片阶段耗时≈最慢一片）。真实验收时报告是否出现 429；出现则停下报告，由 Shiyu 定是否下调，不自行调参。
+- **实测更正（识别验收，2026-09-26）**：250 并发下 Map 阶段一分钟内 429 共 510 次、超时 486 次，242 片失败 121 片。生产此前按 30 并发跑同一本书，242 片全部成功。250 不可用；按实测选值：先以 60 跑一次识别，0 次 429 且逐片阶段 ≤ 3 分钟则取 60，否则回到 30。改 `config.example.yaml` 一处。
 - 已核（DeepSeek 官方 Rate Limit 页）：500 是**账号级**，不论用哪个 key；一个请求从发出到响应结束都占一个并发，长流式输出占得更久。用户自带 key 时互不影响；**同一账号**同时跑两个蒸馏就会到 500 —— 演示账号若共用你的 key 并允许访客蒸馏，需另议（不在本线范围）。
 
 ### WP7 [distiller + schema] 流式蒸馏的格式化改为按字段组并行生成
@@ -189,6 +194,58 @@
 
 **测试**：第 8 节 C1–C4。
 
+### WP11 [adapter] 流式末 chunk 的终态与用量同块，不得跳过终态
+DeepSeek 把 `finish_reason` 与 `usage` 放在**同一个**末 chunk（OpenAI 是终态 chunk 之后另起一个 `choices` 为空的纯用量 chunk）。`adapters/llm_adapter.py:874-881` 的读流循环遇 `chunk.usage` 就 `continue`，把同一 chunk 的 `choices` 一起跳过 —— 终态永远读不到（实测 6/6 `finish_reason=None`；识别、蒸馏的合并与格式化、聊天流都在流式路径上）。后果：`length` 截断从未在任何流式路径上被识别，「截断即失败」（WP5）与格式化、别名判断的截断守卫全部空转，半截内容静默交付。
+- 修法：该 chunk 先记 `usage`，再**照常处理 `choices`**（终态校验、交付 content），不 `continue`。终态缺失告警因此只在真正缺失时出现。
+- 测试桩：`tests/conftest.py` 的 `fake_sse` 支持两种末尾形态 —— `usage_shape="same"`（DeepSeek，**默认**：终态与用量同一 chunk、`choices` 非空）；`usage_shape="separate"`（OpenAI：终态挂末个正文 chunk + 纯用量 chunk）。
+- 依赖：WP13 必须与本项同批上线（见 WP13）。
+
+**测试**：第 8 节 S4。
+
+### WP12 [adapter] `async_chat` 用生成轮的墙钟预算，重试不再被 60 s 总闸饿死
+`async_chat` 复用 `_GEN_ATTEMPTS=3` × `_GEN_ATTEMPT_S=45` 的重试，却只给 `_GEN_DEADLINE_S=60` 的总墙钟（`adapters/llm_adapter.py:74/101/112`）。第 1 次 attempt 一旦吃满 45 s，退避之后只剩约 9 s 给第 2 次，第 3 次分不到时间 —— 重试等于没有（实测：02:56:16 第 1 次超时 → 02:56:31「2 次尝试均失败」；同一片单发 10 s 完成，60 并发整轮 31 s 零失败，本可被重试吸收）。
+- 修法：`async_chat` 用**自己的**总墙钟，由现有常量推导：`_GEN_ATTEMPTS × _GEN_ATTEMPT_S + Σ(每次退避上界) + _ATTEMPT_TIMEOUT_MARGIN_S`，每次退避上界按 `_RetryBudget.on_failure` 的实现（非 429：`_GEN_BACKOFF_S × k + 1`，k = 1…`_GEN_ATTEMPTS−1`）。推导式写进模块常量处的注释，**不新增 env 出口**。
+- `chat()` 的总墙钟维持 `_GEN_DEADLINE_S`（交互式，刻意封顶）不变。`achat` 是 `async_chat` 的另一调用方（群聊、审核），也维持 60 s：`async_chat` 增加仅关键字的 `deadline_s` 形参，默认取推导出的批量预算，`achat` 显式传 `_GEN_DEADLINE_S`。
+
+**测试**：第 8 节 S5。
+
+### WP13 [distiller] 单次合并的输出上限与分批合并/格式化对齐
+同是「合并」这一操作，上限却有两套：≤ `SAFE_SINGLE_REDUCE`（80）片的单次合并 `_single_reduce_stream`（`core/distiller.py:1625`）调 `chat_stream_long` **不传** `max_tokens` → 落到 `llm.max_tokens=4096`；而分批合并（`_single_reduce_async`，`:1616`）与格式化（`:2123`）都传 `CARD_MAX_TOKENS=8192`。普通书（相关片 ≤80）走的就是前者，合并被 4096 封顶。
+- 修法：`_single_reduce_stream` 显式传 `max_tokens=self.CARD_MAX_TOKENS`，与另两处同一份常量，不加新常量、不加新配置。
+- 必须与 WP11 同批：WP11 之前，4096 截断在流式路径上根本不被识别（静默交半截档案）；WP11 之后截断变成硬失败，不改这里的话，普通书的合并会开始报错。
+
+**测试**：第 8 节 S6。
+
+### WP14 [core + adapter + distiller] Map 并发按账户自适应（AIMD，2026-09-26）
+**根因**：DeepSeek 官方文档：并发按账号计、一个请求从发出到响应完成记为一个并发、超限返回 429，429 的处置是「合理控制请求节奏」；文档写 v4-pro 上限 500，但实测 429 原文为「concurrency limit of 18 based on your remaining balance」——上限实际随余额动态变化，属未写进文档的运行时行为。固定 `map_concurrency` 总会超过部分账户的上限（250 并发 429×510；60 并发、上限 18 的账户 429×328、11 片失败）。
+1. **自适应闸**：`core/concurrency.py` 新增一个小类（asyncio 原生），按**在途请求数**控制（与官方「并发」定义一致，不做每分钟限速）：初始上限 = min(账户已学到的值, `map_concurrency`)；每次尝试前 acquire、结束后 release；收到 429 → 上限 ×0.75 向下取整、最低 1；连续成功次数达到当前上限 → 上限 +1、不超过 `map_concurrency`；上限下调后，新的 acquire 等在途数降到上限以下。系数官方未给，取业界默认值（NVIDIA NeMo DataDesigner 与 AIMD 通用做法），只影响收敛快慢、不影响收敛结果。
+2. **接入每次尝试**：`async_chat` 加可选参数 `gate=`（与 `client=` 同一用法）。闸包在**每一次 `create()`** 外（重试循环内），退避睡眠期间不占名额；429 调 `on_rate_limited()`，成功调 `on_success()`。不传 `gate` 时行为不变（`achat`、群聊、审核不受影响）。官方未约定 `Retry-After`，现有「有则读、无则退避」不改。
+3. **账户记忆**：`LLMAdapter` 加实例属性记录该账户学到的上限；每轮 Map 以它为初值、结束写回（实例按 user_id 缓存，`web/deps.py` 的 `_user_llm_cache`）。
+4. **Map 接线**：`_run_map_with_client` 每轮建一个闸替换固定 `asyncio.Semaphore`，传给 `async_chat`，结束写回。
+- 不解析 429 文案里的数字（未写进文档、随时可变）；不新增配置项（`map_concurrency` 含义改为上限）。分批合并与格式化（≤4 路）不接闸，超限时由现有 429 重试兜住。
+
+**测试**：第 8 节 A1–A6。
+
+**WP14 二审补充（2026-09-26）：路径机制清单与真实规模核算**
+Map 调用路径上已有的机制（分支 `worktree-distill-identify` @ `2826733`）：
+| 机制 | 计时/计数起点 | 依赖的前提 | WP14 是否改变前提 |
+|---|---|---|---|
+| `_RetryBudget` 总时限 153 s（`adapters/llm_adapter.py:124`） | 创建预算时（`:816`，重试循环之前） | 调用内不排队（原排队在 Map 外层 `Semaphore`） | **改变**：闸在 `:824`，排队计入时限 → 修法 1 |
+| 单次尝试超时 45 s（`:820`） | 每次 `create` 前计算 | 算完立刻发出 | **改变**：算完后还要排队 → 修法 1 一并处理（进闸后再算） |
+| 429 独立次数上限 5（`:88`），等待 = Retry-After 或 2^(n−1)×2 s（上限 30 s）+ 抖动（`:203-204`） | 每次 429 | 429 少见 | 收敛期 429 集中出现：见核算 |
+| 闸的乘性下调（WP14） | 每次 429 | —— | **缺陷**：一波并发同时 429 会按次数连乘，60×0.75^42 → 1 → 修法 2 |
+| 识别整体时限：nginx `proxy_read_timeout 600s`（`nginx/nginx.conf:54/128/144`）、前端 600 s（`web/frontend/src/api/client.js:188`） | 请求发出 | Map + 别名判断 < 600 s | 见核算 |
+| 识别零容忍 / 蒸馏 50% 容忍、用量整阶段一行、分片 checkpoint 回调 | —— | —— | 不变 |
+
+真实规模核算（单次耗时取实测：识别单片 10.1 s；蒸馏单片按输出约 1.4k token 估 15–20 s）：
+- **识别**，242 片，账户上限 18：收敛从 60 起，按「一波一次」下调 60→45→33→24→18 共约 4 波，单个请求最多被 429 约 4 次 < 上限 5；之后 ⌈242/18⌉≈14 轮 × 单片 p50 5.6 s / p90 7.9 s（A/B 实测，60 并发非流式）≈ 80–110 s，加别名判断约 10 s，**约 2 分钟 < 600 s**。
+- **蒸馏宝玉**，约 180 片（估算依据：A/B 实测识别单片输出 p50 647 token、非流式 p50 5.6 s；蒸馏单片输出约 1.4k token，按同速率约 12 s；流式单路约 60–70 token/s，仓内 map_len_probe 实测 1705 token 23.6 s）：上限 ≥ 60 时 Map 约 3 轮 ≈ 40 s + 3 批合并（输出最多 8192 token）约 2–2.5 分钟 + 4 组格式化约 40 s ≈ **3.5–4 分钟**；上限 18 时 Map 约 10 轮 ≈ 120 s，总计约 **4.5–5 分钟**，贴线。上限随余额动态变化（上游原文「based on your remaining balance」；实测充值后 60 并发 0 次 429、余额下降后降到 18），**5 分钟目标不变**，验收前先确认余额使上限 ≥ 60。蒸馏的真实阶段耗时无历史数据（两节点生产从未跑成蒸馏，本机库待查），以本次验收实测为准。
+- **已知限制（不在本线修）**：账户上限 ≤ 约 6 时，识别 Map 约 ⌈242/6⌉×12 ≈ 480 s 起、逼近 600 s，且收敛波数增多、单请求可能用尽 429 次数。余额很低的用户识别整本长书会失败；是否把识别改成后台任务，由 Shiyu 另定。
+
+修法：
+1. **排队不计入时限**：进闸之后才开始本次尝试的计时——`_RetryBudget` 增加把本次等闸时长顺延进总时限的方法，`async_chat` 进闸后调用，并在进闸后再计算本次超时。不传闸的路径不变。
+2. **一波只下调一次**（NVIDIA DataDesigner：「一波 429 中的第一个」才下调并冷却）：闸维护一个代数，每次下调代数 +1；每次尝试进闸时记下当时的代数，429 回报时只有「代数仍是当前代数」才下调，下调前已发出的那批请求再报 429 不再连乘。
+3. **只有「闸被占满」时成功才计入上调**（二审后第二次补充，依据 RFC 7661：未用满拥塞窗口的发送方「MUST NOT」增大窗口）：尾部排水期在途数低于上限，成功不代表有余量，不得上探，否则写回的账户记忆被抬高（实测偶发到 9）。实现：进闸时记下「此刻是否满载」（在途 + 1 ≥ 上限，或有人在等），`on_success` 只在满载时计数。
 ### WP15 [scripts] 把验收产出的书与卡片搬进两个节点的演示账号（2026-09-26 拍板）
 **目标**：把本地验收产出的红楼梦（原文 + 版本 3 的名单）与宝玉、刘姥姥两张卡，导入 SZ、SG 各自的演示账号 `offerPass`，零模型调用、不搬向量。
 
@@ -213,6 +270,189 @@
 
 **范围规矩**：执行中新发现的问题，属于本段改动面的直接修；只有会撞车或需要 Shiyu 拍板时才停下报告，不自行记账。
 
+### WP16 [distiller] 识别只收「有名字的人物」（2026-09-26 Shiyu 拍板：方案 A + 小样检查）
+
+**已查实的约束**（分支 `worktree-distill-identify` @ `c971f11`；执行方 S0 逐条复核，不成立即停）
+1. 逐片识别提示词 `IDENTIFY_SYSTEM_PROMPT`（`core/distiller.py:63`）第一句已写「找出所有**有名字**且有对话或行为描写的角色」，但没有定义什么算「有名字」；别名要求里列了「代称」（`:65`）。单分片路径（`:1130`）与多分片路径（`:1172`）用同一个提示词。
+2. 实测（识别验收，版本 3）：352 组、66 个主要人物，其中出现「和尚」（主要）与一个名为泛称的次要组（别名「他干娘」「干娘」「老嬷嬷」）——模型对「有名字」的理解比文献宽。
+3. 版本号 `IDENTIFY_VERSION = 3`（`:404`）；内存缓存键含版本（`:1056`）；库里名单按版本精确读取（`storage/postgres_store.py:395`）；搬运脚本要求包版本 == 节点代码版本（`scripts/demo_seed.py:196`）。
+4. 别名规则 `ALIAS_UNIQUENESS_RULE`（`:57-60`）只管「多人共用」，不管「是不是名字」；单字别名已由 `usable_alias` 丢弃。
+
+**方案对比与依据**
+| 方案 | 做法 | 依据 | 取舍 |
+|---|---|---|---|
+| **A（已选）** | 在提示词里把「有名字」定义清楚：称呼里含姓、名或只指一人的专有封号/法号的才算（「刘姥姥」「王夫人」「贾母」「凤姐」「周瑞家的」「北静王」「警幻仙姑」算；「婆子」「和尚」「丫头」「老嬷嬷」不算）；别名只收名字变体（可带称号），不收代词、通称、纯关系称呼；删去「代称」一词 | 哥伦比亚大学 2026（arXiv 2601.15508）：人物清单只保留有专名提及的共指簇，「Miss Bennet」这类称号 + 姓算专名，代词与关系称呼不算；BookNLP：专名与通称分开，通称不与专名共指；Vishnubhotla et al. 2023：把共指链限制在已确认人物上效果更好 | 在抽取时执行判据，与文献一致；模型能否严格执行只能真跑验证 |
+| B | 对现有名单单独再调一次模型，判断每个组名是不是人名 | 文献里的「这个名字是不是本书人物」核对依赖模型记得原著 | 对陌生书不可靠；多一个步骤 |
+| C | 不改 | —— | 演示账号的人物列表会出现「和尚」「婆子」 |
+
+**路径机制清单（识别结果的下游）**
+| 机制 | 依赖的前提 | 本 WP 是否改变 |
+|---|---|---|
+| 内存缓存（键含版本，`:1056`） | 同版本同语义 | 版本升 4，旧缓存自然失效——**意图内** |
+| 库内名单（按版本精确读，`postgres_store.py:395`） | 同上 | 版本 3 的名单读不出，需重跑一次识别——**意图内，且必须在蒸馏验收与搬运之前** |
+| 搬运包版本校验（`demo_seed.py:196`） | 包版本 == 生产代码版本 | 演示名单必须用版本 4 产出——**所以不能保留版本 3 名单** |
+| 蒸馏选片 `aliases_for`（`web/routers/distill.py:378/1062`） | 别名唯一指向此人 | 别名只收名字变体，方向一致 |
+| 验收判据 §10 B2 | 泛称不是组名 | 预期由本 WP 满足 |
+
+**真实规模核算**：识别一次整本（242 片）实测约 4 元、约 38 秒；逐片输出条目会略少，花费与耗时不会更高。
+
+**步骤**（每步独立 commit）
+1. **[distiller]** 按方案 A 改 `IDENTIFY_SYSTEM_PROMPT`，`IDENTIFY_VERSION` 3 → 4。
+2. **[验证·小样，约 0.1 元]** 从全书切片中挑 5 片，合起来覆盖「刘姥姥」「赵姨娘」「周瑞家的」「北静王」与「和尚」「婆子」；只对这 5 片用新提示词各调一次模型（不经路由、不写库），逐片报原样输出。判定：前四者都以人物出现；「和尚」「婆子」不作为人物 name 出现；各人物 aliases 里无代词、无通称。不过即停，先改提示词，不跑全书。
+3. **[tests]** 能免费测的只有代码侧：版本号进入缓存键与读取（现有锁覆盖即可，先 grep，不加钉住提示词文本的测试）。**模型是否按定义执行，只能真跑验证**，由验收 B2 判定：刘姥姥、王夫人、贾母、凤姐在名单里且判为主要；「和尚」「婆子」「丫头」「老嬷嬷」不是任何组名；四位主要人物的别名里没有代词、通称。
+
+**测试**：本地只跑受影响的测试文件，再加一次 `npm test`；库用 Docker 起的 PG；合并门是分支 CI；合并只做 git 操作，不跑测试、不等 CI。
+
+**范围规矩**：执行中新发现的问题，属于本段改动面的直接修；只有会撞车或需要 Shiyu 拍板时才停下报告，不自行记账。
+
+**WP16 补充（2026-09-27，Shiyu 拍板：判定移到全书调用）**
+背景：逐片提示词定义「有名字」后小样不过——「和尚」在片 234 作为人物列出、在片 231 出现 25 次却未列；「太太」「老太太」「二爷」等称呼仍进别名。逐片各判一次，跨片不一致，只改逐片提示词解决不了。
+方案（依据 CoSER，ICML 2025，github.com/Neph0s/CoSER `data_construction/main.py:1043-1150`：全书称呼清单调用一次，每个称呼映射到正式名或标 `impersonal`，标 `impersonal` 的丢弃）：识别第 3 步的全书调用在「哪些组合并」之外再输出两项——不指具体某人的组名（整组丢弃）、只是称呼而非名字变体的别名（从该组别名中移除）。我方改编（CoSER 没有）：别名中的纯称呼要移除，因为我方别名是蒸馏选片用的子串键。缺口：CoSER 未单独评估此步准确率，故先验证（见下）。逐片提示词（`defc776`）保留，不再改动。
+
+已查实的约束（分支 `worktree-distill-identify` @ `defc776`；main 已是本分支祖先，识别汇总代码只在本分支；执行方 S0 逐条复核，不成立即停）
+1. 全书调用 `_identify_alias_pairs`（`core/distiller.py:1224`）经 `_chat_accounted(stream=True)`（`:1243`）走 `chat_stream_long`（`adapters/llm_adapter.py:996`，块间读超时 300 s，`:114`）；输出上限默认 `CARD_MAX_TOKENS = 8192`（`core/distiller.py:404`、`:786`）。
+2. 解析走 `_parse_json_with_retry`（`:809`；本调用在 `:1247-1250`，`list_item_keys=("merge",)`、`allow_empty=True`）。数组分支要求每项含全部字段（`_shape_ok` `:284`，用于 `:875`）。对象分支按 `required_keys` 校验，但重修话术写的是「角色卡结构」（`:864`）和「保留核心人设和原文台词」。初次解析不过时最多再发 2 次重修调用，每次各记一行用量。
+3. `merge_identify_groups`（`core/roster_aggregate.py:270`）并组后调用 `_strip_ambiguous`（`:258`）；歧义由 `_visible_aliases`（`:136`）对全部组计数；`finalize_identify_roster`（`:321`）以全书分片数为分母判主次。
+4. 送给模型的清单 `alias_prompt_rows`（`:240`）已剔除挂在 ≥2 组上的别名。
+5. 识别整请求时限：nginx `proxy_read_timeout 600s`（`nginx/nginx.conf:54/128/144`）、前端 600 s（`web/frontend/src/api/client.js:188`）；验收门 §10 B4 为整请求 ≤ 8 分钟。
+6. `IDENTIFY_VERSION = 4`（`core/distiller.py:413`）未合入 main、未产出过落库名单，本补充不再升版本（S0 查库确认没有 `characters_version = 4` 的行）。
+
+路径机制与本改动的影响
+| 机制 | 现有前提 | 是否改变 → 处理 |
+|---|---|---|
+| 输出上限 8192 | 输出只有合并对，很短 | 改变：若按 CoSER 给每个称呼一条映射，约 350 组加数百别名，估超 1 万 tokens，必截断 → 只输出例外（合并对、`impersonal` 组名、纯称呼别名），估 1.5–3k tokens |
+| 解析分支 | 输出是同形状数组 | 改变：三类结果形状不同，数组分支过不了 → 输出改为含三字段的 JSON 对象，走现有对象分支（`required_keys`），不另写解析器；对象分支的重修名词与话术按目标形态参数化，与数组分支已有的 `_shape_noun` 分档写在同一处，不复制一份 |
+| 歧义移除 | 全部组参与计数 | 改变：先丢组会让原本挂两组的称呼变成「唯一」而被保留 → 歧义按丢组前的分组计数，丢组与去纯称呼放在其后 |
+| 重修环 | 最多 2 次追加调用 | 不变；计入耗时与花费上界 |
+| 用量记账 | 一次调用一行 | 不变 |
+| 主次判定 | 分母为全书分片数 | 不变（被丢的组不参与） |
+
+真实规模核算（单路流式约 72 tokens/s，依据本蓝图 WP14 引用的 map_len_probe 实测 1705 tokens / 23.6 s；逐片 Map 实测 38 s，账户上限 18 时 80–110 s；单价为 DeepSeek 官方空闲时段 v4-pro：输入 4.5 元/百万、输出 13.5 元/百万，高峰翻倍）
+- 常态：全书调用输出 1.5–3k tokens，约 20–45 s；整请求约 1–2.5 分钟；单次全书调用约 0.06–0.08 元（输入按约 7.5k tokens 估算，以查库实测行替换）。
+- 最坏：初次截断加 2 次重修，每次顶到 8192 tokens，约 3 × 114 s = 342 s；加 Map 110 s 共 452 s，小于 600 s；若「失败分片补跑一轮」已实现，再加约 60 s 共 512 s，仍小于 600 s，但超过验收门 8 分钟，只在连续截断时出现，按停下条件报告。最坏花费约 3 × 0.15 = 0.44 元。
+
+验证（在实现之前，另行授权）
+- 用版本 3 全书名单（`texts.id = 9e469e693f76`）按新的输出要求直接调用模型 2 次：不经路由、不走重修环、不写库；解析不过即算不合格。最坏 2 × 0.15 ≈ 0.3 元（空闲时段）。
+- 已知差异：库中名单是合并后的最终名单，且没有分片数；只能验证「认出 impersonal 与纯称呼」，验证不了合并判断。
+- 合格线（「该丢清单」由审计按名单原样列出，Shiyu 确认后在调用前定死）：(1) 两次都可解析、未截断；(2) 该丢清单中的组全部标为 `impersonal`；(3) B2 的 12 人及周瑞家的、北静王、赵姨娘（在名单中的）无一被标 `impersonal`，「宝二爷」「王熙凤」这类名字变体不被去掉；(4) 宝玉、凤姐、贾琏、黛玉的别名处理后不含 夫人、婆子、二爷、奶奶、太太、姑娘；(5) 两次在 (2)–(4) 上判定一致。任一不过即停，贴原样输出，不改提示词重跑。
+- 合格线更正（读版本 3 名单后，2026-09-27）：原 (4)「四人别名不含 夫人/婆子/二爷/奶奶/太太/姑娘」在版本 3 名单上本来就成立（这些词挂在 ≥2 组上，已被现有歧义规则移除），检验不出东西。真正的污染是只挂在一个人名下的纯称呼（香菱「丫头」、黛玉「妹妹」、薛蟠「哥哥」等，按子串会命中大量片段）。验证改按下列清单判，清单外的组与别名不判：
+  - A 必须标 `impersonal`（17）：和尚、婆子、小厮、大夫、小丫头、小丫头（伶俐者）、小鬟、小太监、女尼、道婆、道士、众清客、老姑子、芙蓉花中走出的人影、赖家子弟、林家子弟、赖林诸家
+  - B 不得标 `impersonal`（23）：贾宝玉、林黛玉、薛宝钗、王熙凤、贾母、王夫人、袭人、晴雯、平儿、探春、妙玉、刘姥姥、周瑞家的、北静王、赵姨娘、癞头和尚、跛足道人、张道士、马道婆、警幻仙姑、李嬷嬷、赖嬷嬷、王太医
+  - C 必须列入 `not_name`（24）：贾宝玉：哥儿、我的儿、小爷、世兄；王熙凤：你奶奶、他奶奶、婶娘；林黛玉：妹妹；香菱：丫头；薛蟠：哥哥；探春：小姐；夏金桂：媳妇；妙玉：师父；贾元春：娘娘；邢夫人：婆婆；薛姨妈：姑妈；贾政：老伯、老大人、二老爷；王夫人：二太太、舅母；贾珍：大哥；甄士隐：老道、老道士
+  - D 不得列入 `not_name`（16）：贾宝玉：宝玉、宝二爷；王熙凤：凤姐、凤丫头、琏二奶奶；林黛玉：黛玉、林妹妹、颦儿；薛宝钗：宝钗、宝姐姐；贾母：史太君；贾琏：琏二爷；袭人：花袭人；北静王：北静郡王、水溶；周瑞家的：周大娘
+  - 合格：两次都可解析且未截断；A–D 全对（`not_name` 的键按主名精确匹配）；两次在 A–D 上判定一致。任一不过即停，贴原样输出，不改提示词重跑。
+- 验证输入与真实输入的差异：库中名单没有分片数，验证时每行写作「- 主名（别名：…）」；真实调用的每行还带「出现 N 个分片；」。提示词不描述行格式，两种输入共用同一份。
+- 另发现（版本 3 名单）：尤二姐被并入尤氏组（「尤二姐」「二姐」「新二奶奶」挂在尤氏名下，名单里没有独立的尤二姐）。逐片原始输出未留存，定位不了是哪条并组规则所致。处理：实现时把全书调用返回的三类结果各记一条 INFO 日志（沿用 core/distiller.py 现有的 logger），全书识别验收增加一条判据「尤二姐与尤氏不在同一组」；不过则按日志定位，在本线修。
+- 全书调用新提示词（验证与实现共用；示例取自《水浒传》，与 A–D 清单不重叠，避免验证的是示例记忆而不是判据），原文如下：
+
+```
+下面是从同一部作品的不同片段里各自识别出的角色分组清单，每组一行，给出主名与该组记录到的别名。
+这些组已经按「主名相同」和「别名唯一指向另一个主名」归过一轮。请只列出下面三类例外，其余一律不列：
+1. merge —— 同一个人在不同片段里用了两个都像主名的称呼，被分成了两组。拿不准的一律不合并：把两个人并成一个，比漏并更糟。
+2. impersonal —— 主名不指书中某一个具体的人：职业、身份、类别的通称，或一群人。称呼里含姓或名，或是只指一个人的专有封号、法号、绰号，都算具体的人，不要列。例：「店小二」「众好汉」要列；「王婆」「林教头」「花和尚」不列。拿不准的不列。
+3. not_name —— 某组别名中只是称呼、不是此人名字变体的：亲属称谓、敬称、代词、泛指。名字变体可以带称号，要保留、不列。例：武松组的别名「二郎」「叔叔」「兄弟」要列；「武二郎」「行者武松」不列。
+只返回一个 JSON 对象，格式：
+{"merge": [["主名A", "主名B"]], "impersonal": ["主名"], "not_name": {"主名": ["称呼1", "称呼2"]}}
+某一类没有时写空数组或空对象。不要返回任何其他内容。
+```
+- 验证结果（2026-09-27，2 次）：不合格。两次都可解析、未截断；B 两次 23/23；A 10/17 与 14/17；C 21/24 与 24/24；D 16/16 与 14/16；两次不一致。not_name 第 1 次 111 项、第 2 次 375 项（交集 104）；同一次内也自相矛盾（第 2 次保留「凤丫头」却列出「云丫头」）；merge 第 1 次 7 组（含错并「藕官」「豆官」），第 2 次为空。
+- 结论：同一输入、同一提示词、同一 temperature（0.7，DeepSeek 官方「数据抽取/分析」档）下，单次调用的例外清单随采样大幅漂移。问题是单样本方差，不是提示词措辞。
+- 处理（self-consistency，Wang et al., ICLR 2023：同一输入独立采样多次，按多数票定结果）：全书判定调用改为 k = 5 次独立调用并行，代码逐项计票——组标 `impersonal`、别名列入 `not_name`、组对合并，各需 ≥ 3/5 票才生效。提示词不变。路径机制与真实规模核算在实现 spec 中补。
+- 补充验证：复用已付费的 2 次输出，再调 3 次凑满 5 次（同输入、同提示词）。合格线：5 票多数的结果使 A–D 全对。每个 A–D 项的票数另行报告，不作门槛。
+- 实现步骤与「测试」一节在验证通过后补入本节。
+
+### WP16 修订：识别目标改为「可蒸馏人物」（2026-09-27，Shiyu 拍板；取代本节此前 WP16 补充中的别名分类、A–D 清单与 5 票别名判定）
+
+**目标**：识别出能蒸馏出性格准确卡片的人物。由卡片规格倒推三个条件：(1) 本人有原话且分布在多个场景——说话风格与对话示例直接取自原文对话（`_FORMAT_DIMS` 的 C、I）；(2) 言行分布在足够多的不同场景——铁律 1「一个特质至少在 2 个不同场景出现」× 核心性格至少 3 个（`_FORMAT_IRON_LAWS`、维度 B）⇒ 至少 6 个不同分片里有本人说话；(3) 指一个具体的人。
+
+**数据**（审计用公开一百二十回本估算：正文约 88.5 万字，按 5000 字切 191 片；说话标记「道/说：“」10205 处，按句内首个人名归属 89%，抽查 31 条全对）：说话分片 ≥ 6 的具体人物 59 人（≥ 20 的 21 人）；B2 的 12 人全部 ≥ 7；「和尚」仅 2 片；婆子、小丫头、小厮过线但不是具体一人。版本 3 的 66 个主要人物中 16 个不足 6 片（和尚、元春、北静王等），另有 9 个 ≥ 6 片却被判为次要（尤二姐、巧姐等）。
+
+**改动**（只改识别线现有代码，不新增模块）
+1. 逐片提示词 `IDENTIFY_SYSTEM_PROMPT`：每项加 `spoke`（本段中此人是否亲口说了话）。`importance` 保留（单分片路径仍用），多分片路径不再读它。
+2. `core/roster_aggregate.py`：`_Obs` 以 `spoke`（仅当条目的 `spoke` 为 JSON `true`，即 Python `is True`）取代 `importance`；`_assemble_group` 的组加 `speak_count`（本人说话的不同分片数）与 `impersonal`（缺省 False）；`finalize_identify_roster(groups)` 判主次改为「`speak_count ≥ MIN_SPEAK_CHUNKS`（= 6，注释写明出处即上面的目标 (2)）且非 impersonal」，排序按 `speak_count` 再按 `chunk_count` 降序；输出每项恰为 `name`、`aliases`、`importance`、`reason`、`speak_chunks` 五个键；理由取自本人说话的分片，没有再取第一条非空理由。删除旧判据（被判为主要的分片 ≥ 2 或出现分片 ≥ 10%）、`_MAIN_MARK` 与 `total_chunks` 参数。计数在最终分组上做（并组在前）。名单仍保留全部组（RAG 打标签用全名单），泛称组标为次要，不删除。
+3. 全书判定：`_identify_alias_pairs` / `IDENTIFY_ALIAS_PROMPT` 改名为 `_judge_groups` / `IDENTIFY_JUDGE_PROMPT`。输入与现清单相同（`alias_prompt_rows`），输出 `{"merge": [...], "impersonal": [...]}`。同一输入独立调用 `IDENTIFY_JUDGE_SAMPLES = 5` 次，经现有 `_run_map_with_client` 并发；执行器报失败的调用（含截断抛出的 `IncompleteResponseError`）与不合法样本（不是 JSON 对象，或两键不都是数组）都不计票；合法样本不足 `IDENTIFY_JUDGE_QUORUM = 3` 份即抛 `DistillError`。计票是 `roster_aggregate` 里的纯函数：每份样本里每条 merge 拆成两两组对、每个组对每份样本只计一票，impersonal 按主名计票，≥ 3 票生效。impersonal 按并组前的组名标注，并组后「所并各组全为 impersonal」才算。依据：本节上文 5 次实测中，泛称组 婆子/小丫头 5/5、小厮 4/5，B 清单 23 个真人物 0/5；单次调用约 1/5 的概率漏标小厮，错并（藕官/豆官）仅 1/5。
+4. 生效的合并组对与 impersonal 各打印一行，前缀分别为 `[distill] identify judge merge=` 与 `[distill] identify judge impersonal=`，与本文件现有诊断输出同一方式（`print`，如 `core/distiller.py:1073`），用于定位尤二姐被并入尤氏组的环节。
+5. `IDENTIFY_VERSION` 保持 4（未合入 main，库中无 `characters_version = 4` 的行）；注释补一行说明本修订。
+
+**全书判定提示词原文**（逐字）：
+```
+下面是从同一部作品的不同片段里各自识别出的角色分组清单，每组一行。
+这些组已经按「主名相同」和「别名唯一指向另一个主名」归过一轮。请只列出下面两类例外，其余一律不列：
+1. merge —— 同一个人在不同片段里用了两个都像主名的称呼，被分成了两组。拿不准的一律不合并：把两个人并成一个，比漏并更糟。
+2. impersonal —— 主名不指书中某一个具体的人：职业、身份、类别的通称，或一群人。称呼里含姓或名，或是只指一个人的专有封号、法号、绰号，都算具体的人，不要列。例：「店小二」「众好汉」要列；「王婆」「林教头」「花和尚」不列。拿不准的不列。
+只返回一个 JSON 对象，格式：
+{"merge": [["主名A", "主名B"]], "impersonal": ["主名"]}
+某一类没有时写空数组。不要返回任何其他内容。
+```
+**逐片提示词改动**（逐字）：在「只返回 JSON 数组，格式：」那一行之前加一行
+```
+spoke：本段中此人是否亲口说了话（原文里有他本人说的直接引语）；只被别人提到、或只有动作没有说话，填 false。
+```
+格式行改为
+```
+[{"name": "主名", "aliases": ["别名1", "别名2"], "importance": "主要/次要", "spoke": true, "reason": "简述"}]
+```
+
+**已查实的约束**（基线 `80823ae`，代码与 `defc776` 相同；执行方 S0 逐条复核）
+1. `IDENTIFY_SYSTEM_PROMPT`（`core/distiller.py:67-82`）由单分片（`:1139`、`:1149`）与多分片（`:1181`）共用。
+2. `IDENTIFY_ALIAS_PROMPT`（`:89-100`）只被 `_identify_alias_pairs`（`:1224`）使用，经 `_chat_accounted(stream=True)`（`:1243`）与 `_parse_json_with_retry`（`:1247-1251`）。
+3. `_identify_over_chunks`（`:1164`）：Map 经 `_run_map_with_client`（`:1183`），任一分片失败即 `DistillError`（`:1204-1214`），归组 `:1216`，并组与出名单 `:1221-1222`。
+4. `_run_map_with_client`（`:1541`）→ `_run_map_concurrent`（`:1566`）：每次尝试经 `async_chat`（`adapters/llm_adapter.py:803`），`max_tokens` 缺省取 `llm.max_tokens`（`:824`；`config.example.yaml:12` 为 4096），单次尝试上限 `_GEN_ATTEMPT_S` 45 s（`:105`），整条重试链上限 `_GEN_BATCH_DEADLINE_S`（`:124`，约 152 s），排队时间顺延（`:837`）；整阶段用量汇总记一行（`core/distiller.py:1639`）。
+5. `core/roster_aggregate.py`：`_MAIN_MARK`（`:29`）、`_Obs`（`:32`）、`_observations`（`:76`）、`_assemble_group`（`:114`）、`alias_prompt_rows`（`:240`）、`_strip_ambiguous`（`:258`，`{**group, "aliases": …}` 保留其余键）、`merge_identify_groups`（`:270`）、`_reason`（`:309`）、`finalize_identify_roster`（`:321`，主次判据 `:335-339`）。
+6. 前端只读 `importance`、`reason`（`web/frontend/src/components/CharCard.jsx:467-476`）；`target_character_name` 取名单首项（`core/character_roster.py:75-87`），名单顺序即缺省蒸馏对象。
+7. 验收脚本 identify 模式：`main` 按主名 ∪ 别名解析，要求恰 1 组且为主要（`tests/perf/longbook_acceptance.py:298-305`）；`generics` 要求不是任何组的 name（`:317`），与本修订（泛称组保留为次要）不兼容，本段验收传空；主要人物名单由 `major_names`（`:331`）读出。
+8. `tests/test_identify_whole_book.py:10-12`、`:161-203` 锁的是「合并阶段 1 次、走 chat_stream_long」，本修订按设计改变，相应测试替换。
+
+**路径机制与本改动**
+| 机制 | 现有前提 | 是否改变 → 处理 |
+|---|---|---|
+| 执行器输出上限 4096 | 输出短 | 判定只列例外；5 次实测含别名分类时 774–3414 tokens，去掉后更短；最坏把 352 个组名全列约 2.5k < 4096 |
+| 单次尝试 45 s | 45 s 内生成完 | 常态 5–10 s（实测 5351 输入 / 774 输出用 7.5 s）；最坏 2.5k tokens 约 35 s，仍在限内 |
+| 自适应并发闸 | 按账号上限 | 5 路远低于上限；上限更低时排队，排队时间顺延总时限 |
+| 用量记账 | 一次执行器调用记一行 | 判定 5 次汇总成一行（原先合并调用 1 次一行） |
+| 重修环 | 原合并调用失败时再修 2 次 | 判定不走重修环：失败或不合法的样本不计票，合法 < 3 份即整体失败 |
+| 失败语义 | 任一环节失败即整体失败，不进缓存、不落库 | 不变 |
+| memo | 键含 `IDENTIFY_VERSION` | 版本不变；库中无 v4 名单；验收前重建后端容器，进程内 memo 清空 |
+
+**真实规模核算**（242 片；上次成功识别实测：Map 输入 692097 / 输出 156313 tokens，合并调用输入 8043 / 输出 100；DeepSeek 空闲时段 输入 4.5 元/百万、输出 13.5 元/百万）
+- 逐片：每片平均输出约 646 tokens；`spoke` 每人约 +6 tokens，按每片约 12 人估 +11% ⇒ Map 约 90–120 s（原 80–110 s），花费上界约 5.4 元（未计缓存折扣，上次实扣约 4 元）。
+- 判定：5 × 8k 输入约 0.18 元，输出可忽略；5 路并行约 10 s；最坏（重试链耗尽）152 s。
+- 整请求：常态约 2–2.5 分钟；最坏约 120 + 152 = 272 s，小于 480 s 验收门与 600 s 时限。
+
+**测试**（本地只跑受影响的文件 + `npm test`，库用 Docker 起的 PG；合并门是分支 CI；合并只做 git 操作）
+- 删除或替换：锁旧判据（≥ 2 个主要分片 / ≥ 10%）的测试，锁「合并走流式 1 次」「重修也走流式」的测试。受影响文件以 grep 定位（`IDENTIFY_ALIAS_PROMPT`、`_identify_alias_pairs`、`finalize_identify_roster`、`merge_identify_groups`、`IDENTIFY_SYSTEM_PROMPT`、`_MAIN_MARK`、`group_identify_entries`、`importance`）。
+- 纯函数（`tests/test_roster_aggregate.py`）：
+  - T1：说话分片 5 → 次要，6 → 主要；
+  - T2：impersonal 组即使说话 40 片也是次要，且仍在名单里；
+  - T3：两组各自说话 4 片（分片不重叠）经组对合并 → 8 片、主要；重叠分片只计一次；
+  - T4：impersonal 随并组传递——泛称组并入具体人物组 → 不是；两个泛称组互并 → 仍是；
+  - T5：计票——组对 3/5 生效、2/5 不生效；一条含 3 个主名的 merge 拆成 3 个组对计票；impersonal 3/5 生效；
+  - T8：输出每项恰为五个键（含 `speak_chunks`），按说话分片数降序；理由取自本人说话的分片；
+  - T9：出现 30 片、说话 2 片 → 次要（「和尚」形态：出场多不等于能蒸馏）；
+  - T10：`spoke` 为字符串 `"false"` / `"true"`、数字 `1`、缺省时都不计入说话分片（只认 JSON `true`）。
+- 编排（`tests/test_identify_whole_book.py`，LLM 桩）：
+  - T6：5 份判定只有 2 份合法 → `DistillError`，结果不进 memo；
+  - T7：5 次判定并发——桩对判定提示词每次睡 0.3 s，判定阶段总耗时 < 1.0 s（串行为 1.5 s），按比例复刻「5 路并行约等于单次」；
+  - T11：从 `identify_characters` 入口走完整条链路：7 片，甲在 6 片 `spoke: true` → 主要且排在名单首项；乙出现 7 片、只在 1 片说话 → 次要；判定恰好调 5 次，每次系统提示词为 `IDENTIFY_JUDGE_PROMPT`，5 次 user 内容相同，且不含任何分片的 `reason` 与正文；标准输出含 `[distill] identify judge merge=` 与 `[distill] identify judge impersonal=` 两行；
+  - T12：判定 5 次中 2 次由执行器报失败（其中 1 次为 `IncompleteResponseError`）、3 次合法 → 正常出名单；3 次失败 → `DistillError`；
+  - T13：用量——非空名单的一次识别记恰好 2 行 `distill_identify`（逐片汇总 1 行、判定汇总 1 行，判定那行的调用次数为 5）；
+  - T14：单分片文本不调判定（0 次判定调用），名单原样返回模型给的 `importance`。
+
+**真实模型小样**（全书识别之前；约 10 次真实调用、约 0.1 元）
+- 从本地库 `texts.id = 9e469e693f76` 的原文里，取行首为「第三十九回」的标题起、到行首为「第四十二回」的标题前的全文（刘姥姥二进荣国府），用临时脚本 `e2e/scratch/wp16_spoke_probe.py`（不提交）以真实适配器直接调 `Distiller.identify_characters`（不经路由、不写库）。
+- 同一段原文按生产切片（`Distiller._split_chunks`，`chunk_size` 与生产一致）用正则数「本人说话的分片」作对照：人名 +（至多 8 个非标点字符）+「道：」或「说：」+ 左引号（“ 或 「），正则为 `(名字)[^，。！？“”「」：；\n]{0,8}(?:道|说)：[“「]`；名字取：刘姥姥；贾母；王熙凤 → 「凤姐」「王熙凤」。
+- 门槛：S1 调用成功、5 份判定至少 3 份合法；S2 刘姥姥、贾母、王熙凤三人名单中的 `speak_chunks` 各自 ≥ 正则计数 − 1（正则命中是高精度的正例，模型漏标超过 1 片即判为召回不足）。任一不成立：停下报告，不做全书识别。
+
+**全书验收**（小样通过之后；授权恰好 1 次全书识别请求，约 4.5–5.5 元，空闲时段；失败即停，不重试）
+- 重建后端容器后跑 `tests/perf/longbook_acceptance.py --mode identify --text-id 9e469e693f76`，criteria 为：`{"main": ["贾宝玉", "林黛玉", "薛宝钗", "王熙凤", "贾母", "王夫人", "袭人", "晴雯", "平儿", "探春", "妙玉", "刘姥姥"], "same_group": [], "generics": [], "generic_not_on": []}`。
+- 门槛（全部成立才过）：G1 请求成功且整请求 ≤ 8 分钟；G2 `main_ok` 为 12/12；G3「和尚」「婆子」「小丫头」「小厮」都不在 `major_names` 里。
+- 只报告、不设门槛：主要人物总数与名单（审计估算约 59 人，来自不同版本，仅作参照）；尤二姐是否单独成组及其主次；判定打印的两行；库中名单全部主要人物的 `speak_chunks`；本次用量行。
+**WP16 修订验收结果**（2026-09-27，提交 `3ae22e1`，本地栈，DeepSeek v4-pro）：通过。
+- G1：整请求 95.9 s（逐片 68.5 s）；429 / 5xx / 逐片分片失败均为 0。G2：B2 的 12 人 12/12 为主要。G3：和尚、婆子、小丫头、小厮均被判为 impersonal，不在主要人物里。
+- 主要人物 64 人（审计按另一版本估算 59 人）；尤二姐单独成组，说话 9 片，为主要；刘姥姥 13 片，妙玉 8 片。用量：逐片 723557 / 188604 tokens（242 次），判定 43955 / 1161 tokens（5 次，含 1 次截断的估算）。
+- 估算更正：判定每份输入实测约 8791 tokens（原写约 8k）；5 份中 1 份输出撞到 4096 上限被截断（原写「最坏约 2.5k」，估错）。按 1/5 截断率，5 份中 ≥ 3 份失败导致整次识别失败的概率约 6%。截断内容当时未留存，原因待下次出现时由诊断日志定位。
+- 已知问题（不在本段修）：焙茗（10 片）与茗烟（9 片）为同一人却分成两组，都为主要。原因：判定「拿不准不合并」加 5 票多数偏向漏并，这是有意的取舍（错并比漏并更糟）。
+- 本地 `config.yaml` 未配 `map_concurrency`（取默认 30），验收脚本报 A1 不符；只影响耗时，不影响本段结论。蒸馏验收前在对应的栈上对齐。
 ### WP9 真实验收
 第 10 节。合并进 main 前必须做完；拆分执行时，放在最后一个触及蒸馏路径的执行 spec 里。
 
@@ -222,7 +462,7 @@
 |---|---|---|---|
 | WP1 | — | `adapters/llm_adapter.py`、`core/distiller.py`（5 处改调入口） | 与 WP2、WP4 同文件；`distiller.py` 与 WP3–WP8 同文件 |
 | WP2 | — | `adapters/llm_adapter.py`、`web/server.py` | 与 WP1、WP4 同文件 |
-| WP3 | WP1 | `core/distiller.py`、`core/character_roster.py` | 与 WP5、WP7、WP8 同在 `distiller.py` |
+| WP3 | WP1 | `core/distiller.py`、`core/roster_aggregate.py`（新）、`core/character_roster.py`（搬出） | 与 WP5、WP7、WP8 同在 `distiller.py` |
 | WP4 | — | `adapters/llm_adapter.py`、`core/distiller.py` | 同上 |
 | WP5 | WP1、WP4 | `core/distiller.py` | 同上 |
 | WP6 | — | `config.example.yaml` | 无 |
@@ -233,7 +473,7 @@
 **拆法（2026-09-25 修订：WP8 已合入 main `0dbb3eb`）**
 - **A 线**（现窗口，`feat/distill-longbook`）：WP1 + WP2 → 合入 → WP4 → WP5 → WP6 → WP7 → 蒸馏验收（§10 C、D）。
 - **C 线**（新开，WP1 + WP2 合入 main 之后再开）：WP3 → 识别验收（§10 A、B）→ 合入。
-- 为什么能并行：WP3 只动识别段（`core/distiller.py:942-1135` 的识别函数）与 `core/character_roster.py`；A 线后续改的是 `_collect_stream`（`:618-680`）、分批合并（`:1494-1560`、`:1982-2030`）、格式化（`:2040-2070`）与 `core/schema.py`，行不重叠。测试文件也不重叠（C 线：`test_identify_whole_book.py`、`test_character_roster.py`；A 线：`test_distiller_routing.py`、`test_distill_usage_accounting.py`）。
+- 为什么能并行：WP3 只动识别段（`core/distiller.py:942-1135` 的识别函数）、`core/roster_aggregate.py` 与 `core/character_roster.py`；A 线后续改的是 `_collect_stream`（`:618-680`）、分批合并（`:1494-1560`、`:1982-2030`）、格式化（`:2040-2070`）与 `core/schema.py`，行不重叠。测试文件也不重叠（C 线：`test_identify_whole_book.py`、`test_character_roster.py`；A 线：`test_distiller_routing.py`、`test_distill_usage_accounting.py`）。
 - 为什么 C 线要等 WP1 + WP2 合入：WP3 的编排测试要桩 `chat_stream_long`，这个方法是 WP1 才加的。
 - 为什么不再多开：WP4 要改 WP1 新建的 `_stream`；WP7 的「分批时跳过总合并」与 WP5 改的是同一段；这三个拆开只会制造冲突。
 - 两次真实验收不同时跑：同一个 DeepSeek 账号并发上限 500，识别与蒸馏各 250 会顶满。
@@ -285,17 +525,30 @@
 | S1 | 长输出流容忍 prefill 静默，聊天流不变 | `tests/test_llm_adapter_retry.py` | 假服务先回 200 头、静默 1.0 s 再吐内容；monkeypatch `_STREAM_ATTEMPT_S=0.5`、`_STREAM_DEADLINE_S=1.5`：`chat_stream_long` → 成功；`chat_stream` → 读超时。`test_timeout_family_defaults_unchanged` 补 `_BATCH_STREAM_READ_S == 300.0` | ① `chat_stream_long` 的 `read_s` 改回 ceiling ② 放宽时把 connect 也放大（断言 connect 仍 = ceiling） |
 | S2 | 蒸馏只用长输出流 | `tests/test_llm_adapter_retry.py`（已落此处） | AST：`core/distiller.py` 中没有对 LLM 接收者的 `.chat_stream(` 调用；形态锁原有断言保持绿 | 任一处改回 `chat_stream` |
 | S3 | 流中断 → 503 + 上屏文案；边界锁覆盖全部 LLM 异常类 | `tests/test_chat_stream_error.py` | 参数化两例（真 openai 客户端 + 真 socket）：假服务吐一片后断连；假服务静默超过聊天读超时（生产现场的 `ReadTimeout`）。最小 app 装 `register_domain_error_handlers`，路由消费 `chat_stream` → 503，`detail` == 「模型服务暂时不可用，请稍后重试」（与兜底文案差一词，有分辨力），`__cause__` 是 `httpx2` 异常；边界锁改为扫 `llm_error_types()` 全部类名 | ① 不包装 ② 包装面放宽成 `except Exception`（喂一个循环体内的 `AttributeError`，断言仍非 503） ③ `_TRANSPORT_ERRORS` 去掉 `APIConnectionError`（用例：桩一个抛 `openai.APIConnectionError(request=httpx2.Request("POST","http://x"))` 的流） ④ `llm_error_types` 不含 `UpstreamFailure` ⑤ 不登记 503 ⑥ `_upstream_user_message` 不认传输层（断言建流阶段网络错误重试耗尽后的文案 == 读流中断的文案） ⑦ 边界锁改回字面量 |
+| S4 | 流式末 chunk 的终态与用量同块时终态不被跳过 | `tests/test_llm_adapter_finish_reason.py` | `fake_sse` 默认 `usage_shape="same"`（终态 + usage 同一末 chunk）：`tokens=["a","b"]` + `finish_reason="length"` → `chat_stream_long` 抛 `IncompleteResponseError`；`finish_reason="stop"` → 正文全交付、`last_usage` == 厂商值（pt 1 / ct 2）、输出无「未识别 finish_reason」告警；再以 `usage_shape="separate"`（OpenAI）跑 length 一条仍绿 | ① 读流循环改回 `if chunk.usage: … continue` ② 终态校验加 `and chunk.usage is None`（同块即跳过终态） |
+| S5 | `async_chat` 的重试不被总墙钟饿死；交互路径仍封顶 60s | `tests/test_llm_adapter_retry.py` | 假时钟（`_FakeClock` 注入 `M.time`）：前两次 attempt 各吃满 `_GEN_ATTEMPT_S` 才超时、第 3 次成功 → `async_chat` 返回、create 3 次（旧 60 s 总闸下第 3 次分不到时间）；`achat` 同场景 → 第 2 次后即失败（交互封顶未放宽） | ① `async_chat` 的 `deadline_s` 改回 `_GEN_DEADLINE_S` ② 推导式只按单次算（`_GEN_ATTEMPT_S`）③ `achat` 改传批量预算 |
+| S6 | 单次合并的输出上限 = `CARD_MAX_TOKENS` | `tests/test_distiller_routing.py` | 桩 `chat_stream_long` 记录 `max_tokens`；`list(d._single_reduce_stream(["分析一","分析二"], "角色"))` → 记录值 == `Distiller.CARD_MAX_TOKENS`（8192），正文照常交付 | 删掉 `max_tokens=self.CARD_MAX_TOKENS` |
+| A1 | 闸本身 | 已有并发测试文件（先 grep，无则 `tests/test_concurrency.py`） | 429 → 上限 ×0.75 向下取整、最低 1；连续成功达上限 → +1、不超过上限；上限低于在途数时新 acquire 等待 | 429 不下调 / 无下限 / 无上限 |
+| A2 | Map 在「超过 N 路即 429」的上游下零失败 | `tests/test_distiller_routing.py` | 假服务在途 > 5 时回 429（DeepSeek 原文形态）；`map_concurrency=20` 跑 40 片 → 0 失败，在途峰值收敛到 ≤ 5 | 闸只包整次调用、不进重试循环 / 退避期间占着名额 |
+| A3 | 账户记忆 | `tests/test_distiller_routing.py` | 同一 adapter 连跑两轮：第二轮初值 = 第一轮学到的上限，429 次数明显少于第一轮 | 不写回 |
+| A4 | 排队不计入时限 | 与 A2 同文件 | 假服务每次约 0.2 s、在途 > 3 回 429，缩放 `_GEN_BATCH_DEADLINE_S` 到约 1 s，跑 40 片（排队总时长明显 > 1 s）→ 0 失败 | 去掉顺延 → 尾部分片判超时 |
+| A5 | 一波 429 只下调一次 | `tests/test_concurrency.py` | cap 20、上游在途 > 5 即 429：首波 20 个同时发出、15 个 429 → 上限变为 15（不是 1）；数波后收敛到 ≤ 5，全程上限不低于 3 | 每次 429 都下调 |
+| A6 | 未满载不上探 | `tests/test_concurrency.py` | cap 10、上限 6：先满载跑到收敛，再只剩 2 路在途连续成功 50 次 → 上限不变；写回的账户记忆 ≤ 收敛值 | 不看满载一律计数 |
 
 ### WP3
-纯函数测试放 `tests/test_character_roster.py`（直接喂列表）；编排测试放 `tests/test_identify_whole_book.py`（`TestWholeBookCoverage` 按新口径重写，其余两类保留）。
+纯函数测试放 `tests/test_roster_aggregate.py`（直接喂列表）；编排测试放 `tests/test_identify_whole_book.py`（`TestWholeBookCoverage` 按新口径重写，其余两类保留）。
 
 | # | 守的行为 | 构造 → 断言 | 变异（每条都要红） |
 |---|---|---|---|
 | I1 | 合并阶段只 1 次别名判断，输入无理由、无正文 | 编排测试：3 片桩，reason 与片内各放可搜标记 → `chat_stream.call_count == 1`，其输入不含标记，含每组主名与出现分片数 | 恢复 main 上的 `_identify_merge` |
 | I2 | 别名判断的重修也走流式 | 编排测试：首次回「不是 JSON」→ `chat_stream.call_count == 2`、`chat.call_count == 0`（改写自原 `test_merge_repair_also_uses_stream`） | 重修改 `stream=False` |
 | I3 | 歧义别名：不并组、且从所有组移除 | 纯函数：片1 甲{二爷}、片2 乙{二爷}、组对为空 → 甲乙分开，两者 aliases 都不含「二爷」；再给组对（甲, 丙），丙的「三爷」也挂在丁名下 → 合并组不含「三爷」 | ① 共享任一别名即并 ② 删掉移除那一步 |
+| I3b | 同一人不同主名共列的别名不算歧义；模型并组后共有别名保留 | 纯函数：片1 贾宝玉{宝玉, 宝二爷}、片2 宝玉{宝二爷} → 一组，aliases 含「宝二爷」；再给甲{某爷}、乙{某爷}、组对（甲, 乙）→ 合并组 aliases 含「某爷」；并断言别名判断收到的清单里不含当时挂在 ≥2 组上的别名 | ① 歧义改回按主名计 ② 移除放到别名判断之前 ③ 清单里送出多组共有的别名 |
+| I3c | 成员主名优先 | 纯函数：片1 贾宝玉{宝玉}、片2 宝玉{宝二爷}、片3 甄宝玉{宝玉}，组对（贾宝玉, 宝玉）→ 合并组 aliases 含「宝玉」；甄宝玉组 aliases 不含「宝玉」；在 name ∪ aliases 里「宝玉」恰命中 1 组；并断言别名判断清单里三组都不带「宝玉」 | ① 所有权只数 aliases、不数主名 ② 成员主名也被移除 ③ 清单过滤与移除不同口径 |
+| I3d | 单字别名丢弃 | 纯函数：片1 宝玉{他, 玉, 宝二爷} → aliases == (宝二爷,)；单分片路径同样丢 | 去掉长度判据 / 只在一条路径上判 |
+| I6 | 识别任一分片失败即失败、且不缓存不入库 | 编排测试：242 片中 1 片抛异常 → `DistillError`；随后同文本再识别一次，Map 重新发起（memo 未写）；路由层 `resolve_characters` 未调用 `save_characters` | ① 恢复 50% 容忍 ② 失败时仍写 memo |
 | I4 | 主次、排序、理由、不截断 | 纯函数，一套 40 片数据（10% = 4）：X 3 片其中 2 片主要（写法「主角」「主要角色」）→ 主要，理由取主要片那条；Y 3 片、1 片主要、同片重复一次 → 次要、`chunk_count == 3`；Z 恰 4 片全「配角」→ 主要；再加 57 个一次性人物 → 输出组数 == 60，主要在前、组内按 `(main_count, chunk_count)` 降序 | ① 只按 chunk_count 判 ② `>=` 改 `>` ③ 规范化改 `== "主要"` ④ 按条目计数 ⑤ 去掉主次分层 ⑥ 理由取第一条 ⑦ 加 `[:50]` |
-| I5 | 记账 = 逐片汇总 1 行 + 别名判断 1 行 | 先把变异跑在 `tests/test_usage_accounting_lock.py`，红了就不新增；没红才在 `tests/test_distill_usage_accounting.py` 加一条断言 `["distill_identify"] * 2` | 别名判断改为直接 `self._llm.chat_stream(...)` |
+| I5 | 记账 = 逐片汇总 1 行 + 别名判断 1 行 | 先把变异跑在 `tests/test_usage_accounting_lock.py`，红了就不新增；没红才在 `tests/test_identify_whole_book.py` 加一条断言 `["distill_identify"] * 2`（只数 action 行，不看 token 值；放识别自己的文件，避开 A 线 R4 在改的 `test_distill_usage_accounting.py`） | 别名判断改为直接 `self._llm.chat_stream(...)` |
 
 收尾：删 `test_merge_call_uses_stream`、`test_merge_max_tokens_is_raised`；改写 `tests/test_usage_identity_context.py:398` 的注释；`git grep -n "IDENTIFY_MERGE_PROMPT\|IDENTIFY_MERGE_MAX_TOKENS"` 为 0。版本号见 第 6 节 D7。
 
@@ -338,7 +591,8 @@
 1. `docker compose -f docker-compose.test.yml up -d --wait`（端口 55432，`tests/conftest.py:27-32` 强制连它）。
 2. 每步只跑以下文件：
    - WP1 + WP2：`test_llm_adapter_retry.py test_usage_accounting_lock.py test_chat_stream_error.py test_llm_adapter_finish_reason.py test_domain_exception_exit.py test_exception_pickle_lock.py`
-   - WP3：`test_identify_whole_book.py test_character_roster.py test_identify_failure_channels.py test_usage_identity_context.py test_distill_usage_accounting.py test_usage_accounting_lock.py test_distill_task_api.py`
+   - WP11–13：`test_llm_adapter_finish_reason.py test_llm_adapter_retry.py test_chat_stream_error.py test_distiller_routing.py test_distill_usage_accounting.py test_identify_whole_book.py`
+   - WP3：`test_identify_whole_book.py test_roster_aggregate.py test_character_roster.py test_identify_failure_channels.py test_usage_identity_context.py test_distill_usage_accounting.py test_usage_accounting_lock.py test_distill_task_api.py`
    - WP4 + WP5：`test_distiller_routing.py test_distill_usage_accounting.py test_usage_accounting_lock.py test_llm_access_gate.py test_distill_resume.py test_llm_adapter_finish_reason.py`
    - WP8：`test_distill_task_api.py test_postgres_store.py test_storage.py test_distill_resume.py`
    - WP7：`test_distiller_routing.py test_identify_failure_channels.py test_distill_progress.py test_distill_task_api.py test_distill_usage_accounting.py`

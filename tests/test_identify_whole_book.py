@@ -1,27 +1,39 @@
 # -*- coding: utf-8 -*-
-"""识别覆盖全书：分片 Map + 合并，失败率判据，合并走流式。
+"""识别覆盖全书：分片 Map → 代码归组 → 全书判定（5 次独立采样取多数票），失败率判据。
 
 缺陷形态：``identify_characters`` 取 ``text[:10000]`` —— 红楼梦这类长篇只覆盖头两章，
-名单天然残缺，而残缺名单会被落库、被所有下游当成全书名单用。本文件锁五件事：
+名单天然残缺，而残缺名单会被落库、被所有下游当成全书名单用。本文件锁六件事：
 
   1. 只在**最后一个分片**出现的角色也进名单，且**每个分片都被送进了识别**
      （变异对象 = 恢复 ``excerpt = text[:10000]``：单次调用、末章角色丢失 → 红）
-  2. 单分片**不合并**（`_identify_merge` 不被调用）——短文本的调用形态与改前一致
-  3. 合并调用走 ``chat_stream``（非流式生成有 45s/60s 墙钟上限，长输出必然撞墙）
-  4. 分片失败率越过容忍上限即抛；**解析失败与调用失败同权**计
-  5. 重修重试也不许退回非流式 ``chat``（否则重修那两次还是撞墙）
+  2. 单分片**不走全书判定**（走原来那一次 ``chat``）——短文本的调用形态与改前一致，
+     主次原样保留模型给的 `importance`
+  3. 全书判定独立调 **5 次**、并发（与逐片 Map 同一条 `_run_map_with_client` 骨架）；
+     它的输入只有主名 / 别名 / 出现分片数，**没有 reason、没有正文**
+  4. **任一分片失败即整体失败**（解析失败与调用失败同权计），且失败不进 memo ——
+     名单会落库长期复用，半本书的名单会一直错下去。蒸馏那条容忍线（50%）不在这条路上
+  5. 判定：执行器报错的调用与不合法样本都不计票，合法样本不足 3 份即整体失败，
+     且失败不进 memo
+  6. 别名至少两个字：单字称呼按子串匹配几乎命中每一片，两条路径都丢
+
+归组、并组、判主次、取理由是纯计算，已在 `tests/test_roster_aggregate.py` 逐条锁过
+（I3–I5）—— 这里只锁编排：调了几次、走的哪条通道、喂进去的是什么。
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+import time
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from adapters.llm_adapter import IncompleteResponseError, _extract_content
 from core.distiller import (
     _IDENTIFY_CACHE,
-    IDENTIFY_MERGE_PROMPT,
+    IDENTIFY_JUDGE_PROMPT,
+    IDENTIFY_SYSTEM_PROMPT,
     DistillError,
     Distiller,
 )
@@ -32,11 +44,38 @@ TAIL = "孔明在末章登场"        # 只在最后一分片出现的角色
 # `text[:10000]` 砍掉的那一段
 WHOLE_BOOK_TAIL_CHARS = "\n\n".join([FILLER] * 6 + [TAIL])
 
-KONGMING = {"name": "孔明", "aliases": ["诸葛亮"], "importance": "主要", "reason": "末章登场"}
+KONGMING = {"name": "孔明", "aliases": ["诸葛亮"], "spoke": True, "reason": "末章登场"}
+
+_USAGE = {"prompt_tokens": 1, "completion_tokens": 1}
+#: 判定桩的「谁都不用并、没有泛称」—— 常见且正确的答案，与本文件绝大多数用例无关
+JUDGE_NONE = '{"merge": [], "impersonal": []}'
 
 
 def _chars_json(items) -> str:
     return json.dumps(items, ensure_ascii=False)
+
+
+class _Msg:
+    def __init__(self, content):
+        self.content = content
+
+
+class _Choice:
+    def __init__(self, finish_reason, content):
+        self.finish_reason = finish_reason
+        self.message = _Msg(content)
+
+
+def _truncated(content: str) -> IncompleteResponseError:
+    """经**真实** `_extract_content` 造截断异常，不直接构造。
+
+    直接 `IncompleteResponseError("length", "judge", content=...)` 会绕过 content 的
+    传递链，于是「去掉 content 传递」的变异不会红 —— 那是个测不出东西的用例（同
+    `test_distiller_truncation_selfheal.py` 的取向）。
+    """
+    with pytest.raises(IncompleteResponseError) as ei:
+        _extract_content(_Choice("length", content), where="judge")
+    return ei.value
 
 
 def _client_stub() -> MagicMock:
@@ -53,18 +92,15 @@ def _client_stub() -> MagicMock:
     return client
 
 
-def _make_llm(async_chat=None, chat_stream=None, chat=None) -> MagicMock:
+def _make_llm(async_chat=None, chat=None) -> MagicMock:
     llm = MagicMock()
     llm.model = "test-model"
     llm.last_usage = None
+    # 自适应并发闸的初值取「该账户已学到的上限」：新账号是 None（从 map_concurrency
+    # 起）。MagicMock 的 `int()` 默认是 1，不显式置 None 会让闸一开始就收敛到 1 路。
+    llm.learned_map_concurrency = None
     llm._make_async_client = MagicMock(return_value=_client_stub())
     llm.async_chat = AsyncMock(side_effect=async_chat)
-    llm.chat_stream = MagicMock(
-        side_effect=chat_stream if chat_stream is not None else (lambda *a, **kw: iter([]))
-    )
-    # 长输出入口在生产里是 chat_stream 的薄委托（只放宽读超时）：桩共用同一份记录，
-    # 调用计数/参数断言因此对两条入口都成立。
-    llm.chat_stream_long = llm.chat_stream
     llm.chat = MagicMock(side_effect=chat)
     return llm
 
@@ -75,29 +111,95 @@ def _make_distiller(llm) -> Distiller:
     return d
 
 
-def _map_stub():
-    """Map 桩：分片正文里出现末章名字才返回角色数组，其余分片返回空数组。"""
+def _stub(map_reply, judge=None):
+    """逐片 Map 与全书判定**共用**一个 `async_chat` 桩。
+
+    两条路都走 `async_chat`（判定经 `_run_map_with_client` 并发 5 次），靠 system
+    提示词分路 —— 桩若不分路，判定会拿到 Map 的角色数组，5 份全不合法。``judge``
+    给定时是一个 ``async (system, messages) -> (text, usage)``，缺省回空 merge。
+    """
     async def async_chat(system, messages, max_tokens=None, **kwargs):
-        content = messages[0]["content"]
-        if "孔明" in content:
-            return (_chars_json([KONGMING]), {"prompt_tokens": 1, "completion_tokens": 1})
-        return ("[]", {"prompt_tokens": 1, "completion_tokens": 1})
+        if system == IDENTIFY_JUDGE_PROMPT:
+            if judge is None:
+                return (JUDGE_NONE, dict(_USAGE))
+            return await judge(system, messages)
+        return (map_reply(messages[0]["content"]), dict(_USAGE))
 
     return async_chat
 
 
-def _merge_stream(*, first=None):
-    """合并桩：``chat_stream`` 的 side_effect（返回迭代器，模拟增量）。
+def _systems(llm) -> list[str]:
+    return [c.args[0] for c in llm.async_chat.await_args_list]
 
-    ``first`` 给定时，第一次调用吐它（用于考「解析失败后的重修」）。
-    """
-    payload = _chars_json([KONGMING])
-    replies = list(first) if first is not None else []
 
-    def chat_stream(system, messages, max_tokens=None, **kwargs):
-        return iter([replies.pop(0)] if replies else [payload])
+def _map_calls(llm) -> list:
+    return [c for c in llm.async_chat.await_args_list if c.args[0] == IDENTIFY_SYSTEM_PROMPT]
 
-    return chat_stream
+
+def _judge_calls(llm) -> list:
+    return [c for c in llm.async_chat.await_args_list if c.args[0] == IDENTIFY_JUDGE_PROMPT]
+
+
+def _map_stub():
+    """Map 桩：分片正文里出现末章名字才返回角色数组，其余分片返回空数组。"""
+    return _stub(lambda content: _chars_json([KONGMING]) if "孔明" in content else "[]")
+
+
+# 三片桩：每片一个角色，片内的「正文标记」与理由里的「理由标记」都不许出现在全书
+# 判定的输入里 —— 输入若带了正文或 reason，这两个标记就会露出来。
+_NAMES = ("阿尔法", "贝塔", "伽马")
+_TEXT_MARKERS = ("正文标记一", "正文标记二", "正文标记三")
+_REASON_MARKERS = ("理由标记一", "理由标记二", "理由标记三")
+THREE_CHUNK_TEXT = "\n\n".join(FILLER + m for m in _TEXT_MARKERS)
+
+
+def _three_char_map_stub():
+    """Map 桩：按片内的正文标记各回一个角色（带理由标记与一个唯一别称）。"""
+    def reply(content: str) -> str:
+        for marker, name, reason in zip(_TEXT_MARKERS, _NAMES, _REASON_MARKERS):
+            if marker in content:
+                return _chars_json([{
+                    "name": name, "aliases": [f"{name}别称"],
+                    "spoke": True, "reason": reason,
+                }])
+        return "[]"
+
+    return _stub(reply)
+
+
+# 七片：甲在 6 片亲口说话、乙出现 7 片只在 1 片说话。每片带一个可分辨的标记，
+# 桩据此知道该片有谁。
+_CHUNK_TOKENS = tuple(f"片{i}号标记" for i in range(7))
+SEVEN_CHUNK_TEXT = "\n\n".join(FILLER + t for t in _CHUNK_TOKENS)
+
+
+def _seven_chunk_map_stub():
+    """甲：6 片 `spoke: true`（主要）；乙：7 片里只有第 7 片说话（次要）。"""
+    def people(i: int) -> list[dict]:
+        out = []
+        if i < 6:
+            out.append({"name": "甲", "aliases": [], "spoke": True, "reason": f"甲@{i}"})
+        out.append({"name": "乙", "aliases": [], "spoke": i == 6, "reason": f"乙@{i}"})
+        return out
+
+    def reply(content: str) -> str:
+        for i, token in enumerate(_CHUNK_TOKENS):
+            if token in content:
+                return _chars_json(people(i))
+        return "[]"
+
+    return _stub(reply)
+
+
+@pytest.fixture
+def usage_rows(monkeypatch) -> list[tuple[str, dict | None]]:
+    """收下每次记账的 (action, usage) —— `_try_record_usage` 的唯一被调下游。"""
+    rows: list[tuple[str, dict | None]] = []
+    monkeypatch.setattr(
+        "core.distiller.try_record_usage",
+        lambda **kw: rows.append((kw["action"], kw["usage"])),
+    )
+    return rows
 
 
 class TestWholeBookCoverage:
@@ -106,77 +208,293 @@ class TestWholeBookCoverage:
 
     def test_character_only_in_last_chunk_is_identified(self):
         """末章才登场的角色进名单 —— 且每个分片都送了识别，不是只送前 1 万字。"""
-        llm = _make_llm(async_chat=_map_stub(), chat_stream=_merge_stream())
+        llm = _make_llm(async_chat=_map_stub())
         d = _make_distiller(llm)
 
         result = d.identify_characters(WHOLE_BOOK_TAIL_CHARS)
 
-        assert [c["name"] for c in result] == ["孔明"]
+        # 名字、别名、主次、理由四件都在纯函数里走完全程（不是模型原样返回的那份）
+        assert len(result) == 1
+        assert result[0]["name"] == "孔明"
+        assert result[0]["aliases"] == ["诸葛亮"]
+        assert result[0]["importance"] == "次要", "只在 1 片说话，够不着 6 片的门槛"
+        assert result[0]["speak_chunks"] == 1
+        assert result[0]["reason"] == "末章登场"
         # 6 个分片全送：变异「恢复 text[:10000]」会让这里变成 1，末章角色随之消失
-        assert llm.async_chat.await_count == 6
-        sent = [c.args[1][0]["content"] for c in llm.async_chat.await_args_list]
+        sent = [c.args[1][0]["content"] for c in _map_calls(llm)]
+        assert len(sent) == 6
         assert any("孔明" in s for s in sent), "末章那一片没被送进识别"
 
-    def test_single_chunk_does_not_merge(self):
-        """单分片走原来那次调用（`chat`），不合并 —— 短文本形态与改前一致。"""
+    def test_single_chunk_does_not_judge_groups(self):
+        """单分片走原来那次调用（`chat`），不归组也不判组 —— 短文本形态与改前一致。"""
         llm = _make_llm(chat=lambda *a, **kw: _chars_json([KONGMING]))
         d = _make_distiller(llm)
 
-        with patch.object(d, "_identify_merge") as mock_merge:
-            result = d.identify_characters("短文本，只有一个分片")
+        result = d.identify_characters("短文本，只有一个分片")
 
-        mock_merge.assert_not_called()
         assert llm.chat.call_count == 1
-        assert llm.chat_stream.call_count == 0
+        assert llm.async_chat.await_count == 0, "单分片不该走到全书判定那一步"
         assert [c["name"] for c in result] == ["孔明"]
 
-    def test_merge_call_uses_stream(self):
-        """合并走 chat_stream：非流式生成墙钟装不下整本书的名单。"""
-        llm = _make_llm(async_chat=_map_stub(), chat_stream=_merge_stream())
+
+class TestJudgeInput:
+    """全书判定的输入：只有主名 / 别名 / 出现分片数 —— 没有 reason、没有正文。"""
+
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    def test_judge_sees_names_but_not_reason_or_text(self):
+        """变异对象 = 把各片名单整包丢给模型（正文与理由标记都会露出来 → 红）。"""
+        llm = _make_llm(async_chat=_three_char_map_stub())
         d = _make_distiller(llm)
 
-        d.identify_characters(WHOLE_BOOK_TAIL_CHARS)
+        result = d.identify_characters(THREE_CHUNK_TEXT)
 
-        assert llm.chat_stream.call_count == 1
-        assert llm.chat.call_count == 0, "合并这条路上不该出现非流式 chat"
-        assert llm.chat_stream.call_args.args[0] == IDENTIFY_MERGE_PROMPT
+        calls = _judge_calls(llm)
+        assert len(calls) == 5
+        body = calls[0].args[1][0]["content"]
+        assert not any(m in body for m in _TEXT_MARKERS), "正文不许进判定"
+        assert not any(m in body for m in _REASON_MARKERS), "理由不许进判定"
+        for name in _NAMES:
+            assert name in body, "每组主名要进判定"
+        assert body.count("出现 1 个分片") == 3, "每组出现分片数要进判定"
+        # 三个组各在 1 片说话 → 全部够不着门槛，名单全靠纯函数算出来
+        assert [c["name"] for c in result] == list(_NAMES)
+        assert [c["reason"] for c in result] == list(_REASON_MARKERS)
+        assert [c["aliases"] for c in result] == [[f"{n}别称"] for n in _NAMES]
 
-    def test_merge_repair_also_uses_stream(self):
-        """合并解析失败后的重修也不许退回非流式 chat（否则重修照样撞墙）。"""
-        llm = _make_llm(
-            async_chat=_map_stub(),
-            chat_stream=_merge_stream(first=["不是 JSON"]),
-            chat=lambda *a, **kw: pytest.fail("重修走了非流式 chat"),
-        )
+    def test_all_five_samples_get_the_same_input(self):
+        """同一输入独立采样 —— 采样的是模型，不是输入。"""
+        llm = _make_llm(async_chat=_three_char_map_stub())
         d = _make_distiller(llm)
 
-        result = d.identify_characters(WHOLE_BOOK_TAIL_CHARS)
+        d.identify_characters(THREE_CHUNK_TEXT)
 
-        assert [c["name"] for c in result] == ["孔明"]
-        assert llm.chat_stream.call_count == 2      # 初次 + 重修
-        assert llm.chat.call_count == 0
+        bodies = {c.args[1][0]["content"] for c in _judge_calls(llm)}
+        assert len(bodies) == 1, "5 次的 user 内容必须完全相同"
 
-    def test_merge_max_tokens_is_raised(self):
-        """合并调用的 max_tokens 是 IDENTIFY_MERGE_MAX_TOKENS，且初次与重修一致。
 
-        CARD_MAX_TOKENS（8192）装不下整本书的花名册——撞上去就是「超长被截断」，
-        识别整个失败。这一条也顺带锁住重修没退回小上限（退回则重修白修）。
+class TestJudgeVoting:
+    """执行器报错与不合法样本都不计票；合法样本不足 3 份即整体失败。"""
+
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    CHUNKED = "\n\n".join([FILLER] * 4)
+    MAP = staticmethod(lambda content: _chars_json([KONGMING]))
+
+    @staticmethod
+    def _judge_with_replies(replies: list) -> "callable":
+        """按调用序回放：元素是字符串就回它，是异常就抛。"""
+        seq = list(replies)
+
+        async def judge(system, messages):
+            item = seq.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return (item, dict(_USAGE))
+
+        return judge
+
+    def test_two_valid_samples_are_not_enough(self):
+        """5 份只有 2 份合法 → `DistillError`，且失败不进 memo。
+
+        变异对象 = 拿少数样本当结论（这里会「成功」返回一份名单 → 红）。
         """
-        llm = _make_llm(
-            async_chat=_map_stub(),
-            chat_stream=_merge_stream(first=["不是 JSON"]),
-        )
+        llm = _make_llm(async_chat=_stub(
+            self.MAP,
+            judge=self._judge_with_replies([JUDGE_NONE, JUDGE_NONE, "[]", "[]", "[]"]),
+        ))
         d = _make_distiller(llm)
 
-        d.identify_characters(WHOLE_BOOK_TAIL_CHARS)
+        with pytest.raises(DistillError) as excinfo:
+            d.identify_characters(self.CHUNKED)
 
-        passed = [c.kwargs.get("max_tokens") for c in llm.chat_stream.call_args_list]
-        assert passed == [Distiller.IDENTIFY_MERGE_MAX_TOKENS] * 2
-        assert Distiller.IDENTIFY_MERGE_MAX_TOKENS > Distiller.CARD_MAX_TOKENS
+        assert "识别失败" in excinfo.value.user_message
+        assert "2/5" in str(excinfo.value)
+        before = len(_map_calls(llm))
+        assert before == 4
+
+        with pytest.raises(DistillError):
+            d.identify_characters(self.CHUNKED)
+        assert len(_map_calls(llm)) == before + 4, "失败的识别不许进 memo"
+
+    def test_four_of_five_valid_is_enough(self):
+        """执行器失败 1 次、不合法 1 次、合法 3 次 → 恰好够门槛，正常出名单。"""
+        llm = _make_llm(async_chat=_stub(
+            self.MAP,
+            judge=self._judge_with_replies([
+                JUDGE_NONE,
+                IncompleteResponseError("length", "chat", content=""),
+                JUDGE_NONE,
+                "[]",
+                JUDGE_NONE,
+            ]),
+        ))
+        d = _make_distiller(llm)
+
+        assert [c["name"] for c in d.identify_characters(self.CHUNKED)] == ["孔明"]
+
+    def test_three_executor_failures_raise(self):
+        """5 份里 3 份执行器报错（含截断）→ 合法 2 份，不足门槛。"""
+        llm = _make_llm(async_chat=_stub(
+            self.MAP,
+            judge=self._judge_with_replies([
+                IncompleteResponseError("length", "chat", content=""),
+                RuntimeError("connection timeout"),
+                JUDGE_NONE,
+                RuntimeError("connection timeout"),
+                JUDGE_NONE,
+            ]),
+        ))
+        d = _make_distiller(llm)
+
+        with pytest.raises(DistillError) as excinfo:
+            d.identify_characters(self.CHUNKED)
+
+        assert "执行器失败 3 次" in str(excinfo.value)
+
+    def test_malformed_samples_are_not_counted(self):
+        """两键不都是数组、或根本不是 JSON 对象 → 不计票（这里带 1 个合法 → 抛）。"""
+        llm = _make_llm(async_chat=_stub(
+            self.MAP,
+            judge=self._judge_with_replies([
+                JUDGE_NONE, '{"merge": []}', '{"impersonal": []}', "不是 JSON", '[["甲","乙"]]',
+            ]),
+        ))
+        d = _make_distiller(llm)
+
+        with pytest.raises(DistillError) as excinfo:
+            d.identify_characters(self.CHUNKED)
+
+        assert "合法样本 1/5" in str(excinfo.value)
+
+
+class TestJudgeConcurrency:
+    """5 次判定并行发起 —— 串行会让整阶段多花 4 倍时间。"""
+
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    def test_five_judge_calls_run_concurrently(self):
+        """桩对判定每次睡 0.3 s：并行 → 约 0.3 s，串行 → 1.5 s。
+
+        变异对象 = 判定改成 5 次顺序调用（耗时 ≥ 1.5 s → 红）。
+        """
+        async def judge(system, messages):
+            await asyncio.sleep(0.3)
+            return (JUDGE_NONE, dict(_USAGE))
+
+        llm = _make_llm(async_chat=_stub(
+            lambda content: _chars_json([KONGMING]), judge=judge))
+        d = _make_distiller(llm)
+        text = "\n\n".join([FILLER] * 4)
+
+        start = time.monotonic()
+        d.identify_characters(text)
+        elapsed = time.monotonic() - start
+
+        assert len(_judge_calls(llm)) == 5
+        assert elapsed < 1.0, f"5 次判定没并行（耗时 {elapsed:.2f}s）"
+
+
+class TestWholeChain:
+    """从 `identify_characters` 入口走完整条链路：说话分片数定主次与顺序。"""
+
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    def test_speaking_chunks_decide_rank_and_order(self, capsys):
+        llm = _make_llm(async_chat=_seven_chunk_map_stub())
+        d = _make_distiller(llm)
+
+        result = d.identify_characters(SEVEN_CHUNK_TEXT)
+
+        assert [(r["name"], r["speak_chunks"], r["importance"]) for r in result] == [
+            ("甲", 6, "主要"), ("乙", 1, "次要")]
+        systems = _systems(llm)
+        assert systems.count(IDENTIFY_JUDGE_PROMPT) == 5
+        assert systems.count(IDENTIFY_SYSTEM_PROMPT) == 7
+        out = capsys.readouterr().out
+        assert "[distill] identify judge merge=" in out
+        assert "[distill] identify judge impersonal=" in out
+
+
+class TestIdentifyUsageAccounting:
+    """非空名单的一次识别记**恰好 2 行** `distill_identify`：逐片汇总一条、判定汇总一条。"""
+
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    def test_non_empty_roster_records_map_and_judge_rows(self, usage_rows):
+        llm = _make_llm(async_chat=_seven_chunk_map_stub())
+        d = _make_distiller(llm)
+
+        d.identify_characters(SEVEN_CHUNK_TEXT)
+
+        actions = [a for a, _ in usage_rows]
+        assert actions == ["distill_identify", "distill_identify"], usage_rows
+        map_usage, judge_usage = usage_rows[0][1], usage_rows[1][1]
+        assert map_usage["chunk_count"] == 7, "逐片那行数的是真的调了几次"
+        assert judge_usage["chunk_count"] == 5, "判定 5 次汇总成一行"
+
+
+class TestAliasLength:
+    """单分片路径同样丢单字别名 —— 判据只写一处（`roster_aggregate.usable_alias`），
+    多分片汇总（`_observations`）与单分片（`_normalize_identify_items`）都调它。
+
+    单分片那条路不经过归组，只走 `_parse_identify_list` → `_normalize_identify_items`；
+    只在纯函数那条路径上判，这里就会漏 —— 短文本的名单带着单字称呼落库。
+    """
+
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    def test_single_chunk_drops_single_char_aliases(self):
+        llm = _make_llm(chat=lambda *a, **kw: _chars_json([{
+            "name": "宝玉", "aliases": ["他", "玉", "宝二爷"],
+            "importance": "主要", "reason": "主角",
+        }]))
+        d = _make_distiller(llm)
+
+        result = d.identify_characters("短文本，只有一个分片")
+
+        assert result[0]["aliases"] == ["宝二爷"]
+
+
+class TestSingleChunkKeepsModelImportance:
+    """单分片路径不判主次 —— 原样返回模型给的 `importance` 与那套键。
+
+    多分片那套「说话分片数 ≥ 6」不适用于一段短文：全片就是一个场景，样本量为 1。
+    """
+
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    def test_importance_is_the_model_answer(self):
+        llm = _make_llm(chat=lambda *a, **kw: _chars_json([{
+            "name": "宝玉", "aliases": [], "importance": "主要", "reason": "主角",
+        }]))
+        d = _make_distiller(llm)
+
+        result = d.identify_characters("短文本，只有一个分片")
+
+        assert result[0]["importance"] == "主要"
+        assert llm.async_chat.await_count == 0
 
 
 class TestChunkFailurePolicy:
-    """分片失败率判据（与 Map 阶段同一条：``_map_failure_exceeds_tolerance``）。"""
+    """识别路径**不容忍**分片失败 —— 任一片坏即整体失败。
+
+    与蒸馏的分界：蒸馏有续跑兜底（checkpoint + 重跑合并与格式化），失败代价小；
+    识别没有，且它的产物经 `resolve_characters` → `save_characters` **落库长期复用**
+    （按文本 + 版本缓存）—— 用半本书建的名单会一直错下去，且下游全部当真。
+    实测（识别验收，2026-09-26）：121/242 片失败恰在 50% 容忍线内，名单是半本书建的，
+    妙玉因此被判次要。所以判据不是「等号算不算越线」，是**识别这条路不许有容忍线**。
+
+    变异对象 = ① 恢复 50% 容忍（4 片坏 1 片就继续 → 红）
+              ② 失败时仍写 memo（第二次识别命中缓存、Map 不再发起 → 红）
+    """
 
     CHUNKED = "\n\n".join(FILLER for _ in range(4))   # 4 个分片
 
@@ -187,18 +505,20 @@ class TestChunkFailurePolicy:
         call = [0]
 
         async def async_chat(system, messages, max_tokens=None, **kwargs):
+            if system == IDENTIFY_JUDGE_PROMPT:
+                return (JUDGE_NONE, dict(_USAGE))
             call[0] += 1
             if call[0] <= fail_count:
                 if parse_fail:
-                    return ("这不是 JSON 数组", {"prompt_tokens": 1, "completion_tokens": 1})
+                    return ("这不是 JSON 数组", dict(_USAGE))
                 raise RuntimeError("connection timeout")
-            return (_chars_json([KONGMING]), {"prompt_tokens": 1, "completion_tokens": 1})
+            return (_chars_json([KONGMING]), dict(_USAGE))
 
-        return _make_llm(async_chat=async_chat, chat_stream=_merge_stream())
+        return _make_llm(async_chat=async_chat)
 
-    def test_failure_over_tolerance_raises(self):
-        """4 片坏 3 片（75% > 50%）→ 抛，不拿半本书的名单当全书名单。"""
-        llm = self._llm_with_failures(3)
+    def test_any_chunk_failure_raises(self):
+        """4 片坏 1 片（25%）→ 抛。原先这条在容忍线内，会拿 3/4 本书的名单当真。"""
+        llm = self._llm_with_failures(1)
         d = _make_distiller(llm)
 
         with pytest.raises(DistillError) as excinfo:
@@ -207,32 +527,63 @@ class TestChunkFailurePolicy:
         assert "识别失败" in excinfo.value.user_message
         assert "connection timeout" not in excinfo.value.user_message
         assert "connection timeout" in str(excinfo.value)   # 排障线索只进日志
-        assert llm.chat_stream.call_count == 0              # 没走到合并
+        assert _judge_calls(llm) == []                      # 没走到判定
 
-    def test_failure_within_tolerance_returns(self):
-        """4 片坏 1 片（25% ≤ 50%）→ 正常返回合并结果。"""
-        llm = self._llm_with_failures(1)
+    def test_failure_is_not_memoized(self):
+        """失败不进 memo：同文本再识别一次，Map 重新发起（下次可能就好了）。
+
+        桩按**片内容**判失败（不按调用序号），所以两次请求都是同一片坏 —— 第二次
+        若不是重新发起，它就会成功返回，`pytest.raises` 直接红。
+        """
+        async def async_chat(system, messages, max_tokens=None, **kwargs):
+            if system == IDENTIFY_JUDGE_PROMPT:
+                return (JUDGE_NONE, dict(_USAGE))
+            if "坏片标记" in messages[0]["content"]:
+                raise RuntimeError("connection timeout")
+            return (_chars_json([KONGMING]), dict(_USAGE))
+
+        llm = _make_llm(async_chat=async_chat)
         d = _make_distiller(llm)
+        content = "\n\n".join(["坏片标记" + FILLER] + [FILLER] * 3)
 
-        result = d.identify_characters(self.CHUNKED)
+        with pytest.raises(DistillError):
+            d.identify_characters(content)
+        assert len(_map_calls(llm)) == 4
 
-        assert [c["name"] for c in result] == ["孔明"]
-        assert llm.chat_stream.call_count == 1
+        with pytest.raises(DistillError):
+            d.identify_characters(content)
+        assert len(_map_calls(llm)) == 8, "失败的识别不许进 memo"
 
     def test_unparseable_chunk_counts_as_failure(self):
-        """**解析失败与调用失败同权**：3 片返回的不是数组 → 计入失败率 → 抛。
+        """**解析失败与调用失败同权**：1 片返回的不是数组 → 同样整体失败。
 
-        变异对象 = 只数 ``failures``（调用异常）不数 ``parse_failed``：这里会静默
-        按 1/4 的失败率继续，把三片没识别的书当全书名单合并出去。
+        变异对象 = 只数 ``failures``（调用异常）不数 ``parse_failed``：这一片会静默
+        按「没角色」算，把没识别的书当全书名单交出去。
         """
-        llm = self._llm_with_failures(3, parse_fail=True)
+        llm = self._llm_with_failures(1, parse_fail=True)
         d = _make_distiller(llm)
 
         with pytest.raises(DistillError) as excinfo:
             d.identify_characters(self.CHUNKED)
 
         assert "识别失败" in excinfo.value.user_message
-        assert llm.chat_stream.call_count == 0
+        assert _judge_calls(llm) == []
+
+    def test_429_gets_its_own_message(self):
+        """429 专用文案：限流要与「片段处理失败」分开 —— 用户该等，不是该改内容。"""
+        async def async_chat(system, messages, max_tokens=None, **kwargs):
+            if system == IDENTIFY_JUDGE_PROMPT:
+                return (JUDGE_NONE, dict(_USAGE))
+            raise RuntimeError("API 429 rate limited")
+
+        llm = _make_llm(async_chat=async_chat)
+        d = _make_distiller(llm)
+
+        with pytest.raises(DistillError) as excinfo:
+            d.identify_characters(self.CHUNKED)
+
+        assert "限流" in excinfo.value.user_message
+        assert "429" in str(excinfo.value)
 
 
 class TestEmptyRosterIsNotFailure:
@@ -245,8 +596,8 @@ class TestEmptyRosterIsNotFailure:
     变异对象 = 恢复 ``_identify_over_chunks`` 末尾的 `if not parts: raise`：
     多分片那条变红。单分片那条守 ``_identify_single_call`` 不把合法空数组当解析失败。
 
-    与 ``TestChunkFailurePolicy`` 的分界：那一组考「片坏了怎么办」（失败率是否越线），
-    本组考「片全好但确实没人」（越线判据不该被真空名单触发）。
+    与 ``TestChunkFailurePolicy`` 的分界：那一组考「片坏了怎么办」（任一片坏即抛），
+    本组考「片全好但确实没人」（失败判据不该被真空名单触发）。
     """
 
     def setup_method(self):
@@ -260,25 +611,106 @@ class TestEmptyRosterIsNotFailure:
         assert d.identify_characters("短文本，只有一个分片") == []
 
     def test_all_chunks_empty_array_is_an_empty_roster(self):
-        """多分片：每一片都回合法的空数组 → 空名单，不抛、也不进合并。"""
-        async def async_chat(system, messages, max_tokens=None, **kwargs):
-            return ("[]", {"prompt_tokens": 1, "completion_tokens": 1})
-
-        llm = _make_llm(async_chat=async_chat)
+        """多分片：每一片都回合法的空数组 → 空名单，不抛、也不进判定。"""
+        llm = _make_llm(async_chat=_stub(lambda content: "[]"))
         d = _make_distiller(llm)
 
         assert d.identify_characters("\n\n".join([FILLER] * 4)) == []
-        assert llm.chat_stream.call_count == 0, "没有名单可合并，不该走到合并那一步"
+        assert _judge_calls(llm) == [], "没有可归组的条目，不该走到判定那一步"
 
     def test_empty_roster_is_cached_like_any_other_result(self):
         """空名单同样是**成功结果**，照样进 memo —— 失败才不进缓存。"""
-        async def async_chat(system, messages, max_tokens=None, **kwargs):
-            return ("[]", {"prompt_tokens": 1, "completion_tokens": 1})
-
-        llm = _make_llm(async_chat=async_chat)
+        llm = _make_llm(async_chat=_stub(lambda content: "[]"))
         d = _make_distiller(llm)
         text = "\n\n".join([FILLER] * 4)
 
         assert d.identify_characters(text) == []
         assert d.identify_characters(text) == []
-        assert llm.async_chat.call_count == 4, "第二次该命中缓存，不该再发分片调用"
+        assert len(_map_calls(llm)) == 4, "第二次该命中缓存，不该再发分片调用"
+
+
+class TestFailureLogLabels:
+    """验收脚本按「Map chunk N failed」数**逐片**分片失败；全书判定那 5 份样本走的是
+    同一条 `_run_map_concurrent` 骨架，前缀不改就会被数进去。
+
+    实测（2026-09-27 全书验收）：日志里那条 `Map chunk 4 failed` 其实是判定第 5 份被
+    `max_tokens` 截断 —— 逐片一片没坏（识别对逐片失败零容忍，真坏了根本返回不了名单）。
+
+    变异对象 = `_judge_groups` 不传 `log_label`（判定失败被打回「Map chunk」前缀 → 红）。
+    """
+
+    CHUNKED = "\n\n".join(FILLER for _ in range(4))
+
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    def test_map_chunk_failure_keeps_the_map_chunk_prefix(self, caplog):
+        """逐片某片坏 → 日志前缀仍是「Map chunk」；此时还没走到判定。"""
+        async def async_chat(system, messages, max_tokens=None, **kwargs):
+            if system == IDENTIFY_JUDGE_PROMPT:
+                return (JUDGE_NONE, dict(_USAGE))
+            if "坏片标记" in messages[0]["content"]:
+                raise RuntimeError("connection timeout")
+            return (_chars_json([KONGMING]), dict(_USAGE))
+
+        llm = _make_llm(async_chat=async_chat)
+        content = "\n\n".join(["坏片标记" + FILLER] + [FILLER] * 3)
+        with caplog.at_level("WARNING"):
+            with pytest.raises(DistillError):
+                _make_distiller(llm).identify_characters(content)
+
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(m.startswith("Map chunk ") and "failed" in m for m in msgs), msgs
+        assert not any("Identify judge sample" in m for m in msgs), msgs
+
+    def test_judge_sample_failure_is_labeled_apart(self, caplog):
+        """判定某份执行器报错 → 前缀「Identify judge sample」、且不含「Map chunk」。"""
+        llm = _make_llm(async_chat=_stub(
+            lambda content: _chars_json([KONGMING]),
+            judge=TestJudgeVoting._judge_with_replies(
+                [JUDGE_NONE, JUDGE_NONE, JUDGE_NONE, JUDGE_NONE, RuntimeError("boom")]),
+        ))
+        with caplog.at_level("WARNING"):
+            result = _make_distiller(llm).identify_characters(self.CHUNKED)
+
+        assert [c["name"] for c in result] == ["孔明"], "4 份合法 ≥ 门槛，照常出名单"
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(
+            m.startswith("Identify judge sample ") and "failed" in m for m in msgs), msgs
+        assert not any("Map chunk" in m for m in msgs), msgs
+
+
+class TestJudgeTruncationDiagnostic:
+    """判定样本撞 `max_tokens` 被截断时，把 finish_reason 与已生成内容的开头记下来。
+
+    不记内容就无从判断「输出本来就这么长」还是「上限压得太低」（实测每份输入约
+    8791 tokens，输出上限 4096）。诊断是**纯记录**，不影响判法：其余 4 份合法时
+    照常出名单。
+
+    变异对象 = 删掉这条 WARNING（截断后再无任何内容线索 → 红）。
+    """
+
+    CHUNKED = "\n\n".join(FILLER for _ in range(4))
+    HEAD = '{"merge": [["甲", "乙"]], "imperso'   # 撞上限的半截输出
+
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    def test_truncated_sample_logs_reason_and_head(self, caplog):
+        llm = _make_llm(async_chat=_stub(
+            lambda content: _chars_json([KONGMING]),
+            judge=TestJudgeVoting._judge_with_replies(
+                [JUDGE_NONE, JUDGE_NONE, JUDGE_NONE,
+                 _truncated(self.HEAD), JUDGE_NONE]),
+        ))
+        with caplog.at_level("WARNING"):
+            result = _make_distiller(llm).identify_characters(self.CHUNKED)
+
+        assert [c["name"] for c in result] == ["孔明"]
+        recs = [r.getMessage() for r in caplog.records
+                if "Identify judge sample" in r.getMessage()
+                and "incomplete:" in r.getMessage()]
+        assert recs, "截断的判定样本必须留下一条带 finish_reason 的 WARNING"
+        msg = recs[0]
+        assert "finish_reason=length" in msg, msg
+        assert '"merge": [["甲", "乙"' in msg, f"没记下已生成内容的开头：{msg}"
