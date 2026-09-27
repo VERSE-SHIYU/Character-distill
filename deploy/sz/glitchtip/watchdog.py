@@ -35,7 +35,7 @@ ACTION_RESTART = "restart"
 ACTION_NOTIFY = "notify"
 ACTION_NONE = "none"
 
-MSG_PG_DOWN = "PG 不可用：读不到调度器心跳"
+MSG_PG_DOWN = "读不到调度器心跳（PG 不可用或记录缺失）"
 MSG_STILL_ABNORMAL = "重启后仍异常"
 MSG_RECOVERED = "已自动重启并恢复"
 MSG_NOT_RECOVERED = "重启未恢复"
@@ -197,9 +197,14 @@ class Executor:
         if len(parts) != 3:
             return None
         try:
-            return Reading(int(parts[0]), int(parts[1]), float(parts[2]))
+            reading = Reading(int(parts[0]), int(parts[1]), float(parts[2]))
         except ValueError:
             return None
+        # 心跳记录缺失时 SQL 的 coalesce 兜底是 -1；那是「读不到」，不是「很健康」。
+        # 当成正常会让看门狗照常 ping、永远不报警——静默失明。走读数失败路径。
+        if reading.heartbeat_age < 0:
+            return None
+        return reading
 
     def _run(self, argv, timeout, what):
         """跑一条外部命令；失败只报到 syslog，绝不回显子进程的 stderr。

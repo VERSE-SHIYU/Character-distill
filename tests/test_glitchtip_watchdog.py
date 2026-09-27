@@ -111,6 +111,32 @@ def test_read_failure_notifies_pg_unavailable():
     assert "PG" in msg
 
 
+def test_read_treats_missing_heartbeat_record_as_failure(monkeypatch):
+    """心跳记录缺失（SQL 的 coalesce 兜底 -1）不能当成正常——否则看门狗静默失明。
+
+    上游一旦改键名/表名，秒龄就是 -1；当成正常会让它照常 ping、永远不报警。
+    走的是既有的读数失败路径，不新增分支。
+    """
+
+    class _Done:
+        returncode = 0
+        stdout = "-1|0|1790489099.6"
+
+    monkeypatch.setattr(wd.subprocess, "run", lambda *a, **k: _Done())
+    assert wd.Executor().read() is None
+
+
+def test_read_parses_healthy_reading(monkeypatch):
+    """正控：记录还在时照常解析，别把整个 read() 判死。"""
+
+    class _Done:
+        returncode = 0
+        stdout = "1|0|1790489099.6"
+
+    monkeypatch.setattr(wd.subprocess, "run", lambda *a, **k: _Done())
+    assert wd.Executor().read() == wd.Reading(1, 0, 1790489099.6)
+
+
 # ── 重启后的原地确认 ─────────────────────────────────────────────────────────
 
 
