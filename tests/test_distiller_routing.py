@@ -3,11 +3,15 @@
 import asyncio
 import json
 import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import adapters.llm_adapter as M
+from core.concurrency import AdaptiveGate
 from core.distiller import DistillError, Distiller
 from core.request_context import LLM_CALLER, Caller, current_user_id
 
@@ -129,6 +133,35 @@ class TestBatchReduceUsesTheLongOutputStream:
         assert out == "合并结果", f"分批归并没有走流式长输出（2.0s 静默被当故障）：{out!r}"
 
 
+class TestSingleReduceUsesTheCardOutputCap:
+    """WP13 S6：单次归并（≤80 片，每本普通书都走这条）的输出上限 = `CARD_MAX_TOKENS`。
+
+    `_single_reduce_stream` 原先不传 `max_tokens` → 适配器落回 4096，只有分批归并
+    （`_single_reduce_async`）与格式化的一半。WP11 起 `length` 截断是硬失败，这条
+    就成了普通书蒸馏的必红路径 —— 所以两处必须同批上线。
+
+    变异：删掉 `max_tokens=self.CARD_MAX_TOKENS` → 记录到 None，本条红。
+    """
+
+    def test_single_reduce_passes_card_max_tokens(self):
+        seen: list = []
+
+        class _LLM:
+            last_usage = None
+
+            def chat_stream_long(self, system, messages, max_tokens=None):
+                seen.append(max_tokens)
+                yield "档案"
+                return {"prompt_tokens": 1, "completion_tokens": 1}
+
+        d = Distiller(llm=_LLM(), config_path=None)
+        out = "".join(d._single_reduce_stream(["分析一", "分析二"], "角色"))
+
+        assert out == "档案"
+        assert seen == [Distiller.CARD_MAX_TOKENS], (
+            f"单次归并的输出上限没对齐 CARD_MAX_TOKENS：{seen}")
+
+
 class TestAnyBatchFailureFailsTheWholeReduce:
     """WP5 R2：任一批失败即整体失败 —— 不落半张卡、不进格式化（D3）。
 
@@ -212,7 +245,7 @@ class TestBatchThreadCarriesCallerIdentity:
                 yield "合并结果"
                 return {"prompt_tokens": 1, "completion_tokens": 1}
 
-            async def async_chat(self, system, messages, max_tokens=None, client=None):
+            async def async_chat(self, system, messages, max_tokens=None, client=None, gate=None):
                 seen.append((threading.get_ident(), current_user_id()))
                 return ("合并结果", {"prompt_tokens": 1, "completion_tokens": 1})
 
@@ -745,3 +778,308 @@ class TestFormatGroupFailureYieldsNoCard:
         errors = [f for f in frames if isinstance(f, dict) and "error" in f]
         assert len(errors) == 1, f"组失败没上屏 error 帧：{frames[-4:]}"
         assert not any(isinstance(f, str) for f in frames), "有组失败却拼出了卡"
+
+
+# ── WP14 A2：Map 并发按账户自适应（闸只在每次 create 外，退避不占名额）─────────
+
+
+def _reply(handler, status: int, payload: dict, headers: dict) -> None:
+    body = json.dumps(payload).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(body)))
+    for name, value in headers.items():
+        handler.send_header(name, value)
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+class _InflightUpstream:
+    """非流式假上游，按**在途请求数**限流：> `limit` 即 429（DeepSeek 原文形态）。
+
+    为什么必须是真 socket：A2 要判的是「闸把**同时**在途的请求数压住了」，而重叠只有
+    上游侧看得见 —— 桩 client 只能记「调了几次」，看不见两个请求有没有叠在一起。
+
+    `peak` 是整场的在途峰值；`tail_peak` 跳过前 `warm` 个请求之后才计（冷启动必然从
+    `map_concurrency` 探起 —— 那不是「没收敛」，是 AIMD 的第一探，故峰值判据只看尾部）；
+    `statuses` 按到达次序记每个请求的结果。
+
+    429 带 `Retry-After: 0`：走 `_classify_retry` 的「有则读」分支，退避瞬时，用例不必
+    真等 2/4/8s。取 0 是安全的 —— 乘性下调落在「还名额」之前，重发抢不到旧上限。
+
+    `hold_ms` 是每个请求占住连接的时间。**不是装饰**：本地回一个 JSON 只要几十微秒，
+    20 个并发请求在服务端几乎不重叠（实测峰值 2），那就什么也没测。撑开一个窗口，重叠
+    才成为看得见的事实 —— 实测 hold_ms=60 时 20 并发能看到峰值 20。
+    """
+
+    def __init__(self, limit: int, *, warm: int = 0, retry_after: int = 0,
+                 hold_ms: int = 60) -> None:
+        self.limit = limit
+        self.retry_after = retry_after
+        self.hold_ms = hold_ms
+        self.peak = 0
+        self.tail_peak = 0
+        self.statuses: list[int] = []
+        self._warm = warm
+        self._served = 0
+        self._inflight = 0
+        self._lock = threading.Lock()
+        outer = self
+
+        class _Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length", 0))
+                if n:
+                    self.rfile.read(n)
+                with outer._lock:
+                    outer._inflight += 1
+                    outer._served += 1
+                    outer.peak = max(outer.peak, outer._inflight)
+                    if outer._served > outer._warm:
+                        outer.tail_peak = max(outer.tail_peak, outer._inflight)
+                    throttled = outer._inflight > outer.limit
+                    outer.statuses.append(429 if throttled else 200)
+                try:
+                    time.sleep(outer.hold_ms / 1000.0)
+                    if throttled:
+                        _reply(self, 429, {"error": {
+                            "message": (
+                                "Too many requests. Your current concurrency is "
+                                f"{outer._inflight}, which exceeds your concurrency limit "
+                                f"of {outer.limit} based on your remaining balance."),
+                            "type": "rate_limit_error", "param": None,
+                            "code": "invalid_request_error",
+                        }}, {"Retry-After": str(outer.retry_after)})
+                    else:
+                        _reply(self, 200, {
+                            "id": "fake-upstream", "object": "chat.completion", "created": 0,
+                            "model": "fake-model",
+                            "choices": [{"index": 0, "finish_reason": "stop",
+                                         "message": {"role": "assistant", "content": "分析"}}],
+                            "usage": {"prompt_tokens": 1, "completion_tokens": 1,
+                                      "total_tokens": 2},
+                        }, {})
+                finally:
+                    with outer._lock:
+                        outer._inflight -= 1
+
+        self._srv = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self._srv.daemon_threads = True
+        threading.Thread(target=self._srv.serve_forever, daemon=True).start()
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self._srv.server_address[1]}/v1"
+
+    def adapter(self):
+        return M.LLMAdapter(api_key="sk-fake-local", base_url=self.base_url, model="fake-model")
+
+    def close(self) -> None:
+        self._srv.shutdown()
+        self._srv.server_close()
+
+
+class TestMapConcurrencyAdaptsToTheAccount:
+    """WP14 A2：上游「超过 N 路即 429」时 Map 零失败，且在途数收敛到 N 附近。
+
+    变异：闸只包整次调用（不进重试循环）—— 退避期间名额没还掉。`test_backoff_...`
+    读的就是退避那一刻的 `gate.inflight`，直接打红；端到端那条负责证明「零失败」。
+
+    片数取 80 而不是规格里写的 40：闸的初始上限就是 `map_concurrency`，冷启动那一波
+    必然把它探满，片数不够就没有「收敛后」可判。峰值只看后半程，并列在失败信息里供复核。
+    """
+
+    CHUNKS = 80
+    LIMIT = 5
+    CAP = 20
+    # 尾部窗口跳过的是**上游请求数**（不是分片数）。AIMD 一波只下调一次（同波其余 429
+    # 已被时代代数拦掉），20 → 15 → 11 → 8 → 6 → 4 要 5 波才收敛完，而每波都带回重试，
+    # `served` 涨得比分片快 —— 实测收敛点在 served≈65（80 片整场 served≈155）。窗口从
+    # 100 起，跳过整段下降过程；实测尾峰值稳定在 LIMIT+1。
+    WARM = 100
+
+    async def test_map_finishes_with_zero_failures(self):
+        upstream = _InflightUpstream(self.LIMIT, warm=self.WARM)
+        llm = upstream.adapter()
+        try:
+            d = Distiller(llm=llm, config_path=None)
+            d._map_concurrency = self.CAP
+            client = llm._make_async_client()
+            try:
+                results, failures = await d._run_map_concurrent(
+                    [f"第{i}片正文" for i in range(self.CHUNKS)],
+                    lambda chunk: ("你是角色分析专家", f"分析：{chunk}"),
+                    "distill_map", client=client,
+                )
+            finally:
+                await client.close()
+        finally:
+            upstream.close()
+
+        n429 = upstream.statuses.count(429)
+        assert n429 > 0, "假上游一次都没限流 —— 这条锁没走到被锁的地方"
+        assert failures == [], f"限流把片打挂了：{failures[:3]}"
+        assert len(results) == self.CHUNKS
+        assert upstream.tail_peak > 0, "尾部窗口一个请求都没量到 —— 这条锁空转"
+        assert upstream.tail_peak <= self.LIMIT + 1, (
+            f"收敛后仍在途 {upstream.tail_peak}，超过上游上限 {self.LIMIT}（+1 是 AIMD 的探针："
+            f"不探到上限之上就永远学不到上限）；整场峰值 {upstream.peak}（含冷启动那波），"
+            f"429 共 {n429} 次")
+
+    async def test_backoff_does_not_hold_a_slot(self, monkeypatch):
+        """退避睡眠必须落在闸**外**：睡着的请求若占着名额，上限永远探不上去。
+
+        读数是「退避那一刻闸的在途数」—— 它不随墙钟变，只随「名额有没有提前还掉」变，
+        正是这条锁的对象。
+        """
+        upstream = _InflightUpstream(limit=0, retry_after=0)  # 永远 429
+        llm = upstream.adapter()
+        gate = AdaptiveGate(cap=8)
+        seen: list[int] = []
+        real_sleep = asyncio.sleep
+
+        async def _spy(seconds, *a, **kw):
+            seen.append(gate.inflight)
+            await real_sleep(0)  # 不真等退避
+
+        monkeypatch.setattr(M, "asyncio", SimpleNamespace(sleep=_spy))
+        try:
+            with pytest.raises(M.UpstreamFailure):
+                await llm.async_chat("sys", [{"role": "user", "content": "u"}], gate=gate)
+        finally:
+            upstream.close()
+
+        assert seen, "一次退避都没发生 —— 这条锁没走到被锁的地方"
+        assert seen == [0] * len(seen), f"退避时仍占着名额：{seen}"
+        assert gate.ceiling < 8, "429 没喂到闸上"
+
+
+class TestMapConcurrencyRemembersTheAccount:
+    """WP14 A3：同一个 adapter 连跑两轮，第二轮从第一轮学到的上限起步。
+
+    判据是**行为**：第二轮只在冷启动那一波露初值，故第二轮只跑 `COLD` 片 —— 冷启动那
+    一波就是初值本身。等长两轮的「429 明显更少」实测比值在 1.6–3.1x 之间乱摆（第二轮
+    自己也在探针上撞），那种计数比会 flaky，不拿来当判据。只读
+    `llm.learned_map_concurrency` 非空也不足以证明第二轮**用了**它 —— 初值没接上时那个
+    属性照样有值，退回的是 cap。
+
+    峰值界取 `max(learned, LIMIT) + 1` 而不是 `learned + 1`：第一轮学到的值可能**低于**
+    上游真实上限（负载下多撞几下就偏低），第二轮从那儿合法地继续上探到 `LIMIT` 再撞一次
+    探针 —— 那是 AIMD 在工作，不是缺陷。`+1` 仍是「必须探到上限之上才学得到上限」。
+
+    三条变异各打红一处：不写回 → 属性为 None；写了但不作初值 → 冷启动峰值从 `learned`
+    变成 `COLD`（20 片在 cap=20 下全放）；写回的是配置值而非收敛值 → `learned` 顶到 cap。
+    """
+
+    LEARN_CHUNKS = 120
+    COLD = 20
+    LIMIT = 5
+    CAP = 20
+
+    async def _round(self, d, llm, tag: str, n: int):
+        client = llm._make_async_client()
+        try:
+            return await d._run_map_concurrent(
+                [f"{tag}{i}片正文" for i in range(n)],
+                lambda chunk: ("你是角色分析专家", f"分析：{chunk}"),
+                "distill_map", client=client,
+            )
+        finally:
+            await client.close()
+
+    async def test_the_second_round_starts_from_the_learned_ceiling(self):
+        upstream = _InflightUpstream(self.LIMIT)
+        llm = upstream.adapter()
+        try:
+            d = Distiller(llm=llm, config_path=None)
+            d._map_concurrency = self.CAP
+
+            await self._round(d, llm, "一", self.LEARN_CHUNKS)
+            learned = llm.learned_map_concurrency
+            first_429 = upstream.statuses.count(429)
+            upstream.peak = 0
+            upstream.tail_peak = 0
+            upstream.statuses.clear()
+
+            _, failures = await self._round(d, llm, "二", self.COLD)
+            second_429 = upstream.statuses.count(429)
+        finally:
+            upstream.close()
+
+        assert learned is not None, "第一轮没把学到的上限写回 adapter"
+        assert failures == []
+        # 界不是拍的：146 次采样（60 / 120 片各半）实测落在 4–7，只在机器负载高时见过
+        # 一次 9（尾部排水期变长，闸把「没撞 429」读成余量、继续加性上探）。取「真实上限
+        # 的两倍」把收敛值与配置值分开 —— 写回 cap 的变异给的是 20，余量还有一半。
+        assert learned <= self.LIMIT * 2, (
+            f"学到的上限 {learned} 超过上游真实上限 {self.LIMIT} 的两倍 —— 写回的是配置值"
+            f"cap={self.CAP} 而不是闸收敛出来的值")
+        bound = max(learned, self.LIMIT) + 1
+        assert upstream.peak <= bound, (
+            f"第二轮冷启动在途峰值 {upstream.peak}，高于 {bound}（= max(学到的 {learned}, "
+            f"上游上限 {self.LIMIT}) + 1）—— 没有从学到的上限起步，{self.COLD} 片一起放了。"
+            f"第一轮 {self.LEARN_CHUNKS} 片 {first_429} 次 429、"
+            f"第二轮 {self.COLD} 片 {second_429} 次")
+
+
+class TestQueueingDoesNotEatTheCallDeadline:
+    """WP14 A4：等闸（排队）不占本调用的总时限。
+
+    缺陷形态（修前的 :816/:824）：`_RetryBudget` 在**进闸之前**就建好、时钟当场起算，
+    排队时长直接吃总预算 —— 尾部分片可能一次 create 都没发出去就被判「没时间了」。
+    真机形态：红楼梦 242 片、账号上限 18，末尾的片光排队就超过 153s 的总预算。
+
+    判据是**行为**：每片只给 2s 的总预算（比它自己的一次调用长得多），但整场 40 片在
+    上限 3 的闸后排队必然远超 2s —— 顺延生效时 40 片全成；不生效时尾部的片判超时。
+
+    变异：去掉 `async_chat` 里 `budget.extend_deadline(...)` 那一行 → 尾部分片红。
+
+    不走 `_run_map_concurrent`：它不接受单片预算，而 `_GEN_BATCH_DEADLINE_S` 是**函数定义
+    时**绑进 `async_chat` 形参默认值的（monkeypatch 模块常量改不动它）。直接以 `gate=` +
+    `deadline_s=` 调 `async_chat` 走的是同一段代码，且落在真正的接缝上。
+    """
+
+    N = 40
+    LIMIT = 3        # 上游：在途 > 3 即 429
+    CAP = 8
+    DEADLINE_S = 2.0
+    HOLD_MS = 200
+
+    async def test_tail_chunks_survive_the_queue(self):
+        upstream = _InflightUpstream(self.LIMIT, hold_ms=self.HOLD_MS)
+        llm = upstream.adapter()
+        # 初值就给上游上限、而不是从 cap 探起：从 8 探起时首波 5 片同时 429，个别片
+        # 会在 _RATE_LIMIT_ATTEMPTS 内被连撞（实测 1/40 片耗尽预算），那是 AIMD 冷启动
+        # 的噪声，会把 A4 的判据搅成 flaky。从 3 起只有一个 3↔4 的探针，每片最多撞一次。
+        gate = AdaptiveGate(cap=self.CAP, initial=self.LIMIT)
+        client = llm._make_async_client()
+        t0 = time.monotonic()
+        try:
+            results = await asyncio.gather(*[
+                llm.async_chat("sys", [{"role": "user", "content": f"第{i}片"}],
+                               client=client, gate=gate, deadline_s=self.DEADLINE_S)
+                for i in range(self.N)
+            ], return_exceptions=True)
+        finally:
+            await client.close()
+            upstream.close()
+        elapsed = time.monotonic() - t0
+
+        failures = [r for r in results if isinstance(r, BaseException)]
+        # 判据放在空转门**之前**：去掉顺延的变异下，挂掉的片跑得快，整场反而不到 2s，
+        # 空转门会先炸、把真正的红源（片被判超时）盖掉。顺序只影响报错信息，判绿判红不变。
+        notime = sum("no time for an attempt" in repr(f) for f in failures)
+        assert failures == [], (
+            f"排队把 {len(failures)} 片判成超时，其中 {notime} 片是「预算里挤不出一次 "
+            f"attempt」（修复前正是这样挂的，尾部那批）：{failures[:2]!r}")
+        assert upstream.statuses.count(429) > 0, (
+            "假上游一次都没限流 —— 闸没被钉在上游上限附近，排队压力没形成")
+        assert elapsed > self.DEADLINE_S, (
+            f"整场只跑了 {elapsed:.2f}s ≤ 单片预算 {self.DEADLINE_S}s —— 排队没超过单片预算，"
+            f"这条锁空转")
+        assert len(results) == self.N

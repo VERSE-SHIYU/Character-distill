@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import asyncio
 import random
 import time
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import os
 
@@ -20,6 +21,9 @@ from openai import AsyncOpenAI, BadRequestError, OpenAI, Timeout
 
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 from core.utils import estimate_usage_from_chars  # 字符→token 估算的唯一出口
+
+if TYPE_CHECKING:
+    from core.concurrency import AdaptiveGate  # 只在注解里出现，适配器不构造闸
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +115,17 @@ _BATCH_STREAM_READ_S = 300.0
 _DECISION_DEADLINE_S = _env_timeout_s("LLM_DECISION_DEADLINE_S", 6.0, _ATTEMPT_WINDOW_S)
 _GEN_DEADLINE_S = _env_timeout_s("LLM_GEN_DEADLINE_S", 60.0, _ATTEMPT_WINDOW_S)
 _STREAM_DEADLINE_S = _env_timeout_s("LLM_STREAM_DEADLINE_S", 8.0, _ATTEMPT_WINDOW_S)
+# `async_chat`（批量 Map）的总墙钟：**不是**交互式的 _GEN_DEADLINE_S，而是整条重试链的
+# 上界 —— 3 次 attempt 各可能吃满 _GEN_ATTEMPT_S，中间还夹着退避。按 60s 给的话，第 1 次
+# 吃满 45s 后第 3 次根本轮不到（生产实测：45s 超时 → 15s 后「2 次尝试均失败」）。
+# 推导 = attempts×ceiling + Σ(每次退避上界) + margin；退避上界按 _RetryBudget.on_failure：
+# 非 429 为 `_GEN_BACKOFF_S × k + random.uniform(0, 1)`（取上界 +1），k = 1…attempts−1
+# （最后一次 attempt 不睡）。改退避公式时这里要一起改。
+_GEN_BATCH_DEADLINE_S = (
+    _GEN_ATTEMPTS * _GEN_ATTEMPT_S
+    + sum(_GEN_BACKOFF_S * k + 1 for k in range(1, _GEN_ATTEMPTS))
+    + _ATTEMPT_TIMEOUT_MARGIN_S
+)
 
 
 class _RetryBudget:
@@ -145,6 +160,15 @@ class _RetryBudget:
 
     def remaining_s(self) -> float:
         return max(0.0, self._deadline - time.monotonic())
+
+    def extend_deadline(self, seconds: float) -> None:
+        """把等闸（排队）耗掉的墙钟顺延回总时限 —— 排队不是本调用自己的时间。
+
+        `_deadline` 在**创建预算时**就定死了，那是「调用内不排队」（排队在 Map 外层
+        `Semaphore`）时代的假设。闸搬进 `async_chat` 之后，尾部分片可能排到自己之前
+        预算就尽了（242 片 / 上限 18 时实测），一次 create 都发不出去。
+        """
+        self._deadline += max(0.0, seconds)
 
     def attempt_timeout(self) -> float:
         """本次 create 应传的 timeout（秒）。剩余撑不起一次有效 attempt 则抛（不发出会假失败的 create）。
@@ -654,6 +678,11 @@ class LLMAdapter:
         self._presence_penalty = float(llm_cfg.get("presence_penalty", 0.3))
         self._dialect = _detect_dialect(self._base_url, self._model)
         self.last_usage: dict | None = None
+        # 该账号上一轮学到的并发上限（WP14 A3）。放在 adapter 上而不是 map_concurrency
+        # 里：它是**账号**的属性（按余额变），adapter 又是按 user_id 缓存的
+        # （web/deps.py），一轮 Map 结束写回、下一轮从它起步，冷启动那波不必再撞一遍。
+        # `None` = 还没学过，闸从配的 `map_concurrency` 起。
+        self.learned_map_concurrency: int | None = None
 
         resolved_key = api_key or llm_cfg.get("api_key") or os.getenv("DEEPSEEK_API_KEY")
         self._api_key = resolved_key
@@ -731,7 +760,8 @@ class LLMAdapter:
         置 ``None``（显式「无数据」），不能保留上一次的值 —— 否则记账方会把上一轮
         的 token 当成这一轮的，比不记更糟（错数据冒充真实值）。
         """
-        result, usage = await self.async_chat(system_prompt, messages, max_tokens=max_tokens)
+        result, usage = await self.async_chat(system_prompt, messages, max_tokens=max_tokens,
+                                              deadline_s=_GEN_DEADLINE_S)
         self.last_usage = usage
         return result
 
@@ -773,12 +803,19 @@ class LLMAdapter:
                 time.sleep(budget.on_failure(exc))
 
     @T.async_spanned("llm.chat", op="chat", finalize=_async_infer_finalize)
-    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None, client: AsyncOpenAI | None = None) -> tuple[str, dict | None]:
+    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None, client: AsyncOpenAI | None = None, *, deadline_s: float = _GEN_BATCH_DEADLINE_S, gate: "AdaptiveGate | None" = None) -> tuple[str, dict | None]:
         """异步非流式对话，用于 Map 阶段并发。最多重试3次（非429）或5次（429限流）。
 
         Args:
             client: 可选的自定义 AsyncOpenAI，用于 per-asyncio-run 场景；
                     不传时使用 self._async_client（默认共享实例）。
+            deadline_s: 本调用的总墙钟。默认取批量预算 `_GEN_BATCH_DEADLINE_S`（够跑完
+                        3 次 attempt + 退避）；交互式调用方（``achat``）传 `_GEN_DEADLINE_S`
+                        维持 60s 封顶。
+            gate: 可选的自适应并发闸（`core.concurrency.AdaptiveGate`）。给了它就把**每一次**
+                create 包在闸内：429 报 `on_rate_limited`、成功报 `on_success`；退避睡眠落在
+                闸**外**（睡着的请求占着名额的话，上限永远探不上去）。不传则行为不变 ——
+                `achat`、群聊、审核那几条路都不传。
 
         Returns ``(result, usage)`` where *usage* is ``{"prompt_tokens": N,
         "completion_tokens": N}`` or *None*.  Callers are responsible for
@@ -788,36 +825,62 @@ class LLMAdapter:
         _c = client or self._async_client
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
-        budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
+        budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=deadline_s,
                               ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
                               log_prefix="LLMAdapter async", err_prefix="Async LLM")
         while True:
-            timeout = budget.attempt_timeout()
-            try:
-                completion = await _c.chat.completions.create(
-                    model=self._model,
-                    messages=payload,
-                    temperature=self._temperature,
-                    max_tokens=_mt,
-                    presence_penalty=self._presence_penalty,
-                    timeout=timeout,
-                    extra_body=self._request_options(),
-                )
-                choices = completion.choices
-                if not choices:
-                    raise RuntimeError("API returned empty choices")
-                result = _extract_content(choices[0], where="async_chat")
-                usage = None
-                if completion.usage:
-                    usage = {
-                        "prompt_tokens": completion.usage.prompt_tokens or 0,
-                        "completion_tokens": completion.usage.completion_tokens or 0,
-                    }
-                return result, usage
-            except IncompleteResponseError:
-                raise  # 截断：确定性失败，不烧重试预算
-            except Exception as exc:
-                await asyncio.sleep(budget.on_failure(exc))
+            queue_t0 = time.monotonic()
+            # 闸只包**这一次** create（连同它之前的等名额与超时计算）。退避睡眠落在
+            # `async with` **之外** —— 睡着的请求若占着名额，上限永远探不上去。
+            async with (gate if gate is not None else contextlib.nullcontext()):
+                if gate is not None:
+                    # 排队等名额不是本调用的时间：尾部分片可能一次没发就把总预算排光
+                    # （红楼梦 242 片 / 账号上限 18）。等闸时长顺延回总时限，单次超时也在
+                    # **进闸之后**才算 —— 否则那个窗口是从「还没排到队」的时刻起算的。
+                    budget.extend_deadline(time.monotonic() - queue_t0)
+                # 抛「没时间了」要出闸上抛，不能被下面的 on_failure 重包装成上游故障：
+                # 预算耗尽是本地判定，与上游无关。
+                timeout = budget.attempt_timeout()
+                gen = gate.generation if gate is not None else None
+                try:
+                    try:
+                        completion = await _c.chat.completions.create(
+                            model=self._model,
+                            messages=payload,
+                            temperature=self._temperature,
+                            max_tokens=_mt,
+                            presence_penalty=self._presence_penalty,
+                            timeout=timeout,
+                            extra_body=self._request_options(),
+                        )
+                    except IncompleteResponseError:
+                        raise  # 截断：确定性失败，不烧重试预算
+                    except Exception as exc:
+                        # 乘性下调要在**还名额之前**落账：`__aexit__` 会唤醒等在闸外的片，
+                        # 它们读到旧上限就会按旧上限再冲一波 —— 下调晚一步，整波白撞一次。
+                        # 同一波只下调一次（`gen` 不等于当前代数 = 同波已有人报过）：60 路
+                        # 同时 429 若按次数连乘，20 × 0.75^15 → 1，闸当场自锁。
+                        if gate is not None and _classify_retry(exc)[0]:
+                            await gate.on_rate_limited(gen)
+                        raise
+                    if gate is not None:
+                        await gate.on_success()
+                    choices = completion.choices
+                    if not choices:
+                        raise RuntimeError("API returned empty choices")
+                    result = _extract_content(choices[0], where="async_chat")
+                    usage = None
+                    if completion.usage:
+                        usage = {
+                            "prompt_tokens": completion.usage.prompt_tokens or 0,
+                            "completion_tokens": completion.usage.completion_tokens or 0,
+                        }
+                    return result, usage
+                except IncompleteResponseError:
+                    raise
+                except Exception as exc:
+                    failure = exc
+            await asyncio.sleep(budget.on_failure(failure))
 
     def _stream(self, system_prompt: str, messages: list[dict[str, Any]],
                 max_tokens: int | None = None, *,
@@ -881,7 +944,9 @@ class LLMAdapter:
                         "estimated": False,
                     }
                     self.last_usage = usage
-                    continue
+                    # 不 continue：DeepSeek 把终态与 usage 放在**同一个**末 chunk，跳过它
+                    # 等于永远读不到 finish_reason（实测 6/6 None，截断从未被识别）。
+                    # OpenAI 形态下这个 chunk 的 choices 为空，下一行的 `not choices` 会跳过。
                 choices = chunk.choices
                 if not choices:
                     continue

@@ -21,6 +21,7 @@ OTEL 开还是关走**同一条**路径：载体在开关关闭时三步皆 no-o
 """
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import threading
 from typing import Any, Callable, Protocol
@@ -101,5 +102,102 @@ def ctx_submit(pool, fn: Callable, *args, **kwargs):
 
 __all__ = [
     "ContextCarrier", "register_context_carrier", "get_context_carriers",
-    "set_context_carriers", "ctx_thread", "ctx_submit",
+    "set_context_carriers", "ctx_thread", "ctx_submit", "AdaptiveGate",
 ]
+
+
+class AdaptiveGate:
+    """按**在途请求数**自适应的并发闸（AIMD）。
+
+    为什么不是固定 `Semaphore`：上游的并发上限按账号计、随余额动态变化（一台上限
+    18 的账号拿到 60 并发就 429×328、11 片失败），固定的 `map_concurrency` 总会
+    超过一部分账号。闸把上限当估计值：踩到 429 乘性下探，连续成功加性上探，收敛到
+    该账号当前的真实上限附近。不解析 429 文案里的数字 —— 那是未写进文档、随时会变
+    的运行时行为。
+
+    用法：`async with gate:` 包住**每一次尝试**（不是整次带重试的调用）；进闸时记下
+    `gate.generation`，成功调 `await gate.on_success()`、429 调
+    `await gate.on_rate_limited(gen)`。退避睡眠必须在 `async with` **之外** —— 睡着的
+    请求若占着名额，上限永远探不上去。
+
+    上调会让等在 `__aenter__` 里的协程立刻可进，故 `on_success` 需 `notify_all`；
+    下调相反（更严），不唤醒任何等待者，等 `__aexit__` 释放名额时自然复查。
+
+    加性上探只在**满载**时发生（RFC 7661：未用满拥塞窗口的发送方 MUST NOT 增大窗口）
+    —— 见 `on_success`。
+    """
+
+    def __init__(self, cap: int, initial: int | None = None) -> None:
+        """*cap* 是上限（`map_concurrency`）；*initial* 是该账户已学到的上限，缺省从 cap 起。"""
+        self._cap = max(1, int(cap))
+        self._ceiling = self._cap if initial is None else min(self._cap, max(1, int(initial)))
+        self._inflight = 0
+        self._ok = 0
+        # 代数：每下调一次 +1。一波并发同时撞 429 时，只有「当时代数仍是当前代数」的那个
+        # 下调 —— 否则 N 个 429 会按次数连乘（20 × 0.75^15 → 1），闸当场自锁。
+        self._generation = 0
+        # 最近一次**进闸**时闸是否满载。缺省 True：还没有过任何准入就不抑制 —— 生产路径
+        # 上每次 on_success 前必有一次 `__aenter__`，此缺省只对直接驱动闸的算术用例可见。
+        self._admitted_full = True
+        self._cond = asyncio.Condition()
+
+    @property
+    def ceiling(self) -> int:
+        """当前上限 —— 允许同时在途的请求数。"""
+        return self._ceiling
+
+    @property
+    def inflight(self) -> int:
+        """当前在途请求数。"""
+        return self._inflight
+
+    @property
+    def generation(self) -> int:
+        """当前代数 —— 进闸时记下它，报 429 时交回 `on_rate_limited`。"""
+        return self._generation
+
+    async def __aenter__(self) -> AdaptiveGate:
+        async with self._cond:
+            # 进闸时记下「此刻是否满载」：在途 + 1 ≥ 上限（本请求占的是最后的名额），
+            # 或已经排过队（需求超过上限）—— 见 on_success 的 RFC 7661 说明。
+            full = self._inflight + 1 >= self._ceiling
+            while self._inflight >= self._ceiling:
+                await self._cond.wait()
+                full = True
+            self._inflight += 1
+            self._admitted_full = full
+        return self
+
+    async def __aexit__(self, *_exc) -> None:
+        async with self._cond:
+            self._inflight -= 1
+            self._cond.notify_all()
+
+    async def on_success(self) -> None:
+        """一次尝试成功。连续成功次数达到当前上限即加性 +1，不超过 cap。
+
+        只在**满载**时计数（RFC 7661：未用满拥塞窗口的发送方 MUST NOT 增大窗口）。
+        满载与否取自最近一次进闸（`_admitted_full`）—— 排水期的分片在途数已低于上限，
+        成功只说明收尾顺利，不代表还有余量，照旧计数会把写回的账户记忆抬高。
+        """
+        async with self._cond:
+            if not self._admitted_full:
+                return
+            self._ok += 1
+            if self._ok >= self._ceiling and self._ceiling < self._cap:
+                self._ceiling += 1
+                self._ok = 0
+                self._cond.notify_all()
+
+    async def on_rate_limited(self, generation: int) -> None:
+        """一次 429。乘性下调（×0.75 向下取整），最低 1。
+
+        *generation* 是本次尝试**进闸时**记下的代数；它已不是当前代数，说明这一波里
+        已经有别的请求下调过了（闸更严了，在途的那批是按旧上限发的），本次不再连乘。
+        """
+        async with self._cond:
+            if generation != self._generation:
+                return
+            self._generation += 1
+            self._ceiling = max(1, int(self._ceiling * 0.75))
+            self._ok = 0

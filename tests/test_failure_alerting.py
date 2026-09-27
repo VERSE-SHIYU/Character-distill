@@ -427,14 +427,17 @@ _KEPT_BROAD_EXCEPTS: dict[tuple[str, str], tuple[int, str]] = {
     # 注：`core/agent/tools.py::execute` 曾是「交给下游：随 evidence 上屏」的登记项 ——
     # 按「只上屏不算留痕」的规则改判为补日志 WARNING，已从本表移除（`logger.warning` 在
     # 该分支里，判据不再把它算作静默）。
+    # distiller 这 4 处按 spec 步骤 10 的 C 段裁决**只登记豁免、不改 `core/distiller.py`
+    # 的代码**（distill 线在频繁改这个文件，改它必撞车）。函数改名或挪动即与本表对不上，
+    # 锁会变红 —— 那正是锁该做的事：看到红就到本表改登记、写明理由。
     ("core/distiller.py", "_thread_run"):
-        (2, "交给下游：outcome 队列 → 消费端 raise payload / print+yield error 帧（identify 合入后改 logger.error）"),
+        (2, "交给下游：outcome 队列 → 消费端 print `map stage aborted` + yield error 帧（上屏文案经 user_facing_error 收敛）"),
     ("core/distiller.py", "_parse_json_with_retry"):
-        (2, "交给下游：折进 last_error → 消费端 print 留痕后 raise DistillError（同上，待 identify 合入）"),
+        (2, "交给下游：折进 last_error → 消费端留痕后 raise DistillError（重试预算的另一处出口见 adapters/llm_adapter.py）"),
     ("core/distiller.py", "_reduce_thread"):
-        (1, "交给下游：rq 队列 → 消费端 print + yield error 帧（同上，待 identify 合入）"),
+        (1, "交给下游：rq 队列 → 消费端 print `reduce stage aborted` + yield error 帧"),
     ("core/distiller.py", "_format_one_group"):
-        (1, "交给下游：fmt_queue → 消费端 logger.error + yield error 帧"),
+        (1, "交给下游：fmt_queue → 消费端 logger.error(`format group %s aborted`) + yield error 帧"),
     ("core/embeddings.py", "_call_api_bounded"):
         (1, "交给下游：重试预算；非可重试或耗尽即原样 raise"),
     ("core/moderation/card_guard.py", "_run"):
