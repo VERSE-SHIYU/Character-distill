@@ -30,7 +30,7 @@
     {
       "main":           ["角色1", ...],        # 必须恰 1 组命中、且该组 importance == 主要
       "same_group":     [["角色1", "别名A"]],  # 两个称呼必须落进同一组
-      "generics":       ["泛称1", ...],        # 不得是任何组的 name
+      "generics":       ["泛称1", ...],        # 不得是主要人物的组 name
       "generic_not_on": ["角色1", ...]         # 泛称也不得出现在这些人的 aliases 里
     }
 """
@@ -78,6 +78,11 @@ LOG_PATTERNS = (
     # §10 D2「任一分片最终失败」：`Map chunk %s failed` 是 Map 里某片重试墙后仍未成的
     # 唯一落点（`core/distiller.py` 的 `_run_map_concurrent._one`），全仓只此一处。
     ("分片失败", r"Map chunk \d+ failed"),
+    # 全书判定那 5 份样本走同一条 Map 骨架，前缀由 `log_label` 给（`core/distiller.py`
+    # `_run_map_with_client` 的 `"%s %s failed"`），与本行上面那条是两回事，分开数。
+    # **只报告、不进停下条件**：判定样本失败由「合法样本 < 3 份即整体失败」处理，
+    # 识别请求本身会失败，不是逐片分片坏。
+    ("判定样本失败", r"Identify judge sample \d+ failed"),
 )
 
 
@@ -252,7 +257,10 @@ def identify_mode(args, dsn: str, token: str, user_id: str, env: dict) -> dict:
     ident = [r for r in rows if r["action"] == "distill_identify"]
     stats["usage_rows"] = len(ident)
     stats["map_s"] = round((ident[0]["created_at"] - started_wall).total_seconds(), 1) if ident else None
-    stats["alias_s"] = round((ident[-1]["created_at"] - started_wall).total_seconds(), 1) if len(ident) > 1 else None
+    # 判定阶段自己的耗时（WP16 修订：5 次并行调用汇总成末行），故取首末两行的间隔，
+    # 不是「末行 − 起算」—— 后者把逐片 Map 的时间也算进去了。
+    stats["judge_s"] = (round((ident[-1]["created_at"] - ident[0]["created_at"]).total_seconds(), 1)
+                        if len(ident) > 1 else None)
 
     # B2：质量判据全部用代码判，不肉眼
     crit = _load_criteria(args.criteria)
@@ -279,24 +287,36 @@ def _load_criteria(path: str | None) -> dict | None:
         return None
 
 
+def _groups_of(chars: list[dict], query: str) -> list[int]:
+    """按「是组名，或挂在某组别名上」定位组，返回组下标。
+
+    名单里一个称呼既可能是主名也可能是别名（「宝玉」是「贾宝玉」组的别名），所以查找
+    不能只比 `name` —— 只比 `name` 会把「查宝玉」判成查不到。主要人物/同组判据与
+    `_aliases_of` 共用这一处。
+    """
+    return [i for i, g in enumerate(chars)
+            if query == g.get("name") or query in (g.get("aliases") or [])]
+
+
 def _aliases_of(chars: list[dict], character: str) -> list[str]:
-    for g in chars:
-        if g.get("name") == character:
-            return list(g.get("aliases") or [])
-    return []
+    """该称呼所属组的「本名 ∪ 别名」，去掉查询词本身；命中不唯一时返回空。
+
+    命中 0 组（名单里没有此人）或 ≥2 组（两组都挂了同一称呼）都定位不到唯一的人，
+    此时给不出可信的别名集合：返回空，并在 stderr 报命中组数，让读数里看得见。
+    """
+    idxs = _groups_of(chars, character)
+    if len(idxs) != 1:
+        eprint(f"[aliases] {character!r} 命中 {len(idxs)} 组，按无别名处理")
+        return []
+    terms = dict.fromkeys([chars[idxs[0]].get("name"), *(chars[idxs[0]].get("aliases") or [])])
+    return [t for t in terms if t and t != character]
 
 
 def _check_b2(chars: list[dict], crit: dict) -> dict:
-    """§10 B2：每人恰 1 组且为「主要」；同组对落同一组；泛称不是 name、不挂在指定人身上。"""
-    resolved: dict[str, list[int]] = {}
-    for i, g in enumerate(chars):
-        resolved.setdefault(g.get("name", ""), []).append(i)
-        for a in g.get("aliases") or []:
-            resolved.setdefault(a, []).append(i)
-
+    """§10 B2：每人恰 1 组且为「主要」；同组对落同一组；泛称不是主要人物的组 name。"""
     mains, miss_main = [], []
     for name in crit.get("main") or []:
-        idxs = resolved.get(name) or []
+        idxs = _groups_of(chars, name)
         if len(idxs) == 1 and chars[idxs[0]].get("importance") == "主要":
             mains.append(name)
         else:
@@ -307,14 +327,16 @@ def _check_b2(chars: list[dict], crit: dict) -> dict:
     for pair in crit.get("same_group") or []:
         if len(pair) != 2:
             continue
-        a, b = (resolved.get(pair[0]) or []), (resolved.get(pair[1]) or [])
+        a, b = _groups_of(chars, pair[0]), _groups_of(chars, pair[1])
         if a and b and set(a) & set(b):
             same_ok += 1
         else:
             same_bad.append({"pair": pair, "a_groups": a, "b_groups": b})
 
-    generic_names = [g.get("name") for g in chars]
-    gen_bad = [x for x in (crit.get("generics") or []) if x in generic_names]
+    # 泛称组按 WP16 修订保留在名单里、标为次要（RAG 打标签要用），所以判据只能看主要
+    # 人物的组名 —— 「不得是任何组的 name」会把合法的次要泛称组也判成失败。
+    major_names = {g.get("name") for g in chars if g.get("importance") == "主要"}
+    gen_bad = [x for x in (crit.get("generics") or []) if x in major_names]
     for person in crit.get("generic_not_on") or []:
         aliases = set(_aliases_of(chars, person))
         for x in (crit.get("generics") or []):
@@ -524,7 +546,7 @@ def print_env(env: dict) -> None:
 
 def print_identify(stats: dict, character: str) -> None:
     print(f"[识别] 整请求 {stats.get('elapsed_s')}s | 逐片 {stats.get('map_s')}s "
-          f"| 别名判断 {stats.get('alias_s')}s | 账行数 {stats.get('usage_rows')}")
+          f"| 判定 {stats.get('judge_s')}s | 账行数 {stats.get('usage_rows')}")
     if stats.get("error"):
         print(f"[识别] 失败：{stats['error']}")
     b2 = stats.get("b2") or {}

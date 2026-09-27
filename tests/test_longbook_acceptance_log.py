@@ -25,6 +25,9 @@ SAMPLE_LOG = """\
 2026-09-26 00:00:04,300 WARNING Map chunk 9 done in 1.2s
 2026-09-26 00:00:05,400 WARNING Map chunk 3 slow: retrying
 2026-09-26 00:00:06,500 WARNING Reduce batch 失败：截断（finish_reason=length）
+2026-09-26 00:00:07,600 WARNING Identify judge sample 3 failed: IncompleteResponseError
+2026-09-26 00:00:08,700 WARNING Identify judge sample 2 incomplete: finish_reason=length, generated 120 chars: '...'
+2026-09-26 00:00:09,800 WARNING Identify judge sample 4 malformed: {'merge': []}
 INFO:     127.0.0.1:51000 - "POST /api/distill/start HTTP/1.1" 429 Too Many Requests
 INFO:     127.0.0.1:51001 - "POST /api/distill/task/abc HTTP/1.1" 503 Service Unavailable
 读取流式响应失败（上游传输层）：ReadTimeout
@@ -32,6 +35,7 @@ INFO:     127.0.0.1:51001 - "POST /api/distill/task/abc HTTP/1.1" 503 Service Un
 
 EXPECTED_COUNTS = {
     "429": 1, "5xx": 1, "读取流式响应失败": 1, "Reduce batch": 1, "分片失败": 2,
+    "判定样本失败": 1,
 }
 
 
@@ -90,3 +94,27 @@ def test_5xx_still_stops(tmp_path):
     counts = acc.count_log(_log(tmp_path, 'INFO: 1.2.3.4 - "GET /x HTTP/1.1" 502 Bad Gateway\n'))
     why = acc.over_limit(_stats(), counts, _clean_env())
     assert len(why) == 1 and why[0].startswith("5xx")
+
+
+def test_a_failed_judge_sample_counts_apart_from_a_failed_map_chunk(tmp_path):
+    """WP16 修订后判定那 5 份样本走同一条 Map 骨架，但前缀不同：两类失败各数各的。
+
+    挡住：两条正则混成一条（前缀写松成 `\\w+ \\d+ failed`，或判定那类并进「分片失败」）
+    —— 判定样本失败会被报成「逐片坏了一片」，逐片其实一片没坏。
+    """
+    counts = acc.count_log(_log(tmp_path,
+                                "WARNING Identify judge sample 3 failed: IncompleteResponseError\n"
+                                "WARNING Map chunk 3 failed: APITimeoutError\n"))
+    assert counts["判定样本失败"] == 1
+    assert counts["分片失败"] == 1
+
+    only_judge = acc.count_log(_log(tmp_path, "WARNING Identify judge sample 3 failed: Boom\n"))
+    assert (only_judge["判定样本失败"], only_judge["分片失败"]) == (1, 0)
+
+
+def test_a_failed_judge_sample_is_reported_but_does_not_stop_the_run(tmp_path):
+    """判定样本失败由「合法样本 < 3 份即整体失败」处理，不是 D2 的逐片停下条件 —— 只报。"""
+    counts = acc.count_log(_log(tmp_path,
+                                "WARNING Identify judge sample 3 failed: IncompleteResponseError\n"))
+    assert counts["判定样本失败"] == 1
+    assert acc.over_limit(_stats(), counts, _clean_env()) == []
