@@ -113,7 +113,9 @@ async def _resolve_user_llm(user_id: str, storage: StorageBase | None = None) ->
         # 先入缓存：用户实例本身没有变坏 —— 换个放行的 IP 再来，该命中的还是这条缓存。
         _user_llm_cache[user_id] = resolved.llm
     if resolved.reason:
-        print(f"[deps] {resolved.reason} (user_id={user_id})")
+        # `resolve_llm` 吞掉失败后把原因折进 `Resolution.reason`，由调用方记账（#38）。
+        # 落到 logger 而不是 print：回落/不可用是用户看得见的降级，面板上必须有痕。
+        logger.warning("LLM resolution: %s (user_id=%s)", resolved.reason, user_id)
     return resolved.llm
 
 

@@ -249,12 +249,189 @@ commit：`fix(lifespan): pair every process-wide registration with its undo`
 ### E 段验证
 只跑 `tests/test_message_backfill.py`、`tests/test_llm_access_gate.py`、`tests/test_usage_identity_context.py`、`tests/test_stdout_logging.py`，以及本步新增的用例；合并门是分支 CI。
 
-## D 段：51 处静默吞错补日志（等 119 残留合入后补写本节）
+## D 段：静默吞错补日志（70 处待判），并加回归锁（123、119 均已合入；B 段已上线）
 
-## C 段：退役自建组件
-B 段线上验证通过、Shiyu 确认之后再开，另行补充到本文件。
+### 已查实的约束（基线 origin/main `91e8b0b`）
+1. **扫描口径与锁的判据一致**：新锁用 `_always_raises` 判断是否必然抛出，所以统计也按同一口径做，不能用「分支里出现过 `raise` 就排除」这种更宽的口径，否则统计出来的数目和锁找到的对不上。
+   - 扫描范围：`storage/postgres_store.py`、`web/`、`core/`、`adapters/`
+   - 只看宽 `except`：`Exception`、`BaseException`、裸 `except`，或元组里含这两者之一
+   - 排除：`_always_raises(分支体)` 为真（必然抛出；注意 `raise HTTPException` 不算抛出）；分支里有 `print`（归第 3 节 119 的锁管，新锁跳过这类分支，避免同一处被两把锁重复判）；调用了 logger 的任一级别，或用了 `nonfatal`
+   - **在 `91e8b0b` 上的结果：共 70 处要处理。** 行号会漂，以开工时重跑为准：
+   - (a) 分支里完全没有 `raise`，也没用到异常变量，**51 处**：
+     - `storage/postgres_store.py`：update_published_card:4993
+     - `web/cross_border_sync.py`：forward_dm_to_peer:54、forward_card_to_peer:77、forward_card_to_peer:104、forward_invite_code_to_peer:201、forward_invite_code_delete_to_peer:229、forward_user_profile_to_peer:263
+     - `web/geo_guard.py`：is_whitelisted_base_url:189
+     - `web/routers/admin.py`：list_users_federated:131、list_users:55、list_users_federated:86、admin_user_detail:668、list_users_federated:123
+     - `web/routers/auth.py`：test_embedding:698、get_user_online_status:916
+     - `web/routers/card.py`：export_card:84
+     - `web/routers/chat.py`：_decide_retraction:117、_ensure_session:179
+     - `web/routers/distill.py`：start_session:1340
+     - `web/routers/group.py`：_rebuild_group_session:97、create_group:309、_rebuild_group_session:130、_filter_valid_card_ids:432、cleanup_orphan_card_ids:476、send_message:529、_rebuild_group_session:121、_rebuild_group_session:149、event_generator:636
+     - `web/routers/history.py`：resume_session:215
+     - `web/routers/market.py`：_get_ip_location:44、_card_json_obj:429、publish_card:543、get_author:247、publish_card:520
+     - `web/routers/voice.py`：voice_status:65、voice_status:71、upload_custom_voice:157
+     - `web/server.py`：<module>:20
+     - `core/alerting.py`：emit:111
+     - `core/chat_engine.py`：_should_retract:1370、generate_reunion_greeting:1489、load_affinity:624、_evaluate_affinity:697、_build_time_awareness_block:1084
+     - `core/clock.py`：_safe_zone:25、is_valid_timezone:41
+     - `core/rag.py`：index:275、_peek_dimension:546
+     - `core/scene_indexer.py`：index_scenes:90
+     - `adapters/llm_adapter.py`：_classify_retry:44、aclose:685
+   - (b) 分支里有 `raise`，但不必然抛出，**5 处**。身份线原先的口径把它们漏掉了；其中后两处是 `raise HTTPException`，失败只剩给用户的 500，服务端不留痕：
+     - `core/distiller.py`：_parse_json_with_retry:955、_parse_json_with_retry:998
+     - `core/embeddings.py`：_call_api_bounded:296
+     - `web/routers/history.py`：export_session:108
+     - `web/routers/voice.py`：voice_synthesize:232
+   - (c) 用到了异常变量，疑似「交给下游」，**14 处**。要逐处确认交给了谁：
+     - `web/llm_resolution.py`：resolve_llm:75
+     - `core/agent/tools.py`：execute:207
+     - `core/alerting.py`：_send:119
+     - `core/distiller.py`：_thread_run:372、_thread_run:1983、_format_one_group:2171、_reduce_thread:2092
+     - `core/moderation/card_guard.py`：judge_card:160、judge_card:158、_run:145
+     - `adapters/llm_adapter.py`：chat:769、async_chat:816、_stream:868、chat_with_tools:999
+2. **现成的锁**：`tests/test_failure_alerting.py` 第 3 节，负责「`print` 后吞掉」这一种形态。
+   - 可复用的部分：`_SCAN_ROOTS`、`_always_raises`、`_is_http_exception`、`_enclosing_scope`、父节点表的构造、`_scan_files`
+   - 豁免表 `_KEPT_PRINTS` 以 `(路径, 函数名)` 为键、理由跟着条目走，找到的结果与豁免表做**相等**比较（新增违规和豁免失效都会变红）
+3. **现成的「吞掉但留痕」构造**：`core/nonfatal.py::nonfatal(source, what, level=...)`，模块注释自称是这个意图的「唯一定义」。仓内已有 16 处在用。**它只有 async 版本**（`@asynccontextmanager`）
+4. **身份线读过代码、确认有意吞掉的**：
+   - `core/alerting.py::emit`：告警处理器自身出错不能写日志，否则递归
+   - `web/server.py` 模块级：启动时重设 stdout 编码，日志系统还没装好
+   - `core/clock.py::is_valid_timezone`：校验函数，异常本身就是「不合法」这个结果
+   - `adapters/llm_adapter.py::_classify_retry`：尽力解析 `Retry-After`，解析不出就用默认退避
+   - `adapters/llm_adapter.py::aclose`：尽力关闭客户端
+5. **可能有意、但需要读代码判断的**：`web/geo_guard.py::is_whitelisted_base_url`、`core/clock.py::_safe_zone`（身份线建议补 WARNING：它意味着库里存了坏数据）、`core/rag.py::_peek_dimension`、`web/routers/market.py::_get_ip_location`
+6. **与 C 段的关系**：`core/alerting.py` 在 C 段会整个退役，它的两个豁免条目届时一并删除
+7. **与 distill 线可能撞车**：`core/distiller.py` 有 6 处在本段范围内（(b) 2 处、(c) 4 处），而 distill 线正在频繁修改这个文件。锁的豁免表按函数名登记，那边一旦改名或挪动函数，本锁就会变红
 
-已知的改动面：
-- 代码：`core/log_collector.py`、`core/alerting.py`、`web/routers/admin.py:22/:599`、`web/server.py:107-110`、`core/nonfatal.py`（docstring）、`core/email_service.py`
-- 测试：`tests/test_log_collector.py`、`tests/test_alerting.py`、`tests/test_failure_alerting.py`、`tests/test_nonfatal.py`、`tests/test_router_unified_exits.py`、`tests/perf/alerting_mutations.py`、`tests/perf/alerting_level_census.py`
-- 文档：`DEPLOY.md`、`README.md`、`AGENTS.md`、`docs/TECHNICAL_REPORT.md`
+### 级别口径（已定）
+- **ERROR**：用户拿到的结果是错的，或者数据没写进去 / 没同步过去，而且不会自愈。例如跨节点同步失败导致两地数据不一致。这类会进 GlitchTip 并发邮件
+- **WARNING**：有兜底，用户拿到的结果仍然正确，或者下次会自愈；只是降级。这类只进 stdout 和日志面板，在 GlitchTip 里只作为面包屑
+- **豁免**：异常本身就是返回结果（校验函数）；位于日志链自身；发生在日志系统装好之前。每一条都要写明理由
+- 日志消息里写 `source` / `what` 和定位信息（session_id、card_id、路径），**不写正文和用户输入**
+
+### 约束
+- **锁只有一套判据**：在 `tests/test_failure_alerting.py` 里新增一个测试，复用上面第 2 条列出的那些函数，不另起新文件、不另写一份扫描器
+- **新锁的规则**：宽 `except` 如果不必然抛出（按 `_always_raises` 判），分支里就必须调用 logger 或 `nonfatal`；否则必须登记在新的豁免表里，写明理由
+- 「交给下游」的 14 处**也要登记**进豁免表，理由写清交给了谁（队列、返回值、重试预算……）。不用「用到了异常变量」来自动放行，那等于给以后的静默吞错留了一个口子
+- 同一个函数里有多处的，豁免表按处数登记，比较时要能区分数量
+- 补日志时优先用 `nonfatal`，不在各处手写格式。同步函数里 `nonfatal` 用不了，这一处见步骤 10 的 S1
+- **补日志不是唯一修法，先判断这个宽 `except` 该不该存在**，按下面顺序选，前面的能用就不用后面的：
+  1. **能窄化就窄化**：捕获的其实是可预期的输入错误，就只捕获那个具体类型，不再是宽 `except`，也就不用补日志。例：`voice.py::voice_synthesize` 捕获的是请求体不是合法 JSON，应只捕获 JSON 解析错误，返回 400 是对的
+  2. **能去掉就去掉**：捕获后只是把真故障包装成别的响应，就删掉这个 `try`，交给全局异常处理器（`server.py` 的 `_global_exception_handler`，已经会记日志、返回 500）。例：`history.py::export_session` 把数据库故障伪装成 404「会话不存在」，用户和服务端都被误导；`get_session_owned` 找不到时本来就返回空，不需要这个 `try`
+  3. 以上都不适用，确实要吞掉继续跑，才补 `nonfatal` 或 logger
+  - S1 的分类表加一列「修法：窄化 / 去掉 / 补日志 / 豁免」
+- 只改这 70 处，其它代码不动；每个文件的改动都要能说清是哪一类、为什么
+- 开工前（S1）先查 distill 线有没有未合并的分支改到了 `core/distiller.py` 里上述函数（`git log origin/main..<distill 分支> -- core/distiller.py`，并看 diff 是否碰到这几个函数）。碰到了就在 S1 报告里列出来，由我协调顺序；不自行给这几处开临时豁免，也不在锁里排除 distiller.py
+- distiller 的 4 处 (c) 只需要登记豁免、不改 distiller.py 的代码，不会与 distill 线的代码冲突；以后那边改名或挪动这些函数时锁会变红，这正是锁该做的事。所以锁的失败信息要写清「去豁免表里改登记，并写明理由」，让任何一条线看到红都知道怎么处理
+
+### 步骤 10：[core/web/adapters/storage] 静默吞错补日志 + 回归锁
+
+**S1（只读，出分类表，停下等审计）**
+- 在当时的 main 上用上面的口径重跑扫描，报 (a)(b)(c) 三类的数目，以及与第 1 条的逐项差异
+- 逐处读代码，给出一张表，每行：`路径 · 函数 · 修法（窄化 / 去掉 / 补日志 / 豁免）· 级别（补日志时填 ERROR 或 WARNING）· 一句理由`
+- 统计需要补日志的**同步函数**有几处，并给出建议：是给 `nonfatal` 加一个同步版本（两者共用同一个上报函数，格式只有一份），还是同步处直接用模块 logger。给出理由，由我裁决
+- S1 不改任何文件
+
+**S2（审计通过后实施）**
+- 先写锁：新测试 `test_no_silent_broad_except_left_in_production_code`，此时应该是红的，红的内容正好是 S1 表里的全部条目
+- 再按分类表逐文件改，每改完一个文件跑一次锁，看剩余列表在减少
+- 豁免表最终的条目 = 分类表里的「豁免」+「交给下游」
+- 鉴别力自测：随便挑一处已补的日志删掉 → 锁变红；随便删掉一条豁免 → 锁变红
+
+commit：先 `test(failure-alerting): lock silent broad excepts`（锁 + 豁免表，此时红），再按文件分组若干个 `fix(<模块>): log the failures that were swallowed silently`，最后一个 commit 让锁变绿。中间 commit 锁为红是预期的，所以全部改完再一次推送，推送后分支 CI 必须全绿
+
+### D 段验证
+- 只跑 `tests/test_failure_alerting.py`，加上被改文件对应的已有测试文件；不跑全量；合并门是分支 CI；合并只做 git 操作，不跑测试
+- 合并后：GlitchTip 里观察一天，确认没有被新的 ERROR 刷屏。如果刷屏，说明哪一处的级别定错了，回来改级别，不是去关告警
+
+## C 段：退役自建组件（分两步：C1 现在做，C2 等 GlitchTip 官方修复后做）
+
+### 已定决策（Shiyu 拍板，2026-09-26）
+- **日志面板整个删掉**，不留跳转链接：报错只在 GlitchTip 一处看，GlitchTip 的地址收藏在浏览器里即可
+- **`ALERT_EMAIL` 下发链路和旧邮件告警一起删**，但推迟到 C2：
+  - 查实：我们镜像里的 `django-vtasks` 是 3.1.0，**不含**官方修复 !27（调度器遇到一次瞬时的数据库错误就会永久退出，之后报错照收、告警不发，外面看不出异常）
+  - 在官方修复装上之前，旧邮件告警是两台服务器各自独立发信、不经过 GlitchTip 的兜底渠道
+- **GlitchTip 自身的监控用轻量方案，不在深圳新增任何常驻组件**（深圳可用内存约 609MB）：
+  - 网站和 GlitchTip 能否访问 → 阿里云站点监控（外部探测，深圳零内存），报警走短信
+  - 调度器 bug → 靠官方修复根治：先固定镜像版本，官方发布含修复的版本后再升级
+  - 不做「监控系统本身的死人开关」（Prometheus、采集代理、边车容器）：内存和规模都不值得。已知的剩余风险：官方修复没有覆盖「嵌入式运行时进程半死不活」这一边角情况，接受
+- **GlitchTip 通知的用法**：修好的问题在 GlitchTip 里标「已解决」，复发时会再通知（查实：复发时会删掉旧的通知记录，所以同一条规则会重新发）；已知但暂时不修的，标「忽略」，不要标「已解决」
+
+### 已查实的约束（基线：observability 分支 `fc39f0c`，即 D 段头部；已与最新 main `d226a20` 比对：自 D 段分叉点 `91e8b0b` 以来，main 没有改动本段涉及的任何文件）
+1. **日志面板（C1 要删）**：
+   - `core/log_collector.py`：`install_log_collector`（:41）、`get_recent_logs`（:58）
+   - `web/server.py:78` import，`:125` `stack.callback(install_log_collector())`
+   - `web/routers/admin.py:22` import，`:602` 路由 `GET /api/admin/logs`（:609 调用）
+   - 前端：`web/frontend/src/api/client.js:383` `getLogs`；`components/AdminPanel.jsx` 的 `SystemLogTab`（约 :1622）用 `Promise.all` 同时加载日志和蒸馏任务，两者共用 loading 和错误提示，标题是「系统日志与任务」。只删日志部分，**蒸馏任务保留**，加载函数和状态要跟着拆干净，标题改为「蒸馏任务」
+   - 测试：`tests/test_log_collector.py` 整个删；`tests/test_nonfatal.py:26/34/39` 靠 `get_recent_logs` 判断「失败留下了痕迹」，改用 `caplog` 判断同一件事；`tests/test_lifespan_undo.py:21` 引用 `RingBufferHandler`，去掉相应断言
+   - 注释：`core/nonfatal.py:3`、`core/stdout_logging.py:7`、`core/alerting.py:4/14/161` 提到面板的句子要改写
+   - 我查过，前端没有针对这一页的测试
+2. **GlitchTip 镜像（C1 要固定版本）**：`deploy/sz/glitchtip/docker-compose.yml:16` 是浮动标签 `glitchtip/glitchtip:6`。Docker 官方文档说明，标签可变，发布者可以把同一个标签指向新镜像。执行方之前读过运行中镜像的源码，版本是 6.2.6
+3. **旧邮件告警（C2 要删）**：
+   - `core/alerting.py`：`AlertHandler`、`install_alert_handler`，读 `ALERT_EMAIL`（:38）；`web/server.py:80` import，`:128` 起挂载
+   - 下发链路：`deploy.yml:49-53`（注释和 `ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}`）、`:176` 和 `:370` 的 `envs`；`deploy.yml:54` 的注释写着「机制同 ALERT_EMAIL」，要改成独立说明；`docker-compose.prod.yml:91`、`DEPLOY.md:153`
+   - 注释：`core/email_service.py:72` 把告警列为发信的使用方
+   - 测试：`tests/test_alerting.py` 整个删；`tests/test_failure_alerting.py` 的 `alerts` 夹具（:31）装的是真的 `AlertHandler`；`tests/perf/alerting_mutations.py:140` 那条变异改的是 `alerting.ALERT_LEVEL`；`tests/test_message_backfill.py` 引用了 alerting
+   - 现成的替代接收端：`tests/test_error_reporting.py:58` 的 `recorder` 夹具（把录制用的 transport 注入 `sentry_sdk.init`，全程不出网）
+   - D 段豁免表里 `core/alerting.py::emit`、`::_send` 两条
+   - **不改**：`tests/perf/alerting_level_census.py`。它是按 git 历史回放、复现台账 119 数字的产数脚本，不 import 要删的模块；改了它，历史读数就复现不出来了
+4. **日志路径上的现有机制（C1、C2 都是从这条路径上拿掉组件，逐个核对前提）**：
+   - 根日志器级别：全仓没有 `setLevel` / `basicConfig`，保持默认 WARNING，INFO 记录在进入 handler 之前就被丢弃
+   - 根上现有的出口：环形缓冲（WARNING+，C1 删）、stdout（WARNING+，保留）、`AlertHandler`（ERROR，按「出错模块 + 异常类型」每小时最多一封，C2 删）、Sentry 的 LoggingIntegration（ERROR 生成事件，保留）
+   - **前提一**：根上只要还挂着至少一个 handler，Python 的 lastResort 就不生效（A 段步骤 1 的依据）。C1、C2 之后根上仍有 stdout handler（A 段审计过，它是独立模块，不依赖环形缓冲），这个前提不变
+   - **前提二**：E 段的 `AsyncExitStack` 按注册的逆序撤销，各项撤销互不依赖。去掉 `install_log_collector` 的那一项不改变其余项的顺序关系；`test_lifespan_undo.py` 里涉及它的断言按约束 1 一并去掉
+   - **前提三**：Sentry 的 LoggingIntegration 是 sentry-sdk 自带的，不知道也不依赖我们的环形缓冲或 `AlertHandler`
+5. **规模与时限**：
+   - C2 升级 GlitchTip：当前实际占用 173–198MiB，硬上限 384MB；深圳可用约 609MB。升级后三个数字要重新实测
+   - 阿里云站点监控：5 分钟探测一次，两个探测点都失败才报警，所以从出事到收到短信**最长约 10 分钟**。这个延迟可以接受，因为它防的是「几小时甚至几天没人发现」
+6. **其余文档**：`README.md`、`AGENTS.md`、`docs/TECHNICAL_REPORT.md`、`DEPLOY.md` 中描述日志面板或邮件告警的段落，按 C1、C2 各自删掉的内容分别更新
+
+### 约束（C1、C2 共用）
+- 只删本段列出的东西，其余不动；新发现属于改动面的直接修；只有会与其它线撞车、或需要 Shiyu 拍板时才停下报告；不自行记账
+- 删掉的是机制，不是日志：stdout 和 Sentry 两个出口不动
+
+### 步骤 11（C1）：删除日志面板 + 固定 GlitchTip 镜像版本
+**S0（只读，几分钟）**：在分支头部复核约束 1、2 的坐标；服务器上用 `docker inspect` 读出 GlitchTip 容器实际运行的镜像版本，确认是 6.2.6。任何一条不成立就停下报告。
+
+- 分支：从 D 段头部另开 `worktree-observability-retire`，在同一个 worktree 里切过去做。**合并顺序：D 先合，C1 后合**
+- **删日志面板**，按约束 1 的清单：
+  - 先改测试：`test_nonfatal.py` 改用 `caplog`、`test_lifespan_undo.py` 去掉 `RingBufferHandler` 的断言，这时应该依然全绿
+  - 再删 `core/log_collector.py`、lifespan 里的挂载、`/api/admin/logs`、前端的日志部分和 `getLogs`，删 `test_log_collector.py`，改注释和文档
+- **固定版本**：`deploy/sz/glitchtip/docker-compose.yml:16` 改成 S0 读到的完整版本号（`glitchtip/glitchtip:6.2.6`），不做升级
+  - 服务器上按 `deploy/sz/README.md` 的「scp 覆盖 + diff 验证」流程同步
+  - 因为版本号没变，这一步**不需要**重建 GlitchTip 容器；报告里贴出 diff 与仓库一致的证据即可
+- 残留检查：`git grep -n "log_collector\|get_recent_logs\|RingBufferHandler\|getLogs"`，除 `docs/specs/` 和台账的历史记录外零命中
+
+commit：`test: check nonfatal traces via caplog`、`refactor(observability): retire the ring-buffer log panel`、`chore(glitchtip): pin the image to the running version`
+
+**C1 验证**：本地只跑本段改动或删除涉及的测试文件（库用 docker 起的 PG），加上 `npm test` 里 AdminPanel 相关的文件；不跑全量；合并门是分支 CI；合并只做 git 操作，不跑测试。上线后确认管理后台只剩「蒸馏任务」，页面没有报错。
+
+### Shiyu 的手动步骤（C1 之后做，阿里云控制台，不涉及服务器）
+在阿里云「云监控 → 站点监控」建两个 HTTPS 探测任务，**2 个国内探测点、每 5 分钟一次，两个点都失败才报警**，报警联系人设为你的手机号：
+1. `https://errors.bookecho-shiyu.cn/`：GlitchTip 是否能访问
+2. `https://bookecho-shiyu.cn/health`：主站（nginx 把 `/health` 转发到 `/api/health`，`nginx/nginx.conf:92`）
+按阿里云的计费，国内探测点每 1 万次 10 元，两个任务合计约 35 元/月。
+
+### 步骤 12（C2）：删除旧邮件告警与 `ALERT_EMAIL` 链路（等官方修复）
+**开工条件**：GlitchTip 发布了包含 vtasks 修复的版本。判断办法：拉取新版本镜像，在里面 `grep -n "Scheduler loop failed" .../django_vtasks/scheduler.py`，有命中才算包含修复。
+
+**S0**：复核约束 3 的坐标，行号以届时为准。
+
+1. **先升级 GlitchTip**：
+   - `deploy/sz/glitchtip/docker-compose.yml` 改为新的完整版本号，scp 覆盖 + diff 验证，然后 `docker compose -p glitchtip up -d`
+   - 升级后用 `docker stats` 实测：GlitchTip 仍在 384MB 上限内，深圳可用内存没有明显下降；否则回退到旧版本并报告
+   - 容器里复查：告警调度任务的上次运行时间在 2 分钟以内
+2. **合并前闸门**（开 PR 之前做，结果写进报告）：
+   - 在生产**两台**各触发一条后端测试错误、一条前端测试错误
+   - 核对 GlitchTip 里出现了对应事件，region 分别是 `cn-shenzhen` 和 `sg-singapore`；`bookecho@163.com` 收到了 GlitchTip 发的告警邮件（由 Shiyu 确认）
+   - 两台都通过才开 PR；任何一台没接住就停下报告
+3. **删除**，按约束 3 的清单：
+   - 先改测试：把 `recorder` 从 `test_error_reporting.py` 移到 `tests/conftest.py`，两个文件共用；`test_failure_alerting.py` 的 `alerts` 夹具改为录制 Sentry 事件。各条断言的含义不变（ERROR 产生一个事件，WARNING 不产生；未捕获的 500 产生一个事件），这时应该依然全绿
+   - 变异 `alerting_mutations.py:140` 的目标会消失：在 `init_error_reporting` 里把 LoggingIntegration 的事件门槛显式写出来，复用 `core/nonfatal.py` 的 `DEFAULT_LEVEL`，让这条变异改为针对它
+   - 再删 `core/alerting.py`、lifespan 里的挂载、`ALERT_EMAIL` 下发链路、D 段豁免表里 alerting 的两条、`test_alerting.py`，改注释和文档
+   - 重新生成 `alerting_red_lines.json`，贴出 lock_coverage 的通过输出
+   - 残留检查：`git grep -n "AlertHandler\|install_alert_handler\|ALERT_EMAIL"`，除 `docs/specs/` 和台账的历史记录外零命中
+
+commit：`chore(glitchtip): upgrade to <版本> with the scheduler fix`、`test: record alerts as GlitchTip events`、`refactor(observability): retire email alerting`、`chore(deploy): drop the ALERT_EMAIL delivery`
+
+**C2 验证**：同 C1。上线后两台 app 的启动日志里没有 `ALERT_EMAIL` 相关的 WARNING。GitHub 上的仓库变量 `ALERT_EMAIL` 由 Shiyu 自行删除或保留，不影响运行。

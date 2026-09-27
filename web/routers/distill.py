@@ -1337,8 +1337,13 @@ async def start_session(
         all_characters = await text_manager._build_all_characters(req.text_id, existing_cards, user_id)
         try:
             user_cfg = await storage.get_user_api_config(user_id) or {}
-        except Exception:
+        except Exception as exc:
             user_cfg = {}
+            # 读不到用户配置 → 静默用全局 embedding key（与 chat._ensure_session 同一形态）
+            logger.warning(
+                "Distill session: per-user api config unreadable, falling back to "
+                "global key (user_id=%s): %r", user_id, exc, exc_info=True,
+            )
         emb = resolve_embedding(user_cfg)
         session_id = await asyncio.to_thread(
             text_manager._create_session, card,

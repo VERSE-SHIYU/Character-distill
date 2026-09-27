@@ -695,8 +695,13 @@ async def test_embedding(
         try:
             config = await storage.get_user_api_config(user["id"])
             key = config.get("embedding_key", "")
-        except Exception:
-            pass
+        except Exception as exc:
+            # 读不到已存的 key，下面会落到「未提供 API Key」那条提示 —— 用户拿着
+            # 这句去找 key，问题其实在存储层。排障端点的失败理由必须能分辨。
+            logger.warning(
+                "Embedding test: stored key unreadable (user_id=%s): %r",
+                user["id"], exc, exc_info=True,
+            )
 
     if not key:
         return {"ok": False, "error": "未提供 API Key，请先填写并保存"}
@@ -913,7 +918,7 @@ async def get_user_online_status(
         try:
             dt = datetime.fromisoformat(ts)
             online = (time.time() - dt.timestamp()) < 300
-        except Exception:
+        except (ValueError, TypeError):
             pass
     return {
         "online": online,

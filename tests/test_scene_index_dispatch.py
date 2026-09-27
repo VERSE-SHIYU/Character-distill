@@ -102,8 +102,12 @@ class _FakeClient:
         return col
 
     def delete_collection(self, name=None):
+        # 照真件：删一个不存在的集合抛 NotFoundError（`index_scenes` 首次索引走的正是这条，
+        # 靠窄化的 `except NotFoundError` 吞掉）。假件若静默 pop，这条窄化路径就测不到。
         self.deletes.append(name)
-        self.collections.pop(name, None)
+        if name not in self.collections:
+            raise NotFoundError(f"Collection {name} does not exist")
+        del self.collections[name]
 
 
 def _rag(client: _FakeClient, dims: int = 8) -> RAGEngine:
@@ -124,8 +128,21 @@ def _indexed(client: _FakeClient, text: str = TEXT, dims: int = 8) -> RAGEngine:
 
 
 def _mark(client: _FakeClient) -> tuple[int, int]:
-    """首次索引自己也会 delete（删一个不存在的，`except` 吞掉）—— 故数增量，不数总数。"""
+    """首次索引自己也会 delete（删一个不存在的集合 —— 假件照真件抛 NotFoundError，被吞掉）
+    —— 故数增量，不数总数。"""
     return len(client.deletes), len(client.creates)
+
+
+def test_first_index_swallows_missing_collection_delete():
+    """首次索引删的是「不存在的集合」：真 chroma 抛 NotFoundError，窄化必须吞掉并继续建集合。
+
+    变异：把 `except NotFoundError` 换成别的类型 → 异常从 `index_scenes` 逃逸，本条红。
+    """
+    client = _FakeClient()
+    rag = _indexed(client)
+    assert client.deletes == [NAME], f"首次索引应恰好 delete 一次，实得 {client.deletes}"
+    assert client.creates == [NAME], f"随后必须照常建集合，实得 {client.creates}"
+    assert rag.collection_name == NAME
 
 
 # ── ② 幂等 ──

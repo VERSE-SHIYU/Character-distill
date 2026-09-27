@@ -78,10 +78,13 @@ async def export_card(
 
     # Parse card_json to extract the character name
     card_json = record.get("card_json", "{}")
+    import json
+
     try:
-        import json
         parsed = json.loads(card_json) if isinstance(card_json, str) else card_json
-    except Exception:
+    except json.JSONDecodeError:
+        # isinstance 已判过是字符串，这里只可能是内容不是合法 JSON —— 拿不到名字就
+        # 退回卡片记录里的 name（导出本体照给，不因解析失败而失败）
         parsed = {}
     char_name = parsed.get("name", record.get("name", card_id))
 

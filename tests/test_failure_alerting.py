@@ -18,12 +18,13 @@ from __future__ import annotations
 import ast
 import asyncio
 import logging
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
 import core.alerting as alerting
-from core.nonfatal import nonfatal
+from core.nonfatal import nonfatal, nonfatal_sync
 
 
 @pytest.fixture
@@ -102,6 +103,23 @@ def test_nonfatal_default_level_is_unchanged(alerts, caplog):
     assert _levels_for(caplog, marker) == [logging.ERROR], \
         f"不传 level 时必须是 ERROR，实得 {_levels_for(caplog, marker)}"
     assert len(alerts) == 1, "默认档（数据没存进去 / 请求失败）必须发得出告警"
+
+
+def test_nonfatal_sync_level_warning_is_recorded_but_sends_no_alert(alerts, caplog):
+    """同步版同一档口径：`level=WARNING` → 记 WARNING，且**不**发告警邮件。
+
+    共用 `_report` 只保证「格式与级别参数一致」；「这一档真的不过告警门槛」还得让
+    同步版也走一遍真 `AlertHandler` —— 门槛装在 root 上，判的是 `record.levelno`。
+    """
+    marker = "spec119-nonfatal-sync-warning"
+
+    with caplog.at_level(logging.WARNING):
+        with nonfatal_sync("probe", marker, level=logging.WARNING):
+            raise RuntimeError("warn-boom")
+
+    assert _levels_for(caplog, marker) == [logging.WARNING], \
+        f"应恰有一条 WARNING（吞掉 ≠ 沉默），实得 {_levels_for(caplog, marker)}"
+    assert alerts == [], "WARNING 记成了告警 —— 兜底动作失败会开始发邮件"
 
 
 # ── 2. 全局异常处理器：往上抛的错误必须留痕（并触发告警） ─────────────────────
@@ -254,23 +272,35 @@ def _in_except_handler(node: ast.AST, parent: dict[ast.AST, ast.AST]) -> bool:
     return False
 
 
-def _print_swallows_in(path: Path) -> list[tuple[str, str]]:
-    """本文件里所有吞错 `print` 的 `(相对路径, 所在函数名)` 列表。"""
+def _scanned(path: Path) -> tuple[str, ast.Module, dict[ast.AST, ast.AST]]:
+    """读 + 解析 + 建父链：两把锁共用一个入口。
+
+    **解析不动就当场炸**，不能静默跳过 —— 静默跳过的后果是判据在**空集**上通过（假绿），
+    而假绿是「两种成因共用一个信号」里更坏的那一半。共用这一个入口，是为了让「扫到坏文件
+    会炸」只有一处实现：复制一份出去，两份就会各漂各的。
+
+    父链收 `iter_fields` 的**列表与单值两种**字段。第 3 节要从 `print` 这个**表达式**节点
+    向上走到它所在的语句 —— 那一段走的正是 `Expr.value` 这类单值边，只收列表会在那里断链。
+    """
     src = path.read_text(encoding="utf-8")
     try:
         tree = ast.parse(src)
-    except SyntaxError as exc:            # 扫到语法坏的文件要当场炸，不能静默跳过
+    except SyntaxError as exc:
         raise AssertionError(f"{path}: 扫描目标无法解析：{exc}") from exc
 
     parent: dict[ast.AST, ast.AST] = {}
     for node in ast.walk(tree):
         for _field, val in ast.iter_fields(node):
-            if isinstance(val, list):
-                for item in val:
-                    if isinstance(item, ast.AST):
-                        parent[item] = node
-            elif isinstance(val, ast.AST):
-                parent[val] = node
+            items = val if isinstance(val, list) else [val]
+            for item in items:
+                if isinstance(item, ast.AST):
+                    parent[item] = node
+    return src, tree, parent
+
+
+def _print_swallows_in(path: Path) -> list[tuple[str, str]]:
+    """本文件里所有吞错 `print` 的 `(相对路径, 所在函数名)` 列表。"""
+    src, tree, parent = _scanned(path)
 
     bad: list[tuple[str, str]] = []
     rel = path.relative_to(_REPO).as_posix()
@@ -299,13 +329,20 @@ def _print_swallows_in(path: Path) -> list[tuple[str, str]]:
 
 
 def _scan_files():
+    """扫描根下的 Python 源文件。
+
+    排除 `node_modules`：`web/frontend/node_modules/` 里有第三方包自带的 `.py`
+    （如 `flatted/python/flatted.py`）。它们不受本仓的吞错口径约束，却会被
+    `rglob` 收进来 —— 一旦那个包改了实现，锁会拿别人的代码判我们违规。
+    """
     for root in _SCAN_ROOTS:
         p = _REPO / root
         if p.is_file():
             yield p
         else:
             yield from sorted(
-                q for q in p.rglob("*.py") if "__pycache__" not in q.parts
+                q for q in p.rglob("*.py")
+                if "__pycache__" not in q.parts and "node_modules" not in q.parts
             )
 
 
@@ -315,4 +352,194 @@ def test_no_print_swallowed_failures_left_in_production_code():
     assert sorted(found) == sorted(_KEPT_PRINTS), (
         "这些地方的失败只落在容器 stdout 里，面板与告警都看不见 —— "
         f"改用 nonfatal 或模块 logger：{sorted(found)}"
+    )
+
+
+# ── 4. 宽 `except` 吞错：不必然抛出，分支里就必须留下痕迹 ────────────────────
+#
+# 第 3 节那把锁只管「`print` 了一下」这一种形态。真正的口子更宽：**裸 pass**、
+# **把异常咽掉接着跑完**、**只 `return None`** —— 这些连 stdout 都没有，SG
+# 「全员用量为 0 数月无人察觉」就是后者：每一次写入失败都消失得无影无踪。
+#
+# 判据（与 spec D 段口径一致，不另写一份扫描器）：
+#   宽 `except`（`Exception` / `BaseException` / 裸 / 元组含其一）
+#   且 `_always_raises(分支体)` 为假（必然抛出的交给上游/全局处理器，不用管）
+#   且分支体里既没有 `print`（归第 3 节的锁）
+#   且没有调用 logger 任一级别、也没有用 `nonfatal` / `nonfatal_sync`
+#   → 必须登记在 `_KEPT_BROAD_EXCEPTS` 里并写明理由，否则变红。
+#
+# 登记分两类，都要写明理由：
+#   * **豁免**：异常本身就是返回结果（校验函数）、位于日志链自身（再记就递归）、
+#     发生在日志系统装好之前 —— 这些记不了日志，是设计。
+#   * **交给下游**：异常被转交出去，由下游记账/记录/抛出。**「下游」必须最终落到
+#     logger，或抛给会记日志的处理器**；只 `print`、只上屏不算。
+#
+# 红了的处理办法：不要往这里加条目了事。先问该不该存在这个宽 `except` ——
+# 能窄化就窄化到具体类型，只是把真故障包装成别的响应就去掉 `try` 交给全局处理器；
+# 确实要吞掉继续跑，才补 `nonfatal`（同步函数用 `nonfatal_sync`）或模块 logger。
+# 只有上面三条都不适用，才登记理由。
+
+# 异常类型名：出现在 `except` 的这一侧就算「宽」。
+_BROAD_EXCEPT_NAMES = frozenset({"Exception", "BaseException"})
+
+# logger 的方法名。`_logger.error(...)` / `logging.getLogger(__name__).warning(...)`
+# 两种写法都命中（判据是 `Call.func` 的 `attr`）。
+_LOGGER_METHODS = frozenset(
+    {"debug", "info", "warning", "warn", "error", "exception", "critical", "log"}
+)
+
+# 判定「分支体里已经留痕」的调用名：`print` 到 stdout、`nonfatal` 一族、以及
+# `core/nonfatal.py::_report` —— 那是 `nonfatal` / `nonfatal_sync` 两版吞掉异常后
+# **唯一**的上报出口，本文件自己的两个 `except` 分支就走它。把它从名字里去掉，
+# 锁会把「唯一定义留痕的那两处」也判成静默。
+_TRACE_CALLEES = frozenset({"print", "nonfatal", "nonfatal_sync", "_report"})
+
+# `(相对路径, 函数名)` → `(处数, 理由)`。函数里有多处的按**处数**登记 —— 只登记一处、
+# 另外几处新增，比较时必须能红。
+_KEPT_BROAD_EXCEPTS: dict[tuple[str, str], tuple[int, str]] = {
+    # 豁免：异常本身就是返回值 / 位于日志链自身 / 日志系统尚未装好
+    ("adapters/llm_adapter.py", "_classify_retry"):
+        (1, "豁免：尽力解析 `Retry-After`，解不出就用默认退避 —— 异常本体就是输入"),
+    ("adapters/llm_adapter.py", "aclose"):
+        (1, "豁免：尽力关闭客户端，关不掉没有别的动作可做"),
+    ("core/alerting.py", "emit"):
+        (1, "豁免：告警处理器自身出错，写日志就递归（本模块挂在 root logger 上）"),
+    ("core/alerting.py", "_send"):
+        (1, "豁免：同上一条防递归纪律；已 sys.stderr.write 留痕。C 段退役时与 emit 一并删"),
+    ("core/clock.py", "is_valid_timezone"):
+        (1, "豁免：校验函数，「不合法」就是它的返回值"),
+    ("web/geo_guard.py", "is_whitelisted_base_url"):
+        (1, "豁免：校验函数，解析不了 → 不白名单，是明写的 fail-closed 设计答案"),
+    ("core/rag.py", "_peek_dimension"):
+        (1, "豁免：返回值语义含「读不出来」这一档（None = 无法校验），查询层对失败显式上抛兜底"),
+    ("web/server.py", "<module>"):
+        (1, "豁免：启动时重设 stdout 编码，此刻日志系统还没装好"),
+
+    # 交给下游：理由写清交给了谁，且那条路最终落到 logger 或会记日志的处理器
+    ("adapters/llm_adapter.py", "chat"):
+        (1, "交给下游：_RetryBudget.on_failure(exc) 记账并消耗预算，耗尽时 raise UpstreamFailure 带原异常"),
+    ("adapters/llm_adapter.py", "async_chat"):
+        (1, "交给下游：同 chat 的 _RetryBudget"),
+    ("adapters/llm_adapter.py", "_stream"):
+        (1, "交给下游：同 chat 的 _RetryBudget"),
+    ("adapters/llm_adapter.py", "chat_with_tools"):
+        (1, "交给下游：同 chat 的 _RetryBudget"),
+    # 注：`core/agent/tools.py::execute` 曾是「交给下游：随 evidence 上屏」的登记项 ——
+    # 按「只上屏不算留痕」的规则改判为补日志 WARNING，已从本表移除（`logger.warning` 在
+    # 该分支里，判据不再把它算作静默）。
+    # distiller 这 4 处按 spec 步骤 10 的 C 段裁决**只登记豁免、不改 `core/distiller.py`
+    # 的代码**（distill 线在频繁改这个文件，改它必撞车）。函数改名或挪动即与本表对不上，
+    # 锁会变红 —— 那正是锁该做的事：看到红就到本表改登记、写明理由。
+    ("core/distiller.py", "_thread_run"):
+        (2, "交给下游：outcome 队列 → 消费端 print `map stage aborted` + yield error 帧（上屏文案经 user_facing_error 收敛）"),
+    ("core/distiller.py", "_parse_json_with_retry"):
+        (2, "交给下游：折进 last_error → 消费端留痕后 raise DistillError（重试预算的另一处出口见 adapters/llm_adapter.py）"),
+    ("core/distiller.py", "_reduce_thread"):
+        (1, "交给下游：rq 队列 → 消费端 print `reduce stage aborted` + yield error 帧"),
+    ("core/distiller.py", "_format_one_group"):
+        (1, "交给下游：fmt_queue → 消费端 logger.error(`format group %s aborted`) + yield error 帧"),
+    ("core/embeddings.py", "_call_api_bounded"):
+        (1, "交给下游：重试预算；非可重试或耗尽即原样 raise"),
+    ("core/moderation/card_guard.py", "_run"):
+        (1, "交给下游：box[\"ok\"]/box[\"err\"] → 同函数 GuardVerdict(error=True, error_msg=…)"),
+    ("core/moderation/card_guard.py", "judge_card"):
+        (1, "交给下游：GuardVerdict.error → text_manager 落「待人工复核」记录"),
+    ("web/llm_resolution.py", "resolve_llm"):
+        (1, "交给下游：Resolution.reason → 调用方 web/deps.py 记 logger.warning"),
+}
+
+
+def _is_broad_except_type(node: ast.expr | None) -> bool:
+    """`except` 这一侧是否命中宽类型（裸 `except` 也算）。"""
+    if node is None:                       # 裸 `except:`
+        return True
+    if isinstance(node, ast.Name):
+        return node.id in _BROAD_EXCEPT_NAMES
+    if isinstance(node, ast.Attribute):    # `except foo.Exception:`
+        return node.attr in _BROAD_EXCEPT_NAMES
+    if isinstance(node, ast.Tuple):        # `except (A, Exception):`
+        return any(_is_broad_except_type(e) for e in node.elts)
+    return False
+
+
+def _body_nodes(stmts: list[ast.stmt]):
+    """展开语句列表里的节点，但**不进**嵌套的函数/类 —— 那些有自己的作用域。
+
+    只在分支体这一层判「有没有 print / 有没有记日志」：嵌套的 `def` 里记日志救不了
+    外面的失败，而把它的 `print` 算进来会掩盖一个真静默的分支。
+    """
+    stack: list[ast.AST] = list(stmts)
+    while stack:
+        node = stack.pop()
+        yield node
+        for _field, val in ast.iter_fields(node):
+            items = val if isinstance(val, list) else [val]
+            for item in items:
+                if isinstance(item, ast.AST) and not isinstance(item, _SCOPE_NODES):
+                    stack.append(item)
+
+
+def _branches_leave_a_trace(stmts: list[ast.stmt]) -> bool:
+    """分支体里是否已经有留痕动作：`print` 或 logger 任一级别或 `nonfatal`。"""
+    for node in _body_nodes(stmts):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name in _LOGGER_METHODS or name in _TRACE_CALLEES:
+                return True
+    return False
+
+
+def _silent_broad_excepts_in(path: Path) -> list[tuple[str, str]]:
+    """本文件里所有「宽 `except` 吞掉且不留痕」的 `(相对路径, 所在函数名)`。"""
+    _src, tree, parent = _scanned(path)
+
+    rel = path.relative_to(_REPO).as_posix()
+    out: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ExceptHandler):
+            continue
+        if not _is_broad_except_type(node.type):
+            continue
+        if _always_raises(node.body):          # 必然抛出：交给上游/全局处理器
+            continue
+        if _branches_leave_a_trace(node.body):  # 已有 print / logger / nonfatal
+            continue
+        out.append((rel, _enclosing_scope(node, parent)))
+    return out
+
+
+def _expected_broad_excepts() -> Counter[tuple[str, str]]:
+    c: Counter[tuple[str, str]] = Counter()
+    for key, (count, _reason) in _KEPT_BROAD_EXCEPTS.items():
+        c[key] += count
+    return c
+
+
+def test_no_silent_broad_except_left_in_production_code():
+    """宽 `except` 吞掉失败且不留痕 —— 只剩登记在案的那几处，每处都有理由。
+
+    与第 3 节的锁同源（同一份 `_scan_files` / `_always_raises` / 函数名解析），只是
+    判据从「有没有 print」放宽成「有没有任何痕迹」。两把锁**相等**比较，所以新增的
+    静默分支和失效的豁免条目都会红。
+
+    红在「未登记」上：不要直接往豁免表里加条目。先按 spec 的顺序挑修法 —— 能窄化
+    就窄化，只是包装成别的响应就去掉 `try`，确实要吞才补 `nonfatal` / logger。
+    """
+    found = Counter(
+        site for p in _scan_files() for site in _silent_broad_excepts_in(p)
+    )
+    expected = _expected_broad_excepts()
+    if found == expected:
+        return
+
+    unregistered = sorted((found - expected).elements())
+    stale = sorted((expected - found).elements())
+    raise AssertionError(
+        "宽 `except` 吞掉了失败却没有任何痕迹（面板与告警都看不见）。\n"
+        "先挑修法：窄化到具体类型 / 去掉 try 交给全局处理器 / 补 nonfatal（同步用 "
+        "nonfatal_sync）或模块 logger；三条都不适用才登记进 _KEPT_BROAD_EXCEPTS 并写明理由。\n"
+        f"  未登记的静默分支 ({len(unregistered)})：{unregistered}\n"
+        f"  登记了但已不存在的豁免 ({len(stale)})：{stale}\n"
+        "（若某处是刚改好或刚挪动/改名，请把过期条目从 _KEPT_BROAD_EXCEPTS 里删掉）"
     )

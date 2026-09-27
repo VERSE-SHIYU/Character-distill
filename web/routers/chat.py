@@ -112,10 +112,9 @@ async def _decide_retraction(engine, session: dict, reply: str) -> bool:
     if random.random() >= RETRACT_BASE_PROB:
         return False
 
-    try:
-        retracted = await asyncio.to_thread(engine._should_retract, reply)
-    except Exception:
-        retracted = False
+    # `_should_retract` 自己吞掉失败并返回 False（并把原因记 WARNING），这里再包一层
+    # try 等于同一个失败记两次，也让「谁吞的」有两处定义。
+    retracted = await asyncio.to_thread(engine._should_retract, reply)
 
     if retracted:
         state["last_retract_turn"] = state["turn_index"]
@@ -176,8 +175,15 @@ async def _ensure_session(
 
     try:
         user_cfg = await storage.get_user_api_config(user_id) or {}
-    except Exception:
+    except Exception as exc:
         user_cfg = {}
+        # 读不到用户配置 → 下面 resolve_embedding({}) 会静默用全局 key。结果还能跑，
+        # 但「这个用户没用自己的 key」这件事得留痕，否则账单差异无从解释。
+        logger.warning(
+            "Session resume: per-user api config unreadable, falling back to global "
+            "key (user_id=%s session_id=%s): %r",
+            user_id, session_id, exc, exc_info=True,
+        )
     emb = resolve_embedding(user_cfg)
 
     rag = text_manager._indexing_service.get_rag_for_session(

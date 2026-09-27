@@ -183,7 +183,10 @@ class _CapturingClient:
         raise NotFoundError(f"Collection {name} does not exist")
 
     def delete_collection(self, name=None):
-        raise RuntimeError("no such collection")
+        # 照真件：删不存在的集合抛 NotFoundError。旧件抛 RuntimeError，被当时那句宽
+        # `except Exception` 掩盖了 —— 窄化到 NotFoundError 后当场暴露出来（假件形状与
+        # 真件不一致，测的就不是生产形态）。
+        raise NotFoundError(f"Collection {name} does not exist")
 
     def create_collection(self, name=None, embedding_function=None, metadata=None):
         self.col = _CapturingCollection(metadata)
