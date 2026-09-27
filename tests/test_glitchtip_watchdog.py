@@ -154,10 +154,14 @@ class Clock:
 
 
 class FakeExecutor:
-    """假执行器：只记下重启与发信，心跳读数按脚本依次吐出。"""
+    """假执行器：只记下重启与发信，心跳读数按脚本依次吐出。
 
-    def __init__(self, values=()):
+    ``notify_ok`` 控制发信是否成功——失败时调用方不能记 ``last_notify``。
+    """
+
+    def __init__(self, values=(), notify_ok=True):
         self.values = list(values)
+        self.notify_ok = notify_ok
         self.restarts = 0
         self.notices = []
         self.pings = []
@@ -167,6 +171,7 @@ class FakeExecutor:
 
     def notify(self, subject, body):
         self.notices.append((subject, body))
+        return self.notify_ok
 
     def ping(self, url):
         self.pings.append(url)
@@ -246,3 +251,50 @@ def test_handle_restart_still_restarts_when_notice_is_throttled():
     assert msg is None  # 限流窗口内不发信
     assert ex.notices == []
     assert state["last_restart"] == NOW
+
+
+# ── 发信失败不记账：失败必须能在下一次运行重试 ───────────────────────────────
+
+
+def test_handle_restart_does_not_record_notify_when_send_fails():
+    """发信失败不能写 last_notify——写了，1 小时限流会把下一次补发一起吞掉。"""
+    clock = Clock(NOW)
+    ex = FakeExecutor([NOW + 1], notify_ok=False)
+    state = {}
+    saved = []
+    recovered, msg = wd.handle_restart(
+        ex, wd.Reading(300, 0, NOW), state, NOW, clock.now, clock.sleep, saved.append
+    )
+    assert recovered is True
+    assert msg is None  # 没发出去，就不算发过
+    assert "last_notify" not in state
+    assert state["last_restart"] == NOW  # 重启本身仍要记账
+
+
+def test_main_retries_notify_after_send_failure(monkeypatch):
+    """发信失败后重跑：不写 last_notify，所以下一次运行还会再发。"""
+    ex = FakeExecutor(notify_ok=False)  # 读数为空 → 读数失败 → ACTION_NOTIFY
+    monkeypatch.setattr(wd, "Executor", lambda: ex)
+    monkeypatch.setattr(wd, "load_state", lambda path: {})
+    saved = []
+    monkeypatch.setattr(wd, "save_state", lambda path, s: saved.append(dict(s)))
+
+    wd.main([])
+    wd.main([])
+
+    assert saved == []  # 一次也没记 last_notify
+    assert len(ex.notices) == 2  # 第二次运行仍然再发
+
+
+def test_main_records_notify_when_send_succeeds(monkeypatch):
+    """正控：发信成功才写 last_notify——否则上面那条用例是空过。"""
+    ex = FakeExecutor(notify_ok=True)
+    monkeypatch.setattr(wd, "Executor", lambda: ex)
+    monkeypatch.setattr(wd, "load_state", lambda path: {})
+    saved = []
+    monkeypatch.setattr(wd, "save_state", lambda path, s: saved.append(dict(s)))
+
+    wd.main([])
+
+    assert len(saved) == 1
+    assert "last_notify" in saved[0]

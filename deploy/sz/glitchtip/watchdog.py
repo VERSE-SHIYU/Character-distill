@@ -166,11 +166,13 @@ def handle_restart(executor, reading, state, now, now_fn, sleep_fn, save):
     )
     message = MSG_RECOVERED if recovered else MSG_NOT_RECOVERED
     action, notice = _notify(state, now_fn(), message)
+    sent = False
     if action == ACTION_NOTIFY:
-        executor.notify(SUBJECT, notice)
-        state["last_notify"] = now_fn()
-        save(state)
-    return recovered, notice if action == ACTION_NOTIFY else None
+        sent = executor.notify(SUBJECT, notice)
+        if sent:
+            state["last_notify"] = now_fn()
+            save(state)
+    return recovered, notice if sent else None
 
 
 class Executor:
@@ -236,12 +238,13 @@ class Executor:
         )
 
     def notify(self, subject, body):
+        """发信；返回是否成功——失败就不许记 ``last_notify``，留给下一次重试。"""
         snippet = (
             "import os;from django.core.mail import send_mail;"
             "send_mail(os.environ['WD_SUBJECT'], os.environ['WD_BODY'], None, "
             "[os.environ['WD_TO']])"
         )
-        self._run(
+        done = self._run(
             [
                 "docker", "exec",
                 "-e", "WD_SUBJECT=" + subject,
@@ -251,6 +254,7 @@ class Executor:
             ],
             MAIL_TIMEOUT, "发信",
         )
+        return done is not None and done.returncode == 0
 
 
 def read_heartbeat_url():
@@ -292,9 +296,9 @@ def main(argv=None):
                 file=sys.stderr,
             )
     elif action == ACTION_NOTIFY:
-        executor.notify(SUBJECT, message)
-        state["last_notify"] = now
-        save_state(STATE_PATH, state)
+        if executor.notify(SUBJECT, message):
+            state["last_notify"] = now
+            save_state(STATE_PATH, state)
     elif action == ACTION_RESTART:
         handle_restart(
             executor, reading, state, now, time.time, time.sleep,
