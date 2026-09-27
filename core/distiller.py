@@ -650,10 +650,13 @@ class Distiller:
     def _unfinished_kind(exc: BaseException) -> tuple[str, str]:
         """未完成终态的**唯一**判据 —— ``(kind, content)``，``kind`` ∈ ``{"", "truncated", "fatal"}``。
 
-        全仓只此一处读 `incomplete_response_info`、也只此一处把 finish_reason 与
+        **判处置**只此一处读 `incomplete_response_info`、也只此一处把 finish_reason 与
         ``length`` 比。下游两个问题都从这一个结果派生，判法不会在两处分叉：
         `_truncation_evidence` 问「有没有可修的截断证据」，`_unfinished_disposition`
         问「重修环该不该上抛」。``content`` 只在 ``"truncated"`` 时可能非空。
+
+        `_judge_groups` 另有一处**纯诊断**读取（判定样本截断时记一条日志），不含任何
+        判法分支 —— 分档口径仍只在这里。
 
         - ``"truncated"``：``length`` 终态（含空正文那一格）；
         - ``"fatal"``：其余未完成终态（``content_filter`` 要改输入、资源不足可稍后重试）；
@@ -1264,8 +1267,22 @@ class Distiller:
         samples = [body] * self.IDENTIFY_JUDGE_SAMPLES
         results, failures = self._run_map_with_client(
             samples, lambda chunk: (IDENTIFY_JUDGE_PROMPT, chunk), "distill_identify",
+            log_label="Identify judge sample",
         )
-        failed_idx = {i for i, _ in failures}
+        failed_idx: set[int] = set()
+        for idx, exc in failures:
+            failed_idx.add(idx)
+            # 未完成终态（截断等）时把 finish_reason 与已生成开头记下来 —— 验收实测
+            # 每份输入约 8791 tokens，输出撞 4096 上限会真截断；不记内容就无从判断
+            # 是「输出本来就这么长」还是「上限压得太低」。
+            info = incomplete_response_info(exc)
+            if info is not None:
+                finish_reason, content = info
+                logger.warning(
+                    "Identify judge sample %s incomplete: finish_reason=%s, "
+                    "generated %d chars: %r",
+                    idx, finish_reason, len(content), content[:300],
+                )
         parsed: list[dict[str, Any]] = []
         for idx, raw in results:
             if idx in failed_idx:
@@ -1586,6 +1603,7 @@ class Distiller:
         build_prompt: _cabc.Callable[[str], tuple[str, str]],
         usage_action: str,
         on_chunk_done: "callable | None" = None,
+        log_label: str = "Map chunk",
     ) -> tuple[list[tuple[int, str]], list[tuple[int, Exception]]]:
         """建 async client → 跑 Map → 关掉它。**同步侧调 Map 的唯一姿势。**
 
@@ -1598,6 +1616,7 @@ class Distiller:
             try:
                 return await self._run_map_concurrent(
                     chunks, build_prompt, usage_action, on_chunk_done, client=run_client,
+                    log_label=log_label,
                 )
             finally:
                 async with nonfatal("distiller", "close map client", level=logging.WARNING):
@@ -1612,12 +1631,17 @@ class Distiller:
         usage_action: str,
         on_chunk_done: "callable | None" = None,
         client: AsyncOpenAI | None = None,
+        log_label: str = "Map chunk",
     ) -> tuple[list[tuple[int, str]], list[tuple[int, Exception]]]:
         """Core Map — concurrent chunk analysis shared by sync and stream.
 
         ``build_prompt(chunk) -> (system, user)`` 由调用方给：蒸馏是「收集某角色的
         人格证据」，识别是「列出全书角色名单」，提示词不同、并发与记账骨架相同。
         ``usage_action`` 是整阶段汇总落账的 action 名。
+
+        失败日志的前缀由 ``log_label`` 给：验收脚本按「Map chunk N failed」数**逐片**
+        分片失败，判定那 5 份样本走的是同一条骨架 —— 前缀不改，判定样本的失败就会被
+        数进逐片失败里（假象：逐片坏了一片，实际全书逐片一片没坏）。
 
         Returns (ordered [(index, analysis_text), ...], [(index, exception), ...]).
         ``on_chunk_done(index, result, ok)`` is called synchronously within the
@@ -1647,7 +1671,7 @@ class Distiller:
                     system, [{"role": "user", "content": user}], client=client, gate=gate
                 )
             except Exception as exc:
-                logger.warning("Map chunk %s failed: %s", i, exc, exc_info=True)
+                logger.warning("%s %s failed: %s", log_label, i, exc, exc_info=True)
                 # 失败分片照样烧了 token（重试墙下空烧 26–100s）—— prompt 侧按字符
                 # 估算补记，completion 未知记 0 并标 estimated。只记成功 = 统计系统性偏低。
                 usage = estimate_usage_from_chars(len(system) + len(user))

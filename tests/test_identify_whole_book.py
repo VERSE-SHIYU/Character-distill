@@ -29,7 +29,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from adapters.llm_adapter import IncompleteResponseError
+from adapters.llm_adapter import IncompleteResponseError, _extract_content
 from core.distiller import (
     _IDENTIFY_CACHE,
     IDENTIFY_JUDGE_PROMPT,
@@ -53,6 +53,29 @@ JUDGE_NONE = '{"merge": [], "impersonal": []}'
 
 def _chars_json(items) -> str:
     return json.dumps(items, ensure_ascii=False)
+
+
+class _Msg:
+    def __init__(self, content):
+        self.content = content
+
+
+class _Choice:
+    def __init__(self, finish_reason, content):
+        self.finish_reason = finish_reason
+        self.message = _Msg(content)
+
+
+def _truncated(content: str) -> IncompleteResponseError:
+    """经**真实** `_extract_content` 造截断异常，不直接构造。
+
+    直接 `IncompleteResponseError("length", "judge", content=...)` 会绕过 content 的
+    传递链，于是「去掉 content 传递」的变异不会红 —— 那是个测不出东西的用例（同
+    `test_distiller_truncation_selfheal.py` 的取向）。
+    """
+    with pytest.raises(IncompleteResponseError) as ei:
+        _extract_content(_Choice("length", content), where="judge")
+    return ei.value
 
 
 def _client_stub() -> MagicMock:
@@ -604,3 +627,90 @@ class TestEmptyRosterIsNotFailure:
         assert d.identify_characters(text) == []
         assert d.identify_characters(text) == []
         assert len(_map_calls(llm)) == 4, "第二次该命中缓存，不该再发分片调用"
+
+
+class TestFailureLogLabels:
+    """验收脚本按「Map chunk N failed」数**逐片**分片失败；全书判定那 5 份样本走的是
+    同一条 `_run_map_concurrent` 骨架，前缀不改就会被数进去。
+
+    实测（2026-09-27 全书验收）：日志里那条 `Map chunk 4 failed` 其实是判定第 5 份被
+    `max_tokens` 截断 —— 逐片一片没坏（识别对逐片失败零容忍，真坏了根本返回不了名单）。
+
+    变异对象 = `_judge_groups` 不传 `log_label`（判定失败被打回「Map chunk」前缀 → 红）。
+    """
+
+    CHUNKED = "\n\n".join(FILLER for _ in range(4))
+
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    def test_map_chunk_failure_keeps_the_map_chunk_prefix(self, caplog):
+        """逐片某片坏 → 日志前缀仍是「Map chunk」；此时还没走到判定。"""
+        async def async_chat(system, messages, max_tokens=None, **kwargs):
+            if system == IDENTIFY_JUDGE_PROMPT:
+                return (JUDGE_NONE, dict(_USAGE))
+            if "坏片标记" in messages[0]["content"]:
+                raise RuntimeError("connection timeout")
+            return (_chars_json([KONGMING]), dict(_USAGE))
+
+        llm = _make_llm(async_chat=async_chat)
+        content = "\n\n".join(["坏片标记" + FILLER] + [FILLER] * 3)
+        with caplog.at_level("WARNING"):
+            with pytest.raises(DistillError):
+                _make_distiller(llm).identify_characters(content)
+
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(m.startswith("Map chunk ") and "failed" in m for m in msgs), msgs
+        assert not any("Identify judge sample" in m for m in msgs), msgs
+
+    def test_judge_sample_failure_is_labeled_apart(self, caplog):
+        """判定某份执行器报错 → 前缀「Identify judge sample」、且不含「Map chunk」。"""
+        llm = _make_llm(async_chat=_stub(
+            lambda content: _chars_json([KONGMING]),
+            judge=TestJudgeVoting._judge_with_replies(
+                [JUDGE_NONE, JUDGE_NONE, JUDGE_NONE, JUDGE_NONE, RuntimeError("boom")]),
+        ))
+        with caplog.at_level("WARNING"):
+            result = _make_distiller(llm).identify_characters(self.CHUNKED)
+
+        assert [c["name"] for c in result] == ["孔明"], "4 份合法 ≥ 门槛，照常出名单"
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(
+            m.startswith("Identify judge sample ") and "failed" in m for m in msgs), msgs
+        assert not any("Map chunk" in m for m in msgs), msgs
+
+
+class TestJudgeTruncationDiagnostic:
+    """判定样本撞 `max_tokens` 被截断时，把 finish_reason 与已生成内容的开头记下来。
+
+    不记内容就无从判断「输出本来就这么长」还是「上限压得太低」（实测每份输入约
+    8791 tokens，输出上限 4096）。诊断是**纯记录**，不影响判法：其余 4 份合法时
+    照常出名单。
+
+    变异对象 = 删掉这条 WARNING（截断后再无任何内容线索 → 红）。
+    """
+
+    CHUNKED = "\n\n".join(FILLER for _ in range(4))
+    HEAD = '{"merge": [["甲", "乙"]], "imperso'   # 撞上限的半截输出
+
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    def test_truncated_sample_logs_reason_and_head(self, caplog):
+        llm = _make_llm(async_chat=_stub(
+            lambda content: _chars_json([KONGMING]),
+            judge=TestJudgeVoting._judge_with_replies(
+                [JUDGE_NONE, JUDGE_NONE, JUDGE_NONE,
+                 _truncated(self.HEAD), JUDGE_NONE]),
+        ))
+        with caplog.at_level("WARNING"):
+            result = _make_distiller(llm).identify_characters(self.CHUNKED)
+
+        assert [c["name"] for c in result] == ["孔明"]
+        recs = [r.getMessage() for r in caplog.records
+                if "Identify judge sample" in r.getMessage()
+                and "incomplete:" in r.getMessage()]
+        assert recs, "截断的判定样本必须留下一条带 finish_reason 的 WARNING"
+        msg = recs[0]
+        assert "finish_reason=length" in msg, msg
+        assert '"merge": [["甲", "乙"' in msg, f"没记下已生成内容的开头：{msg}"
