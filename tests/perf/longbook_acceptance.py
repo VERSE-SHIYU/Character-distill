@@ -647,6 +647,11 @@ def over_limit(stats: dict, counts: dict, env: dict) -> list[str]:
         if b2.get("main_miss") or b2.get("same_bad") or b2.get("generics_bad"):
             why.append("B2 任一条不成立")
     if stats.get("mode") == "distill":
+        # 任务终态不是 done（error / interrupted / 轮询超时）就是失败，且**必须**停下：
+        # 失败发生在归并或格式化时既没有 usage 行（批数 0）也没有超时，下面两条判据
+        # 都静默通过 —— 于是「跑挂了」被读成「通过」。终态是唯一在每种失败下都成立的信号。
+        if stats.get("final") != "done" or stats.get("error"):
+            why.append(f"任务终态 {stats.get('final')}")
         if (stats.get("elapsed_s") or 0) > DISTILL_LIMIT_S:
             why.append(f"蒸馏 {stats['elapsed_s']}s > {DISTILL_LIMIT_S:.0f}s")
         for i, b in enumerate((stats.get("stages") or {}).get("batches") or []):

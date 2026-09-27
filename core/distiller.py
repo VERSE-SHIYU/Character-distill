@@ -106,6 +106,12 @@ IDENTIFY_JUDGE_PROMPT = (
 
 DISTILL_PROMPT_BEFORE_NAME = """你是一个角色分析专家。从给定文本中精确提取角色 \""""
 
+# ── 归并 / 压缩共用的取舍优先级 ───────────────────────────────────────
+# 篇幅不够时按这个顺序丢信息：先丢背景，最后才动原文对话原句。归并
+# （`_reduce_system_prompt`）与超长压缩两处说的是同一件事 —— 定义在这里一次，
+# 改口径时两处一起变，不会一处收紧一处还写着「不要为控制篇幅而删减信息」。
+PROFILE_PRIORITY_LINE = "优先级：原文对话原句 > 行为证据 > 性格总结 > 背景信息。"
+
 # ── 格式化提示词片段（WP7）────────────────────────────────────────────
 # 提示词只在这里定义一次。完整提示词（非流式 distill_incremental 等路径）= 全部片段
 # 按本表顺序拼出；组提示词（流式按字段组并行）= 共享片段 + 本组片段，组名取
@@ -130,7 +136,7 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ("G3", 'C. 说话风格：语气、句式、口癖（直接从原文对话提取）、用词水平。禁忌用词（taboo_words）：根据角色性格，推断他绝对不会说出口的话或词（如违背人设的示弱话、不符其语言习惯的词）。从原文和人设推断，确实没有才留空。'),
     ("G2", 'D. 价值观（2-4个）：什么对他最重要？两难时怎么选？'),
     ("G4", 'E. 关键记忆（3-5个）：塑造此人的重要经历'),
-    ("G4",
+    ("G5",
         'F. 人际关系（站在本角色自己的视角，单向抽取）：\n'
         '   覆盖前置步骤中枚举的【所有】有名字角色，逐一独立成条，不遗漏次要角色（前任/现任/配角），不合并不同角色，不列入宠物等非人物。\n'
         '   关键：只写【本角色对对方的看法】，不要写"对方怎么看本角色"。关系可以不对称——A把B当挚友，B可能对A别有心思，各自视角各自抽，这是合理的。\n'
@@ -222,7 +228,7 @@ _FORMAT_IMPORTANCE_HEADING = '重要：'
 _FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
     ("G4", '- psyche 是必需嵌套对象，triggers 和 soft_spots 放在 psyche 内部，不在顶层'),
     (None, '- 数组字段的元素形态按模板来：模板里写成【一句字符串】的，就输出一句字符串，不要改成对象'),
-    ("G4", '- relationships 的每个元素是【对象】，含 target/relation/attitude/note 四个字段'),
+    ("G5", '- relationships 的每个元素是【对象】，含 target/relation/attitude/note 四个字段'),
     ("G4", '- 数字字段（openness/conscientiousness 等）输出整数，不要加引号'),
     (None, '- 所有字段必须按此模板输出，不要添加自定义字段'),
 )
@@ -238,8 +244,8 @@ def format_prompt_after(group: str | None = None) -> str:
 
     ``group=None`` → 完整提示词（与改前逐字一致，仅两句改写：「list 元素」那句改为不点
     字段名的通用句；模板引导句去掉 psyche —— psyche 的要求归 G4，引导句进每组提示词时
-    不能再点它）。``group="G1".."G4"`` → 共享前缀 + 该组片段（该组维度说明、该组「重要」
-    规则、该组 JSON 模板），供流式按组并行调用。
+    不能再点它）。``group`` 取 `FORMAT_GROUPS` 的键 → 共享前缀 + 该组片段（该组维度说明、
+    该组「重要」规则、该组 JSON 模板），供流式按组并行调用。
     """
     if group is not None and group not in FORMAT_GROUPS:
         raise ValueError(f"未知字段组：{group!r}（应为 {list(FORMAT_GROUPS)} 之一）")
@@ -249,7 +255,7 @@ def format_prompt_after(group: str | None = None) -> str:
     parts: list[str] = [
         _FORMAT_HEADER,
         _FORMAT_IRON_LAWS,
-        _FORMAT_PRESTEP if keep("G4") else "",
+        _FORMAT_PRESTEP if keep("G5") else "",
         _FORMAT_DIMS_HEADING,
         "\n".join(text for owner, text in _FORMAT_DIMS if keep(owner)),
         _FORMAT_DIM_M if keep("G4") else "",
@@ -407,6 +413,11 @@ class Distiller:
 
     SAFE_SINGLE_REDUCE = 80
     CARD_MAX_TOKENS = 8192  # 角色卡 JSON 长输出需要更大 token 上限
+    #: 归并/压缩结果的字数上限。DeepSeek 官方换算 1 个中文字符 ≈ 0.6 token，8000 字
+    #: ≈ 4800 tokens，是 `CARD_MAX_TOKENS` 的 59% —— 剩下一半给提示词、JSON 骨架与
+    #: 格式化阶段，归并正文才不至于顶到输出上限被 `finish_reason=length` 截断（缺陷：
+    #: 刘姥姥单批归并撞 8192 截断，任务整体失败）。取舍顺序见 `PROFILE_PRIORITY_LINE`。
+    REDUCE_BUDGET_CHARS = 8000
     #: 角色识别算法的版本：口径（提示词 / 覆盖范围 / 合并规则）一改就 +1。
     #: 名单落库时带此版本，读回时版本不符即当无缓存 —— 旧版本的名单是残缺的
     #: （只覆盖前 1 万字那版只认头两章），沿用比重算更糟。值是**唯一定义**，
@@ -545,7 +556,9 @@ class Distiller:
             "1. 合并重复信息，但保留所有原文对话原句\n"
             "2. 矛盾不要调和，标注为【矛盾】并都保留\n"
             "3. 区分角色本人的话与他人评价\n"
-            "4. 不要为控制篇幅而删减信息，尽可能完整保留人物的性格、关系、记忆细节；原文对话和口癖优先保留"
+            f"4. 整合结果控制在 {Distiller.REDUCE_BUDGET_CHARS} 字以内；篇幅不够时按优先级取舍\n"
+            f"{PROFILE_PRIORITY_LINE}\n"
+            "口癖和说话风格的原文例句必须保留。"
         )
 
     @staticmethod
@@ -1936,7 +1949,7 @@ class Distiller:
         if len(profile_draft) > max_profile_len:
             compress_system = (
                 f"压缩以下「{character_name}」的角色档案到{max_profile_len}字以内。\n"
-                "优先级：原文对话原句 > 行为证据 > 性格总结 > 背景信息。\n"
+                f"{PROFILE_PRIORITY_LINE}\n"
                 "口癖和说话风格的原文例句必须保留，这是最重要的。\n"
                 "合并重复信息，但不要删除矛盾点。"
             )

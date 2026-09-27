@@ -14,6 +14,7 @@ import adapters.llm_adapter as M
 from core.concurrency import AdaptiveGate
 from core.distiller import DistillError, Distiller
 from core.request_context import LLM_CALLER, Caller, current_user_id
+from core.schema import FORMAT_GROUPS
 
 
 class TestReduceAllEmptyBails:
@@ -506,7 +507,7 @@ class TestMapPhaseFailureHandling:
 
 
 class TestFormatFieldGroups:
-    """WP7 F3：4 组 ∪ 后置字段 == CharacterCard.model_fields，两两无交集。
+    """WP7 F3：各组 ∪ 后置字段 == CharacterCard.model_fields，两两无交集。
 
     分组与后置字段定义在 core/schema.py 一处（紧挨 CharacterCard），本测试直接读那份
     定义，不另存副本。变异 = 从某组删一个字段 → 并集缺项，union 断言变红。
@@ -551,12 +552,14 @@ class _FakeAsyncClient:
         pass
 
 
-# 组模板里的键名互不重叠，故拿它认「这条调用是哪一组」。
+# 组模板里的键名互不重叠，故拿它认「这条调用是哪一组」。relationships 已从 G4 拆到
+# G5，两组各用各的模板键作标记。
 _FORMAT_GROUP_MARKERS = (
     ("G1", '"name": "角色名"'),
     ("G2", '"personality_traits"'),
     ("G3", '"speaking_style"'),
-    ("G4", '"relationships"'),
+    ("G4", '"key_memories"'),
+    ("G5", '"relationships"'),
 )
 _FORMAT_GROUP_ORDER = [g for g, _ in _FORMAT_GROUP_MARKERS]
 
@@ -602,10 +605,11 @@ def _group_reply(group: str) -> str:
 
 
 class TestFormatGroupsRunInParallel:
-    """WP7 F1：4 组并行、各记各账、`formatting` 帧恰 1 次且在 4 组之前。
+    """WP7 F1：各组并行、各记各账、`formatting` 帧恰 1 次且在各组之前。
 
-    并行判据是 `threading.Barrier(4)` —— 串行实现等不到第 4 个，2 s 后破障，该组失败，
-    成品卡就出不来（无 str 帧）。记账判据是 4 条 `distill_format` 各带不同 usage。
+    并行判据是 `threading.Barrier(len(FORMAT_GROUPS))` —— 串行实现等不齐，2 s 后破障，
+    该组失败，成品卡就出不来（无 str 帧）。记账判据是每组一条 `distill_format`、各带不同
+    usage。组数从 `FORMAT_GROUPS` 读，不写死 —— 关系拆到 G5 时这里不该跟着改。
 
     变异：① 改回串行 ② 每组各发一次 `formatting`。
     """
@@ -614,7 +618,8 @@ class TestFormatGroupsRunInParallel:
     TEXT = "AB" * (1500 * 50)   # 150000 字符 → 50 片（≤80，走单次合并）
 
     def test_four_groups_run_in_parallel_and_account_separately(self, monkeypatch):
-        barrier = threading.Barrier(4, timeout=2)
+        n_groups = len(FORMAT_GROUPS)
+        barrier = threading.Barrier(n_groups, timeout=2)
         events: list[str] = []
         rows: list[tuple[str, dict | None]] = []
 
@@ -638,7 +643,7 @@ class TestFormatGroupsRunInParallel:
                     yield "合并结果"
                     return {"prompt_tokens": 1, "completion_tokens": 1}
                 group = _format_group_of(system)
-                barrier.wait()            # 串行实现到这里等不齐 4 个 → 破障
+                barrier.wait()            # 串行实现到这里等不齐 → 破障
                 idx = _FORMAT_GROUP_ORDER.index(group) if group else -1
                 events.append(f"group:{group}")
                 yield _group_reply(group)
@@ -657,21 +662,21 @@ class TestFormatGroupsRunInParallel:
                 events.append("formatting")
 
         fmt_rows = [u for a, u in rows if a == "distill_format"]
-        assert len(fmt_rows) == 4, f"distill_format 记账不是 4 条：{rows}"
-        assert len({json.dumps(u, sort_keys=True) for u in fmt_rows}) == 4, (
-            f"4 组账目分不开：{fmt_rows}"
+        assert len(fmt_rows) == n_groups, f"distill_format 记账不是 {n_groups} 条：{rows}"
+        assert len({json.dumps(u, sort_keys=True) for u in fmt_rows}) == n_groups, (
+            f"各组账目分不开：{fmt_rows}"
         )
         assert events.count("formatting") == 1, f"formatting 帧不是恰 1 次：{events}"
-        assert events[0] == "formatting", f"formatting 帧不在 4 组调用之前：{events}"
-        assert sum(1 for e in events if e.startswith("group:")) == 4, events
+        assert events[0] == "formatting", f"formatting 帧不在各组调用之前：{events}"
+        assert sum(1 for e in events if e.startswith("group:")) == n_groups, events
         assert sum(1 for f in frames if isinstance(f, str)) == 1, "成品卡不是恰 1 个 str 帧"
 
 
 class TestBatchCountDecidesTotalMerge:
     """WP7 F2：批数决定是否先总合并。
 
-    100 片（2 批）→ 归并恰 2 次（**无总合并**），4 组输入都含两批结果；
-    50 片（1 批）→ 归并恰 1 次，4 组输入就是这次合并的输出。
+    100 片（2 批）→ 归并恰 2 次（**无总合并**），各组输入都含两批结果；
+    50 片（1 批）→ 归并恰 1 次，各组输入就是这次合并的输出。
 
     变异：① 恢复总合并（100 片那条变 3 次）② 一律跳过合并（50 片那条变 0 次）。
     """
@@ -721,20 +726,20 @@ class TestBatchCountDecidesTotalMerge:
         assert reduces == ["合并甲", "合并乙"] or reduces == ["合并乙", "合并甲"], (
             f"分批归并次数不对（应恰 2 次、无总合并）：{reduces}"
         )
-        assert len(formats) == 4, f"格式化不是 4 组：{len(formats)}"
+        assert len(formats) == len(FORMAT_GROUPS), f"格式化不是各组一次：{len(formats)}"
         for body in formats:
             assert "合并甲" in body and "合并乙" in body, (
-                f"4 组没有直接读到两批归并结果：{body[-120:]}"
+                f"各组没有直接读到两批归并结果：{body[-120:]}"
             )
 
     def test_single_batch_merges_once_then_formats_from_it(self):
         reduces, formats = self._run(self.TEXT_50, [])
 
         assert reduces == ["合并甲"], f"≤80 片应恰 1 次归并：{reduces}"
-        assert len(formats) == 4, f"格式化不是 4 组：{len(formats)}"
+        assert len(formats) == len(FORMAT_GROUPS), f"格式化不是各组一次：{len(formats)}"
         for body in formats:
             assert body.endswith("合并甲"), (
-                f"4 组输入不是这次合并的输出：{body[-120:]}"
+                f"各组输入不是这次合并的输出：{body[-120:]}"
             )
 
 

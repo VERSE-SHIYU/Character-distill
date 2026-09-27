@@ -36,7 +36,7 @@ from core.distiller import Distiller
 from core.schema import FORMAT_GROUPS
 from core.utils import estimate_usage_from_chars, try_record_usage
 
-# WP7：格式化改成按字段组并行（4 组），桩 LLM 得按组回 JSON 才走得完那一阶段。
+# WP7：格式化改成按字段组并行，桩 LLM 得按组回 JSON 才走得完那一阶段。
 # 认组 / 造回复都复用 WP7 那批件，不另抄一份字段样例 —— 抄一份就是第二处「组字段表」。
 from test_distiller_routing import _format_group_of, _group_reply
 
@@ -451,11 +451,11 @@ class TestStreamReturnValueAccounting:
         self._assert_404(records, "distill_reduce")
 
     def test_incremental_format_stream_accounts_returned_usage(self, records):
-        """流式格式化：4 组各一条，账取 `_collect_stream` 收下的返回值。
+        """流式格式化：每组一条，账取 `_collect_stream` 收下的返回值。
 
         `distill_incremental_stream` 要整条跑完才到得了 Phase 3 —— 这条同时当「那一处确实
         跑到了」的仪器：`fmt` 为空即说明本轮根本没走到格式化，红的是覆盖面而不是取值。
-        组数从 `FORMAT_GROUPS` 读（WP7 起是 4 组并行，每组一次 `_chat_accounted`）。
+        组数从 `FORMAT_GROUPS` 读（WP7 起按字段组并行，每组一次 `_chat_accounted`）。
         Reduce 那一段（`_single_reduce_stream`）也落一条 `distill_reduce`，两个站点在本轮
         都不许读共享属性，故两处变异各自会红一条：断言只挑 `distill_format`，免得一个站点的
         变异把另一站点的用例也染色（那就分不清是谁坏了）。
