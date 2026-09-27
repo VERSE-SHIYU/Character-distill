@@ -7,8 +7,8 @@
 细节」），`Distiller` 反过来依赖它只能靠函数内 import，把环藏起来而不是消掉。
 
 分层：本模块不认识 LLM、不认识提示词、不认识名单缓存，只认识
-`{name, aliases, importance, reason}` 这个形状（与红线 2 的对外形状同一份）与
-`{chunk, name, aliases, importance, reason}` 这个逐片条目形状。
+`{name, aliases, importance, reason, speak_chunks}` 这个形状（与红线 2 的对外形状同一份）与
+`{chunk, name, aliases, spoke, reason}` 这个逐片条目形状。
 
 **歧义判定时机**（本模块的中心）：并组做完之后、按**最终分组**计数。放在并组之前会
 误伤同一人的多个主名 —— 片1 贾宝玉{宝玉,宝二爷}、片2 宝玉{宝二爷} 里，「宝玉」既是
@@ -24,18 +24,22 @@
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple, Sequence
+from typing import Any, Iterable, NamedTuple, Sequence
 
-_MAIN_MARK = "主"
+#: 判「主要」的说话分片数门槛：卡片里的说话风格与对话示例直接取自原文对话，铁律 1
+#: 要求一个特质至少在 2 个不同场景出现、核心性格至少 3 个 ⇒ 至少 6 个不同分片里
+#: 有本人说话，才可能蒸出一张性格准确的卡。出场多但几乎不说话的（「和尚」形态）
+#: 出不了卡，判次要。
+MIN_SPEAK_CHUNKS = 6
 
 
 class _Obs(NamedTuple):
-    """一条逐片识别条目：哪个分片说的、说了什么。"""
+    """一条逐片识别条目：哪个分片说的、说了什么、本人有没有亲口说话。"""
 
     chunk: int
     name: str
     aliases: tuple[str, ...]
-    importance: Any
+    spoke: bool
     reason: Any
 
 
@@ -94,7 +98,7 @@ def _observations(per_chunk: Sequence[Sequence[dict[str, Any]]]) -> list[_Obs]:
                 if a and a != name and usable_alias(a)
             ))
             out.append(_Obs(
-                chunk, name, tuple(aliases), item.get("importance"), item.get("reason")))
+                chunk, name, tuple(aliases), item.get("spoke") is True, item.get("reason")))
     return out
 
 
@@ -113,6 +117,7 @@ def _display_name(members: tuple[str, ...], entries: tuple[_Obs, ...]) -> str:
 
 def _assemble_group(
     members: tuple[str, ...], listed_aliases: tuple[str, ...], entries: tuple[_Obs, ...],
+    impersonal: bool = False,
 ) -> dict[str, Any]:
     """成员 + 该组列过的别名 + 观测 → 一个组。
 
@@ -120,6 +125,9 @@ def _assemble_group(
     人的另一个称呼，下游按子串匹配（`match_terms = [name] + aliases`）时不能漏掉它 ——
     漏了就等于把此人在那些分片里的场景判给了别人。歧义别名的移除不在这里，在并组
     全部做完之后（`_strip_ambiguous`）。
+
+    `speak_count` 是本人**亲口说话**的不同分片数（判主次只用它）；`impersonal` 由
+    全书判定给出，缺省 False —— 逐片那条路给不出这个信息。
     """
     entries = tuple(sorted(entries, key=lambda o: o.chunk))
     name = _display_name(members, entries)
@@ -129,6 +137,8 @@ def _assemble_group(
         "aliases": tuple(sorted((set(listed_aliases) | set(members)) - {name})),
         "listed_aliases": tuple(listed_aliases),
         "chunk_count": len({o.chunk for o in entries}),
+        "speak_count": len({o.chunk for o in entries if o.spoke}),
+        "impersonal": impersonal,
         "entries": entries,
     }
 
@@ -269,13 +279,18 @@ def _strip_ambiguous(groups: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def merge_identify_groups(
     groups: Sequence[dict[str, Any]], pairs: Sequence[Sequence[str]],
+    impersonal_names: Iterable[str] = (),
 ) -> list[dict[str, Any]]:
-    """按别名判断给出的组对并组，然后按最终分组移除不属于本组的称呼。
+    """按组对并组，然后按最终分组移除不属于本组的称呼，并定下各组的 `impersonal`。
 
     **模型没判为同一人的一律保持分开** —— 只并它点名的对，不做任何推断式合并。
     `pairs` 里写错的名字（不在名单中的主名）忽略：那是模型输出，认错一个名字不该让
     整本书的识别失败。
+
+    `impersonal_names` 按**并组前**的组名标注；并完之后只有「所并各组全为泛称」才算
+    泛称 —— 一个真人物并进泛称组，那组就是具体的人，反之亦然。
     """
+    impersonals = set(impersonal_names)
     by_name = {g["name"]: i for i, g in enumerate(groups)}
     uf = _UnionFind(range(len(groups)))
     for pair in pairs:
@@ -295,21 +310,57 @@ def merge_identify_groups(
             continue
         seen.add(root)
         idxs = members_of[root]
+        imp = all(groups[j]["name"] in impersonals for j in idxs)
         if len(idxs) == 1:
-            merged.append(group)
+            merged.append({**group, "impersonal": imp})
             continue
         merged.append(_assemble_group(
             tuple(dict.fromkeys(m for j in idxs for m in groups[j]["members"])),
             tuple(dict.fromkeys(a for j in idxs for a in groups[j]["listed_aliases"])),
             tuple(o for j in idxs for o in groups[j]["entries"]),
+            impersonal=imp,
         ))
     return _strip_ambiguous(merged)
 
 
-def _reason(entries: tuple[_Obs, ...], main_chunks: set[int]) -> str:
-    """该组在「主要」分片里的第一条理由；没有则第一条非空理由。都没有则是空串。"""
+def tally_judge_samples(
+    samples: Sequence[dict[str, Any]], votes: int,
+) -> tuple[list[tuple[str, str]], set[str]]:
+    """全书判定的多份样本 → （生效的合并组对，生效的泛称主名），各自需 ≥ `votes` 票。
+
+    单次调用的例外清单随采样大幅漂移（同一输入同一提示词两次结果不一致），故按
+    self-consistency（Wang et al., ICLR 2023）计多数票定结果。
+
+    每条 merge 拆成**两两组对**：模型写 `["甲","乙","丙"]` 说的是这仨同一个人，拆开
+    是它的等价含义。同一个组对在同一份样本里只计一票（模型可能重复列或在一份里同时
+    给 `[甲,乙]` 与 `[甲,乙,丙]`），跨样本才累加。空名与单名条目不计。
+    """
+    merge: dict[tuple[str, str], int] = {}
+    impersonal: dict[str, int] = {}
+    for sample in samples:
+        seen_pairs: set[tuple[str, str]] = set()
+        for entry in sample.get("merge") or []:
+            if not isinstance(entry, list):
+                continue
+            names = [n for n in (_norm(x) for x in entry) if n]
+            for a in range(len(names)):
+                for b in range(a + 1, len(names)):
+                    seen_pairs.add(tuple(sorted((names[a], names[b]))))
+        for pair in seen_pairs:
+            merge[pair] = merge.get(pair, 0) + 1
+        seen_names = {n for n in (_norm(x) for x in sample.get("impersonal") or []) if n}
+        for name in seen_names:
+            impersonal[name] = impersonal.get(name, 0) + 1
+    return (
+        sorted(pair for pair, count in merge.items() if count >= votes),
+        {name for name, count in impersonal.items() if count >= votes},
+    )
+
+
+def _reason(entries: tuple[_Obs, ...]) -> str:
+    """该组本人说话的分片里的第一条理由；没有则第一条非空理由。都没有则是空串。"""
     for o in entries:
-        if o.chunk in main_chunks and _norm(o.reason):
+        if o.spoke and _norm(o.reason):
             return _norm(o.reason)
     for o in entries:
         reason = _norm(o.reason)
@@ -319,33 +370,29 @@ def _reason(entries: tuple[_Obs, ...], main_chunks: set[int]) -> str:
 
 
 def finalize_identify_roster(
-    groups: Sequence[dict[str, Any]], total_chunks: int,
+    groups: Sequence[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """分组 → 对外名单：判主次、取理由、排序。不截断（逐片识别出的人全保留）。
 
-    `total_chunks` 是**全书分片数**（不是有名单的分片数）—— 10% 那条门的分母是这个
-    数；拿「该组出现的分片数」当分母，每个组都会轻易越过门槛。判据的三个输入全是
-    代码可数的：被逐片判为主要的分片数、出现的不同分片数、全书分片数。逐片那一步的
-    `importance` 只看得到本片，全书尺度必须在这里重判。
+    判主次只看两个代码可数的输入：本人说话的不同分片数（门槛见 `MIN_SPEAK_CHUNKS`）
+    与全书判定标的 `impersonal`。出场分片数不参与 —— 出场多但几乎不说话的
+    （「和尚」形态）蒸不出性格准确的卡。
 
-    「≥ 10%」写成整数乘法：浮点 0.1 在 total 不是 10 的倍数时会把边界判错。
+    泛称组（`impersonal`）标次要但仍在名单里：RAG 按别名打标签要用全名单，删掉会让
+    它指向的片段整段丢失归属。
     """
     scored = []
     for group in groups:
-        main_chunks = {
-            o.chunk for o in group["entries"] if _MAIN_MARK in _norm(o.importance)}
         importance = "主要" if (
-            len(main_chunks) >= 2 or group["chunk_count"] * 10 >= total_chunks
+            group["speak_count"] >= MIN_SPEAK_CHUNKS and not group["impersonal"]
         ) else "次要"
-        scored.append((
-            importance, len(main_chunks), group["chunk_count"],
-            group, _reason(group["entries"], main_chunks),
-        ))
-    # 主要在前；组内按 (被逐片判为主要的分片数, 出现的分片数) 降序。并列保持首现序
-    # （sorted 稳定），名单因此可复现。
-    scored.sort(key=lambda s: (s[0] != "主要", -s[1], -s[2]))
+        scored.append((importance, group, _reason(group["entries"])))
+    # 主要在前；组内按 (说话分片数, 出现的分片数) 降序。并列保持首现序（sorted 稳定），
+    # 名单因此可复现。
+    scored.sort(
+        key=lambda s: (s[0] != "主要", -s[1]["speak_count"], -s[1]["chunk_count"]))
     return [
-        {"name": g["name"], "aliases": list(g["aliases"]),
-         "importance": importance, "reason": reason}
-        for importance, _main, _chunks, g, reason in scored
+        {"name": g["name"], "aliases": list(g["aliases"]), "importance": importance,
+         "reason": reason, "speak_chunks": g["speak_count"]}
+        for importance, g, reason in scored
     ]

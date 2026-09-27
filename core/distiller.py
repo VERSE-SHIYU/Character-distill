@@ -28,6 +28,7 @@ from core.roster_aggregate import (
     finalize_identify_roster,
     group_identify_entries,
     merge_identify_groups,
+    tally_judge_samples,
     usable_alias,
 )
 from core.schema import CharacterCard, FORMAT_GROUPS, PRESET_TAGS, format_group_schema
@@ -75,28 +76,32 @@ IDENTIFY_SYSTEM_PROMPT = (
     '例如：魏无羡/魏婴/夷陵老祖 → name: "魏无羡", aliases: ["魏婴", "夷陵老祖"]\n'
     '例如：汪东城/大东 → name: "汪东城", aliases: ["大东"]\n'
     "\n"
+    "spoke：本段中此人是否亲口说了话（原文里有他本人说的直接引语）；"
+    "只被别人提到、或只有动作没有说话，填 false。\n"
     "只返回 JSON 数组，格式：\n"
     '[{"name": "主名", "aliases": ["别名1", "别名2"], '
-    '"importance": "主要/次要", "reason": "简述"}]\n'
+    '"importance": "主要/次要", "spoke": true, "reason": "简述"}]\n'
     "不要返回任何其他内容。"
 )
 
-#: 别名判断的提示：逐片名单已经在代码里归过一轮组（同名必同组、唯一别名并组、
-#: 有歧义的别名已移除），剩下一类代码认不出来 —— 同一个人在不同分片里用了两个都像
-#: 主名的称呼（一处叫全名、一处只叫名或号）。模型只回答这一件事。
+#: 全书判定的提示：逐片名单已经在代码里归过一轮组（同名必同组、唯一别名并组、
+#: 有歧义的别名已移除），剩下两类代码认不出来 —— 同一个人在不同分片里用了两个都像
+#: 主名的称呼（merge），以及主名根本不指某一个具体的人（impersonal，泛称组要留但
+#: 不能当蒸馏对象）。
 #: **不送**理由、正文、主次：那些都由代码算（`core/character_roster.py`），送了不但
-#: 白烧 token，还会把判断从「这两个称呼是否指同一人」拖到「谁戏份多」。
-IDENTIFY_ALIAS_PROMPT = (
-    "下面是从同一部作品的不同片段里各自识别出的角色分组清单，"
-    "每组给出主名、出现的分片数与该组记录到的别名。\n"
-    "这些组已经按「主名相同」和「别名唯一指向另一个主名」归过一轮，"
-    "还剩一种情况没能合并：同一个人在不同片段里用了两个都像主名的称呼。\n"
-    "请只判断哪些组其实是同一个人，把需要合并的组对列出来。\n"
-    "拿不准的一律不合并 —— 把两个人并成一个，比漏并更糟。\n"
-    "\n"
-    "只返回 JSON 数组，每项是要合并到一起的主名列表，格式：\n"
-    '[{"merge": ["主名A", "主名B"]}]\n'
-    "没有需要合并的返回 []。不要返回任何其他内容。"
+#: 白烧 token，还会把判断从「这是不是一个人」拖到「谁戏份多」。
+IDENTIFY_JUDGE_PROMPT = (
+    "下面是从同一部作品的不同片段里各自识别出的角色分组清单，每组一行。\n"
+    "这些组已经按「主名相同」和「别名唯一指向另一个主名」归过一轮。"
+    "请只列出下面两类例外，其余一律不列：\n"
+    "1. merge —— 同一个人在不同片段里用了两个都像主名的称呼，被分成了两组。"
+    "拿不准的一律不合并：把两个人并成一个，比漏并更糟。\n"
+    "2. impersonal —— 主名不指书中某一个具体的人：职业、身份、类别的通称，或一群人。"
+    "称呼里含姓或名，或是只指一个人的专有封号、法号、绰号，都算具体的人，不要列。"
+    "例：「店小二」「众好汉」要列；「王婆」「林教头」「花和尚」不列。拿不准的不列。\n"
+    "只返回一个 JSON 对象，格式：\n"
+    '{"merge": [["主名A", "主名B"]], "impersonal": ["主名"]}\n'
+    "某一类没有时写空数组。不要返回任何其他内容。"
 )
 
 DISTILL_PROMPT_BEFORE_NAME = """你是一个角色分析专家。从给定文本中精确提取角色 \""""
@@ -410,7 +415,16 @@ class Distiller:
     #: 算法也换了（原先由模型按全书重判，现在按出现分片数与判主次的分片数计）。
     #: 4：提示词给「有名字」下了定义（WP16）—— 只收含姓/名/专有封号法号的称呼与名字
     #: 变体别名，泛称、代词、纯关系称呼不收。口径变了，旧名单必须失效。
+    #: 4（同版修订，未合入 main）：逐片提示词加 `spoke`，主次改由「本人说话的不同
+    #: 分片数 ≥ MIN_SPEAK_CHUNKS 且非泛称」判定；全书判定输出改 `merge` / `impersonal`
+    #: 两键、取 5 次独立采样的多数票。
     IDENTIFY_VERSION = 4
+
+    #: 全书判定的独立采样次数：同一输入、同一提示词下单次调用的例外清单随采样大幅
+    #: 漂移（实测两次交集很小），故按 self-consistency（Wang et al., ICLR 2023）取多数票。
+    IDENTIFY_JUDGE_SAMPLES = 5
+    #: 生效所需票数。合法样本不足这个数即整体失败 —— 拿一两份当结论比不判更糟。
+    IDENTIFY_JUDGE_QUORUM = 3
 
     def __init__(
         self,
@@ -1174,8 +1188,8 @@ class Distiller:
         每一片都解析成空名单 → 返回 ``[]``：这是**真的没有具名角色**，不是识别失败。
         与单分片同口径 —— 空名单是合法结果，失败才抛。
 
-        归组、并组、判主次、取理由都是纯计算（`core/roster_aggregate.py`）；模型只判一件
-        需要判断力的事：哪些组其实是同一个人（`_identify_alias_pairs`）。
+        归组、并组、判主次、取理由都是纯计算（`core/roster_aggregate.py`）；模型只判两件
+        需要判断力的事：哪些组其实是同一个人、哪些主名不指具体的人（`_judge_groups`）。
         """
         def _build_prompt(chunk: str) -> tuple[str, str]:
             return IDENTIFY_SYSTEM_PROMPT, chunk
@@ -1218,38 +1232,66 @@ class Distiller:
             # 每一片都解析成空名单（且没有一片失败）→ 真空名单，不是失败。
             # 原先这里抛 DistillError，把「这本书没有具名角色」当成了故障。
             return []
-        merged = merge_identify_groups(groups, self._identify_alias_pairs(groups))
-        return finalize_identify_roster(merged, total)
+        pairs, impersonal = self._judge_groups(groups)
+        merged = merge_identify_groups(groups, pairs, impersonal)
+        return finalize_identify_roster(merged)
 
-    def _identify_alias_pairs(self, groups: list[dict[str, Any]]) -> list[list[str]]:
-        """问一次模型：哪些组其实是同一个人。**只送主名、别名、出现分片数。**
+    def _judge_groups(
+        self, groups: list[dict[str, Any]],
+    ) -> tuple[list[tuple[str, str]], set[str]]:
+        """问多次模型：哪些组是同一个人（merge）、哪些主名不指具体的人（impersonal）。
 
-        不送 reason、不送原文：模型只判「同一个人的两种称呼被分到了两组」这一件事，
-        归组与主次已经在代码里定完。送正文不但白烧 token，还会把判断从「这两个称呼
-        是否指同一人」拖到「谁戏份多」。
+        **只送主名、别名、出现分片数。** 不送 reason、不送原文：模型只判「这是不是
+        一个人」，归组与主次已经在代码里定完。送正文不但白烧 token，还会把判断从
+        「这两个称呼是否指同一人」拖到「谁戏份多」。
 
         别名也做了筛选：当时挂在 ≥2 组上的泛称不进清单（`alias_prompt_rows`）——
         摆进去只会诱导模型把两个人并成一个。
 
-        走 `_chat_accounted(stream=True)`：与逐片 Map、蒸馏的长输出同一条流式路径，
-        读超时按 WP1 的 `chat_stream_long` 放宽；记账落在唯一出口（缺陷 16）。
+        同一输入独立采样 `IDENTIFY_JUDGE_SAMPLES` 次、经 `_run_map_with_client` 并发
+        （与逐片 Map 同一条骨架，整阶段汇总一条用量行）。单次调用的例外清单随采样大幅
+        漂移，故按 self-consistency 取多数票。执行器报错的调用与不合法样本（不是 JSON
+        对象，或两键不都是数组）都不计票；合法样本不足 `IDENTIFY_JUDGE_QUORUM` 份即
+        整体失败 —— 拿一两份当结论比不判更糟。
+
+        返回（生效的合并组对，生效的泛称主名）。
         """
         body = "各组如下：\n" + "\n".join(
             f"- {name}（出现 {chunks} 个分片；"
             f"别名：{'、'.join(aliases) or '无'}）"
             for name, chunks, aliases in alias_prompt_rows(groups)
         )
-        messages: list[dict[str, Any]] = [{"role": "user", "content": body}]
-        reply, upstream_truncated = self._chat_accounted(
-            IDENTIFY_ALIAS_PROMPT, messages, "角色分组判定", "distill_identify", stream=True,
+        samples = [body] * self.IDENTIFY_JUDGE_SAMPLES
+        results, failures = self._run_map_with_client(
+            samples, lambda chunk: (IDENTIFY_JUDGE_PROMPT, chunk), "distill_identify",
         )
-        # allow_empty：组对为空（谁都不用并）是常见且**正确**的答案，不能当解析失败重修。
-        parsed = self._parse_json_with_retry(
-            reply, IDENTIFY_ALIAS_PROMPT, messages,
-            action_label="distill_identify", list_item_keys=("merge",),
-            upstream_truncated=upstream_truncated, stream=True, allow_empty=True,
-        )
-        return [item["merge"] for item in parsed if isinstance(item.get("merge"), list)]
+        failed_idx = {i for i, _ in failures}
+        parsed: list[dict[str, Any]] = []
+        for idx, raw in results:
+            if idx in failed_idx:
+                continue    # 执行器已记过失败（含截断），不重复记日志
+            try:
+                item = json.loads(self._extract_json(raw))
+            except Exception as exc:
+                logger.warning("Identify judge sample %s unparseable: %s", idx, exc)
+                continue
+            if not isinstance(item, dict) or not (
+                isinstance(item.get("merge"), list)
+                and isinstance(item.get("impersonal"), list)
+            ):
+                logger.warning("Identify judge sample %s malformed: %r", idx, item)
+                continue
+            parsed.append(item)
+        if len(parsed) < self.IDENTIFY_JUDGE_QUORUM:
+            raise DistillError(
+                "识别失败：全书角色分组判定未能取得一致结论，请重试",
+                f"判定合法样本 {len(parsed)}/{self.IDENTIFY_JUDGE_SAMPLES} 份"
+                f"（执行器失败 {len(failures)} 次），不足 {self.IDENTIFY_JUDGE_QUORUM} 份",
+            )
+        pairs, impersonal = tally_judge_samples(parsed, self.IDENTIFY_JUDGE_QUORUM)
+        print(f"[distill] identify judge merge={pairs}")
+        print(f"[distill] identify judge impersonal={sorted(impersonal)}")
+        return pairs, impersonal
 
     @staticmethod
     def _split_chunks(text: str, chunk_size: int) -> list[str]:
