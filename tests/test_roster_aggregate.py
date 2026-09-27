@@ -15,7 +15,9 @@
   I3c  成员主名优先：「宝玉」是合并组的成员主名、又被甄宝玉组当别名 —— 只属于有它
        的那一组。只以别名身份挂在 ≥2 组上的，才从所有组移除。
   I3d  别名至少两个字 —— 单字称呼（「他」「玉」「爷」）按子串匹配几乎命中每一片。
-  I4   主次、排序、理由、不截断 —— 四个输入全是代码可数的。
+  I4   主次按「本人说话的不同分片数 ≥ 6 且非泛称」判，组内按它降序，理由取自本人
+       说话的分片 —— 出场多但几乎不说话的（「和尚」形态）出不了卡。
+  I5   全书判定的多份样本按多数票取结果；同一份样本里重复列的组对只计一票。
 
 判定「歧义」的时机是本文件的中心：**并组做完、按最终分组计数**。放在并组之前，
 片1 贾宝玉{宝玉,宝二爷} 里的「宝玉」会被当成挂在两个主名下的泛称而丢掉。
@@ -28,6 +30,7 @@ from core.roster_aggregate import (
     finalize_identify_roster,
     group_identify_entries,
     merge_identify_groups,
+    tally_judge_samples,
 )
 
 
@@ -35,9 +38,31 @@ def _all_members(groups) -> set[frozenset]:
     return {frozenset(g["members"]) for g in groups}
 
 
-def _merged(per_chunk, pairs=()):
-    """建组 → 按组对并组 → 出最终组（移除歧义别名在这一步做）。"""
-    return merge_identify_groups(group_identify_entries(per_chunk), list(pairs))
+def _merged(per_chunk, pairs=(), impersonal=()):
+    """建组 → 按组对并组（含泛称标注）→ 出最终组（移除歧义别名在这一步做）。"""
+    return merge_identify_groups(
+        group_identify_entries(per_chunk), list(pairs), impersonal)
+
+
+def _chunks(people_by_chunk: dict[int, list[tuple[str, bool]]], total: int):
+    """按分片号铺观测：{片号: [(主名, 是否亲口说话), ...]}，其余片为空。
+
+    片号即分片序号 —— `_observations` 的 `chunk` 是 `enumerate(per_chunk)` 给的下标。
+    """
+    out = [[] for _ in range(total)]
+    for idx, people in people_by_chunk.items():
+        out[idx] = [
+            {"name": n, "aliases": [], "spoke": s, "reason": f"{n}@{idx}"}
+            for n, s in people
+        ]
+    return out
+
+
+def _row(per_chunk, pairs=(), impersonal=()):
+    """单个组的一条名单行 —— 这类用例都只关心一个组。"""
+    roster = finalize_identify_roster(_merged(per_chunk, pairs, impersonal))
+    assert len(roster) == 1, [r["name"] for r in roster]
+    return roster[0]
 
 
 # 片序即分片序号：片1 甲{二爷}、片2 乙{二爷}（「二爷」两处都挂 = 有歧义），
@@ -219,64 +244,176 @@ class TestAliasLength:
         assert groups[0]["aliases"] == ("宝二爷",), "单字称呼按子串匹配几乎命中全书"
 
 
-# 40 片，10% = 4 片。X / Y / Z 各按一种边界摆：
-#   X 3 片、其中 2 片是主要（逐片那层写的「主角」「主要角色」）→ 靠 main_count 过线
-#   Y 3 片、只有 1 片主要，且那一片里同一人出现两次 → 条目数 4 但分片数 3，不该过线
-#   Z 恰 4 片、全「配角」→ 恰好在 10% 那条线上（`>=` 与 `>` 在这里分开）
-# 其余 57 个一次性人物把总数顶到 60，用来锁「不截断」。
-_LONG_BOOK_PER_CHUNK: list[list[dict]] = [[] for _ in range(40)]
-_LONG_BOOK_PER_CHUNK[0] = [{"name": "X", "aliases": [], "importance": "配角", "reason": "起(x)"}]
-_LONG_BOOK_PER_CHUNK[1] = [{"name": "X", "aliases": [], "importance": "主角", "reason": "主(x)"}]
-_LONG_BOOK_PER_CHUNK[2] = [{"name": "X", "aliases": [], "importance": "主要角色", "reason": "再主(x)"}]
-_LONG_BOOK_PER_CHUNK[3] = [{"name": "Y", "aliases": [], "importance": "主角", "reason": "主(y)"}]
-_LONG_BOOK_PER_CHUNK[4] = [{"name": "Y", "aliases": [], "importance": "配角", "reason": "配(y1)"},
-                           {"name": "Y", "aliases": [], "importance": "配角", "reason": "配(y2)"}]
-_LONG_BOOK_PER_CHUNK[5] = [{"name": "Y", "aliases": [], "importance": "配角", "reason": "配(y3)"}]
-for _i in range(6, 10):
-    _LONG_BOOK_PER_CHUNK[_i] = [
-        {"name": "Z", "aliases": [], "importance": "配角", "reason": f"配(z{_i})"}]
-for _n in range(57):
-    _LONG_BOOK_PER_CHUNK[10 + _n % 30].append(
-        {"name": f"路人{_n:02d}", "aliases": [], "importance": "配角", "reason": "一闪"})
+class TestSpeakChunkThreshold:
+    """主次只看「本人说话的不同分片数 ≥ 6」——卡片里的说话风格与对话示例取自原文
+    对话，铁律 1（一个特质至少在 2 个场景出现）× 核心性格至少 3 个 ⇒ 至少 6 片。
 
+    门槛写死在用例里（不引用 `MIN_SPEAK_CHUNKS`）：拿被测常量当期望值，改常量时
+    用例会跟着改，边界就锁不住了。
 
-class TestImportanceAndOrdering:
-    """主次、排序、理由、不截断 —— 四件都是纯代码可判的事，原先整包交给模型。
-
-    逐片那层的 `importance` 只看得到本片，全书尺度必须在这里重判；判据的三个输入
-    全是可数的（被判主要的分片数、出现的不同分片数、全书分片数）。
-
-    变异对象 = ① 只按 chunk_count 判（X 3 片 < 4 → 次要）
-              ② `>=` 改 `>`（Z 恰 4 片 → 次要）
-              ③ 规范化改 `== "主要"`（「主角」「主要角色」都不算 → X 次要）
-              ④ 按**条目**数而非分片数计（Y 同片两条 → 4 片 → 主要）
-              ⑤ 去掉主次分层（Z 排到 Y 后面）
-              ⑥ 理由取第一条（X 拿到「起(x)」而不是主要片那条）
-              ⑦ 加 `[:50]`（60 组被截到 50）
+    变异对象 = ① 门槛写成 `>= 5`（5 片那条红）
+              ② 条件反过来（6 片判次要 → 红）
     """
 
-    def setup_method(self):
-        self.groups = group_identify_entries(_LONG_BOOK_PER_CHUNK)
-        self.roster = finalize_identify_roster(self.groups, total_chunks=40)
-        self.rows = {r["name"]: r for r in self.roster}
+    def test_five_speaking_chunks_is_minor_and_six_is_major(self):
+        five = _chunks({i: [("甲", True)] for i in range(5)}, 8)
+        six = _chunks({i: [("甲", True)] for i in range(6)}, 8)
 
-    def test_nobody_is_truncated(self):
-        assert len(self.roster) == 60
+        assert _row(five)["importance"] == "次要"
+        assert _row(six)["importance"] == "主要"
 
-    def test_chunk_count_counts_distinct_chunks(self):
-        by_name = {g["name"]: g for g in self.groups}
-        assert by_name["X"]["chunk_count"] == 3
-        assert by_name["Y"]["chunk_count"] == 3, "同一片里出现两次仍算一片"
-        assert by_name["Z"]["chunk_count"] == 4
+    def test_appearing_in_30_chunks_but_speaking_in_2_is_minor(self):
+        """「和尚」形态：出场多不等于能蒸馏 —— 出现分片数不参与判主次。
 
-    def test_importance_is_judged_by_the_whole_book(self):
-        assert self.rows["X"]["importance"] == "主要", "2 片被判为主要"
-        assert self.rows["Y"]["importance"] == "次要", "1 片主要、3 片出现，两条线都不够"
-        assert self.rows["Z"]["importance"] == "主要", "恰 4 片 = 全书的 10%"
+        变异对象 = 把出现分片数也算进判据（`chunk_count` 30 ≥ 6 → 判主要 → 红）。
+        """
+        per = _chunks({i: [("和尚", i < 2)] for i in range(30)}, 30)
 
-    def test_main_characters_first_then_by_weight(self):
-        assert [r["name"] for r in self.roster[:3]] == ["X", "Z", "Y"]
+        assert group_identify_entries(per)[0]["chunk_count"] == 30
+        row = _row(per)
+        assert row["speak_chunks"] == 2
+        assert row["importance"] == "次要", "出场 30 片、只亲口说话 2 片"
 
-    def test_reason_comes_from_a_main_chunk(self):
-        assert self.rows["X"]["reason"] == "主(x)"
-        assert self.rows["Y"]["reason"] == "主(y)"
+    def test_spoke_only_counts_json_true(self):
+        """只认 JSON `true`：字符串 `"true"` / 数字 / 缺省都不计入说话分片。
+
+        变异对象 = 判据改成真值判断（`"false"` 非空串为真 → 6 片 → 判主要 → 红）。
+        """
+        for marker in ("false", "true", 1, None):
+            item = {"name": "甲", "aliases": [], "reason": "r"}
+            if marker is not None:
+                item["spoke"] = marker
+            row = _row([[dict(item)] for _ in range(6)])
+
+            assert row["speak_chunks"] == 0, marker
+            assert row["importance"] == "次要", marker
+
+
+class TestImpersonalGroups:
+    """泛称组（`impersonal`）一律次要，但**仍在名单里** —— RAG 打标签要用全名单。
+
+    变异对象 = ① 泛称组直接删掉（名单只剩 1 组 → 红）
+              ② `impersonal` 不参与判主次（40 片说话 → 判主要 → 红）
+    """
+
+    def test_generic_group_with_40_speaking_chunks_stays_minor_and_listed(self):
+        per = _chunks({i: [("婆子", True)] for i in range(40)}, 40)
+        roster = finalize_identify_roster(_merged(per, impersonal=["婆子"]))
+
+        assert [r["name"] for r in roster] == ["婆子"], "泛称组保留，只是标次要"
+        assert roster[0]["speak_chunks"] == 40
+        assert roster[0]["importance"] == "次要"
+
+
+class TestImpersonalPropagation:
+    """`impersonal` 按并组前的组名标注，并完之后「所并各组全为泛称」才算。
+
+    变异对象 = ① 并组后用显示名重新查泛称集合（泛称并入真人组后显示名可能变 → 红）
+              ② 并组时丢掉 `impersonal`（`_assemble_group` 不传 → 红）
+    """
+
+    def test_generic_merged_into_a_real_person_is_not_impersonal(self):
+        per = _chunks({i: [("甲", True), ("婆子", False)] for i in range(7)}, 7)
+        row = _row(per, pairs=[("甲", "婆子")], impersonal=["婆子"])
+
+        assert row["importance"] == "主要", "一个真人物并进泛称组，那组就是具体的人"
+
+    def test_two_generic_groups_merged_stay_impersonal(self):
+        per = _chunks(
+            {**{i: [("婆子", True)] for i in range(7)},
+             **{i: [("小丫头", True)] for i in range(7, 14)}}, 14)
+        row = _row(per, pairs=[("婆子", "小丫头")], impersonal=["婆子", "小丫头"])
+
+        assert row["speak_chunks"] == 14
+        assert row["importance"] == "次要", "两个泛称组互并仍是泛称"
+
+
+class TestSpeakCountAcrossMergedGroups:
+    """并组后按**最终分组**计说话分片 —— 两组各自的片加起来，重叠的片只计一次。"""
+
+    def test_disjoint_speaking_chunks_add_up(self):
+        per = _chunks({**{i: [("甲", True)] for i in range(4)},
+                       **{i: [("乙", True)] for i in range(4, 8)}}, 8)
+        row = _row(per, pairs=[("甲", "乙")])
+
+        assert row["speak_chunks"] == 8, "4 + 4，两片不重叠"
+        assert row["importance"] == "主要", "各自 4 片不够，并完 8 片才够"
+
+    def test_overlapping_chunks_are_counted_once(self):
+        per = [[{"name": "甲", "aliases": [], "spoke": True, "reason": "a"},
+                {"name": "乙", "aliases": [], "spoke": True, "reason": "b"}]
+               for _ in range(4)]
+        row = _row(per, pairs=[("甲", "乙")])
+
+        assert row["speak_chunks"] == 4, "同一片里两人都说话仍只算一片"
+        assert row["importance"] == "次要"
+
+
+class TestRosterShape:
+    """对外的名单行形状与顺序：恰五个键、按说话分片数降序、理由取自说话的分片。"""
+
+    def test_each_row_has_exactly_five_keys(self):
+        roster = finalize_identify_roster(_merged(_chunks({0: [("甲", True)]}, 1)))
+
+        assert set(roster[0]) == {"name", "aliases", "importance", "reason", "speak_chunks"}
+
+    def test_rows_are_ordered_by_speaking_chunks_desc(self):
+        per = _chunks({i: [("乙", True)] for i in range(3)}, 12)
+        for i in range(9):
+            per[i].append({"name": "甲", "aliases": [], "spoke": True, "reason": "a"})
+        roster = finalize_identify_roster(_merged(per))
+
+        assert [(r["name"], r["speak_chunks"]) for r in roster] == [("甲", 9), ("乙", 3)]
+
+    def test_reason_comes_from_a_speaking_chunk(self):
+        """没说话那片的理由排在前面也不取 —— 理由要能代表此人的说话风格。
+
+        变异对象 = 去掉 `o.spoke` 那一支（取到「没说话」→ 红）。
+        """
+        per = [[{"name": "甲", "aliases": [], "spoke": False, "reason": "没说话"},
+                {"name": "甲", "aliases": [], "spoke": True, "reason": "说话了"}]]
+        roster = finalize_identify_roster(_merged(per))
+
+        assert roster[0]["reason"] == "说话了"
+
+    def test_reason_falls_back_to_the_first_non_empty_reason(self):
+        """一句都没说的人（泛称组）仍要有理由可看。"""
+        per = [[{"name": "婆子", "aliases": [], "spoke": False, "reason": ""},
+                {"name": "婆子", "aliases": [], "spoke": False, "reason": "传话"}]]
+        roster = finalize_identify_roster(_merged(per))
+
+        assert roster[0]["reason"] == "传话"
+
+
+class TestJudgeVoteTally:
+    """5 份判定样本的计票：组对与泛称各需 ≥ 3 票，条内拆两两组对，条间不重复计。"""
+
+    def test_pair_needs_three_of_five(self):
+        yes = [{"merge": [["甲", "乙"]], "impersonal": []} for _ in range(3)]
+        no = [{"merge": [], "impersonal": []} for _ in range(2)]
+
+        assert tally_judge_samples(yes + no, 3)[0] == [("乙", "甲")]
+        assert tally_judge_samples(no + yes[:2], 3)[0] == [], "只有 2 票不生效"
+
+    def test_three_name_merge_splits_into_all_pairs(self):
+        samples = [{"merge": [["甲", "乙", "丙"]], "impersonal": []} for _ in range(3)]
+
+        # 组对按名字排序后返回，顺序由码位定（丙 U+4E19 < 乙 U+4E59 < 甲 U+7532）
+        assert tally_judge_samples(samples, 3)[0] == [
+            ("丙", "乙"), ("丙", "甲"), ("乙", "甲")]
+
+    def test_a_pair_is_counted_once_per_sample(self):
+        """同一份里重复列（或 3 名条目与 2 名条目并存）只算一票。
+
+        变异对象 = 不去重（甲–乙 在同一样本里数两次 → 越过门槛 → 红）。
+        """
+        samples = [{"merge": [["甲", "乙"], ["甲", "乙", "丙"]], "impersonal": []}]
+
+        assert tally_judge_samples(samples, 2)[0] == [], "一份样本里同一组对只计一票"
+
+    def test_impersonal_needs_three_of_five(self):
+        yes = [{"merge": [], "impersonal": ["婆子"]} for _ in range(3)]
+        no = [{"merge": [], "impersonal": []} for _ in range(2)]
+
+        assert tally_judge_samples(yes + no, 3)[1] == {"婆子"}
+        assert tally_judge_samples(no + yes[:2], 3)[1] == set()

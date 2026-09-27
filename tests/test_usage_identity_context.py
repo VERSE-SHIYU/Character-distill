@@ -405,12 +405,12 @@ class _FakeLLM:
         usage = {"prompt_tokens": 21, "completion_tokens": 5}
         # 识别 Map 原样送的就是这个常量（`_identify_over_chunks` 的 `_build_prompt` 直接
         # `return IDENTIFY_SYSTEM_PROMPT, chunk`）。**不能按「识别」二字筛** —— 识别系统
-        # 提示词里没有那两个字，含它的是别名判断（`IDENTIFY_ALIAS_PROMPT`，走 chat_stream）。
+        # 提示词里没有那两个字，含它的是全书判定（`IDENTIFY_JUDGE_PROMPT`）。
         if system == IDENTIFY_SYSTEM_PROMPT:
             # 合法**空**名单（不是空串、不是失败）：分片全返回 `[]` → 无组可归 →
-            # `_identify_over_chunks` 在 `if not groups: return []` 短路，不进别名判断。
+            # `_identify_over_chunks` 在 `if not groups: return []` 短路，不进全书判定。
             # 于是「点名蒸馏 + 这本书没有具名角色」照常蒸馏下去，identify 恰好记 1 行（逐片
-            # 汇总那条）；若这里换成非空名单，别名判断会再记 1 行 → 全流程 10 行，与 expected=9 不符。
+            # 汇总那条）；若这里换成非空名单，判定会再记 1 行 → 全流程 10 行，与 expected=9 不符。
             return "[]", usage
         return "甲很沉默，说了一句话。", usage
 
