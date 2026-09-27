@@ -232,8 +232,12 @@ class Executor:
         )
 
     def ping(self, url):
+        # 心跳端点只收 POST（GET 会 405）；auth=None，URL 本身就是凭据。
         self._run(
-            ["curl", "--max-time", str(PING_TIMEOUT), "-fsS", "-o", os.devnull, url],
+            [
+                "curl", "-X", "POST", "--max-time", str(PING_TIMEOUT), "-fsS",
+                "-o", os.devnull, url,
+            ],
             PING_TIMEOUT + 5, "反向心跳",
         )
 

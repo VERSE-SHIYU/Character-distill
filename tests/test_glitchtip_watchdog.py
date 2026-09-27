@@ -137,6 +137,27 @@ def test_read_parses_healthy_reading(monkeypatch):
     assert wd.Executor().read() == wd.Reading(1, 0, 1790489099.6)
 
 
+# ── 反向心跳必须是 POST ──────────────────────────────────────────────────────
+
+
+def test_ping_posts_to_the_heartbeat_url(monkeypatch):
+    """GlitchTip 的心跳端点只收 POST，GET 会 405（线上实测），所以 ping 必须 POST。"""
+    seen = {}
+
+    class _Done:
+        returncode = 0
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = list(argv)
+        return _Done()
+
+    monkeypatch.setattr(wd.subprocess, "run", fake_run)
+    wd.Executor().ping("https://example.invalid/hb/")
+
+    assert "POST" in seen["argv"]
+    assert seen["argv"][-1] == "https://example.invalid/hb/"
+
+
 # ── 重启后的原地确认 ─────────────────────────────────────────────────────────
 
 
