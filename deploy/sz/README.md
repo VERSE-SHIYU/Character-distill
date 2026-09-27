@@ -75,3 +75,49 @@ Shiyu 首次登录、改完口令后**删掉这个文件**——之后改口令�
 通过，再 `docker exec character-distill-nginx-1 openresty -s reload -c /etc/nginx/nginx.conf`。
 
 官方文档（环境变量与 nginx 示例的出处）：<https://glitchtip.com/documentation/install>
+
+## 看门狗 `watchdog.py`（宿主机 cron）
+
+GlitchTip 的调度器停摆时，站内告警也一起哑掉——没人报警。看门狗从外面盯：每分钟只读 PG
+两个秒龄，`uptime-dispatch-checks` 心跳（阈值 60 秒）与最老可执行 QUEUED 任务（阈值 600 秒）。
+两项都正常就 ping 一次反向心跳地址；异常就 `docker restart` GlitchTip 容器一次（1 小时最多 1 次），
+并在同一次运行里原地确认（心跳值前进=恢复）；通知 1 小时最多 1 封。设计依据与参数见
+`docs/specs/observability-glitchtip.md` 的「S0 后定稿」。
+
+| 仓库路径 | 服务器落点 |
+| --- | --- |
+| `deploy/sz/glitchtip/watchdog.py` | `/opt/glitchtip/watchdog.py` |
+
+**落盘**：同上一节的三步（scp 到 `/tmp` → `sudo cp` 覆盖 → `diff` 验证）。只依赖标准库 +
+宿主机的 `docker`、`curl`，没有常驻进程。
+
+**心跳地址文件**：`/root/.glitchtip_watchdog`（`chmod 600`），内容是 Shiyu 在 GlitchTip 网页上
+建好的 Heartbeat 监控地址（一行）。宿主机上只有这一项凭据；发信复用 GlitchTip 容器自己的
+`EMAIL_URL` / `DEFAULT_FROM_EMAIL`，宿主机不解析、不复制任何发信凭据。地址留空或文件不存在时，
+正常路径只是 ping 不出去（反向心跳失效），会在 syslog 留一行——所以要先建好监控再装 cron。
+
+**crontab**（root，`crontab -e` 加一行）：
+
+```
+* * * * * /usr/bin/flock -n /run/glitchtip-watchdog.lock /usr/bin/python3 /opt/glitchtip/watchdog.py 2>&1 | /usr/bin/logger -t glitchtip-watchdog
+```
+
+`flock -n` 防叠跑：单次最坏约 131 秒（13 秒重启 + 90 秒确认 + 30 秒发信），随后一两次 cron
+直接退出不排队。脚本自己不写锁。输出走 `logger` 进 syslog，由系统轮转——不落自管的增长文件。
+
+**回滚**：`crontab -e` 删掉那一行，保存即可。`/opt/glitchtip/watchdog.py` 与状态文件
+`/root/.glitchtip_watchdog_state.json` 留着不生效，也不影响任何东西；要清干净再删这两个文件。
+
+**上线验收**（先建好监控、写好心跳地址文件，再装 cron）：
+
+1. 手动跑一次，把心跳阈值临时压到必触发（**不改文件**）：
+   ```
+   sudo /usr/bin/python3 /opt/glitchtip/watchdog.py --heartbeat-max-age -1
+   ```
+   确认：执行了容器级重启、90 秒内心跳值前进、状态文件被写、`bookecho@163.com` 收到
+   「已自动重启并恢复」（这一步同时证明发信复用路径可用）。
+   > 为什么不是 `0`：判据是「秒龄 ≤ 阈值」，而正常时心跳秒龄在 0/1 之间取整，`0` 有约一半
+   > 概率判成正常、不一定触发；`-1` 才能确定性触发。心跳**记录缺失**（秒龄兜底 `-1`）不算
+   > 正常，走读数失败路径，会发「读不到调度器心跳」。
+2. 临时注释掉 crontab 那一行：10–20 分钟内（宽限期 == interval）应收到 GlitchTip 的心跳缺席邮件（反向心跳停了），
+   然后恢复那一行。
