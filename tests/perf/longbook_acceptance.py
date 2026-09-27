@@ -533,6 +533,8 @@ def _check_card(args, token: str, content: str, run_status: str | None) -> dict:
     dumped = card.model_dump()
     return {"valid": True, "empty": empty,
             "dialogue": dialogue_hits(dumped.get("dialogue_examples"), content),
+            "catchphrase_miss": catchphrase_misses(
+                (dumped.get("speaking_style") or {}).get("catchphrases"), content),
             "quote_miss": quote_misses(dumped, content),
             "dup_targets": duplicate_targets(dumped.get("relationships"))}
 
@@ -625,6 +627,17 @@ def duplicate_targets(relationships) -> list[list]:
     return [[t, n] for t, n in counts.most_common() if n > 1 and t]
 
 
+def catchphrase_misses(catchphrases, content: str) -> list[str]:
+    """口癖逐条查原文，返回查不到的（原样）。
+
+    口癖是**本人原话里的固定说法**，本该逐字出现在原文里。与引文不同，这里**不设
+    字数下限**：口癖短到两个字也算（「无事忙」「凤辣子」），套 4 字下限会把它们整个
+    跳过，判据就漏了最典型的那一类。
+    """
+    src = _norm(content)
+    return [str(c) for c in (catchphrases or []) if _norm(c) not in src]
+
+
 # ══ §10 D3：读数模板 ══════════════════════════════════════════════════
 
 def print_env(env: dict) -> None:
@@ -681,13 +694,16 @@ def print_distill(stats: dict, character: str) -> None:
         print(f"[蒸馏-{character}] 卡片校验 失败 | {card['error']}")
         return
     d = card.get("dialogue") or {}
+    cpm = card.get("catchphrase_miss") or []
     qm, dup = card.get("quote_miss") or [], card.get("dup_targets") or []
     print(f"[蒸馏-{character}] 卡片校验 {'通过' if card.get('valid') else '失败'} "
           f"| 空字段 {card.get('empty')} "
-          f"| 对话示例 {d.get('hit')}/{d.get('n')} "
+          f"| 对话示例 {d.get('hit')}/{d.get('n')} | 口癖查不到 {len(cpm)} "
           f"| 引文查不到 {len(qm)} | 关系重复 target {len(dup)}")
     if d.get("miss"):
         print(f"[蒸馏-{character}] 对话示例未命中（原样）: {json.dumps(d['miss'], ensure_ascii=False)}")
+    if cpm:
+        print(f"[蒸馏-{character}] 口癖查不到（原样）: {json.dumps(cpm, ensure_ascii=False)}")
     for m in qm:
         print(f"[蒸馏-{character}] 引文查不到（{m['field']}）: {m['quote']}")
     if dup:
@@ -715,9 +731,10 @@ def _evidence_payload(stats: dict) -> dict:
     if isinstance(card, dict):
         raw = out["card"]
         card = {k: v for k, v in card.items()
-                if k not in ("dialogue", "quote_miss", "dup_targets")}
+                if k not in ("dialogue", "catchphrase_miss", "quote_miss", "dup_targets")}
         if isinstance(raw.get("dialogue"), dict):
             card["dialogue"] = scrub_hits(raw["dialogue"])
+        card["catchphrase_miss_n"] = len(raw.get("catchphrase_miss") or [])
         card["quote_miss_n"] = len(raw.get("quote_miss") or [])
         card["dup_targets_n"] = len(raw.get("dup_targets") or [])
         out["card"] = card
@@ -771,6 +788,8 @@ def over_limit(stats: dict, counts: dict, env: dict) -> list[str]:
             d = card.get("dialogue") or {}
             if d.get("miss"):
                 why.append(f"对话示例未命中 {len(d['miss'])}/{d.get('n')}")
+            if card.get("catchphrase_miss"):
+                why.append(f"口癖查不到 × {len(card['catchphrase_miss'])}")
             if card.get("quote_miss"):
                 why.append(f"引文查不到 × {len(card['quote_miss'])}")
             if card.get("dup_targets"):

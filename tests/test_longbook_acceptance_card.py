@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""`tests/perf/longbook_acceptance.py` 的 §10 C4 卡片核对锁：对话示例 / 引文 / 关系重复。
+"""`tests/perf/longbook_acceptance.py` 的 §10 C4 卡片核对锁：对话 / 口癖 / 引文 / 关系重复。
 
 **为什么入库。** 旧 `hits()` 把整条 `dialogue_examples`（多行、含「说话人：」标签与
 （…）动作说明）当**整体**子串去原文查 —— 原文里只有台词本身，于是这个判据对任何一张
 卡都恒报 0/3，而它只报不停：三个月后没人看得出它从来没命中过。引文同理（藏在别的字段
 里，一句都没查过），关系重复则是从来没人查过。
 
-**纯函数而不是真卡片。** `dialogue_hits` / `quote_misses` / `duplicate_targets` 不碰
-HTTP、不碰库，所以每条判据都配一条「像但它不是」的反例 —— 少拆一层标签、改一个字、
-少算一次重复，都会红。
+**纯函数而不是真卡片。** `dialogue_hits` / `catchphrase_misses` / `quote_misses` /
+`duplicate_targets` 不碰 HTTP、不碰库，所以每条判据都配一条「像但它不是」的反例 ——
+少拆一层标签、改一个字、少算一次重复，都会红。
 """
 from __future__ import annotations
 
@@ -58,6 +58,17 @@ def test_a_quote_changed_by_one_char_is_reported_with_its_field():
     assert acc.quote_misses(short, SOURCE) == []
 
 
+def test_a_catchphrase_changed_by_one_char_is_reported():
+    """口癖是本人原话里的固定说法，须逐字出现在原文；**不设字数下限**。
+
+    挡住两条变异：① 不查口癖（读数一栏恒为 0 条）→ 反例仍判 0；② 套用引文那条 4 字
+    下限 → 「无事忙」这种 3 字口癖被跳过，反例判 0。
+    """
+    src = "众人见他来了，都笑道：「无事忙来了。」宝玉道：「好姐姐，你别恼。」"
+    assert acc.catchphrase_misses(["无事忙", "好姐姐"], src) == []
+    assert acc.catchphrase_misses(["无忙事", "好姐姐"], src) == ["无忙事"]
+
+
 def test_a_repeated_relationship_target_is_reported_with_its_count():
     """重复的 target 连同次数一起报出，次数多的在前。
 
@@ -91,8 +102,8 @@ def _stats(card) -> dict:
     return {"mode": "distill", "elapsed_s": 10.0, "stages": {}, "final": "done", "card": card}
 
 
-def test_the_three_card_checks_stop_the_run():
-    """三条判据要真的挂在 `over_limit` 上，不是只从 `print_distill` 打出来。
+def test_the_card_checks_stop_the_run():
+    """四条判据要真的挂在 `over_limit` 上，不是只从 `print_distill` 打出来。
 
     挡住变异：判据只进读数不进停下条件 —— 读数报「引文查不到 1」，`over_limit` 却不认，
     验收仍报「未命中停下条件」。
@@ -103,7 +114,9 @@ def test_the_three_card_checks_stop_the_run():
     why = acc.over_limit(_stats({
         "valid": True,
         "dialogue": {"n": 3, "hit": 2, "miss": ["缺一句"]},
+        "catchphrase_miss": ["查无此口癖"],
         "quote_miss": [{"field": "key_memories[0]", "quote": "查无此句"}],
         "dup_targets": [["贾母", 3]],
     }), counts, _clean_env())
-    assert len(why) == 3 and all("对话示例" in w or "引文" in w or "关系重复" in w for w in why), why
+    assert len(why) == 4 and all(
+        "对话示例" in w or "口癖" in w or "引文" in w or "关系重复" in w for w in why), why
