@@ -419,11 +419,6 @@ class Distiller:
     #: 1/24：够装一份完整档案，又给「输出跑飞」留了封顶代价。格式化各组仍用
     #: `CARD_MAX_TOKENS` —— 每组只出卡的一部分，上限不必跟着放大。
     LONG_OUTPUT_MAX_TOKENS = 16384
-    #: 归并/压缩结果的字数上限。DeepSeek 官方换算 1 个中文字符 ≈ 0.6 token，8000 字
-    #: ≈ 4800 tokens，是 `CARD_MAX_TOKENS` 的 59% —— 剩下一半给提示词、JSON 骨架与
-    #: 格式化阶段，归并正文才不至于顶到输出上限被 `finish_reason=length` 截断（缺陷：
-    #: 刘姥姥单批归并撞 8192 截断，任务整体失败）。取舍顺序见 `PROFILE_PRIORITY_LINE`。
-    REDUCE_BUDGET_CHARS = 8000
     #: 角色识别算法的版本：口径（提示词 / 覆盖范围 / 合并规则）一改就 +1。
     #: 名单落库时带此版本，读回时版本不符即当无缓存 —— 旧版本的名单是残缺的
     #: （只覆盖前 1 万字那版只认头两章），沿用比重算更糟。值是**唯一定义**，
@@ -559,15 +554,20 @@ class Distiller:
 
     @staticmethod
     def _reduce_system_prompt(character_name: str) -> str:
+        """归并提示词：按**维度**限量，不给整份档案定字数。
+
+        上一版一边写「保留所有原文对话原句」，一边补一句总字数预算，两条互相打架：
+        输入是几十片分析，原句全留远超任何输出上限，模型只能二选一 —— 实测刘姥姥那次
+        选了保原句，正文撞 `max_tokens` 被 `finish_reason=length` 截断。改成每维度
+        「200 字概括 + 5 条原句」后，上限不随输入体量增长，也就没有预算可抢。
+        """
         return (
             f"你正在整合关于「{character_name}」的多份独立片段分析。\n"
             "规则：\n"
-            "1. 合并重复信息，但保留所有原文对话原句\n"
+            "1. 合并重复信息；每个维度先写不超过 200 字的概括，再列最有代表性的 5 条原文原句\n"
             "2. 矛盾不要调和，标注为【矛盾】并都保留\n"
             "3. 区分角色本人的话与他人评价\n"
-            f"4. 整合结果控制在 {Distiller.REDUCE_BUDGET_CHARS} 字以内；篇幅不够时按优先级取舍\n"
-            f"{PROFILE_PRIORITY_LINE}\n"
-            "口癖和说话风格的原文例句必须保留。"
+            f"{PROFILE_PRIORITY_LINE}"
         )
 
     @staticmethod
@@ -1770,6 +1770,8 @@ class Distiller:
         result = self._llm.chat(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
+            # 漏传会落回适配器阶梯的 config.yaml 档（本仓 4096），比流式那条更早截断。
+            max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
         )
         usage = self._llm.last_usage
         self._try_record_usage("distill_reduce", usage)
@@ -1797,7 +1799,7 @@ class Distiller:
             "分批归并",
             "distill_reduce",
             stream=True,
-            max_tokens=self.CARD_MAX_TOKENS,
+            max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
         )
         if truncated or not reply.strip():
             raise DistillError(
@@ -1812,9 +1814,10 @@ class Distiller:
         usage = yield from self._llm.chat_stream_long(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
-            # 显式给上限：漏传会落回适配器默认的 4096，只有分批归并/格式化的一半，
-            # 而这条是每本普通书（≤80 片）的必经路径（WP13）。
-            max_tokens=self.CARD_MAX_TOKENS,
+            # 显式给上限：漏传会落回适配器阶梯的 config.yaml 档（本仓 4096）。
+            # 这条是每本普通书（≤80 片）的必经路径，产物是整份档案而非卡的分片，
+            # 故用 LONG_OUTPUT_MAX_TOKENS 而不是 CARD_MAX_TOKENS。
+            max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
         )
         self._try_record_usage("distill_reduce", usage)
 

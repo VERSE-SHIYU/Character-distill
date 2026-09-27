@@ -134,17 +134,18 @@ class TestBatchReduceUsesTheLongOutputStream:
         assert out == "合并结果", f"分批归并没有走流式长输出（2.0s 静默被当故障）：{out!r}"
 
 
-class TestSingleReduceUsesTheCardOutputCap:
-    """WP13 S6：单次归并（≤80 片，每本普通书都走这条）的输出上限 = `CARD_MAX_TOKENS`。
+class TestSingleReduceUsesTheLongOutputCap:
+    """WP13 S6：单次归并（≤80 片，每本普通书都走这条）的输出上限 = `LONG_OUTPUT_MAX_TOKENS`。
 
     `_single_reduce_stream` 原先不传 `max_tokens` → 适配器落回 4096，只有分批归并
     （`_single_reduce_async`）与格式化的一半。WP11 起 `length` 截断是硬失败，这条
-    就成了普通书蒸馏的必红路径 —— 所以两处必须同批上线。
+    就成了普通书蒸馏的必红路径 —— 所以两处必须同批上线。归并产物是**整份档案**而非
+    卡的分片，故不与格式化共用 `CARD_MAX_TOKENS`。
 
-    变异：删掉 `max_tokens=self.CARD_MAX_TOKENS` → 记录到 None，本条红。
+    变异：删掉 `max_tokens=self.LONG_OUTPUT_MAX_TOKENS` → 记录到 None，本条红。
     """
 
-    def test_single_reduce_passes_card_max_tokens(self):
+    def test_single_reduce_passes_the_long_output_cap(self):
         seen: list = []
 
         class _LLM:
@@ -159,8 +160,8 @@ class TestSingleReduceUsesTheCardOutputCap:
         out = "".join(d._single_reduce_stream(["分析一", "分析二"], "角色"))
 
         assert out == "档案"
-        assert seen == [Distiller.CARD_MAX_TOKENS], (
-            f"单次归并的输出上限没对齐 CARD_MAX_TOKENS：{seen}")
+        assert seen == [Distiller.LONG_OUTPUT_MAX_TOKENS], (
+            f"单次归并的输出上限没对齐 LONG_OUTPUT_MAX_TOKENS：{seen}")
 
 
 class TestAnyBatchFailureFailsTheWholeReduce:
@@ -170,7 +171,7 @@ class TestAnyBatchFailureFailsTheWholeReduce:
     识别（分批是并发发出的，按调用次序认会飘），分别造截断 / 空正文。
 
     断言：上屏恰一个 error 帧、无 `formatting` 帧、格式化 0 次；并断言分批归并的输出
-    上限是 `CARD_MAX_TOKENS`。变异：① 截断照常交出半截 ② 恢复单批吞异常
+    上限是 `LONG_OUTPUT_MAX_TOKENS`。变异：① 截断照常交出半截 ② 恢复单批吞异常
     ③ 恢复空批跳过 ④ 不传 max_tokens。
     """
 
@@ -221,8 +222,8 @@ class TestAnyBatchFailureFailsTheWholeReduce:
         fmt_calls = [c for c in calls if "你正在整合关于" not in c["system"]]
         assert len(reduce_calls) >= 2, f"没跑到分批归并：{calls}"
         assert fmt_calls == [], f"格式化不该被调用：{[c['system'][:20] for c in fmt_calls]}"
-        assert {c["max_tokens"] for c in reduce_calls} == {8192}, (
-            f"分批归并的输出上限不是 CARD_MAX_TOKENS："
+        assert {c["max_tokens"] for c in reduce_calls} == {Distiller.LONG_OUTPUT_MAX_TOKENS}, (
+            f"分批归并的输出上限不是 LONG_OUTPUT_MAX_TOKENS："
             f"{[c['max_tokens'] for c in reduce_calls]}"
         )
 

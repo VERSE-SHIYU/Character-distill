@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""归并预算与格式分组拆分的读数锁（WP17）。
+"""归并限量与格式分组拆分的读数锁（WP17）。
 
-三处坏法都只在真验收（真模型、真长书）里才露头，且都不抛异常：
+两处坏法都只在真验收（真模型、真长书）里才露头，且都不抛异常：
 
-- 归并提示词没写字数上限 → 单批归并撞 `CARD_MAX_TOKENS` 被 `finish_reason=length`
-  截断，整任务失败（实测：刘姥姥）。
-- 上限换成的 token 估算超过上限的 60% → 留给提示词与 JSON 骨架的余量不够，照样截断。
+- 归并提示词要模型「保留所有原文对话原句」而输出有硬上限 → 输入是几十片分析，
+  原句全留装不下，模型保了原句就被 `finish_reason=length` 截断，整任务失败
+  （实测：刘姥姥）。改成按维度限量（200 字概括 + 5 条原句）后上限不随输入增长。
 - relationships 与其余字段同组 → 关系条数随登场人数增长（宝玉几十条），那一组顶爆而
   其余字段都没超，卡就少关系。
 
@@ -52,12 +52,13 @@ def _reduce_distiller(monkeypatch) -> tuple[Distiller, _CapturingLLM]:
     return d, llm
 
 
-def test_all_three_reduce_entry_points_carry_the_budget_and_the_priority(monkeypatch):
-    """三处归并入口的 system prompt 都含字数上限与优先级那一句（共用 `_reduce_system_prompt`）。
+def test_all_three_reduce_entry_points_ask_for_a_capped_summary_plus_five_quotes(monkeypatch):
+    """三处归并入口都按维度限量，且都不再要求「保留所有原文对话原句」。
 
-    挡住：把任意一处改回自带的旧提示词（不再走共用那份）—— 那一处既没上限也没优先级，
-    本断言红。分批归并（`_single_reduce_async`）与单批流式（`_single_reduce_stream`）是
-    两条真实路径，各自都可能被单独「顺手改回」。
+    挡住两件事：把任意一处改回自带的旧提示词（不再走共用那份），以及把限量规则换回
+    无上限的「保留所有原文对话原句」—— 后者正是刘姥姥那次把正文顶到 `max_tokens`
+    截断的写法。分批归并（`_single_reduce_async`）与单批流式（`_single_reduce_stream`）
+    是两条真实路径，各自都可能被单独「顺手改回」。
     """
     d, llm = _reduce_distiller(monkeypatch)
     d._single_reduce(["片段分析"], "角色")
@@ -66,20 +67,9 @@ def test_all_three_reduce_entry_points_carry_the_budget_and_the_priority(monkeyp
 
     assert len(llm.systems) == 3, f"三个入口没各发一次：{len(llm.systems)}"
     for system in llm.systems:
-        assert str(Distiller.REDUCE_BUDGET_CHARS) in system, system[:80]
-        assert PROFILE_PRIORITY_LINE in system, system[:80]
-
-
-def test_the_budget_leaves_margin_under_the_card_token_cap():
-    """字数上限按 0.6 token/字换算后不得超过上限的 60%（其余留给提示词与 JSON 骨架）。
-
-    挡住：把 `REDUCE_BUDGET_CHARS` 调大到 9000 —— 9000 × 0.6 = 5400 > 8192 × 0.6 = 4915.2，
-    估算的正文 token 吃掉六成以上，截断余量被挤掉，本断言红。
-    """
-    estimated = Distiller.REDUCE_BUDGET_CHARS * 0.6
-    assert estimated <= 0.6 * Distiller.CARD_MAX_TOKENS, (
-        f"{Distiller.REDUCE_BUDGET_CHARS} 字 ≈ {estimated} tokens，超过上限的 60%"
-    )
+        assert "每个维度先写不超过 200 字的概括，再列最有代表性的 5 条原文原句" in system, system[:100]
+        assert PROFILE_PRIORITY_LINE in system, system[:100]
+        assert "保留所有原文对话原句" not in system, system[:100]
 
 
 def test_prestep_and_dimension_f_ride_with_G5_while_dimension_M_stays_in_G4():
