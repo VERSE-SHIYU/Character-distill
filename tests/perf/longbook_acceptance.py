@@ -50,6 +50,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import yaml  # noqa: E402
 from evidence_writer import code_sha, write_evidence  # noqa: E402
 from core.distiller import Distiller  # noqa: E402
 from core.schema import CharacterCard  # noqa: E402
@@ -59,7 +60,21 @@ EXPECTED_CHARS = 866_149       # §10 A3：不是这份就不是同一本书
 EXPECTED_IDENTIFY_CHUNKS = 242  # §10 A3：_split_chunks(text, 5000) 的片数
 EXPECTED_CHUNK_SIZE = 5000     # §10 A1：_chunk_size 必须 5000
 EXPECTED_MAP_CONCURRENCY = 60  # §10 A1：WP6 实测更正后的值（原 250 撞 429）
-EXPECTED_MODEL = "deepseek-v4-pro"   # §10 A1
+
+
+def _production_default_model() -> str:
+    """§10 A1 的期望模型 —— 取自 `config.example.yaml`，不在这里写第二份。
+
+    验收核的是**生产默认值**，而那个值只有一处：生产容器没有 config.yaml，`Distiller` /
+    `LLMAdapter` / `web/deps.py` 都回退读 `config.example.yaml`。写死在脚本里会在改默认
+    模型时悄悄变陈旧（2026-09-27 改 `deepseek-v4-pro` → `deepseek-flash` 那次就是），
+    下次验收报「model 不符」却看不出是谁的错。
+    """
+    cfg = yaml.safe_load((ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+    return cfg["llm"]["model"]
+
+
+EXPECTED_MODEL = _production_default_model()   # §10 A1
 IDENTIFY_CHUNK_SIZE = 5000     # 识别用 self._chunk_size，不看 text_type（§1.28）
 IDENTIFY_LIMIT_S = 480.0       # §10 B4 / D2：整请求 ≤ 8 分钟
 DISTILL_LIMIT_S = 300.0        # §10 D2：宝玉 > 5 分钟即停
@@ -647,6 +662,11 @@ def over_limit(stats: dict, counts: dict, env: dict) -> list[str]:
         if b2.get("main_miss") or b2.get("same_bad") or b2.get("generics_bad"):
             why.append("B2 任一条不成立")
     if stats.get("mode") == "distill":
+        # 任务终态不是 done（error / interrupted / 轮询超时）就是失败，且**必须**停下：
+        # 失败发生在归并或格式化时既没有 usage 行（批数 0）也没有超时，下面两条判据
+        # 都静默通过 —— 于是「跑挂了」被读成「通过」。终态是唯一在每种失败下都成立的信号。
+        if stats.get("final") != "done" or stats.get("error"):
+            why.append(f"任务终态 {stats.get('final')}")
         if (stats.get("elapsed_s") or 0) > DISTILL_LIMIT_S:
             why.append(f"蒸馏 {stats['elapsed_s']}s > {DISTILL_LIMIT_S:.0f}s")
         for i, b in enumerate((stats.get("stages") or {}).get("batches") or []):

@@ -14,6 +14,7 @@ import adapters.llm_adapter as M
 from core.concurrency import AdaptiveGate
 from core.distiller import DistillError, Distiller
 from core.request_context import LLM_CALLER, Caller, current_user_id
+from core.schema import FORMAT_GROUPS
 
 
 class TestReduceAllEmptyBails:
@@ -133,17 +134,18 @@ class TestBatchReduceUsesTheLongOutputStream:
         assert out == "合并结果", f"分批归并没有走流式长输出（2.0s 静默被当故障）：{out!r}"
 
 
-class TestSingleReduceUsesTheCardOutputCap:
-    """WP13 S6：单次归并（≤80 片，每本普通书都走这条）的输出上限 = `CARD_MAX_TOKENS`。
+class TestSingleReduceUsesTheLongOutputCap:
+    """WP13 S6：单次归并（≤80 片，每本普通书都走这条）的输出上限 = `LONG_OUTPUT_MAX_TOKENS`。
 
     `_single_reduce_stream` 原先不传 `max_tokens` → 适配器落回 4096，只有分批归并
     （`_single_reduce_async`）与格式化的一半。WP11 起 `length` 截断是硬失败，这条
-    就成了普通书蒸馏的必红路径 —— 所以两处必须同批上线。
+    就成了普通书蒸馏的必红路径 —— 所以两处必须同批上线。归并产物是**整份档案**而非
+    卡的分片，故不与格式化共用 `CARD_MAX_TOKENS`。
 
-    变异：删掉 `max_tokens=self.CARD_MAX_TOKENS` → 记录到 None，本条红。
+    变异：删掉 `max_tokens=self.LONG_OUTPUT_MAX_TOKENS` → 记录到 None，本条红。
     """
 
-    def test_single_reduce_passes_card_max_tokens(self):
+    def test_single_reduce_passes_the_long_output_cap(self):
         seen: list = []
 
         class _LLM:
@@ -158,8 +160,8 @@ class TestSingleReduceUsesTheCardOutputCap:
         out = "".join(d._single_reduce_stream(["分析一", "分析二"], "角色"))
 
         assert out == "档案"
-        assert seen == [Distiller.CARD_MAX_TOKENS], (
-            f"单次归并的输出上限没对齐 CARD_MAX_TOKENS：{seen}")
+        assert seen == [Distiller.LONG_OUTPUT_MAX_TOKENS], (
+            f"单次归并的输出上限没对齐 LONG_OUTPUT_MAX_TOKENS：{seen}")
 
 
 class TestAnyBatchFailureFailsTheWholeReduce:
@@ -169,7 +171,7 @@ class TestAnyBatchFailureFailsTheWholeReduce:
     识别（分批是并发发出的，按调用次序认会飘），分别造截断 / 空正文。
 
     断言：上屏恰一个 error 帧、无 `formatting` 帧、格式化 0 次；并断言分批归并的输出
-    上限是 `CARD_MAX_TOKENS`。变异：① 截断照常交出半截 ② 恢复单批吞异常
+    上限是 `LONG_OUTPUT_MAX_TOKENS`。变异：① 截断照常交出半截 ② 恢复单批吞异常
     ③ 恢复空批跳过 ④ 不传 max_tokens。
     """
 
@@ -220,8 +222,8 @@ class TestAnyBatchFailureFailsTheWholeReduce:
         fmt_calls = [c for c in calls if "你正在整合关于" not in c["system"]]
         assert len(reduce_calls) >= 2, f"没跑到分批归并：{calls}"
         assert fmt_calls == [], f"格式化不该被调用：{[c['system'][:20] for c in fmt_calls]}"
-        assert {c["max_tokens"] for c in reduce_calls} == {8192}, (
-            f"分批归并的输出上限不是 CARD_MAX_TOKENS："
+        assert {c["max_tokens"] for c in reduce_calls} == {Distiller.LONG_OUTPUT_MAX_TOKENS}, (
+            f"分批归并的输出上限不是 LONG_OUTPUT_MAX_TOKENS："
             f"{[c['max_tokens'] for c in reduce_calls]}"
         )
 
@@ -344,6 +346,77 @@ class TestRouting:
             except Exception:
                 pass
             mock_long.assert_not_called()
+
+    # ── 默认阈值（上面每个用例都把 150000 钉死了，默认值只有这里看得到）──
+
+    def test_a_book_at_hongloumeng_scale_takes_one_pass_at_the_default_threshold(self):
+        """默认阈值下：52 万 token 走一次读完，95 万 token 走分片。
+
+        挡住：把默认值退回 150000 —— 红楼梦（实测 519,689 token）会掉进分片路径，
+        也就是归并撞输出上限那条路。判据只看**走哪条路**，不看阈值是几。
+        """
+        d = Distiller(llm=self.distiller._llm, config_path=None)
+        text = "测试" * 100
+        with patch.object(Distiller, "_estimate_tokens", return_value=519_689):
+            with patch.object(d, "_distill_longcontext_stream", return_value=iter([])) as one_pass:
+                list(d.distill_incremental_stream(text, "角色"))
+            one_pass.assert_called_once()
+        with patch.object(Distiller, "_estimate_tokens", return_value=950_000):
+            with patch.object(d, "_distill_longcontext_stream") as one_pass:
+                try:
+                    list(d.distill_incremental_stream(text, "角色"))
+                except Exception:
+                    pass
+            one_pass.assert_not_called()
+
+    def test_the_one_pass_request_puts_the_whole_text_before_the_character_name(self):
+        """一次读完的请求里，全文排在角色名之前 —— 否则跨角色前缀不共享，缓存恒不命中。
+
+        Context Caching 按**前缀**匹配（命中要求从头逐 token 相同，
+        https://api-docs.deepseek.com/guides/kv_cache），所以共享的正文必须落在请求
+        最前面。挡住：把角色名放回系统提示开头（改前的结构，同一本书换个角色从第 1
+        个 token 就分叉）。
+        """
+        llm = MagicMock()
+        llm.last_usage = None
+        seen: list[tuple] = []
+        llm.chat_stream_long.side_effect = lambda system, messages, max_tokens=None: (
+            seen.append((system, messages, max_tokens)), iter([])
+        )[1]
+        d = Distiller(llm=llm, config_path=None)
+        text = "此处是正文。" * 40
+        name = "独一无二的测试角色"
+        with patch.object(Distiller, "_estimate_tokens", return_value=1_000):
+            list(d.distill_incremental_stream(text, name))
+
+        system, messages, max_tokens = seen[0]
+        assert text in system, "全文不在一次读完请求里"
+        assert system.index(text) < system.index(name), "角色名出现在全文之前，前缀无法共享"
+        assert text not in "".join(m["content"] for m in messages), "全文被送了两遍（system 里一份、user 里又一份）"
+        assert max_tokens == Distiller.LONG_OUTPUT_MAX_TOKENS
+
+    def test_the_sync_one_pass_request_uses_the_same_prompt(self):
+        """同步那条一次读完与流式共用同一个提示词构造函数 —— 顺序不能只对流式成立。
+
+        `_distill_longcontext` 曾自己拼提示词、停在旧顺序（角色名写在系统提示开头），
+        于是「全文在前」只对了一半的调用。挡住：同步那条再各拼各的。
+        """
+        llm = MagicMock()
+        llm.last_usage = None
+        seen: list[tuple] = []
+        llm.chat.side_effect = lambda system, messages, max_tokens=None: (
+            seen.append((system, messages, max_tokens)), '{"name": "T", "identity": "T"}'
+        )[1]
+        d = Distiller(llm=llm, config_path=None)
+        text = "此处是正文。" * 40
+        name = "独一无二的测试角色"
+        with patch.object(Distiller, "_estimate_tokens", return_value=1_000):
+            d.distill_incremental(text, name)
+
+        system, messages, max_tokens = seen[0]
+        assert system.index(text) < system.index(name), "角色名出现在全文之前，前缀无法共享"
+        assert text not in "".join(m["content"] for m in messages), "全文被送了两遍"
+        assert max_tokens == Distiller.LONG_OUTPUT_MAX_TOKENS
 
 
 class TestAsyncChatClientParam:
@@ -506,7 +579,7 @@ class TestMapPhaseFailureHandling:
 
 
 class TestFormatFieldGroups:
-    """WP7 F3：4 组 ∪ 后置字段 == CharacterCard.model_fields，两两无交集。
+    """WP7 F3：各组 ∪ 后置字段 == CharacterCard.model_fields，两两无交集。
 
     分组与后置字段定义在 core/schema.py 一处（紧挨 CharacterCard），本测试直接读那份
     定义，不另存副本。变异 = 从某组删一个字段 → 并集缺项，union 断言变红。
@@ -551,12 +624,14 @@ class _FakeAsyncClient:
         pass
 
 
-# 组模板里的键名互不重叠，故拿它认「这条调用是哪一组」。
+# 组模板里的键名互不重叠，故拿它认「这条调用是哪一组」。relationships 已从 G4 拆到
+# G5，两组各用各的模板键作标记。
 _FORMAT_GROUP_MARKERS = (
     ("G1", '"name": "角色名"'),
     ("G2", '"personality_traits"'),
     ("G3", '"speaking_style"'),
-    ("G4", '"relationships"'),
+    ("G4", '"key_memories"'),
+    ("G5", '"relationships"'),
 )
 _FORMAT_GROUP_ORDER = [g for g, _ in _FORMAT_GROUP_MARKERS]
 
@@ -602,10 +677,11 @@ def _group_reply(group: str) -> str:
 
 
 class TestFormatGroupsRunInParallel:
-    """WP7 F1：4 组并行、各记各账、`formatting` 帧恰 1 次且在 4 组之前。
+    """WP7 F1：各组并行、各记各账、`formatting` 帧恰 1 次且在各组之前。
 
-    并行判据是 `threading.Barrier(4)` —— 串行实现等不到第 4 个，2 s 后破障，该组失败，
-    成品卡就出不来（无 str 帧）。记账判据是 4 条 `distill_format` 各带不同 usage。
+    并行判据是 `threading.Barrier(len(FORMAT_GROUPS))` —— 串行实现等不齐，2 s 后破障，
+    该组失败，成品卡就出不来（无 str 帧）。记账判据是每组一条 `distill_format`、各带不同
+    usage。组数从 `FORMAT_GROUPS` 读，不写死 —— 关系拆到 G5 时这里不该跟着改。
 
     变异：① 改回串行 ② 每组各发一次 `formatting`。
     """
@@ -614,7 +690,8 @@ class TestFormatGroupsRunInParallel:
     TEXT = "AB" * (1500 * 50)   # 150000 字符 → 50 片（≤80，走单次合并）
 
     def test_four_groups_run_in_parallel_and_account_separately(self, monkeypatch):
-        barrier = threading.Barrier(4, timeout=2)
+        n_groups = len(FORMAT_GROUPS)
+        barrier = threading.Barrier(n_groups, timeout=2)
         events: list[str] = []
         rows: list[tuple[str, dict | None]] = []
 
@@ -638,7 +715,7 @@ class TestFormatGroupsRunInParallel:
                     yield "合并结果"
                     return {"prompt_tokens": 1, "completion_tokens": 1}
                 group = _format_group_of(system)
-                barrier.wait()            # 串行实现到这里等不齐 4 个 → 破障
+                barrier.wait()            # 串行实现到这里等不齐 → 破障
                 idx = _FORMAT_GROUP_ORDER.index(group) if group else -1
                 events.append(f"group:{group}")
                 yield _group_reply(group)
@@ -657,21 +734,21 @@ class TestFormatGroupsRunInParallel:
                 events.append("formatting")
 
         fmt_rows = [u for a, u in rows if a == "distill_format"]
-        assert len(fmt_rows) == 4, f"distill_format 记账不是 4 条：{rows}"
-        assert len({json.dumps(u, sort_keys=True) for u in fmt_rows}) == 4, (
-            f"4 组账目分不开：{fmt_rows}"
+        assert len(fmt_rows) == n_groups, f"distill_format 记账不是 {n_groups} 条：{rows}"
+        assert len({json.dumps(u, sort_keys=True) for u in fmt_rows}) == n_groups, (
+            f"各组账目分不开：{fmt_rows}"
         )
         assert events.count("formatting") == 1, f"formatting 帧不是恰 1 次：{events}"
-        assert events[0] == "formatting", f"formatting 帧不在 4 组调用之前：{events}"
-        assert sum(1 for e in events if e.startswith("group:")) == 4, events
+        assert events[0] == "formatting", f"formatting 帧不在各组调用之前：{events}"
+        assert sum(1 for e in events if e.startswith("group:")) == n_groups, events
         assert sum(1 for f in frames if isinstance(f, str)) == 1, "成品卡不是恰 1 个 str 帧"
 
 
 class TestBatchCountDecidesTotalMerge:
     """WP7 F2：批数决定是否先总合并。
 
-    100 片（2 批）→ 归并恰 2 次（**无总合并**），4 组输入都含两批结果；
-    50 片（1 批）→ 归并恰 1 次，4 组输入就是这次合并的输出。
+    100 片（2 批）→ 归并恰 2 次（**无总合并**），各组输入都含两批结果；
+    50 片（1 批）→ 归并恰 1 次，各组输入就是这次合并的输出。
 
     变异：① 恢复总合并（100 片那条变 3 次）② 一律跳过合并（50 片那条变 0 次）。
     """
@@ -721,20 +798,20 @@ class TestBatchCountDecidesTotalMerge:
         assert reduces == ["合并甲", "合并乙"] or reduces == ["合并乙", "合并甲"], (
             f"分批归并次数不对（应恰 2 次、无总合并）：{reduces}"
         )
-        assert len(formats) == 4, f"格式化不是 4 组：{len(formats)}"
+        assert len(formats) == len(FORMAT_GROUPS), f"格式化不是各组一次：{len(formats)}"
         for body in formats:
             assert "合并甲" in body and "合并乙" in body, (
-                f"4 组没有直接读到两批归并结果：{body[-120:]}"
+                f"各组没有直接读到两批归并结果：{body[-120:]}"
             )
 
     def test_single_batch_merges_once_then_formats_from_it(self):
         reduces, formats = self._run(self.TEXT_50, [])
 
         assert reduces == ["合并甲"], f"≤80 片应恰 1 次归并：{reduces}"
-        assert len(formats) == 4, f"格式化不是 4 组：{len(formats)}"
+        assert len(formats) == len(FORMAT_GROUPS), f"格式化不是各组一次：{len(formats)}"
         for body in formats:
             assert body.endswith("合并甲"), (
-                f"4 组输入不是这次合并的输出：{body[-120:]}"
+                f"各组输入不是这次合并的输出：{body[-120:]}"
             )
 
 

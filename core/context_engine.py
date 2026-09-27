@@ -41,6 +41,10 @@ def _truncate(text: str, max_tokens: int) -> str:
 # ── 模型 → token 预算映射 ──────────────────────────────────
 # 未知模型用 32000 保底，保留现有比例。
 MODEL_BUDGET_MAP: dict[str, int] = {
+    # `deepseek-flash` 与 `deepseek-v4-pro` 同为 1M 上下文，预算同值。生产自 2026-09-27
+    # 起默认发前者（`config.example.yaml`）；不列它只会多一行「unknown model」告警，
+    # 值本来也走 32000 保底，列出来是让那行告警重新有意义。
+    "deepseek-flash": 32000,
     "deepseek-v4-pro": 32000,
     "claude-sonnet": 24000,
 }

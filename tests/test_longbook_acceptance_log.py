@@ -59,8 +59,9 @@ def _clean_env() -> dict:
     }
 
 
-def _stats(elapsed_s: float = 10.0) -> dict:
-    return {"mode": "distill", "elapsed_s": elapsed_s, "stages": {}}
+def _stats(elapsed_s: float = 10.0, final: str = "done") -> dict:
+    """干净基线：A 的对齐门逐项相等、任务终态 done —— 让 `over_limit` 只可能因日志计数而停下。"""
+    return {"mode": "distill", "elapsed_s": elapsed_s, "stages": {}, "final": final}
 
 
 def test_sample_log_counts_the_real_lines_and_not_the_lookalikes(tmp_path):
@@ -118,3 +119,19 @@ def test_a_failed_judge_sample_is_reported_but_does_not_stop_the_run(tmp_path):
                                 "WARNING Identify judge sample 3 failed: IncompleteResponseError\n"))
     assert counts["判定样本失败"] == 1
     assert acc.over_limit(_stats(), counts, _clean_env()) == []
+
+
+def test_a_task_that_did_not_end_done_stops_the_run():
+    """D2：任务终态不是 done（error / interrupted / 轮询超时）必须停下。
+
+    挡住：distill 分支只看耗时与批 token —— 归并或格式化中途失败时既没有 usage 行
+    （批数 0）也没超时，两条判据都静默通过，于是「跑挂了」被读成「通过」。终态是唯一
+    在每种失败下都成立的信号（实测：刘姥姥归并撞 8192 截断，门槛报「未命中」）。
+    """
+    why = acc.over_limit(_stats(final="error"), acc.count_log(None), _clean_env())
+    assert why == ["任务终态 error"], why
+
+
+def test_a_task_that_ended_done_does_not_trip_the_final_state_stop():
+    """基线：终态 done 时这条判据不发声 —— 否则它会盖住真正该报的判据。"""
+    assert acc.over_limit(_stats(final="done"), acc.count_log(None), _clean_env()) == []

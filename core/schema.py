@@ -89,19 +89,23 @@ class CharacterCard(BaseModel):
 
 
 # ── 格式化字段分组（WP7）──────────────────────────────────────────────
-# 流式蒸馏的格式化按 4 组并行生成；非流式 distill_incremental 仍用完整提示词。
+# 流式蒸馏的格式化按组并行生成；非流式 distill_incremental 仍用完整提示词。
 # 这里是分组的**唯一出处**：提示词片段、子 schema 都从这里派生，不另存副本
-# （两份手维护清单必然漂移）。F3 断言「4 组 ∪ POST_FORMAT_FIELDS ==
+# （两份手维护清单必然漂移）。F3 断言「各组 ∪ POST_FORMAT_FIELDS ==
 # CharacterCard.model_fields，两两无交集」。组序即提示词片段顺序，别随意调。
 FORMAT_GROUPS: dict[str, tuple[str, ...]] = {
     "G1": ("name", "identity", "background"),
     "G2": ("personality_traits", "values", "inner_tensions",
            "emotional_patterns", "decision_style"),
     "G3": ("speaking_style", "dialogue_examples", "first_message", "cognitive"),
-    "G4": ("relationships", "key_memories", "character_arc", "psyche"),
+    # relationships 从 G4 拆出来单独成组：关系条数随登场人数增长（宝玉这种主角几十
+    # 条），与其余字段同组会把这组的输出顶到 token 上限；分组之间各给各的上限，
+    # 拆开后关系再长也只挤自己那一组。
+    "G4": ("key_memories", "character_arc", "psyche"),
+    "G5": ("relationships",),
 }
 
-# 后置步骤产出的字段（_auto_tag / _generate_awakening），不进 4 组。
+# 后置步骤产出的字段（_auto_tag / _generate_awakening），不进分组。
 POST_FORMAT_FIELDS: tuple[str, ...] = ("tags", "awakening_message")
 
 

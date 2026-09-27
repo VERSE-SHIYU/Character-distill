@@ -46,8 +46,8 @@
 20. **流式用量存在共享属性上**：`LLMAdapter.chat_stream` 写 `self.last_usage`（`adapters/llm_adapter.py:786` 清空、`:816` 写入、`:840-841` 估算兜底）；`_collect_stream`（`core/distiller.py:660`）经 `core/utils.py:82-83` 读它记账；span 收尾 `_infer_finalize`（`adapters/llm_adapter.py:299`）也读它。已复现：几条流几乎同时结束、且 usage chunk 之后还有一次 `[DONE]` 读时 300/300 串号；结束时刻错开时 300/300 正确。
 21. **`T.spanned` 的生成器包装能透传返回值**：`result = yield from fn(...)`（`core/telemetry.py:272`）+ `return result`（`:288`）。
 22. **分批合并单批失败被静默丢弃**：单批异常 → 结果置空（`core/distiller.py:1511-1513`）；流式路径空批 print 后跳过（`:2024`）；只有全空才报错（`:1528`）。
-23. **续跑只认 interrupted**：`/start` 经 `find_interrupted_distill`（`storage/postgres_store.py:3380`，`WHERE ... status = 'interrupted'`）找可复用任务（`web/routers/distill.py:786-810`）。合并失败的任务状态是 `error`，再点蒸馏是新任务，Map 全部重跑。`AGENTS.md` 已登记：非 interrupted 行命不中是已知取舍，「按 (user, text, character) 找最近一条可复用行」属加功能，另立项。
-24. **分片缓存键不含模型与 Map 提示词版本**：分片级门只比 `text_fingerprint(chunk)`（`core/distiller.py:254`；写入在 `:1913`）；任务级门只比 `chunk_size` 与全文指纹（`web/routers/distill.py:799-802`）。对照：识别的缓存键已含模型与版本（`core/distiller.py:966`，`{指纹}:{model}:{IDENTIFY_VERSION}`）。
+23. **续跑只认 interrupted**：`/start` 经 `find_interrupted_distill`（`storage/postgres_store.py:3380`，`WHERE ... status = 'interrupted'`）找可复用任务（`web/routers/distill.py:786-810`）。合并失败的任务状态是 `error`，再点蒸馏是新任务，Map 全部重跑。`AGENTS.md` 已登记：非 interrupted 行命不中是已知取舍，「按 (user, text, character) 找最近一条可复用行」属加功能，另立项。**（已由 WP8 修复：PR #28，`0dbb3eb`）**
+24. **分片缓存键不含模型与 Map 提示词版本**：分片级门只比 `text_fingerprint(chunk)`（`core/distiller.py:254`；写入在 `:1913`）；任务级门只比 `chunk_size` 与全文指纹（`web/routers/distill.py:799-802`）。对照：识别的缓存键已含模型与版本（`core/distiller.py:966`，`{指纹}:{model}:{IDENTIFY_VERSION}`）。**（已由 WP8 修复：PR #28，`0dbb3eb`）**
 25. 前端蒸馏默认 `force=false`（`web/frontend/src/store/useAppStore.js:831`）。
 26. 本地 worktree 有 `config.yaml`，生产没有；`Distiller` 与 `web/deps.py:36-38` 都是「有 `config.yaml` 就读它」。本地跑出的数若不先移走它，就不是生产配置。
 
@@ -73,14 +73,14 @@
 |---|---|---|
 | 适配器 | `adapters/llm_adapter.py` | 长输出读超时（WP1）；上游失败归类（WP2）；`chat_stream` 以返回值交出本次用量（WP4） |
 | 纯计算 | `core/roster_aggregate.py`（新） | 名单汇总、并组、判主次、取理由（WP3，纯函数，不 import 任何项目模块） |
-| 数据定义 | `core/schema.py` | 角色卡 4 组字段划分，定义一处（WP7） |
-| 编排 | `core/distiller.py` | 识别：逐片 → 汇总 → 别名判断 → 出名单；蒸馏：逐片 → 分批合并（任一批失败即整体失败）→ 4 组并行格式化；长输出一律走 `_chat_accounted(stream=True)` → `_collect_stream`，这是唯一的长输出与记账出口；分片缓存键 `chunk_cache_key`（WP8） |
+| 数据定义 | `core/schema.py` | 角色卡 5 组字段划分，定义一处（WP7；G5 = `relationships`，2026-09-27 从 G4 拆出） |
+| 编排 | `core/distiller.py` | 识别：逐片 → 汇总 → 别名判断 → 出名单；蒸馏：逐片 → 分批合并（任一批失败即整体失败）→ 5 组并行格式化；长输出一律走 `_chat_accounted(stream=True)` → `_collect_stream`，这是唯一的长输出与记账出口；分片缓存键 `chunk_cache_key`（WP8） |
 | 路由 | `web/routers/distill.py` | `/start` 续跑：可复用 `interrupted` 与 `error` 两种任务（WP8） |
 | 存储 | `storage/*_store.py` | `find_resumable_distill`（由 `find_interrupted_distill` 改名并放宽状态条件，WP8） |
 
 **落点细则（红线 4 的具体化）**
 - WP3：汇总、并组、判主次、取理由是**纯计算**，写成 `core/roster_aggregate.py`（新）里的纯函数（输入逐片条目 + 别名判断给出的组对 + 全书分片数，输出名单）；`_identify_over_chunks` 只做编排：逐片调用 → 纯函数建组 → 别名判断调用 → 纯函数出名单。测试直接喂列表测纯函数，不需要 LLM 桩。
-- WP7：4 组字段划分只在 `core/schema.py` 定义一处（紧挨 `CharacterCard`），格式化与测试都读它；合并后仍由 `CharacterCard.model_validate` 统一校验，不另写校验。
+- WP7：5 组字段划分只在 `core/schema.py` 定义一处（紧挨 `CharacterCard`），格式化与测试都读它；合并后仍由 `CharacterCard.model_validate` 统一校验，不另写校验。
 
 ## 4. 工作包
 
@@ -172,6 +172,8 @@
 4. 代码合并 4 组结果 → `CharacterCard.model_validate` 校验 → 以**一个** `json.dumps` 字符串 `yield`（与第 1 节第 17 条的两种消费方式兼容）。任一组失败或校验不过：按现有重修/报错口径处理，不拼半张卡。
 5. 格式化进度：并行开始时 `yield {"status": "formatting"}`，每组完成可发一次心跳；不新增状态值。
 - **分组定案（WP7 S0 后裁决，2026-09-25）**：G1 身份与背景 = name、identity、background；G2 内在 = personality_traits、values、inner_tensions、emotional_patterns、decision_style；G3 语言 = speaking_style、dialogue_examples、first_message、cognitive；G4 关系与经历 = relationships、key_memories、character_arc、psyche。`cognitive`（认知/语言画像，含 speech_style、vocabulary_level）归 G3，与 speaking_style 同组，消除两处语义重叠。`tags`、`awakening_message` 本来就由后置步骤生成（`_auto_tag`、`_generate_awakening`），不进 4 组。分组与后置字段都在 `core/schema.py` 定义一处（紧挨 `CharacterCard`），F3 断言「4 组 ∪ 后置字段 == `model_fields`，两两无交集」。
+
+**分组更正（2026-09-27，`fix/distill-output-bounds`）**：`relationships` 已从 G4 拆出，单独成 **G5**；G4 只留 `key_memories` / `character_arc` / `psyche`，现共 **5 组**。依据：关系条数随登场人数增长（宝玉这种主角几十条），与其余字段同组时那一组先顶到 `CARD_MAX_TOKENS`，其余字段都还没超，落下的卡就少关系；分组各给各的输出上限，拆开后关系只挤自己那一组。维度 F 与关系元素规则随迁 G5，格式化前置步骤改 `keep("G5")`。**本文件里其余写「4 组」的地方（§4 WP7 步骤、§5 D5/D6、§7 时间推导、§8 F1/F2）按此读作 5 组**，历史行不改写。
 - **提示词装配**：现有格式化提示词拆成「共享前缀 + 4 个组片段」，只定义一次。共享前缀 = 分析铁律、输出要求、「所有字段按模板输出、不加自定义字段」，以及把「list 元素是一句字符串」改写成不点字段名的通用句。组片段 = 该组的维度说明、该组专属的「重要」规则、该组的 JSON 模板片段；「前置步骤（枚举全部有名字角色）」归 G4。非流式 `distill_incremental` 仍用完整提示词，由同一批片段按原顺序拼出，拼出的文本除两句外与改前逐字一致：「list 元素」那句改为通用句；模板引导句「完整 JSON 模板（所有字段必须包含，psyche 为必需嵌套对象）：」改为「JSON 模板（所有字段必须包含）：」（psyche 的要求已在 G4 的「重要」规则里，引导句进每组提示词时不能再点 psyche）。本次核对一次、报 diff，不加钉子测试。子 schema 由 `CharacterCard` 按组字段取，不手写。
 - 测试：第 8 节 F1–F5。
 
@@ -490,6 +492,17 @@ spoke：本段中此人是否亲口说了话（原文里有他本人说的直接
 | D5 | 分批时跳过总合并，4 组直接读批结果 | 总合并与格式化是串行的两次长输出，跳过省一整段 | 先总合并再格式化 |
 | D6 | 格式化 4 组并行（Skeleton-of-Thought） | 提速来自并行，不依赖前缀缓存 | 单次串行格式化 |
 | D7 | `IDENTIFY_VERSION` 2→3 不加测试 | 缺陷 89 的锁（`tests/test_character_roster.py:97`）用 monkeypatch 验机制，不看字面值；其余测试都按符号引用 `IDENTIFY_VERSION`。不加字面值钉子（改一次动一次，不是机制），2→3 由审计核对。 | 字面值钉子 |
+
+**本轮改动与依据（2026-09-27，`fix/distill-output-bounds`）**
+
+触发：刘姥姥蒸馏在归并阶段撞 `max_tokens` 被 `finish_reason=length` 截断（任务终态 `error`，宝玉按「失败即停」未跑）。根因不在措辞，在两处**按输入体量等比增长**的设计：整本走分片、归并正文没有上限。四处改动：
+
+1. **一次读完路径**（`51754ef`）：`longctx_threshold` 默认 `150000 → 900000`（`core/distiller.py`，只改这一个默认；`config.yaml` 无此键，也不新增键）。红楼梦 866149 字 ≈ 52 万 token，落在阈内 ⇒ 整本一次读完，不再分片，也就没有归并可撞。新增 `LONG_OUTPUT_MAX_TOKENS = 16384`（官方最大输出 384K 的 1/24）：一次读完与三处归并都用它，**格式化各组仍用 `CARD_MAX_TOKENS`**（每组只出卡的一部分）。一次读完的请求改成「全文在前、角色指令在后」—— Context Caching 按**前缀**匹配，共享段必须落在请求最前面（<https://api-docs.deepseek.com/guides/kv_cache>）；改前角色名开系统提示，同一本书换个角色从第 1 个 token 就分叉，正文永远进不了共享前缀。
+2. **合并路径**（`f560fca`，超过 90 万 token 的书仍走这里）：删掉「保留所有原文对话原句（最重要）」与 8000 字预算句，改为按维度限量 —— 「每个维度先写不超过 200 字的概括，再列最有代表性的 5 条原文原句」；`REDUCE_BUDGET_CHARS` 删除。原两句互相矛盾：输入是几十片分析，原句全留装不下任何输出上限，模型只能二选一。
+3. **默认模型**（`bb030af`）：`config.example.yaml` 的 `model: deepseek-v4-pro → deepseek-flash`。
+4. **分组**：`relationships` 从 G4 拆成 G5（`d7f7517`）—— 见 §4 WP7 的「分组更正」，本文件其余「4 组」一律读作 5 组。
+
+依据：DeepSeek 官方 Models & Pricing（v4-pro 上下文 1M / 最大输出 384K）<https://api-docs.deepseek.com/quick_start/pricing>；Context Caching 指南（前缀匹配）<https://api-docs.deepseek.com/guides/kv_cache>；V4.1-Flash 公告（2026-09-10）<https://api-docs.deepseek.com/zh-cn/updates/>。
 
 ## 7. 时间推导
 

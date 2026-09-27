@@ -34,7 +34,7 @@ from fastapi.testclient import TestClient
 import deps
 import server
 from core.distiller import DistillError, Distiller
-from core.schema import CharacterCard
+from core.schema import FORMAT_GROUPS, CharacterCard
 from core.text_manager import TextManager
 from deps import get_storage
 from routers import distill as D
@@ -448,11 +448,12 @@ class TestOneParseableCardOnBothChannels:
     """
 
     def _assert_all_groups_landed(self, card: CharacterCard) -> None:
-        """四个组各自的代表字段都得在卡上 —— 少一组说明那个组的帧没并进来。"""
+        """各组各自的代表字段都得在卡上 —— 少一组说明那个组的帧没并进来。"""
         assert card.name == "角色"                                    # G1
         assert card.decision_style == "谨慎型"                         # G2
         assert card.speaking_style.tone == "冷淡"                      # G3
-        assert [r.target for r in card.relationships] == ["某人"]        # G4
+        assert card.key_memories == ["关键经历"]                       # G4
+        assert [r.target for r in card.relationships] == ["某人"]        # G5
 
     def test_bg_task_accumulates_one_card(self, store, user_id, monkeypatch):
         tid = _seed_text(store, user_id)
@@ -464,12 +465,12 @@ class TestOneParseableCardOnBothChannels:
 
         assert row["status"] == "done", row
         assert len(tm.saved) == 1, f"落库的卡不是一张：{len(tm.saved)}"
-        # 落库前 `CharacterCard.model_validate(累加串)` 已过；再拿四个组各自的字段核
-        # 一遍「四段都并进来了」——只核 name 的话，逐组 yield 走的「首个顶层 {}」退路
-        # 也能捞出一张只有 G1 的卡。
+        # 落库前 `CharacterCard.model_validate(累加串)` 已过；再拿各组各自的字段核
+        # 一遍「每段都并进来了」——只核 name 的话，逐组 yield 走的「首个顶层 {}」退路
+        # 也能捞出一张只有 G1 的卡。组名从 `FORMAT_GROUPS` 读，不写死一份并列清单。
         self._assert_all_groups_landed(tm.saved[0])
-        assert sorted(distiller._llm.format_groups) == ["G1", "G2", "G3", "G4"], (
-            f"4 组没都跑：{distiller._llm.format_groups}"
+        assert sorted(distiller._llm.format_groups) == sorted(FORMAT_GROUPS), (
+            f"各组没都跑：{distiller._llm.format_groups}"
         )
 
     def test_sse_accumulates_exactly_one_str_frame(self, store, user_id, monkeypatch):

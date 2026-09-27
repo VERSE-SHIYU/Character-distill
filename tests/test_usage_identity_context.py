@@ -65,6 +65,7 @@ from core import concurrency as C
 from core import scheduling as S
 from core.request_context import Caller, LLM_CALLER, current_user_id
 from core.distiller import IDENTIFY_SYSTEM_PROMPT
+from core.schema import FORMAT_GROUPS
 
 # WP7 复用：从格式化系统提示词认组别 + 按组回字段齐备的 JSON（不另抄字段样例）
 from test_distiller_routing import _format_group_of, _group_reply
@@ -387,7 +388,7 @@ class _FakeLLM:
 
     def chat_stream(self, system, messages, max_tokens=None):
         self.last_usage = {"prompt_tokens": 13, "completion_tokens": 9}
-        # WP7：格式化按 4 组并行，每组各要各的字段 —— 按组别分派（组别从系统提示词认），
+        # WP7：格式化按字段组并行，每组各要各的字段 —— 按组别分派（组别从系统提示词认），
         # 归并那一跳照旧吐草稿。**不按 user 文案筛**：文案不是接口，改一个字就假绿。
         group = _format_group_of(system)
         text = _group_reply(group) if group else "一份档案草稿。" * 4
@@ -410,7 +411,7 @@ class _FakeLLM:
             # 合法**空**名单（不是空串、不是失败）：分片全返回 `[]` → 无组可归 →
             # `_identify_over_chunks` 在 `if not groups: return []` 短路，不进全书判定。
             # 于是「点名蒸馏 + 这本书没有具名角色」照常蒸馏下去，identify 恰好记 1 行（逐片
-            # 汇总那条）；若这里换成非空名单，判定会再记 1 行 → 全流程 10 行，与 expected=9 不符。
+            # 汇总那条）；若这里换成非空名单，判定会再记 1 行 → 全流程多 1 行，与 n_rows 不符。
             return "[]", usage
         return "甲很沉默，说了一句话。", usage
 
@@ -520,10 +521,11 @@ def test_start_route_lands_usage_rows(monkeypatch):
             assert r.status_code == 200, f"/start 没跑起来：{r.status_code} {r.text[:200]}"
             for t in threads:
                 t.join(timeout=120)
-            # WP7 起格式化的**笔数**变了（1 → 4，按字段组并行），故期望值从 5 改 9；
-            # `_wait_for_rows` 的 expected 必须给足 9 —— 给 5 会在跑到一半时快照返回，
-            # 下面那条 == 断言就成了竞态。
-            rows = _wait_for_rows(str(db), expected=9)
+            # 格式化的**笔数** = 字段组数（每组一笔，WP7 起并行）。组数从 `FORMAT_GROUPS`
+            # 读，不写死 —— 关系拆到 G5 时这里不该跟着改。`_wait_for_rows` 的 expected
+            # 必须给足，给少了会在跑到一半时快照返回，下面那条 == 断言就成了竞态。
+            n_rows = 5 + len(FORMAT_GROUPS)     # 识别/逐片/归并/自动标签/苏醒台词各 1 笔
+            rows = _wait_for_rows(str(db), expected=n_rows)
     finally:
         C.ctx_thread = real_ctx_thread
         _IDENTIFY_CACHE.clear()
@@ -533,11 +535,11 @@ def test_start_route_lands_usage_rows(monkeypatch):
             pass
 
     actions = [a for a, _ in rows]
-    assert len(rows) == 9, f"落库 {len(rows)} 行（{actions}）—— 出口发出 9 笔却只落这么些"
+    assert len(rows) == n_rows, f"落库 {len(rows)} 行（{actions}）—— 出口发出 {n_rows} 笔却只落这么些"
     assert all(u == uid for _, u in rows), f"落库归属不是请求身份：{rows}"
     assert sorted(actions) == sorted([
         "distill_identify", "distill_map", "distill_reduce",
-        "distill_format", "distill_format", "distill_format", "distill_format",
+        *["distill_format"] * len(FORMAT_GROUPS),
         "distill_autotag", "chat_awakening",
     ]), f"落库的 action 面不对：{actions}"
 

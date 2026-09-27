@@ -106,6 +106,12 @@ IDENTIFY_JUDGE_PROMPT = (
 
 DISTILL_PROMPT_BEFORE_NAME = """你是一个角色分析专家。从给定文本中精确提取角色 \""""
 
+# ── 归并 / 压缩共用的取舍优先级 ───────────────────────────────────────
+# 篇幅不够时按这个顺序丢信息：先丢背景，最后才动原文对话原句。归并
+# （`_reduce_system_prompt`）与超长压缩两处说的是同一件事 —— 定义在这里一次，
+# 改口径时两处一起变，不会一处收紧一处还写着「不要为控制篇幅而删减信息」。
+PROFILE_PRIORITY_LINE = "优先级：原文对话原句 > 行为证据 > 性格总结 > 背景信息。"
+
 # ── 格式化提示词片段（WP7）────────────────────────────────────────────
 # 提示词只在这里定义一次。完整提示词（非流式 distill_incremental 等路径）= 全部片段
 # 按本表顺序拼出；组提示词（流式按字段组并行）= 共享片段 + 本组片段，组名取
@@ -130,7 +136,7 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ("G3", 'C. 说话风格：语气、句式、口癖（直接从原文对话提取）、用词水平。禁忌用词（taboo_words）：根据角色性格，推断他绝对不会说出口的话或词（如违背人设的示弱话、不符其语言习惯的词）。从原文和人设推断，确实没有才留空。'),
     ("G2", 'D. 价值观（2-4个）：什么对他最重要？两难时怎么选？'),
     ("G4", 'E. 关键记忆（3-5个）：塑造此人的重要经历'),
-    ("G4",
+    ("G5",
         'F. 人际关系（站在本角色自己的视角，单向抽取）：\n'
         '   覆盖前置步骤中枚举的【所有】有名字角色，逐一独立成条，不遗漏次要角色（前任/现任/配角），不合并不同角色，不列入宠物等非人物。\n'
         '   关键：只写【本角色对对方的看法】，不要写"对方怎么看本角色"。关系可以不对称——A把B当挚友，B可能对A别有心思，各自视角各自抽，这是合理的。\n'
@@ -222,7 +228,7 @@ _FORMAT_IMPORTANCE_HEADING = '重要：'
 _FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
     ("G4", '- psyche 是必需嵌套对象，triggers 和 soft_spots 放在 psyche 内部，不在顶层'),
     (None, '- 数组字段的元素形态按模板来：模板里写成【一句字符串】的，就输出一句字符串，不要改成对象'),
-    ("G4", '- relationships 的每个元素是【对象】，含 target/relation/attitude/note 四个字段'),
+    ("G5", '- relationships 的每个元素是【对象】，含 target/relation/attitude/note 四个字段'),
     ("G4", '- 数字字段（openness/conscientiousness 等）输出整数，不要加引号'),
     (None, '- 所有字段必须按此模板输出，不要添加自定义字段'),
 )
@@ -238,8 +244,8 @@ def format_prompt_after(group: str | None = None) -> str:
 
     ``group=None`` → 完整提示词（与改前逐字一致，仅两句改写：「list 元素」那句改为不点
     字段名的通用句；模板引导句去掉 psyche —— psyche 的要求归 G4，引导句进每组提示词时
-    不能再点它）。``group="G1".."G4"`` → 共享前缀 + 该组片段（该组维度说明、该组「重要」
-    规则、该组 JSON 模板），供流式按组并行调用。
+    不能再点它）。``group`` 取 `FORMAT_GROUPS` 的键 → 共享前缀 + 该组片段（该组维度说明、
+    该组「重要」规则、该组 JSON 模板），供流式按组并行调用。
     """
     if group is not None and group not in FORMAT_GROUPS:
         raise ValueError(f"未知字段组：{group!r}（应为 {list(FORMAT_GROUPS)} 之一）")
@@ -249,7 +255,7 @@ def format_prompt_after(group: str | None = None) -> str:
     parts: list[str] = [
         _FORMAT_HEADER,
         _FORMAT_IRON_LAWS,
-        _FORMAT_PRESTEP if keep("G4") else "",
+        _FORMAT_PRESTEP if keep("G5") else "",
         _FORMAT_DIMS_HEADING,
         "\n".join(text for owner, text in _FORMAT_DIMS if keep(owner)),
         _FORMAT_DIM_M if keep("G4") else "",
@@ -407,6 +413,12 @@ class Distiller:
 
     SAFE_SINGLE_REDUCE = 80
     CARD_MAX_TOKENS = 8192  # 角色卡 JSON 长输出需要更大 token 上限
+    #: 一次读完（`_distill_longcontext*`）与合并（`_single_reduce*`）的输出上限 ——
+    #: 这两处的产物是**整份档案**，不是卡的分片。官方给定 deepseek-v4-pro 最大输出
+    #: 384K token（https://api-docs.deepseek.com/quick_start/pricing），16384 是它的
+    #: 1/24：够装一份完整档案，又给「输出跑飞」留了封顶代价。格式化各组仍用
+    #: `CARD_MAX_TOKENS` —— 每组只出卡的一部分，上限不必跟着放大。
+    LONG_OUTPUT_MAX_TOKENS = 16384
     #: 角色识别算法的版本：口径（提示词 / 覆盖范围 / 合并规则）一改就 +1。
     #: 名单落库时带此版本，读回时版本不符即当无缓存 —— 旧版本的名单是残缺的
     #: （只覆盖前 1 万字那版只认头两章），沿用比重算更糟。值是**唯一定义**，
@@ -466,7 +478,10 @@ class Distiller:
         distill_cfg = data["distill"]
         self._chunk_size: int = int(distill_cfg.get("chunk_size", 3000))
         self._max_profile_len: int = int(distill_cfg.get("max_profile_len", 2000))
-        self._longctx_threshold: int = int(distill_cfg.get("longctx_threshold", 150000))
+        # 官方给定 deepseek-v4-pro 上下文 1M token（https://api-docs.deepseek.com/quick_start/pricing）；
+        # 90 万是留给提示词与输出的余量。分片路径留给超过 90 万 token 的书 —— 实测红楼梦
+        # 866,149 字 ≈ 519,689 token（app 日志原文），整本一次读完即可，不必再拆。
+        self._longctx_threshold: int = int(distill_cfg.get("longctx_threshold", 900000))
         self._map_concurrency: int = max(1, int(distill_cfg.get("map_concurrency", 30)))
 
     def _try_record_usage(self, action: str = "distill", usage: dict | None = None) -> None:
@@ -539,13 +554,20 @@ class Distiller:
 
     @staticmethod
     def _reduce_system_prompt(character_name: str) -> str:
+        """归并提示词：按**维度**限量，不给整份档案定字数。
+
+        上一版一边写「保留所有原文对话原句」，一边补一句总字数预算，两条互相打架：
+        输入是几十片分析，原句全留远超任何输出上限，模型只能二选一 —— 实测刘姥姥那次
+        选了保原句，正文撞 `max_tokens` 被 `finish_reason=length` 截断。改成每维度
+        「200 字概括 + 5 条原句」后，上限不随输入体量增长，也就没有预算可抢。
+        """
         return (
             f"你正在整合关于「{character_name}」的多份独立片段分析。\n"
             "规则：\n"
-            "1. 合并重复信息，但保留所有原文对话原句\n"
+            "1. 合并重复信息；每个维度先写不超过 200 字的概括，再列最有代表性的 5 条原文原句\n"
             "2. 矛盾不要调和，标注为【矛盾】并都保留\n"
             "3. 区分角色本人的话与他人评价\n"
-            "4. 不要为控制篇幅而删减信息，尽可能完整保留人物的性格、关系、记忆细节；原文对话和口癖优先保留"
+            f"{PROFILE_PRIORITY_LINE}"
         )
 
     @staticmethod
@@ -1493,24 +1515,42 @@ class Distiller:
 
     # ── Long-context distillation ──────────────────────────────────────
 
-    def _distill_longcontext(self, text: str, character_name: str) -> CharacterCard:
-        """整本蒸：全文 + DISTILL_PROMPT → 一次性调用 LLM 产出角色卡。"""
+    @staticmethod
+    def _longcontext_prompt(text: str, character_name: str) -> tuple[str, list[dict[str, Any]]]:
+        """整本蒸的提示词（system + user 消息）—— 一次读完的两条路径共用，顺序只此一处。
+
+        「全文在前、角色相关指令在后」是为了同一本书的不同角色共享前缀、命中 Context
+        Caching：官方规则是**前缀**匹配，共享段必须落在请求最前面（
+        https://api-docs.deepseek.com/guides/kv_cache：「A subsequent request can only
+        hit the cache if it fully matches a cache prefix unit」）。原先角色名写在系统
+        提示开头，同一本书换个角色从第 1 个 token 就分叉，正文永远进不了共享前缀。
+        因而正文放在**系统段**：它是唯一排在 user 消息之前的位置。
+
+        同步（`_distill_longcontext`）与流式（`_distill_longcontext_stream`）曾各拼各的，
+        顺序因此分叉（同步那条留在旧结构）；收到这里一份，改顺序只改这里。
+        """
         try:
-            schema_obj = CharacterCard.model_json_schema()
-            schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
+            schema_str = json.dumps(
+                CharacterCard.model_json_schema(), ensure_ascii=False, indent=2)
         except (TypeError, ValueError) as exc:
             print(f"生成 CharacterCard JSON Schema 失败：{exc}")
             raise
 
         system_prompt = (
-            DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
+            "以下是完整的文本内容：\n\n" + text + "\n\n"
+            + DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
         )
-        user_content = (
-            f"以下是完整的文本内容，请基于全文为「{character_name}」生成角色卡。\n\n{text}"
-        )
+        user_content = f"请基于以上全文为「{character_name}」生成角色卡。"
+        return system_prompt, [{"role": "user", "content": user_content}]
 
-        user_messages = [{"role": "user", "content": user_content}]
-        reply, upstream_truncated = self._chat_accounted(system_prompt, user_messages, "整本蒸馏", "distill_longcontext")
+    def _distill_longcontext(self, text: str, character_name: str) -> CharacterCard:
+        """整本蒸：全文 + DISTILL_PROMPT → 一次性调用 LLM 产出角色卡。"""
+        system_prompt, user_messages = self._longcontext_prompt(text, character_name)
+
+        reply, upstream_truncated = self._chat_accounted(
+            system_prompt, user_messages, "整本蒸馏", "distill_longcontext",
+            max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
+        )
 
         data = self._parse_json_with_retry(
             reply, system_prompt, user_messages,
@@ -1524,26 +1564,14 @@ class Distiller:
 
     def _distill_longcontext_stream(self, text: str, character_name: str):
         """整本蒸流式版 — 一次性 LLM 调用 + 流式 token + 思考模式。"""
-        try:
-            schema_obj = CharacterCard.model_json_schema()
-            schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError) as exc:
-            print(f"生成 CharacterCard JSON Schema 失败：{exc}")
-            raise
-
-        system_prompt = (
-            DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
-        )
-        user_content = (
-            f"以下是完整的文本内容，请基于全文为「{character_name}」生成角色卡。\n\n{text}"
-        )
+        system_prompt, user_messages = self._longcontext_prompt(text, character_name)
 
         yield {"status": "formatting"}
         tc = 0
         usage: dict | None = None
         stream = self._llm.chat_stream_long(
-            system_prompt, [{"role": "user", "content": user_content}],
-            max_tokens=self.CARD_MAX_TOKENS,
+            system_prompt, user_messages,
+            max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
         )
         while True:
             try:
@@ -1740,6 +1768,8 @@ class Distiller:
         result = self._llm.chat(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
+            # 漏传会落回适配器阶梯的 config.yaml 档（本仓 4096），比流式那条更早截断。
+            max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
         )
         usage = self._llm.last_usage
         self._try_record_usage("distill_reduce", usage)
@@ -1767,7 +1797,7 @@ class Distiller:
             "分批归并",
             "distill_reduce",
             stream=True,
-            max_tokens=self.CARD_MAX_TOKENS,
+            max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
         )
         if truncated or not reply.strip():
             raise DistillError(
@@ -1782,9 +1812,10 @@ class Distiller:
         usage = yield from self._llm.chat_stream_long(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
-            # 显式给上限：漏传会落回适配器默认的 4096，只有分批归并/格式化的一半，
-            # 而这条是每本普通书（≤80 片）的必经路径（WP13）。
-            max_tokens=self.CARD_MAX_TOKENS,
+            # 显式给上限：漏传会落回适配器阶梯的 config.yaml 档（本仓 4096）。
+            # 这条是每本普通书（≤80 片）的必经路径，产物是整份档案而非卡的分片，
+            # 故用 LONG_OUTPUT_MAX_TOKENS 而不是 CARD_MAX_TOKENS。
+            max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
         )
         self._try_record_usage("distill_reduce", usage)
 
@@ -1936,7 +1967,7 @@ class Distiller:
         if len(profile_draft) > max_profile_len:
             compress_system = (
                 f"压缩以下「{character_name}」的角色档案到{max_profile_len}字以内。\n"
-                "优先级：原文对话原句 > 行为证据 > 性格总结 > 背景信息。\n"
+                f"{PROFILE_PRIORITY_LINE}\n"
                 "口癖和说话风格的原文例句必须保留，这是最重要的。\n"
                 "合并重复信息，但不要删除矛盾点。"
             )

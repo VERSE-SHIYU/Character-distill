@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from core.distiller import Distiller, _resume_hit, text_fingerprint
 from storage.sqlite_store import SQLiteStore
 
-# WP7：流式格式化改按 4 组并行，每组只要**本组**字段 —— 桩得按组回 JSON，否则每组
+# WP7：流式格式化改按字段组并行，每组只要**本组**字段 —— 桩得按组回 JSON，否则每组
 # 的 `required_keys` 都不过。认组别与样例值复用 WP7 那批件，不另抄一份字段样例
 # （cross-module import 在本仓有先例：test_postgres_store 引 test_published_from_backfill）。
 from test_distiller_routing import _format_group_of, _group_reply
