@@ -78,7 +78,6 @@ EXPECTED_MODEL = _production_default_model()   # §10 A1
 IDENTIFY_CHUNK_SIZE = 5000     # 识别用 self._chunk_size，不看 text_type（§1.28）
 IDENTIFY_LIMIT_S = 480.0       # §10 B4 / D2：整请求 ≤ 8 分钟
 DISTILL_LIMIT_S = 300.0        # §10 D2：宝玉 > 5 分钟即停
-CARD_MAX_TOKENS = 8192         # §10 D2：任一批 completion_tokens ≥ 它即停（截断）
 POLL_S = 1.0                   # §10 C1：每 1 s 轮询
 HITS = 5                       # §10 C4：对话示例 / 口癖各取前 5 条做原文命中
 
@@ -669,9 +668,14 @@ def over_limit(stats: dict, counts: dict, env: dict) -> list[str]:
             why.append(f"任务终态 {stats.get('final')}")
         if (stats.get("elapsed_s") or 0) > DISTILL_LIMIT_S:
             why.append(f"蒸馏 {stats['elapsed_s']}s > {DISTILL_LIMIT_S:.0f}s")
+        # 批次 completion 是**归并**的产物，上限定义在 `core/distiller.py`
+        # （`LONG_OUTPUT_MAX_TOKENS`）。脚本自己写 8192 是陈旧值：归并早已改成 16384，
+        # 8192 是**格式化各组**的上限 —— 判据会两头都错（8448 的批次漏报、8192+ 的
+        # 正常批次误报）。上限在哪定义，判据就读哪里。
+        cap = Distiller.LONG_OUTPUT_MAX_TOKENS
         for i, b in enumerate((stats.get("stages") or {}).get("batches") or []):
-            if (b.get("tok") or 0) >= CARD_MAX_TOKENS:
-                why.append(f"批{i + 1} completion {b['tok']} ≥ {CARD_MAX_TOKENS}（疑截断）")
+            if (b.get("tok") or 0) >= cap:
+                why.append(f"批{i + 1} completion {b['tok']} ≥ {cap}（疑截断）")
     # 429 不再是停下条件：WP14 把 map 并发压到闸以下之后，收敛途中打 429 是**正常信号**，
     # 次数由 `print_logs` 照报，不作判据。分片失败才是 —— 那片结果是空串，会一路污染合并。
     # 计数只在「数过」时才算命中：没给日志时值是「未提供」这个字符串，直接当布尔用
