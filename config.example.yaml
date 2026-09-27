@@ -10,7 +10,11 @@ llm:
   # 复现路径与实测数据见 AGENTS.md「蒸馏管线」二、三节。调新值前先按第四节拿数据。
   # 环境变量 LLM_MAX_TOKENS 可临时覆盖本值（压过本文件，不发版）。
   max_tokens: 4096
-  model: deepseek-v4-pro
+  # V4.1-Flash（2026-09-10 发布）。官方称其在效果/成本/速度上全面超过 V4-Pro，并计划
+  # 有序下线 V4-Pro —— 2026-09-14 12:00（北京时间）起 `deepseek-v4-pro` 的请求已被
+  # 全部路由到 V4.1-Flash 并按 Flash 单价计费，故此处改回它的正式名。
+  # https://api-docs.deepseek.com/zh-cn/updates/
+  model: deepseek-flash
   presence_penalty: 0.3  # 防重复，温和不磨平口头禅
   summary_threshold: 100
   temperature: 0.7
