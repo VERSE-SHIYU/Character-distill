@@ -51,7 +51,10 @@ async def forward_dm_to_peer(msg: dict, storage: StorageBase) -> bool:
                 headers=headers,
             )
         return resp.status_code == 200
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "DM forward failed: msg_id=%s error=%r", msg.get("id"), exc, exc_info=True,
+        )
         return False
 
 
@@ -74,8 +77,12 @@ async def forward_card_to_peer(card: dict, storage: StorageBase) -> bool:
         owner = await storage.get_user_by_id(card.get("user_id", ""))
         if owner:
             origin_region = owner.get("home_region", "")
-    except Exception:
-        pass
+    except Exception as exc:
+        # 降级而非失败：origin_region 留空，卡片本体照发
+        logger.warning(
+            "Card forward: owner region unreadable (card_id=%s error=%r)",
+            card.get("id"), exc, exc_info=True,
+        )
 
     payload = {
         "id": card["id"],
@@ -101,7 +108,10 @@ async def forward_card_to_peer(card: dict, storage: StorageBase) -> bool:
                 headers=headers,
             )
         return resp.status_code == 200
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Card forward failed: card_id=%s error=%r", card.get("id"), exc, exc_info=True,
+        )
         return False
 
 
@@ -198,7 +208,12 @@ async def forward_invite_code_to_peer(record: dict) -> bool:
                 headers=headers,
             )
         return resp.status_code == 200
-    except Exception:
+    except Exception as exc:
+        # 不记 code 本身（邀请码是凭据），用 created_by 定位是哪一次
+        logger.error(
+            "Invite-code forward failed (no retry): created_by=%s error=%r",
+            record.get("created_by"), exc, exc_info=True,
+        )
         return False
 
 
@@ -226,15 +241,24 @@ async def forward_invite_code_delete_to_peer(code: str) -> bool:
                 headers=headers,
             )
         return resp.status_code == 200
-    except Exception:
+    except Exception as exc:
+        # 不记 code 本身（邀请码是凭据）：这条也无重试，对端会一直留着这个码
+        logger.error(
+            "Invite-code delete forward failed (no retry): error=%r", exc, exc_info=True,
+        )
         return False
 
 
 async def forward_user_profile_to_peer(user_id: str, username: str, home_region: str, avatar_data: str = "") -> bool:
     """Forward a user profile to the peer node (lightweight stub sync).
 
-    Best-effort: returns False on failure.  Caller is not expected to retry;
-    the profile will be synced when the first DM exchange happens.
+    Best-effort: returns False on failure.  Caller is not expected to retry.
+
+    A previous version of this docstring said the profile would be synced when
+    the first DM exchange happens.  That is not true: the peer's
+    ``/api/inter-node/dm/receive`` only inserts the message and never writes the
+    user row.  So once this forward fails, the peer stays without the profile
+    until some other explicit forward succeeds.
     """
     peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
     if not peer_url:
@@ -260,7 +284,11 @@ async def forward_user_profile_to_peer(user_id: str, username: str, home_region:
                 headers=headers,
             )
         return resp.status_code == 200
-    except Exception:
+    except Exception as exc:
+        logger.error(
+            "User-profile forward failed (no retry): user_id=%s error=%r",
+            user_id, exc, exc_info=True,
+        )
         return False
 
 

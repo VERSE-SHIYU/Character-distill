@@ -40,7 +40,7 @@ from core.rag import CollectionUnusableError, RAGEngine
 
 
 class _FakeCollection:
-    """Minimal chroma Collection stand-in: count / peek / query with scripted behavior."""
+    """Minimal chroma Collection stand-in: count / peek / query / add with scripted behavior."""
 
     def __init__(self, count=0, dim=None, query_error=None, query_result=None, peek_error=None):
         self.name = "fake"
@@ -49,6 +49,7 @@ class _FakeCollection:
         self._query_error = query_error
         self._query_result = query_result
         self._peek_error = peek_error
+        self.docs: list[str] = []
 
     def count(self) -> int:
         return self._count
@@ -64,17 +65,49 @@ class _FakeCollection:
             raise self._query_error
         return self._query_result
 
+    def add(self, documents=None, ids=None, metadatas=None):
+        self.docs.extend(documents or [])
+
 
 class _FakeClient:
-    """Minimal chroma PersistentClient stand-in: get_collection returns a col or raises."""
+    """Minimal chroma PersistentClient stand-in.
 
-    def __init__(self, target):
+    Two shapes of construction, kept apart on purpose:
+      - ``_FakeClient(col)`` / ``_FakeClient(exc)`` — scripted ``get_collection``, for the
+        load_existing / query tests (the only method they touch).
+      - ``_FakeClient()`` — dict-backed, mirroring the real client's contract for the
+        *write* path: ``get_collection`` and ``delete_collection`` both raise
+        ``NotFoundError`` when the name is absent. That is precisely what
+        ``core/rag.py::index`` relies on when it deletes a not-yet-existing collection.
+    """
+
+    def __init__(self, target=None):
         self._target = target
+        self._collections: dict[str, _FakeCollection] = {}
+        self.deletes: list[str] = []
+        self.delete_error: Exception | None = None
 
     def get_collection(self, name=None, embedding_function=None):
         if isinstance(self._target, Exception):
             raise self._target
-        return self._target
+        if self._target is not None:
+            return self._target
+        if name not in self._collections:
+            raise NotFoundError(f"Collection {name} does not exist")
+        return self._collections[name]
+
+    def create_collection(self, name=None, embedding_function=None, metadata=None):
+        col = _FakeCollection()
+        self._collections[name] = col
+        return col
+
+    def delete_collection(self, name=None):
+        self.deletes.append(name)
+        if self.delete_error is not None:
+            raise self.delete_error
+        if name not in self._collections:
+            raise NotFoundError(f"Collection {name} does not exist")
+        del self._collections[name]
 
 
 def _make_engine(client=None, embed_dim=1024, collection=None) -> RAGEngine:
@@ -204,6 +237,63 @@ def test_query_no_collection_returns_empty():
     assert eng.query("q") == []
     assert eng.query_with_emotion("q") == []
     print("  [PASS] no collection → query returns [] (unchanged)")
+
+
+# ── #27 窄化守卫：index() 首次索引删的是「不存在的集合」──
+
+def test_real_chromadb_delete_absent_collection_raises_notfound():
+    """契约守卫：真 chromadb 删一个不存在的集合，抛的就是 ``chromadb.errors.NotFoundError``。
+
+    这是 ``except NotFoundError`` 成立的**前提**，不是对 RAGEngine 的断言。升级 chromadb
+    若把这个类型换掉，本条先红 —— 而不是等生产上「首次索引一律 500」。
+
+    只删一个不存在的集合：内存客户端、无写入（Windows 宿主对非空集合写盘段错误，此处不落盘）。
+    """
+    import chromadb
+
+    client = chromadb.EphemeralClient()
+    try:
+        client.delete_collection(name="definitely_absent_rag_collection")
+    except NotFoundError:
+        pass
+    else:
+        raise AssertionError(
+            "删不存在的集合没抛 chromadb.errors.NotFoundError —— "
+            "core/rag.py::index 的 `except NotFoundError` 前提已变，升级后首次索引会 500"
+        )
+    print("  [PASS] 真 chromadb：删不存在的集合抛 NotFoundError（窄化前提成立）")
+
+
+def test_index_succeeds_when_collection_absent():
+    """首次索引（集合不存在）：delete 抛 NotFoundError 被吞掉，index 照常建好、写入。
+
+    变异：把 `except NotFoundError` 换成别的类型 → 异常逃逸，本条红。
+    """
+    client = _FakeClient()  # dict-backed：delete 一个不存在的集合抛 NotFoundError
+    eng = _make_engine(client=client, embed_dim=1024)
+    eng.index("魏无羡坐在廊下说了很多话。" * 20, collection_name="text_new")
+
+    assert client.deletes == ["text_new"], "首次索引确实走了一次 delete（删不存在的集合）"
+    assert eng.collection_name == "text_new"
+    assert eng.collection is not None and eng.collection.docs, "集合建好了但没写入切片"
+    print("  [PASS] index() 集合不存在：delete 的 NotFoundError 被吞、照常建好并写入")
+
+
+def test_index_delete_failure_propagates():
+    """负控：delete 的真故障（非 NotFoundError）必须上抛 —— 窄化不等于「什么都吞」。
+
+    变异：把 `except NotFoundError` 放宽回 `except Exception` → 本条红。
+    """
+    client = _FakeClient()
+    client.delete_error = RuntimeError("permission denied")
+    eng = _make_engine(client=client, embed_dim=1024)
+    try:
+        eng.index("正文" * 200, collection_name="text_locked")
+    except RuntimeError as exc:
+        assert "permission denied" in str(exc), exc
+    else:
+        raise AssertionError("delete_collection 的真故障被咽掉了（窄化过头）")
+    print("  [PASS] index() delete 真故障上抛（窄化未把真故障也吞掉）")
 
 
 # ── 调用路径回归：维度不符集合 → 三条 load_existing 调用路径都降级、都绝不 index() ──
@@ -368,6 +458,9 @@ def main() -> int:
         test_query_with_emotion_dim_error_raises_not_empty,
         test_query_no_match_still_returns_empty,
         test_query_no_collection_returns_empty,
+        test_real_chromadb_delete_absent_collection_raises_notfound,
+        test_index_succeeds_when_collection_absent,
+        test_index_delete_failure_propagates,
         test_caller_mcp_degrades_no_index,
     ]
     print("=== RAG UNUSABLE-COLLECTION REGRESSION ===\n")

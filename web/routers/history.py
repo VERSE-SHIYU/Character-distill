@@ -103,10 +103,9 @@ async def export_session(
     storage: StorageBase = Depends(get_storage),
 ) -> Response:
     """Export a session as json or txt."""
-    try:
-        session = await storage.get_session_owned(session_id, user["id"])
-    except Exception:
-        raise HTTPException(404, "Session not found")
+    # 不包 try：原先会把数据库故障伪装成 404「会话不存在」，用户被误导、服务端也不留痕。
+    # `get_session_owned` 找不到本来就返回空，交给下面的 404 就够；真故障上抛给全局处理器。
+    session = await storage.get_session_owned(session_id, user["id"])
     if not session:
         raise HTTPException(404, "Session not found")
     try:
@@ -212,8 +211,14 @@ async def resume_session(
     # 4. Fetch embedding config for this user
     try:
         user_cfg = await storage.get_user_api_config(user_id) or {}
-    except Exception:
+    except Exception as exc:
         user_cfg = {}
+        # 读不到用户配置 → 静默用全局 embedding key（与 chat._ensure_session 同一形态）
+        logger.warning(
+            "Session resume: per-user api config unreadable, falling back to global "
+            "key (user_id=%s session_id=%s): %r",
+            user_id, session_id, exc, exc_info=True,
+        )
     emb = resolve_embedding(user_cfg)
 
     # 5. Rebuild RAG + ChatEngine via _create_session (with timeout)

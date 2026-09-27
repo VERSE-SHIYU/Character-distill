@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from contextlib import asynccontextmanager, contextmanager
+from typing import AsyncIterator, Iterator
 
 _logger = logging.getLogger(__name__)
 
@@ -29,6 +29,10 @@ _logger = logging.getLogger(__name__)
 # **把口径写下来**而不是修某个活 bug —— 将来若有人把它放宽成 `except BaseException`，
 # 这几行就是那条判据的落点。
 _PASS_THROUGH = (KeyboardInterrupt, SystemExit, asyncio.CancelledError)
+
+# 两个版本的**同一个**默认档 —— 「数据没存进去 / 请求失败」会发告警邮件。提成常量是为了
+# 让这一档只有一处定义：两版各自的签名都引用它，就不会出现「同步版悄悄降档」的漂移。
+DEFAULT_LEVEL = logging.ERROR
 
 
 class NonFatalOutcome:
@@ -45,9 +49,24 @@ class NonFatalOutcome:
         self.failed = False
 
 
+def _report(exc: BaseException, source: str, what: str, level: int) -> None:
+    """吞错点唯一的留痕出口 —— 同步／异步两版共用，好让级别与格式只有一处定义。
+
+    消息用 `%s` 占位而不是 f-string：告警面板与 GlitchTip 都按**消息模板**归并，
+    把变量拼进模板会把同一个故障拆成一堆各发一封邮件的问题。消息里只写 source /
+    what / 异常类型与消息，不写正文和用户输入。
+    """
+    _logger.log(
+        level,
+        "[%s] %s failed (non-fatal): %s: %s",
+        source, what, type(exc).__name__, exc,
+        exc_info=True,
+    )
+
+
 @asynccontextmanager
 async def nonfatal(
-    source: str, what: str, *, level: int = logging.ERROR,
+    source: str, what: str, *, level: int = DEFAULT_LEVEL,
 ) -> AsyncIterator[NonFatalOutcome]:
     """吞掉块内异常，并以一条 ERROR 上报到日志面板；结果对象告知调用方成没成。
 
@@ -71,9 +90,28 @@ async def nonfatal(
         raise
     except Exception as exc:
         outcome.failed = True
-        _logger.log(
-            level,
-            "[%s] %s failed (non-fatal): %s: %s",
-            source, what, type(exc).__name__, exc,
-            exc_info=True,
-        )
+        _report(exc, source, what, level)
+
+
+@contextmanager
+def nonfatal_sync(
+    source: str, what: str, *, level: int = DEFAULT_LEVEL,
+) -> Iterator[NonFatalOutcome]:
+    """`nonfatal` 的同步版本 —— 契约、级别口径、放行规则完全一致，只是不用 `await`。
+
+    **什么时候用它**：同步函数里的吞错点（`with nonfatal_sync(...)`）。异步上下文里
+    一律用 `nonfatal` —— 同步版套在 `await` 外面接不住对端抛出的异常，而调用方会
+    以为自己已经吞了。
+
+    `KeyboardInterrupt` / `SystemExit` / `CancelledError` 同样放行（共用
+    `_PASS_THROUGH`）。第三项在同步代码里仍会经过：协程被取消时异常可能落在同步
+    调用栈上，吞掉它会让任务停不下来。
+    """
+    outcome = NonFatalOutcome()
+    try:
+        yield outcome
+    except _PASS_THROUGH:
+        raise
+    except Exception as exc:
+        outcome.failed = True
+        _report(exc, source, what, level)

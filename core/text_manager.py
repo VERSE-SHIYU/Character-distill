@@ -476,7 +476,9 @@ class TextManager:
                     card_id, user_id,
                     f"[distill-validator] 校验失败，待人工复核（{verdict.error_msg[:200]}）",
                 )
-                print(f"[card-guard] judge error → flag pending review {card_id}")
+                # #26 的下游：判词失败由这里落「待人工复核」。落 logger 而不是 print ——
+                # 只上屏的话，面板与告警都看不见「某张卡被判词判挂了」。
+                logger.warning("[card-guard] judge error → flag pending review %s", card_id)
             elif verdict.flagged:
                 await self._flag_review(
                     card_id, user_id,
@@ -561,7 +563,7 @@ class TextManager:
                 actual_card_id, user_id,
                 f"[distill-validator] 校验失败，待人工复核（{verdict.error_msg[:200]}）",
             )
-            print(f"[card-guard] judge error → flag pending review {actual_card_id}")
+            logger.warning("[card-guard] judge error → flag pending review %s", actual_card_id)
         elif verdict.flagged:
             await self._flag_review(
                 actual_card_id, user_id,

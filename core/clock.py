@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+
+from core.nonfatal import nonfatal_sync
 
 DEFAULT_TZ = "Asia/Shanghai"  # 时区缺失/非法时的回退
 
@@ -20,10 +23,19 @@ def set_current_timezone(tz: str) -> None:
 
 
 def _safe_zone(tz: str | None) -> ZoneInfo:
-    try:
-        return ZoneInfo(tz) if tz else ZoneInfo(DEFAULT_TZ)
-    except Exception:
-        return ZoneInfo(DEFAULT_TZ)
+    """用哪个时区 —— **必有答案**，解析不了就兜底 `DEFAULT_TZ`。
+
+    兜底不是「正常情况」：走到这里说明上下文或库里存了一个非法的 IANA 时区名，
+    而这个用户看到的**所有**时间会整体偏移。结果仍然可用（所以是 WARNING 而非
+    ERROR），但必须留痕，否则「某个人时间一直差几小时」无从查起。
+
+    不用 `is_valid_timezone` 先探一遍再解析：那是解析两次，且引入 TOCTOU 式的
+    「探的时候好、用的时候坏」。这里就用一次 try 表达「解析不了就兜底」。
+    """
+    if tz:
+        with nonfatal_sync("clock", "resolve user timezone", level=logging.WARNING):
+            return ZoneInfo(tz)
+    return ZoneInfo(DEFAULT_TZ)
 
 
 def is_valid_timezone(tz: str | None) -> bool:
