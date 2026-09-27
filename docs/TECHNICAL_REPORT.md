@@ -63,7 +63,7 @@
 - **对话引擎**：`chat_engine.py`、`context_engine.py`（上下文构建）、`group_session.py`（群聊会话）
 - **记忆 / 检索**：`memory_manager.py`（Mem0 长期记忆）、`rag.py`（情感感知 RAG）、`embeddings.py`（DashScopeEmbedding）、`indexing_service.py` / `scene_indexer.py`（场景级向量索引）
 - **情感模拟**：`affinity_service.py`（亲和度）、`reflection_service.py`（反思/人格一致性）
-- **运营服务**：`text_manager.py`、`evaluation_pipeline.py`（蒸馏评估）、`moderation/`（内容审核决策）、`agent/`（Agent 工具调用）、`reaction_service.py`、`event_service.py`、`trash_service.py`、`email_service.py`、`clock.py`、`export.py`、`schema.py`、`log_collector.py`
+- **运营服务**：`text_manager.py`、`evaluation_pipeline.py`（蒸馏评估）、`moderation/`（内容审核决策）、`agent/`（Agent 工具调用）、`reaction_service.py`、`event_service.py`、`trash_service.py`、`email_service.py`、`clock.py`、`export.py`、`schema.py`
 
 ### 4.3 API 路由层 `web/routers/`
 

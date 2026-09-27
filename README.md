@@ -139,7 +139,6 @@ Character-distill/
 │   ├── group_session.py        # 群聊会话引擎（多角色 + 广播 + 群好感度）
 │   ├── memory_manager.py       # Mem0 长期记忆管理
 │   ├── email_service.py        # Resend 邮件验证码服务
-│   ├── log_collector.py        # 运行日志采集
 │   ├── moderation/             # 内容审核（关键词过滤/预处理/决策引擎/复审）
 │   ├── export.py               # SillyTavern v2 JSON 导出
 │   ├── utils.py                # 通用工具

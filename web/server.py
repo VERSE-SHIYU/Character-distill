@@ -75,7 +75,6 @@ from adapters.llm_adapter import llm_error_payload, llm_error_types, user_facing
 from web.llm_gate import install_llm_gate
 from web.demo_gate import install_demo_gate
 from storage.base import StorageBase
-from core.log_collector import install_log_collector
 from core.stdout_logging import install_stdout_logging
 from core.alerting import install_alert_handler
 from core.error_reporting import init_error_reporting
@@ -122,10 +121,9 @@ async def _lifespan(app: FastAPI):
         validate_fernet_key()
         validate_jwt_secret()
         validate_inter_node_secret()
-        stack.callback(install_log_collector())
         stack.callback(install_stdout_logging())
-        # 三个出口同一个装配处：面板「留在进程里等人来查」、stdout「推给 docker logs」、
-        # 告警「推去邮箱」。`ALERT_EMAIL` 未配置时不安装告警，只记一条 WARNING（见 core/alerting）。
+        # 两个出口同一个装配处：stdout「推给 docker logs」、告警「推去邮箱」。
+        # `ALERT_EMAIL` 未配置时不安装告警，只记一条 WARNING（见 core/alerting）。
         stack.callback(install_alert_handler())
         loop = asyncio.get_running_loop()
         # context 传播点注记：`asyncio.to_thread` 会拷贝 contextvar（标准库内部走
@@ -296,8 +294,7 @@ register_domain_error_handlers(app)
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     # 往上抛的错误统一在这里落一条带堆栈的 ERROR：约 300 处 `print + raise` 会走到这儿，
-    # 它们本身不改成日志（错误已由此处记录），但在此之前它们只落在 stdout 里 —— 面板
-    # （RingBufferHandler，收 WARNING+）和告警邮件（收 ERROR）都看不见。
+    # 它们本身不改成日志（错误已由此处记录），但在此之前它们只落在 stdout 里。
     logger.exception("%s %s 未捕获的异常", request.method, request.url.path)
     return JSONResponse(
         status_code=500,

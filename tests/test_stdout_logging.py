@@ -33,7 +33,7 @@ def _probe_logger(name: str) -> logging.Logger:
 
 
 def test_install_is_idempotent_and_sits_at_warning():
-    """装几次都只剩一个 handler，且级别与环形缓冲同级。
+    """装几次都只剩一个 handler，且级别是 WARNING。
 
     起点先清干净再装：别的用例（如 `test_llm_access_gate` 起真 app 的 lifespan）早就
     把本模块的单例挂上去了，按「装前装后差集」算会得空 —— 那判的是「这次调用新挂了
@@ -48,7 +48,7 @@ def test_install_is_idempotent_and_sits_at_warning():
         ours = _our_handlers()
         assert len(ours) == 1, f"装两次应只留一个 handler，实得 {len(ours)}"
         assert ours[0].level == logging.WARNING, (
-            f"handler 级别应是 WARNING（与环形缓冲同级），"
+            f"handler 级别应是 WARNING，"
             f"实得 {logging.getLevelName(ours[0].level)}"
         )
     finally:

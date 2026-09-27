@@ -208,8 +208,8 @@ class AgentToolkit:
                 f"工具执行超时（{entry.timeout}s）",
             )
         except Exception as exc:
-            # 交给下游的只有「折进 SourceTrace 随 evidence 上屏」—— 上屏不算留痕（面板与
-            # 告警都看不见）。此处补 WARNING：工具失败不致命（agent 拿到 failed 态继续），
+            # 交给下游的只有「折进 SourceTrace 随 evidence 上屏」—— 上屏不算留痕（GlitchTip
+            # 与告警都看不见）。此处补 WARNING：工具失败不致命（agent 拿到 failed 态继续），
             # 但「哪件工具、为什么失败」要能查。
             logger.warning("Agent tool %s failed: %s: %s", name, type(exc).__name__, exc,
                            exc_info=True)

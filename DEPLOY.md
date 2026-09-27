@@ -150,7 +150,7 @@ ${VAR} → deploy.yml 顶层 env 的 ${{ vars.VAR }}
 
 | 仓库变量 | 含义 |
 |---|---|
-| `ALERT_EMAIL` | 主动告警收件邮箱。**消费方 = `core/alerting.AlertHandler`**（`web/server.py` 的 lifespan 里挂到 root logger，紧跟 `install_log_collector()`）：ERROR 级日志按 (logger 名, 异常类型) 节流后发到这里，同键 1 小时一封。**空 = 不安装**（只记一条 WARNING），不设默认收件人。自测：`python -m core.alerting --test`。 |
+| `ALERT_EMAIL` | 主动告警收件邮箱。**消费方 = `core/alerting.AlertHandler`**（`web/server.py` 的 lifespan 里挂到 root logger，紧跟 `install_stdout_logging()`）：ERROR 级日志按 (logger 名, 异常类型) 节流后发到这里，同键 1 小时一封。**空 = 不安装**（只记一条 WARNING），不设默认收件人。自测：`python -m core.alerting --test`。 |
 | `SENTRY_DSN` | **后端**上报用的 DSN（自托管 GlitchTip）。**消费方 = `core/error_reporting.init_error_reporting`**。**空 = 整个模块不生效**（连 SDK 都不 import）。 |
 | `SENTRY_FRONTEND_DSN` | **前端**上报用的 DSN，GlitchTip 里另一个 project。**消费方 = `web/client_config.py`（全仓唯一读取点）**：既由 `GET /api/client-config` 下发给前端，也决定 CSP 的 `connect-src` 放行哪个 origin —— 两处同源，否则会出现「接口给了 DSN、CSP 还不放行」的半通状态。**空 = 前端不初始化 SDK，CSP 与接线前逐字一致**。 |
 

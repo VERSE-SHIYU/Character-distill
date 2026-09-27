@@ -211,8 +211,8 @@ class MessageOutbox:
         记**一条** ERROR（条数给全量、key 只列前 `_LOST_KEYS_LOGGED` 个；只记 key 与
         `scope`，不记正文）。
 
-        **`scope` 只用于那条告警**（会话 / 群聊 id）：队列自己不知道它挂在谁名下，而日志
-        面板上只有一行文本，不点名是哪条会话就没法追。
+        **`scope` 只用于那条告警**（会话 / 群聊 id）：队列自己不知道它挂在谁名下，而
+        GlitchTip 上一条问题只有一行文本，不点名是哪条会话就没法追。
 
         查库失败（库不可达）时那几个 key 两边都不进、**保持 pending** —— 那与补写同一套
         口径：此刻问不着库，就不能断言消息是丢了。见 `nonfatal`。
@@ -241,8 +241,9 @@ class MessageOutbox:
                 report.flushed.append((key, row_id))
         if lost:
             # 整轮一条，**不是每个 key 一条**：`keys` 是请求体里来的（上限 200），逐 key 记
-            # 的话一个构造出来的大 body 就能让一次重试刷满日志面板 —— 而面板正是拿来追这
-            # 条会话的地方，被刷满了就等于没有。条数给全量（截断只截列出来的 key，不少报）。
+            # 的话一个构造出来的大 body 就能让一次重试刷满 GlitchTip 的问题列表 —— 而那里
+            # 正是拿来追这条会话的地方，被刷满了就等于没有。条数给全量（截断只截列出来的
+            # key，不少报）。
             logger.error(
                 "queued messages lost: scope=%s count=%d keys=%s",
                 scope, len(lost), lost[:_LOST_KEYS_LOGGED],
