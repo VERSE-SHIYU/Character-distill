@@ -395,6 +395,29 @@ class TestRouting:
         assert text not in "".join(m["content"] for m in messages), "全文被送了两遍（system 里一份、user 里又一份）"
         assert max_tokens == Distiller.LONG_OUTPUT_MAX_TOKENS
 
+    def test_the_sync_one_pass_request_uses_the_same_prompt(self):
+        """同步那条一次读完与流式共用同一个提示词构造函数 —— 顺序不能只对流式成立。
+
+        `_distill_longcontext` 曾自己拼提示词、停在旧顺序（角色名写在系统提示开头），
+        于是「全文在前」只对了一半的调用。挡住：同步那条再各拼各的。
+        """
+        llm = MagicMock()
+        llm.last_usage = None
+        seen: list[tuple] = []
+        llm.chat.side_effect = lambda system, messages, max_tokens=None: (
+            seen.append((system, messages, max_tokens)), '{"name": "T", "identity": "T"}'
+        )[1]
+        d = Distiller(llm=llm, config_path=None)
+        text = "此处是正文。" * 40
+        name = "独一无二的测试角色"
+        with patch.object(Distiller, "_estimate_tokens", return_value=1_000):
+            d.distill_incremental(text, name)
+
+        system, messages, max_tokens = seen[0]
+        assert system.index(text) < system.index(name), "角色名出现在全文之前，前缀无法共享"
+        assert text not in "".join(m["content"] for m in messages), "全文被送了两遍"
+        assert max_tokens == Distiller.LONG_OUTPUT_MAX_TOKENS
+
 
 class TestAsyncChatClientParam:
     """async_chat(client=...) uses the right client without affecting the default."""

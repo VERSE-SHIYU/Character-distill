@@ -1515,23 +1515,38 @@ class Distiller:
 
     # ── Long-context distillation ──────────────────────────────────────
 
-    def _distill_longcontext(self, text: str, character_name: str) -> CharacterCard:
-        """整本蒸：全文 + DISTILL_PROMPT → 一次性调用 LLM 产出角色卡。"""
+    @staticmethod
+    def _longcontext_prompt(text: str, character_name: str) -> tuple[str, list[dict[str, Any]]]:
+        """整本蒸的提示词（system + user 消息）—— 一次读完的两条路径共用，顺序只此一处。
+
+        「全文在前、角色相关指令在后」是为了同一本书的不同角色共享前缀、命中 Context
+        Caching：官方规则是**前缀**匹配，共享段必须落在请求最前面（
+        https://api-docs.deepseek.com/guides/kv_cache：「A subsequent request can only
+        hit the cache if it fully matches a cache prefix unit」）。原先角色名写在系统
+        提示开头，同一本书换个角色从第 1 个 token 就分叉，正文永远进不了共享前缀。
+        因而正文放在**系统段**：它是唯一排在 user 消息之前的位置。
+
+        同步（`_distill_longcontext`）与流式（`_distill_longcontext_stream`）曾各拼各的，
+        顺序因此分叉（同步那条留在旧结构）；收到这里一份，改顺序只改这里。
+        """
         try:
-            schema_obj = CharacterCard.model_json_schema()
-            schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
+            schema_str = json.dumps(
+                CharacterCard.model_json_schema(), ensure_ascii=False, indent=2)
         except (TypeError, ValueError) as exc:
             print(f"生成 CharacterCard JSON Schema 失败：{exc}")
             raise
 
         system_prompt = (
-            DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
+            "以下是完整的文本内容：\n\n" + text + "\n\n"
+            + DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
         )
-        user_content = (
-            f"以下是完整的文本内容，请基于全文为「{character_name}」生成角色卡。\n\n{text}"
-        )
+        user_content = f"请基于以上全文为「{character_name}」生成角色卡。"
+        return system_prompt, [{"role": "user", "content": user_content}]
 
-        user_messages = [{"role": "user", "content": user_content}]
+    def _distill_longcontext(self, text: str, character_name: str) -> CharacterCard:
+        """整本蒸：全文 + DISTILL_PROMPT → 一次性调用 LLM 产出角色卡。"""
+        system_prompt, user_messages = self._longcontext_prompt(text, character_name)
+
         reply, upstream_truncated = self._chat_accounted(
             system_prompt, user_messages, "整本蒸馏", "distill_longcontext",
             max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
@@ -1549,30 +1564,13 @@ class Distiller:
 
     def _distill_longcontext_stream(self, text: str, character_name: str):
         """整本蒸流式版 — 一次性 LLM 调用 + 流式 token + 思考模式。"""
-        try:
-            schema_obj = CharacterCard.model_json_schema()
-            schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError) as exc:
-            print(f"生成 CharacterCard JSON Schema 失败：{exc}")
-            raise
-
-        # 「全文在前、角色相关指令在后」是为了同一本书的不同角色共享前缀、命中 Context
-        # Caching：官方规则是**前缀**匹配，共享段必须落在请求最前面（
-        # https://api-docs.deepseek.com/guides/kv_cache：「A subsequent request can only
-        # hit the cache if it fully matches a cache prefix unit」）。原先角色名写在系统
-        # 提示开头，同一本书换个角色从第 1 个 token 就分叉，正文永远进不了共享前缀。
-        # 因而正文放在**系统段**：它是唯一排在 user 消息之前的位置。
-        system_prompt = (
-            "以下是完整的文本内容：\n\n" + text + "\n\n"
-            + DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
-        )
-        user_content = f"请基于以上全文为「{character_name}」生成角色卡。"
+        system_prompt, user_messages = self._longcontext_prompt(text, character_name)
 
         yield {"status": "formatting"}
         tc = 0
         usage: dict | None = None
         stream = self._llm.chat_stream_long(
-            system_prompt, [{"role": "user", "content": user_content}],
+            system_prompt, user_messages,
             max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
         )
         while True:
