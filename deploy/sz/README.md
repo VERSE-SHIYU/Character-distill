@@ -17,7 +17,7 @@ tag 可变，发布者能把同一个 tag 指向新镜像；digest 指向唯一�
 | `deploy/sz/glitchtip/docker-compose.yml` | `/opt/glitchtip/docker-compose.yml` |
 | `deploy/sz/nginx/glitchtip.conf` | `/opt/character-distill/nginx/conf.d/glitchtip.conf` |
 
-## 改了本目录的文件：必须重新 scp 覆盖 + diff 验证
+## 改了本目录的文件：必须重新下发 + diff 验证
 
 因为不走流水线，**在仓库里改了不会自动到服务器**——服务器那份是上次 scp 的快照，会一直停在旧版本。
 实例：`ALLOWED_HOSTS=errors.bookecho-shiyu.cn` 于 `3dc95f3` 进了仓库，服务器那份仍缺这一行，
@@ -25,17 +25,28 @@ tag 可变，发布者能把同一个 tag 指向新镜像；digest 指向唯一�
 
 所以每次改完走三步（以 compose 为例）：
 
+`<sha>` = 要落盘的那个 commit。**源一律取 git 对象，绝不取工作树**——Windows 工作树是
+CRLF，直接 scp 会把 `\r` 一起装上服务器（watchdog.py 曾被这样装成 CRLF 版，与 LF 版
+只差行尾、行为一样，但对不上任何 git 对象）。先钉住 sha 再动手：
+
+```bash
+SHA=$(git rev-parse origin/main)   # 换成你要落盘的那个 commit
+```
+
+三步（以 compose 为例）：
+
 ```bash
 # 1) 传到临时位置再覆盖。cp 到已存在的文件会保留原权限（现为 644 root:root）
-scp -i ~/.ssh/shenzhen_deploy deploy/sz/glitchtip/docker-compose.yml \
-    admin@47.107.42.111:/tmp/glitchtip-compose.yml
+git show "$SHA":deploy/sz/glitchtip/docker-compose.yml \
+  | ssh -i ~/.ssh/shenzhen_deploy admin@47.107.42.111 'cat > /tmp/glitchtip-compose.yml'
 ssh -i ~/.ssh/shenzhen_deploy admin@47.107.42.111 \
   'sudo cp /tmp/glitchtip-compose.yml /opt/glitchtip/docker-compose.yml && rm /tmp/glitchtip-compose.yml'
 
-# 2) diff 确认与仓库一致（无输出 = 一致）
+# 2) diff 确认与仓库一致（无输出 = 一致）。比对的是同一个 git 对象，别拿工作树比——
+#    CRLF 工作树对上 LF 落盘会满屏假差异。进程替换需要 bash/zsh。
 ssh -i ~/.ssh/shenzhen_deploy admin@47.107.42.111 \
     'sudo cat /opt/glitchtip/docker-compose.yml' \
-  | diff -u deploy/sz/glitchtip/docker-compose.yml -
+  | diff -u <(git show "$SHA":deploy/sz/glitchtip/docker-compose.yml) -
 
 # 3) 重建。该 compose 只有一个服务、无 depends_on，不会碰到主站 postgres
 ssh -i ~/.ssh/shenzhen_deploy admin@47.107.42.111 \
@@ -88,8 +99,10 @@ GlitchTip 的调度器停摆时，站内告警也一起哑掉——没人报警�
 | --- | --- |
 | `deploy/sz/glitchtip/watchdog.py` | `/opt/glitchtip/watchdog.py` |
 
-**落盘**：同上一节的三步（scp 到 `/tmp` → `sudo cp` 覆盖 → `diff` 验证）。只依赖标准库 +
-宿主机的 `docker`、`curl`，没有常驻进程。
+**落盘**：同上一节的三步（`git show "$SHA":…` 取 LF → 落 `/tmp` → `sudo cp` 覆盖 → 对
+git 对象 `diff` 验证）。只依赖标准库 + 宿主机的 `docker`、`curl`，没有常驻进程。
+装完再核一次内容：`sudo sha256sum /opt/glitchtip/watchdog.py` 与
+`git show "$SHA":deploy/sz/glitchtip/watchdog.py | sha256sum` 的前 12 位必须相同。
 
 **心跳地址文件**：`/root/.glitchtip_watchdog`（`chmod 600`），内容是 Shiyu 在 GlitchTip 网页上
 建好的 Heartbeat 监控地址（一行）。宿主机上只有这一项凭据；发信复用 GlitchTip 容器自己的
