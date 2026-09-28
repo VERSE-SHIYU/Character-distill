@@ -8,7 +8,9 @@
 
 **变异**（每条用例都配一个）：① 改用模型返回的 `texts` → 复制断言红；② 去掉编号/说话人
 校验 → 越界或编造的项漏进卡；③ 说话人改回按引导语子串取名（`speaker_in`）→ 茄鲞那条红；
-④ `attach` 内绕开 `dialogue_candidates` 直接抽取 → 预检放行的与挑选看到的不是同一批。
+④ `attach` 内绕开 `dialogue_candidates` 直接抽取 → 预检放行的与挑选看到的不是同一批；
+⑤ 挑选 schema 改回变长数组 → 结构断言红（宝玉就是被无界输出截断的）；⑥ 不丢编号 0 →
+「含 0 就少一组」那条红。
 """
 from __future__ import annotations
 
@@ -44,7 +46,8 @@ class _PickLLM:
     """
 
     def __init__(self, args: dict | None = None) -> None:
-        self.args = {"picks": [{"n": 2, "prev_speaker": "凤姐"}]} if args is None else args
+        self.args = ({"pick1": 2, "speaker1": "凤姐"}
+                     if args is None else args)
         self.seen: dict = {}
         self.last_usage = {"prompt_tokens": 1, "completion_tokens": 1}
         self._model = "fake"
@@ -67,7 +70,7 @@ def test_the_examples_are_copied_from_the_source_not_taken_from_the_model():
     变异：改用 `args["texts"]`（模型生成文字再核对，即方案 B 那条路）→ 第一条断言红，
     而且验收时才会以「查不到」的形状现形。
     """
-    llm, out = _pick({"picks": [{"n": 2, "prev_speaker": "凤姐"}],
+    llm, out = _pick({"pick1": 2, "speaker1": "凤姐",
                       "texts": ["凤姐：你老慢慢说。\n刘姥姥：阿弥陀佛……"]})
 
     assert out == [GROUP2]
@@ -76,33 +79,68 @@ def test_the_examples_are_copied_from_the_source_not_taken_from_the_model():
     assert "……" not in out[0], "省略号是模型编的形态，不该出现在复制出来的示例里"
 
 
-def test_the_schema_takes_the_other_peoples_standard_names_plus_undecided():
-    """工具 Schema：`picks` 是对象数组，`n` 卡上限 N，`prev_speaker` 的 enum 是名单里
-    其他人物的标准名再加「无法判断」—— 别名不进 enum（同一人两个选项）。
+def test_the_schema_is_fixed_slots_not_an_unbounded_array():
+    """工具 Schema：挑选结果是 MAX_EXAMPLES 个固定槽位（`pick{i}` integer 0..N + `speaker{i}`
+    enum），不是变长数组 —— 数组长度 strict 拦不住，无界输出会在候选多时把回复撑爆（宝玉
+    1672 条候选那次就是 `finish_reason=length` 截断）。
 
-    变异：enum 改回含本角色或别名 → 第一条 enum 断言红；去掉 `n` 的 `maximum` → 越界编号
-    靠服务端拦不住（非 strict 供应商下由 `valid_picks` 兜第二层）。
+    `speaker{i}` 的 enum 是名单里其他人物的标准名再加「无法判断」，别名不进 enum（同一人
+    两个选项）；`pick{i}` 的 `maximum` 是候选数，`minimum` 是 0（该格不挑）。
+
+    变异：改回 `picks` 数组 → `properties` 不是六个槽位字段、结构断言红；enum 改回含本角色
+    或别名 → enum 断言红；去掉 `maximum` → 越界靠服务端拦不住（非 strict 供应商下由
+    `valid_picks` 兜第二层）。
     """
     llm, out = _pick()
 
     f = llm.seen["function"]
     assert f["name"] == "pick_dialogue_examples"
     params = f["parameters"]
+    assert params["type"] == "object"
     assert params["additionalProperties"] is False, "strict 模式要求显式关闭额外字段"
-    assert list(params["properties"]) == ["picks"]
-    item = params["properties"]["picks"]["items"]
-    assert item["type"] == "object"
-    assert item["additionalProperties"] is False
-    assert item["required"] == ["n", "prev_speaker"]
-    assert item["properties"]["n"] == {"type": "integer", "minimum": 1, "maximum": 4}
-    assert item["properties"]["prev_speaker"]["enum"] == ["凤姐", "无法判断"]
-    assert params["required"] == ["picks"]
+    # 三个格子、每格一个整数字段 + 一个 enum 字段，数量由 MAX_EXAMPLES 生成。
+    assert list(params["properties"]) == [
+        "pick1", "speaker1", "pick2", "speaker2", "pick3", "speaker3"]
+    assert params["required"] == list(params["properties"]), "strict 要求属性全部必填"
+    for i in (1, 2, 3):
+        assert params["properties"][f"pick{i}"] == {
+            "type": "integer", "minimum": 0, "maximum": 4}
+        assert params["properties"][f"speaker{i}"]["type"] == "string"
+        assert params["properties"][f"speaker{i}"]["enum"] == ["凤姐", "无法判断"]
     # 名单（标准名 + 别名）真的发给了模型：原文写「凤丫头」时它得能对到「凤姐」。
     assert "凤姐" in llm.seen["system"] and "凤丫头" in llm.seen["system"]
+    # 提示词点明了格子名与「不足填 0」，否则模型不知道往哪填、也不知道空位怎么处理。
+    assert "pick1" in llm.seen["system"] and "填 0" in llm.seen["system"]
     # 候选块真的发给了模型（编号、原文片段、两句都在），否则它无从读片段判定。
     assert "[2] 片段：" in llm.seen["messages"][0]["content"]
     assert "本句：" in llm.seen["messages"][0]["content"]
     assert len(out) == 1
+
+
+def test_three_valid_slots_make_three_examples_in_slot_order():
+    """三格都填了有效编号 → 三组示例，顺序就是格子的顺序（模型自己排的序）。"""
+    _, out = _pick({"pick1": 1, "speaker1": "凤姐",
+                    "pick2": 2, "speaker2": "凤姐",
+                    "pick3": 3, "speaker3": "凤姐"})
+
+    assert len(out) == 3
+    assert out[0].startswith("凤姐：你老快别这样说。")   # 1 号候选
+    assert out[2].startswith("凤姐：你老别急。")         # 3 号候选
+
+
+def test_a_zero_slot_means_fewer_examples():
+    """编号 0 = 这一格不挑 → 示例少于 MAX_EXAMPLES 组。
+
+    变异：不丢 0（`by_n[0]` 直接索引）→ KeyError 从 `pick_dialogue_examples` 漏出去，
+    调用方分不清是挑选失败还是代码错误 → 本断言红。
+    """
+    _, out = _pick({"pick1": 1, "speaker1": "凤姐",
+                    "pick2": 0, "speaker2": "凤姐",
+                    "pick3": 3, "speaker3": "凤姐"})
+
+    assert len(out) == 2
+    assert out[0].startswith("凤姐：你老快别这样说。")
+    assert out[1].startswith("凤姐：你老别急。")
 
 
 def test_out_of_range_duplicate_undecided_and_off_enum_picks_are_dropped_not_raised():
@@ -111,27 +149,19 @@ def test_out_of_range_duplicate_undecided_and_off_enum_picks_are_dropped_not_rai
     变异：不校验直接索引 → KeyError 从 `pick_dialogue_examples` 漏出去，调用方分不清是
     挑选失败还是代码错误；接受「无法判断」→ 拼出没有对方名的组。
     """
-    _, out = _pick({"picks": [
-        {"n": 99, "prev_speaker": "凤姐"},
-        {"n": 2, "prev_speaker": "凤姐"},
-        {"n": 2, "prev_speaker": "凤姐"},
-        {"n": 1, "prev_speaker": "无法判断"},
-        {"n": 3, "prev_speaker": "薛宝钗"},
-        {"n": "4", "prev_speaker": "凤姐"},
-        {"n": 4},
-        "不是对象",
-        None,
-    ]})
-
+    _, out = _pick({"pick1": 99, "speaker1": "凤姐",       # 越界
+                    "pick2": 2, "speaker2": "凤姐",
+                    "pick3": "3", "speaker3": "凤姐"})      # 非整数
     assert out == [GROUP2]
 
+    _, out2 = _pick({"pick1": 2, "speaker1": "凤姐",
+                     "pick2": 2, "speaker2": "薛宝钗",      # 重复编号，第二格丢
+                     "pick3": 1, "speaker3": "无法判断"})   # 判不准，第三格丢
+    assert out2 == [GROUP2]
 
-def test_at_most_three_examples_are_kept():
-    """挑出 4 组也只要前 3 组（与卡片的展示口径一致）。"""
-    _, out = _pick({"picks": [{"n": n, "prev_speaker": "凤姐"} for n in (1, 2, 3, 4)]})
-
-    assert len(out) == 3
-    assert out[0].startswith("凤姐：你老快别这样说。")
+    _, out3 = _pick({"pick1": 1, "speaker1": "薛宝钗",     # 说话人不在 enum，第一格丢
+                     "pick2": 4, "speaker2": "凤姐"})       # 第三格缺字段，不算错
+    assert out3 == ["凤姐：你老说哪里话。\n刘姥姥：我们乡下人，哪里懂这些。"]
 
 
 def test_no_candidates_at_all_is_a_task_failure_and_the_model_is_not_called():
@@ -140,7 +170,7 @@ def test_no_candidates_at_all_is_a_task_failure_and_the_model_is_not_called():
     提示里要点出「认的引号是哪些」：失败最常见的原因是版本用了别的引号（本轮不支持 ASCII
     引号），看不出这一点就只能猜。
     """
-    llm = _PickLLM({"picks": [{"n": 1, "prev_speaker": "凤姐"}]})
+    llm = _PickLLM({"pick1": 1, "speaker1": "凤姐"})
 
     with pytest.raises(DistillError, match="找不到「刘姥姥」的对话句"):
         Distiller(llm=llm, config_path=None).dialogue_candidates(
@@ -173,7 +203,7 @@ def test_attach_fills_the_field_from_the_source_and_leaves_the_rest_of_the_card_
 
     变异：不做这一步（后置只当装饰）→ 卡上留着模型编的示例，第一条断言红。
     """
-    d = Distiller(llm=_PickLLM({"picks": [{"n": 2, "prev_speaker": "凤姐"}]}),
+    d = Distiller(llm=_PickLLM({"pick1": 2, "speaker1": "凤姐"}),
                   config_path=None)
     card = CharacterCard.model_validate(
         {"name": "刘姥姥", "identity": "乡下老妪", "dialogue_examples": ["模型编的示例"]})
@@ -197,7 +227,7 @@ def test_the_previous_speaker_is_the_models_choice_not_a_name_found_in_the_lead(
     source = ('依言搛些茄鲞送入刘姥姥口中，因笑道：“你尝尝这个。”\n'
               '刘姥姥笑道：“姑娘说得是。”\n')
 
-    _, out = _pick({"picks": [{"n": 1, "prev_speaker": "凤姐"}]}, content=source)
+    _, out = _pick({"pick1": 1, "speaker1": "凤姐"}, content=source)
 
     assert out == ["凤姐：你尝尝这个。\n刘姥姥：姑娘说得是。"]
 
@@ -207,7 +237,7 @@ def test_the_subject_and_its_aliases_are_kept_out_of_the_enum():
 
     变异：enum 不排除本角色/别名 → 名单里「刘姥姥／姥姥」会各自成为一个选项，断言红。
     """
-    llm = _PickLLM({"picks": [{"n": 1, "prev_speaker": "凤姐"}]})
+    llm = _PickLLM({"pick1": 1, "speaker1": "凤姐"})
     source = ('凤姐忙和刘姥姥摆手道：“你老快别这样说。”\n'
               '刘姥姥笑道：“姑娘说得是。”\n')
 
@@ -217,14 +247,13 @@ def test_the_subject_and_its_aliases_are_kept_out_of_the_enum():
          {"name": "凤姐", "aliases": ["凤丫头"]}])
 
     assert out.dialogue_examples == ["凤姐：你老快别这样说。\n刘姥姥：姑娘说得是。"]
-    enum = llm.seen["function"]["parameters"]["properties"]["picks"]["items"][
-        "properties"]["prev_speaker"]["enum"]
-    assert enum == ["凤姐", "无法判断"]
+    props = llm.seen["function"]["parameters"]["properties"]
+    assert props["speaker1"]["enum"] == ["凤姐", "无法判断"]
 
 
 def test_attach_passes_the_failure_through_instead_of_saving_an_empty_field():
     """挑不出来 → 抛出，绝不返回一张示例为空的卡（空示例与「本来就没有」从成品分不出）。"""
-    d = Distiller(llm=_PickLLM({"picks": [{"n": 1, "prev_speaker": "凤姐"}]}),
+    d = Distiller(llm=_PickLLM({"pick1": 1, "speaker1": "凤姐"}),
                   config_path=None)
 
     with pytest.raises(DistillError, match="对话示例"):
@@ -250,7 +279,7 @@ def test_attach_takes_its_candidates_from_dialogue_candidates_not_from_the_text_
     变异：`attach` 内改为直接调 `extract_candidates`（绕开 `dialogue_candidates`）→ 示例
     来自 `content`，断言红。
     """
-    d = _FixedCandidates(_PickLLM({"picks": [{"n": 1, "prev_speaker": "凤姐"}]}),
+    d = _FixedCandidates(_PickLLM({"pick1": 1, "speaker1": "凤姐"}),
                          config_path=None)
 
     out = d.attach_dialogue_examples(

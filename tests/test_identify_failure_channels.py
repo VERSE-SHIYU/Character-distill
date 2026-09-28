@@ -503,7 +503,7 @@ class _FormattingLLM:
         """挑选对话示例：只回编号与上一句说话人（文字由代码从原文复制）。编号只发给说话人
         是「角色」的候选，正文里那条就是 1 号；上一句说话人从名单 enum 里取「路人」——
         让这一步真的跑通，别把它桩掉（本组考的是 4 组怎么并成一张卡）。"""
-        return {"picks": [{"n": 1, "prev_speaker": "路人"}]}
+        return {"pick1": 1, "speaker1": "路人"}
 
 
 def _card_distiller() -> Distiller:

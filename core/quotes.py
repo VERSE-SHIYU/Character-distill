@@ -186,38 +186,61 @@ def render_candidates(candidates: Sequence[Candidate]) -> str:
 
 
 # 一组示例两行（对方一句、角色一句），3 组够看出说话风格；再多只是把卡片撑长。
-# 上限只能写在代码里：strict 的 Schema 里 array 不支持 maxItems（约束 6），服务端不拦。
+# 上限只能靠**字段数固定**来保证：strict 的 Schema 不支持 array 的 maxItems（约束 6），
+# 服务端拦不住数组长度，所以挑选结果不是「变长的数组」而是 MAX_EXAMPLES 个固定槽位。
 MAX_EXAMPLES = 3
 
 # 上一句说话人判不准时的取值：模型选它、以及代码把它当不合格丢掉，用的是同一个字面量。
 UNDECIDED = "无法判断"
 
 
-def valid_picks(raw, total: int, enum: Sequence[str]) -> list[tuple[int, str]]:
-    """留下 `raw` 里合法的挑选项，返回 `(编号, 上一句说话人)`，顺序保留，最多 3 组。
+def pick_slot(i: int) -> tuple[str, str]:
+    """第 i 个挑选槽位的两个字段名（编号 / 上一句说话人）。
 
-    合格 = `n` 是整数、在 1..total 内、未重复，且 `prev_speaker` 在 `enum` 里又并非
-    `UNDECIDED`。非 strict 供应商可能给不合法 JSON 或编造参数（约束 6），越界编号直接
-    索引会抛 KeyError —— 调用方分不清是挑选失败（预期内，该报任务失败）还是代码错误。
-    故这里只挑出能用的，一个都没有时返回空列表，由调用方判「没有可用的挑选结果」。
+    槽位的数量与命名只由 `MAX_EXAMPLES` 生成：strict 的 schema 与 `valid_picks` 的校验共用
+    这套名字 —— 两边一旦错开，就成了「服务端填 A 格、代码读 B 格」，而取到的仍是原文里的
+    句子，验收看不出来。
     """
-    if not isinstance(raw, (list, tuple)):
+    return f"pick{i}", f"speaker{i}"
+
+
+def pick_slot_properties(total: int, enum: Sequence[str]) -> dict[str, dict]:
+    """strict schema 里挑选槽位的 properties：MAX_EXAMPLES 个「编号 + 说话人」字段。
+
+    限量靠字段数固定（见 `MAX_EXAMPLES`）；编号 `0` 表示这一格不挑（`valid_picks` 丢掉）。
+    说话人（对方名）与编号同在一个槽位，配对由结构保证：模型读片段后从 `enum` 里选。
+    """
+    props: dict[str, dict] = {}
+    for i in range(1, MAX_EXAMPLES + 1):
+        n_key, speaker_key = pick_slot(i)
+        props[n_key] = {"type": "integer", "minimum": 0, "maximum": total}
+        props[speaker_key] = {"type": "string", "enum": list(enum)}
+    return props
+
+
+def valid_picks(raw, total: int, enum: Sequence[str]) -> list[tuple[int, str]]:
+    """留下 `raw` 里合法的挑选项，返回 `(编号, 上一句说话人)`，顺序即槽位顺序。
+
+    合格 = 编号是整数、在 1..total 内、未重复，且说话人在 `enum` 里又并非 `UNDECIDED`；
+    编号 `0`（该格不挑）、缺字段、类型不对、越界、重复、判不准 —— 一律丢。非 strict 供应商
+    可能给不合法 JSON 或编造参数（约束 6），越界编号直接索引会抛 KeyError —— 调用方分不清
+    是挑选失败（预期内，该报任务失败）还是代码错误。故这里只挑出能用的，一个都没有时返回
+    空列表，由调用方判「没有可用的挑选结果」。
+    """
+    if not isinstance(raw, dict):
         return []
     allowed = set(enum) - {UNDECIDED}
     out: list[tuple[int, str]] = []
     seen: set[int] = set()
-    for p in raw:
-        if not isinstance(p, dict):
-            continue
-        n, speaker = p.get("n"), p.get("prev_speaker")
+    for i in range(1, MAX_EXAMPLES + 1):
+        n_key, speaker_key = pick_slot(i)
+        n, speaker = raw.get(n_key), raw.get(speaker_key)
         if isinstance(n, bool) or not isinstance(n, int):
             continue
         if not 1 <= n <= total or n in seen or speaker not in allowed:
             continue
         seen.add(n)
         out.append((n, speaker))
-        if len(out) == MAX_EXAMPLES:
-            break
     return out
 
 

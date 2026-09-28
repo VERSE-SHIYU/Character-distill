@@ -297,3 +297,25 @@
 - **阈值的适用范围**：一次读完这一步读入 64.4 万 token，超过 50 万。但 50 万阈值只针对「挑选」这一步的输入（补充 1 · S0 裁决）。一次读完是本 WP 之前就有的路径，本轮整任务 33.5 秒，所以不适用这个阈值。
 - **偏离接受**：本线的服务端口临时改成 5433/7863；D1 是事后按同一套正则补算的；包装脚本不含任何判据，只是转调仓内的验收脚本。
 - **记录，不挡**：3 组示例都出自同一场景，多样性有限。本轮目标是逐字准确和说话人准确，已经达到；要不要要求示例分散到不同场景，以后另议。
+
+### 补充 2（2026-09-28，宝玉真跑失败后；本节优先于补充 1 与上文冲突处）
+
+**问题（实测证据）**：宝玉验收（新 main，任务 `17ffef1ec1f7`）在 95% 失败：
+`IncompleteResponseError(finish_reason='length')`「回复被截断，请重试」。根因：候选数随角色规模变化
+（同一文本实测候选 刘姥姥 158 条、宝玉 1672 条），而原 schema 的 `picks` 是**变长数组**，提示词又要
+模型「挑出所有合格的候选」→ 输出无界 → 撞上 4096 输出上限被截断。数组长度 strict 的 Schema 拦不住
+（不支持 `maxItems`，约束 6），故「最多几组」不能靠提示词或服务端校验，只能靠结构。
+
+**改法（分支 `fix/dialogue-pick-bounded`）**：挑选 schema 由「`picks` 对象数组」改为**固定槽位**：
+`MAX_EXAMPLES` 个 `pick{i}`（integer，`minimum` 0、`maximum`=候选数；`0` = 该格不挑）配同格的
+`speaker{i}`（string enum，取补充 1 的名单标准名 + 「无法判断」）。字段名与数量由
+`core/quotes.py::pick_slot` / `pick_slot_properties` 一处按 `MAX_EXAMPLES` 生成，schema 与
+`valid_picks` 共用，不写死三份；按官方要求对象属性全部进 `required`、`additionalProperties: false`。
+提示词同步改为「按想要的顺序填进 pick1..3；不足 3 组时多出的格子编号填 0」。
+
+**保留**：`valid_picks` 仍做校验，入参由数组改为整个参数对象 —— 丢编号 0、去重、范围校验、说话人必须
+在 enum 且非「无法判断」；「最多 3 组」现在是结构保证，函数里不再有截断分支。`build_example`、候选
+抽取、说话人由模型读片段判定，全部不变。
+
+**官方依据（2026-09-28 核对）**：strict 模式要求对象属性**全部必填**、每个对象（含嵌套）设
+`additionalProperties: false`；`integer` 支持 `minimum`/`maximum`；array 不支持 `minItems`/`maxItems`。
