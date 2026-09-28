@@ -10,13 +10,13 @@
 ## 问题（实测证据）
 刘姥姥验收（Flash、一次读完、`b965f0c`）：对话示例 3 组只命中 1 组；未命中的两组都是把**被他人插话打断的两段话**拼成一句，吞掉了中间说话人的台词。提示词已要求逐字引用，模型仍然拼接——提示词约束不能保证逐字。
 
-## 已查实的约束（基线 main `ae89f7d`；执行方 S0 逐条复核，不成立即停）
-1. 对话示例由格式化片段生成：维度 I 在 `core/distiller.py:151`（归 G3），模板行 `:200`；字段 `core/schema.py:81`；`FORMAT_GROUPS["G3"]` 在 `core/schema.py:100`；后置字段 `POST_FORMAT_FIELDS = ("tags", "awakening_message")` 在 `core/schema.py:109`。
-2. 一次读完与分组格式化共用同一批片段：`format_prompt_after`（`core/distiller.py:242`），一次读完经 `_longcontext_prompt`（`:1519`），分组格式化在 `distill_incremental_stream`（`:2031` 起）。
+## 已查实的约束（基线本分支 `9c02c2d`，比 main `ae89f7d` 多 10 行，来自 `e1ac099`/`b965f0c`；执行方 S0 已逐条复核，全部成立）
+1. 对话示例由格式化片段生成：维度 I 在 `core/distiller.py:161`（归 G3），模板行 `:210`；字段 `core/schema.py:81`；`FORMAT_GROUPS["G3"]` 在 `core/schema.py:100`；后置字段 `POST_FORMAT_FIELDS = ("tags", "awakening_message")` 在 `core/schema.py:109`。
+2. 一次读完与分组格式化共用同一批片段：`format_prompt_after`（`core/distiller.py:252`），一次读完经 `_longcontext_prompt`（`:1529`），分组格式化在 `distill_incremental_stream`（`:2041` 起）。
 3. 路由的后置步骤：`_auto_tag`（`web/routers/distill.py:511`）→ 保存卡片（`:520-541`）→ 苏醒台词（`:552`，保存后 `update_card`）。
 4. 适配器：一个实例一个客户端，按构造时的 `base_url` 建（`adapters/llm_adapter.py:696`）；关闭思考的参数统一由 `_request_options`（`:748`）注入；出站守卫 `check_outbound_guard`（`:315`）；方言识别 `_detect_dialect`（`:383`）。
 5. **现有 `chat_with_tools`（`:1011`）用的是「决策轮」预算：2 次、总时限 6 秒**，前提是「短小的路由决策」。本步骤输入最多约 7 万 token，读入就要数秒，**不能复用它**（见路径机制清单）。
-6. **DeepSeek 官方文档（2026-09-28 核对）**——「模型 & 价格」页：`deepseek-flash`（V4.1-Flash）与 `deepseek-v4-pro`（0813）都支持 Tool Calls 与 JSON Output；思考模式为**默认**，须显式关闭；上下文 1M、最大输出 384K；Flash 输入（未命中缓存）空闲时段 1 元 / 百万 token、输出 4 元 / 百万 token，空闲时段为北京时间工作日 9–12、14–18 以外及周末节假日全天。「更新日志」最新一条为 2026-09-10（V4.1-Flash 发布；V4-Pro 在 9 月 14 日后继续提供）。「Tool Calls」页（strict 模式，Beta）：须用 `base_url=https://api.deepseek.com/beta`、每个 function 设 `strict: true`，服务端校验 Schema；支持 object / string / number / integer / boolean / array / enum / anyOf；**integer 支持 `minimum` / `maximum`**；array 不支持 `minItems` / `maxItems`；enum 未写数量上限；思考与非思考模式均可用。Chat Completions API 页：非 strict 时模型可能生成不合法 JSON 或编造参数，须在代码里校验。
+6. **DeepSeek 官方文档（2026-09-28 核对）**——「模型 & 价格」页：`deepseek-flash`（V4.1-Flash）与 `deepseek-v4-pro`（0813）都支持 Tool Calls 与 JSON Output；思考模式为**默认**，须显式关闭；上下文 1M、最大输出 384K；Flash 输入（未命中缓存）空闲时段 1 元 / 百万 token、输出 4 元 / 百万 token，空闲时段为北京时间工作日 9–12、14–18 以外及周末节假日全天。「更新日志」最新一条为 2026-09-10（V4.1-Flash 发布；V4-Pro 在 9 月 14 日后继续提供）。「Tool Calls」页（strict 模式，Beta）：须用 `base_url=https://api.deepseek.com/beta`、每个 function 设 `strict: true`，服务端校验 Schema；支持 object / string / number / integer / boolean / array / enum / anyOf；**integer 支持 `minimum` / `maximum`**；array 不支持 `minItems` / `maxItems`；enum 未写数量上限；思考与非思考模式均可用。Chat Completions API 页：非 strict 时模型可能生成不合法 JSON 或编造参数，须在代码里校验。「思考模式」页（2026-09-28 补核）：OpenAI 格式下关闭思考**只能**用 `extra_body={"thinking":{"type":"disabled"}}`；思考模式下带 tools 的请求必须回传 `reasoning_content`，否则 400。故 `/beta` 客户端必须与现客户端一样注入 `_request_options` 的关闭思考参数——「strict 与关闭思考」那条测试就是锁它，不能省。
 7. 逐字核对的现成逻辑在验收脚本里（分支 `fix/acceptance-card-checks` @ `b965f0c` 的 `tests/perf/longbook_acceptance.py`：拆开带说话人标签的多行对话、去掉（）动作说明、在原文里逐字查找）。产品代码不能 import 测试目录，所以要把它**搬进 `core/`**，由验收脚本反过来 import，只留一份。
 8. 原文格式（公开的 120 回红楼梦文本实测，版本与本地不同、格式一致）：对话一律用 `“……”`，全书 11,742 处；86% 前面紧跟「某某（笑）道：」类引导语；引导语含「刘姥姥」142 句、含「宝玉」1,431 句；约 15% 的引导语里有两个人名（如「凤姐忙和刘姥姥摆手道：」，说话的是凤姐）。
 
