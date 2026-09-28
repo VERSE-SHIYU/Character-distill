@@ -6852,12 +6852,12 @@ label[for] {
 }
 
 .ui-select:focus,
-.ui-select[aria-expanded="true"] {
+.ui-select[data-state="open"] {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--ring);
 }
 
-.ui-select:disabled {
+.ui-select[data-disabled] {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -6880,10 +6880,13 @@ label[for] {
 }
 
 /* 弹层：z-index 1100 —— 高于 1000/1001 的弹窗与抽屉，低于全屏图片预览
-   （9999/10000），预览层之下不显示属预期。max-height 与 overflow-y 由组件
-   内联 style 按选项数决定，此处不重复。 */
+   （9999/10000），预览层之下不显示属预期。这里写 z-index 能生效，是因为
+   Radix popper 的外包 wrapper 会复制弹层的 computed z-index。宽度与高度上限
+   走内容上由 popper 注入的两个变量。 */
 .ui-select-menu {
   z-index: 1100;
+  min-width: var(--radix-select-trigger-width);
+  max-height: min(280px, var(--radix-select-content-available-height));
   padding: 4px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
@@ -6906,22 +6909,20 @@ label[for] {
   text-overflow: ellipsis;
 }
 
-.ui-select-option.is-active {
+.ui-select-option[data-highlighted] {
+  outline: none;
   background: var(--accent-soft);
 }
 
-.ui-select-option.is-current {
+.ui-select-option[data-state="checked"] {
   padding-right: 26px;
   color: var(--accent);
   font-weight: 600;
 }
 
-.ui-select-option.is-current::after {
-  content: '✓';
+.ui-select-check {
   position: absolute;
   right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
 }
 
 /* ===== Modals ===== */
