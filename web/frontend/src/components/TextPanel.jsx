@@ -13,6 +13,7 @@ import EditCardModal from './EditCardModal'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import useCanWrite from '../hooks/useCanWrite'
 import { formatDateTime } from '../utils/time'
+import DistillWorkbenchButton from './common/DistillWorkbenchButton'
 
 const ALLOWED_EXT = ['.txt', '.md', '.json', '.csv', '.log', '.pdf', '.docx']
 const MAX_BYTES = 100 * 1024 * 1024
@@ -583,7 +584,7 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
           <h1 className="panel-title">角色管理</h1>
           <p className="panel-desc">管理所有蒸馏角色卡，点击 ⋯ 进行操作</p>
         </div>
-        <button type="button" className="dw-entry-btn" onClick={() => pushView('distillWorkbench')}>蒸馏工作台</button>
+        <DistillWorkbenchButton />
       </header>
 
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
