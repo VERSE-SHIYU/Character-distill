@@ -758,19 +758,6 @@ html.theme-midnight::before {
   border-color: rgba(251, 191, 36, 0.25);
 }
 
-/* Dropdown / select */
-.theme-midnight select.settings-input,
-.theme-galaxy select.settings-input {
-  background: var(--input-bg);
-  color: var(--text-primary);
-}
-
-.theme-midnight select.settings-input option,
-.theme-galaxy select.settings-input option {
-  background: #16131a;
-  color: var(--text-primary);
-}
-
 /* Midnight — page background applied to panels */
 .theme-midnight .panel,
 .theme-galaxy .panel {
@@ -5004,28 +4991,6 @@ label[for] {
   box-shadow: 0 0 0 3px var(--ring);
 }
 
-.history-filter {
-  min-width: 140px;
-  height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  backdrop-filter: blur(12px) saturate(160%);
-  -webkit-backdrop-filter: blur(12px) saturate(160%);
-  font: inherit;
-  font-size: 13px;
-  color: var(--text);
-  cursor: pointer;
-  outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.history-filter:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--ring);
-}
-
 .history-empty {
   text-align: center;
   color: var(--fg-subtle);
@@ -5964,10 +5929,6 @@ label[for] {
   cursor: not-allowed;
 }
 
-select.settings-input {
-  cursor: pointer;
-}
-
 .settings-theme-row {
   display: flex;
   gap: 10px;
@@ -6866,6 +6827,102 @@ select.settings-input {
 }
 .voice-toggle-mini:hover {
   background: rgba(255, 255, 255, 0.85);
+}
+
+/* ===== Themed select (ui-select) =====
+   全站下拉统一组件。配色只走主题 token，深浅色与各主题色自动跟随。 */
+.ui-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.ui-select:hover {
+  border-color: var(--accent);
+}
+
+.ui-select:focus,
+.ui-select[data-state="open"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.ui-select[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* md：完整承接原历史筛选框的尺寸与毛玻璃 */
+.ui-select--md {
+  min-width: 140px;
+  height: 40px;
+  padding: 0 12px;
+  font-size: 13px;
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+}
+
+/* sm：承接原表格内角色下拉的尺寸，紧凑场景 */
+.ui-select--sm {
+  height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+/* 弹层：z-index 1100 —— 高于 1000/1001 的弹窗与抽屉，低于全屏图片预览
+   （9999/10000），预览层之下不显示属预期。这里写 z-index 能生效，是因为
+   Radix popper 的外包 wrapper 会复制弹层的 computed z-index。宽度与高度上限
+   走内容上由 popper 注入的两个变量。 */
+.ui-select-menu {
+  z-index: 1100;
+  min-width: var(--radix-select-trigger-width);
+  max-height: min(280px, var(--radix-select-content-available-height));
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  backdrop-filter: var(--card-blur);
+  -webkit-backdrop-filter: var(--card-blur);
+  box-shadow: var(--card-shadow);
+}
+
+.ui-select-option {
+  position: relative;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ui-select-option[data-highlighted] {
+  outline: none;
+  background: var(--accent-soft);
+}
+
+.ui-select-option[data-state="checked"] {
+  padding-right: 26px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ui-select-check {
+  position: absolute;
+  right: 10px;
 }
 
 /* ===== Modals ===== */
@@ -9051,22 +9108,6 @@ select.settings-input {
   gap: 6px;
   align-items: center;
   flex-wrap: nowrap;
-}
-
-.admin-role-select {
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--btn-radius);
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-.admin-role-select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .admin-action-btn {
@@ -18696,8 +18737,7 @@ select.settings-input {
 /* ── Mobile inputs: 16px to prevent iOS auto-zoom on focus ── */
 @media (max-width: 768px) {
   input:not([type=checkbox]):not([type=radio]),
-  textarea,
-  select {
+  textarea {
     font-size: 16px;
   }
 }
