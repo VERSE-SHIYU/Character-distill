@@ -45,8 +45,26 @@ def verbatim_in(source: str, quote: str) -> bool:
     return bool(segs) and all(s in src for s in segs)
 
 
-_QUOTE = re.compile(r"“([^”]*)”")            # 原文对话一律用「“……”」（约束 8 实测）
+# 原文的对话引号样式：不同版本的书用不同的一对，同一本书里外层对话与内层引语用的是不同
+# 的对。**一份文本只用出现最多的那一对**（按开引号计数，并列按下面的顺序取）—— 三对混着
+# 匹配会把引语中的引语（`「他说『好』」`）当成另一句对话，于是后面每一句的「上一句」都
+# 错位。三种都没有（如纯 ASCII 直引号）时不猜：抽不出候选（约束 12，本轮不支持）。
+_QUOTE_PAIRS = (("“", "”"), ("「", "」"), ("『", "』"))
 _LEAD_BREAK = re.compile(r"[。！？\n]")       # 引导语只取紧贴引号的那一句
+
+
+def _quote_re(text: str) -> "re.Pattern[str] | None":
+    """这份文本的主引号样式对应的正则；三种都没有时 None。"""
+    best: tuple[int, str, str] | None = None
+    for left, right in _QUOTE_PAIRS:
+        n = text.count(left)
+        if n and (best is None or n > best[0]):
+            best = (n, left, right)
+    if best is None:
+        return None
+    _n, left, right = best
+    return re.compile(re.escape(left) + "([^" + re.escape(left)
+                      + re.escape(right) + "]*)" + re.escape(right))
 
 
 class Candidate(NamedTuple):
@@ -75,7 +93,10 @@ def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
     风格的交互」。
     """
     wanted = [n for n in names if n]
-    quotes = list(_QUOTE.finditer(text))
+    quote_re = _quote_re(text)
+    if quote_re is None:
+        return []
+    quotes = list(quote_re.finditer(text))
     out: list[Candidate] = []
     for i, m in enumerate(quotes):
         lead = _lead_before(text, quotes, i, m.start())

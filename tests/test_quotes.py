@@ -82,6 +82,55 @@ def test_no_names_or_no_quotes_yields_nothing():
     assert extract_candidates(PARA, ["薛宝钗"]) == []
 
 
+# ── 引号样式：一份文本只用出现最多的那一对（补充 1-第 1 步）─────────────────
+
+BRACKET = ("刘姥姥笑道：「我念了句『阿弥陀佛』，姑娘别见怪。」\n"
+           "凤姐道：「你老慢慢说。」\n")
+
+
+def test_the_book_quote_style_is_picked_by_the_most_opening_quotes():
+    """`「」` 的书用 `「」` 抽；只认 `“”` 的话这类文本一条候选也抽不出来。
+
+    变异：`_QUOTE` 改回只认 `“”` → 两条断言都红（抽出空列表）。
+    """
+    cands = extract_candidates(BRACKET, ["刘姥姥"])
+
+    assert [c.line for c in cands] == ["我念了句『阿弥陀佛』，姑娘别见怪。"]
+    assert [c.lead for c in cands] == ["刘姥姥笑道："]
+
+
+def test_an_inner_quote_pair_is_not_a_speaking_turn_of_its_own():
+    """外层 `「」` 里的 `『』` 是引语中的引语，不是另一句对话。
+
+    三对混着匹配会把 `『阿弥陀佛』` 插进引语序列，于是凤姐那句的「上一句」变成
+    「阿弥陀佛」—— 成组时给出的对方台词整条错位。
+
+    变异：三对各自 findall 再按位置并起来 → `prev_line` 断言红。
+    """
+    cands = extract_candidates(BRACKET, ["凤姐"])
+
+    assert len(cands) == 1
+    assert cands[0].prev_line == "我念了句『阿弥陀佛』，姑娘别见怪。"
+
+
+def test_a_tie_goes_to_the_first_pair_in_the_list():
+    """开引号数并列时按 `_QUOTE_PAIRS` 的顺序取（`“”` 优先）—— 两种样式混用的文本结果
+    是确定的，不随扫描顺序漂。
+
+    变异：比较写成 `>=`（后来者居上）→ 抽到 `「」` 那句，断言红。
+    """
+    text = "刘姥姥道：“好。”\n凤姐道：「也好。」\n"
+
+    assert [c.line for c in extract_candidates(text, ["刘姥姥", "凤姐"])] == ["好。"]
+
+
+def test_ascii_quotes_yield_no_candidates():
+    """ASCII 直引号不分左右、无法按出现顺序配对（约束 12），**本轮不支持**：不猜，抽空。"""
+    text = '刘姥姥笑道:"姑娘别见怪。"\n凤姐道:"你老慢慢说。"\n'
+
+    assert extract_candidates(text, ["刘姥姥", "凤姐"]) == []
+
+
 def test_rendered_numbers_are_the_same_numbers_the_caller_indexes_by():
     """渲染块里的编号就是 `Candidate.n`（从 1 起）—— 提示词与「按编号复制」共用一份清单。
 
