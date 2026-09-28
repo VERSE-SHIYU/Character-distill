@@ -9,6 +9,7 @@ import Loading from './common/Loading'
 import PrivateMessageChat from './PrivateMessageChat'
 import { displayName } from '../utils/displayName'
 import { Inbox } from './common/Icon'
+import SplitLayout from './common/SplitLayout'
 
 const POLL_INTERVAL = 30000
 
@@ -141,11 +142,10 @@ export default function MessagesPage() {
           </div>
         </div>
       ) : (
-        <div className="messages-layout">
-          {/* ── Sidebar: conversation list ── */}
+        <SplitLayout id="dm" label="私信列表" hasActive={!!activeOtherId} className="messages-layout" list={(
           <div
             className="messages-sidebar hide-scrollbar"
-            style={{ display: !isMobile || mobileView === 'list' ? 'flex' : 'none' }}
+            style={isMobile ? { display: mobileView === 'list' ? 'flex' : 'none' } : undefined}
           >
             <div className="messages-sidebar-header">
               <PageHeader title="私信" onBack={handleBackFromChat} />
@@ -179,6 +179,7 @@ export default function MessagesPage() {
               ))
             )}
           </div>
+        )}>
 
           {/* ── Chat area ── */}
           <div
@@ -200,7 +201,7 @@ export default function MessagesPage() {
               />
             )}
           </div>
-        </div>
+        </SplitLayout>
       )}
     </div>
   )
