@@ -25,6 +25,7 @@ from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_faci
 from core.chat_preprocessor import ChatPreprocessor
 from core.quotes import (
     UNDECIDED,
+    Candidate,
     build_example,
     extract_candidates,
     render_candidates,
@@ -421,6 +422,23 @@ def _run_async_in_ctx_thread(factory: _cabc.Callable[[], _cabc.Awaitable[_T]]) -
     if not ok:
         raise payload
     return payload
+
+
+def _other_people(
+    roster: Sequence[dict], name: str, aliases: Sequence[str]
+) -> list[dict]:
+    """名单里**除本角色外**的人物：`[{"name", "aliases"}]`。
+
+    预检（`dialogue_candidates` 判「有没有别人可当对方」）与挑选（enum 的可选项、提示词里
+    的名单）都从这一处取，不各写一份 —— 两处一旦分家，预检放行的名单与挑选看到的名单就
+    不是同一份。本角色的标准名与别名一并排除，否则 enum 里多出一个「自己」，模型可能
+    选出自己接自己的组。
+    """
+    return [
+        {"name": c.get("name"), "aliases": list(c.get("aliases") or [])}
+        for c in roster
+        if c.get("name") and c.get("name") != name and c.get("name") not in aliases
+    ]
 
 
 def _roster_hint(others: Sequence[dict]) -> str:
@@ -1615,14 +1633,42 @@ class Distiller:
 
         self._try_record_usage("distill_longcontext", usage)
 
-    def pick_dialogue_examples(
+    def dialogue_candidates(
         self,
         content: str,
         name: str,
         aliases: Sequence[str] = (),
+        roster: Sequence[dict] = (),
+    ) -> list[Candidate]:
+        """抽取「本角色」（含别名）的候选对话句；抽不出就抛 `DistillError`。
+
+        预检与挑选共用这一个方法（补充 1-第 3 步）：三条通道在花钱之前先调一眼，挑选时
+        `attach_dialogue_examples` 再调一次 —— 同一个纯函数、同样的输入，结果必然相同，
+        所以「预检过了，挑选就不会因为没候选而失败」这句成立。抽候选约 0.1 秒（约束 11），
+        跨长步骤把候选对象带着走不值这点钱。
+
+        两种抽不出都是任务失败（不是落一张没有示例的卡）：
+        - 名单里除本角色外没有别人 —— enum 没有可选的对方，成不了「一问一答」；
+        - 原文里找不到带本角色名的对话句 —— 提示里点出认的引号，版本用了别的引号时能看出
+          来（本轮只认 `“”`/`「」`/`『』`，见 `core/quotes.py`）。
+        """
+        if not _other_people(roster, name, aliases):
+            raise DistillError(
+                f"挑选对话示例失败：名单里除「{name}」外没有别人，凑不成一问一答")
+        candidates = extract_candidates(content, [name, *aliases])
+        if not candidates:
+            raise DistillError(
+                f"挑选对话示例失败：原文里找不到「{name}」的对话句"
+                f"（识别的引号：“”「」『』）")
+        return candidates
+
+    def pick_dialogue_examples(
+        self,
+        candidates: Sequence[Candidate],
+        name: str,
         others: Sequence[dict] = (),
     ) -> list[str]:
-        """从原文挑 1-3 组对话示例，**文字一律由代码从原文复制**（WP17）。
+        """从候选里挑 1-3 组对话示例，**文字一律由代码从原文复制**（WP17）。
 
         模型的选择能力够、逐字复现能力不够：实测它会把被人插话打断的两段话拼成一句
         （对话示例 3 组只命中 1 组，都是在中间吞掉了另一个说话人的台词）。故这里换成
@@ -1632,16 +1678,14 @@ class Distiller:
         引导语里的人名取名会把宾语当主语（问题①：「送入刘姥姥口中，因笑道」是凤姐说的），
         代码只负责校验与拼装。
 
-        `others` 是名单里**除本人外**的人物（`[{"name", "aliases"}]`）：标准名做 enum 的
-        可选项，标准名加别名写进提示词，好让模型把原文里的别称（「凤丫头」）对回标准名。
+        候选由调用方从 `dialogue_candidates` 取（本方法不再自己抽取，两处判据因此同源）；
+        `others` 是 `_other_people` 算出的名单里**除本人外**的人物（`[{"name", "aliases"}]`）：
+        标准名做 enum 的可选项，标准名加别名写进提示词，好让模型把原文里的别称（「凤丫头」）
+        对回标准名。
 
-        无可用的候选、或挑选结果一组都成不了对，都抛 `DistillError` —— 与其他后置步骤
-        同口径：任务是失败，不是落一张没有对话示例的卡。
+        挑选结果一组都成不了对，抛 `DistillError` —— 与其他后置步骤同口径：任务是失败，
+        不是落一张没有对话示例的卡。
         """
-        candidates = extract_candidates(content, [name, *aliases])
-        if not candidates:
-            raise DistillError(
-                f"挑选对话示例失败：原文里找不到「{name}」的对话句")
         enum = [*(dict.fromkeys(o.get("name") for o in others if o.get("name"))),
                 UNDECIDED]
         function = {
@@ -1715,17 +1759,16 @@ class Distiller:
         一份的结果是其中一条悄悄漏了这一步，而卡上「没有对话示例」与「本来就没有」从
         成品看不出来。
 
-        `roster` 是识别出的名单（`resolve_characters` 的形状）；本角色自己的名字与别名
-        必须排除，否则 enum 里多出一个「自己」，模型可能选出自己接自己的组。
+        `roster` 是识别出的名单（`resolve_characters` 的形状）；本角色自己的名字与别名由
+        `_other_people` 排除，否则 enum 里多出一个「自己」，模型可能选出自己接自己的组。
+
+        候选只从 `dialogue_candidates` 取：预检走的是同一个方法，两处不会分家。
         """
-        others = [
-            {"name": c.get("name"), "aliases": list(c.get("aliases") or [])}
-            for c in roster
-            if c.get("name") and c.get("name") != name and c.get("name") not in aliases
-        ]
+        others = _other_people(roster, name, aliases)
+        candidates = self.dialogue_candidates(content, name, aliases, roster)
         card_dict = card.model_dump()
         card_dict["dialogue_examples"] = self.pick_dialogue_examples(
-            content, name, aliases, others)
+            candidates, name, others)
         return CharacterCard.model_validate(card_dict)
 
     def _auto_tag(self, card_dict: dict) -> list[str]:

@@ -7,14 +7,15 @@
 或「对方名错」的形态出现，届时既贵又看不出是哪一环。
 
 **变异**（每条用例都配一个）：① 改用模型返回的 `texts` → 复制断言红；② 去掉编号/说话人
-校验 → 越界或编造的项漏进卡；③ 说话人改回按引导语子串取名（`speaker_in`）→ 茄鲞那条红。
+校验 → 越界或编造的项漏进卡；③ 说话人改回按引导语子串取名（`speaker_in`）→ 茄鲞那条红；
+④ `attach` 内绕开 `dialogue_candidates` 直接抽取 → 预检放行的与挑选看到的不是同一批。
 """
 from __future__ import annotations
 
 import pytest
 
 from core.distiller import DistillError, Distiller
-from core.quotes import verbatim_in
+from core.quotes import Candidate, verbatim_in
 from core.schema import CharacterCard
 
 # 刘姥姥四条候选（1..4），每条上一句都是凤姐的话：四组都能成对，好验「最多 3 组」。
@@ -55,9 +56,9 @@ class _PickLLM:
 
 def _pick(args: dict | None = None, content: str = CONTENT, others=OTHERS):
     llm = _PickLLM(args)
-    out = Distiller(llm=llm, config_path=None).pick_dialogue_examples(
-        content, "刘姥姥", [], others)
-    return llm, out
+    d = Distiller(llm=llm, config_path=None)
+    candidates = d.dialogue_candidates(content, "刘姥姥", [], others)
+    return llm, d.pick_dialogue_examples(candidates, "刘姥姥", others)
 
 
 def test_the_examples_are_copied_from_the_source_not_taken_from_the_model():
@@ -134,14 +135,34 @@ def test_at_most_three_examples_are_kept():
 
 
 def test_no_candidates_at_all_is_a_task_failure_and_the_model_is_not_called():
-    """原文里没有这个角色的对话句 → 没得挑，直接失败（不花一次调用）。"""
+    """原文里没有这个角色的对话句 → 没得挑，直接失败（不花一次调用）。
+
+    提示里要点出「认的引号是哪些」：失败最常见的原因是版本用了别的引号（本轮不支持 ASCII
+    引号），看不出这一点就只能猜。
+    """
     llm = _PickLLM({"picks": [{"n": 1, "prev_speaker": "凤姐"}]})
 
-    with pytest.raises(DistillError, match="对话示例"):
-        Distiller(llm=llm, config_path=None).pick_dialogue_examples(
+    with pytest.raises(DistillError, match="找不到「刘姥姥」的对话句"):
+        Distiller(llm=llm, config_path=None).dialogue_candidates(
             "只有叙述，没有对话。", "刘姥姥", [], OTHERS)
 
     assert llm.seen == {}, "没候选还去问模型 = 让它在空清单上编编号"
+
+
+def test_a_roster_with_nobody_but_the_subject_fails_before_the_model_is_called():
+    """名单里除本角色外没有别人 → enum 没有可选的对方，成不了组，同样在花钱前失败。
+
+    本角色自己的别名也一并排除：名单里只剩他这一行（标准名 + 别名）仍是「没有别人」。
+    变异：不查这一条 → 预检放行，付完一次调用才在挑选处发现一组都成不了对。
+    """
+    llm = _PickLLM()
+
+    with pytest.raises(DistillError, match="没有别人"):
+        Distiller(llm=llm, config_path=None).dialogue_candidates(
+            CONTENT, "刘姥姥", ["姥姥"],
+            [{"name": "刘姥姥", "aliases": ["姥姥"]}])
+
+    assert llm.seen == {}, "没有可当对方的人还去问模型 = 让它编一个不存在的对方名"
 
 
 # ── 贴到卡上（后置步骤）：三条产卡通道共用，卡上其余字段一个不动 ──────────────
@@ -209,3 +230,33 @@ def test_attach_passes_the_failure_through_instead_of_saving_an_empty_field():
     with pytest.raises(DistillError, match="对话示例"):
         d.attach_dialogue_examples(
             CharacterCard(name="刘姥姥"), "只有叙述，没有对话。", "刘姥姥")
+
+
+class _FixedCandidates(Distiller):
+    """把 `dialogue_candidates` 换成替身：返回的是哪批候选，一眼看得出有没有被用上。"""
+
+    FIXED = [Candidate(n=1, lead="", line="我这一辈子也没见过这样的排场。",
+                       prev_lead="", prev_line="你老慢慢说。", context="")]
+
+    def dialogue_candidates(self, content, name, aliases=(), roster=()):
+        return list(self.FIXED)
+
+
+def test_attach_takes_its_candidates_from_dialogue_candidates_not_from_the_text_again():
+    """预检与挑选是同一个取候选的方法：换掉它，`attach` 的产出跟着换。
+
+    `content` 与替身给的候选是两段不同的话，产出哪一段就说明 `attach` 走的是哪条路 ——
+    预检与挑选一旦分家，「预检过了挑选就不会因为没候选而失败」这句就不成立。
+    变异：`attach` 内改为直接调 `extract_candidates`（绕开 `dialogue_candidates`）→ 示例
+    来自 `content`，断言红。
+    """
+    d = _FixedCandidates(_PickLLM({"picks": [{"n": 1, "prev_speaker": "凤姐"}]}),
+                         config_path=None)
+
+    out = d.attach_dialogue_examples(
+        CharacterCard(name="刘姥姥"),
+        '凤姐道：“别的话。”\n刘姥姥道：“另一句。”\n',
+        "刘姥姥", [], [{"name": "刘姥姥"}, {"name": "凤姐"}])
+
+    assert out.dialogue_examples == [
+        "凤姐：你老慢慢说。\n刘姥姥：我这一辈子也没见过这样的排场。"]
