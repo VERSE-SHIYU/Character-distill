@@ -21,7 +21,7 @@ if str(_REPO_ROOT) not in sys.path:
 load_dotenv(_REPO_ROOT / ".env")
 
 import yaml
-from adapters.llm_adapter import LLMAdapter
+from adapters.llm_adapter import LLMAdapter, default_model
 from core import scheduling
 from core.distiller import Distiller
 from core.indexing_service import IndexingService
@@ -84,7 +84,7 @@ def _make_user_llm(config: dict[str, Any]) -> LLMAdapter:
     return LLMAdapter(
         api_key=config["api_key"],
         base_url=config.get("base_url", "https://api.deepseek.com"),
-        model=config.get("model", "deepseek-v4-pro"),
+        model=config.get("model") or default_model(),
     )
 
 
