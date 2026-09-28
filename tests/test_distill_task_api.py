@@ -274,6 +274,11 @@ class _CardStubDistiller:
         yield {"status": "formatting", "current": 1, "total": 1}
         yield json.dumps(self.CARD, ensure_ascii=False)
 
+    def dialogue_candidates(self, content, name, aliases=(), roster=()):
+        # 预检（补充 1-第 4 步）：路由拿到别名之后先调它一眼，返回值不保留。本组不考
+        # 抽取，给个非空即可 —— 抽取与两条失败判据在 test_distiller_dialogue_pick 里核。
+        return [object()]
+
     def _auto_tag(self, card_dict):
         return []
 
@@ -723,6 +728,11 @@ class _ChunkEmittingDistiller:
 
     def identify_characters(self, content):
         return [{"name": "甲", "aliases": []}]
+
+    def dialogue_candidates(self, content, name, aliases=(), roster=()):
+        # 预检（补充 1-第 4 步）：路由拿到别名之后先调它一眼，返回值不保留。本组不考
+        # 抽取，给个非空即可 —— 抽取与两条失败判据在 test_distiller_dialogue_pick 里核。
+        return [object()]
 
     def distill_incremental_stream(self, text, character_name, *,
                                    aliases=None, text_type="story",

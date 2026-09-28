@@ -453,6 +453,14 @@ class TextManager:
                 self._storage, self._distiller, text_id, user_id, content)
             aliases = aliases_for(chars, character_name)
 
+            # 预检（补充 1-第 4 步）：原文里挑不出本角色的对话句就在长步骤之前失败 ——
+            # 与挑选共用 `dialogue_candidates`，省掉「付了钱才发现挑不出」。约 0.1 秒的
+            # 纯计算也挪出事件循环（本协程跑在请求 loop 上）。
+            await asyncio.to_thread(
+                self._distiller.dialogue_candidates,
+                content, character_name, aliases, chars,
+            )
+
             try:
                 card = await asyncio.to_thread(
                     self._distiller.distill_incremental, content, character_name, aliases

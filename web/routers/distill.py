@@ -377,6 +377,11 @@ def _run_distill_task(
             name = target_character_name(chars)
         aliases = aliases_for(chars, name)
 
+        # 预检（补充 1-第 4 步）：原文里挑不出本角色的对话句就在长步骤之前失败 —— 那条
+        # 判据与挑选共用 `dialogue_candidates`，预检过了挑选就不会再因此失败。约 0.1 秒
+        # 的纯计算，返回值不保留（本线程同步，不必挪进线程池）。
+        distiller.dialogue_candidates(content, name, aliases, chars)
+
         _set_task(task_id, {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
 
         # Step 2: run incremental distill (synchronous, collect full output)
@@ -1050,19 +1055,25 @@ async def distill_stream(
 
         # 名单走唯一入口：命中缓存即不发 LLM，未命中才识别一次并写回
         nonlocal char_name
-        # 识别失败与「挑不出目标角色」两类结果都在这一个 except 里渲染：本生成器
-        # 在下面 chat 那圈 try 之外，靠冒泡会变成未处理的生成器异常而不是错误帧，
-        # 故就地 yield —— 与本生成器蒸馏段的 except 同形、共用 user_facing_error 这一份口径链。
+        # 识别失败、「挑不出目标角色」与预检挑不出对话句三类结果都在这一个 except 里
+        # 渲染：本生成器在下面 chat 那圈 try 之外，靠冒泡会变成未处理的生成器异常而不是
+        # 错误帧，故就地 yield —— 与本生成器蒸馏段的 except 同形、共用 user_facing_error
+        # 这一份口径链。预检不另写第二段 try：挪进这里就是为了共用这一个出口。
         try:
             chars = await resolve_characters(
                 storage, distiller, req.text_id, user_id, content)
             if not char_name:
                 char_name = target_character_name(chars)
+            aliases = aliases_for(chars, char_name)
+            # 预检（补充 1-第 4 步）：原文里挑不出本角色的对话句就在长步骤之前失败。
+            # 与挑选共用 `dialogue_candidates`，验收口径因此只有一处；约 0.1 秒的纯
+            # 计算也得挪出事件循环（本生成器跑在请求 loop 上，同步跑等于堵住它）。
+            await asyncio.to_thread(
+                distiller.dialogue_candidates, content, char_name, aliases, chars)
         except Exception as exc:
             logger.error("Identify failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
-        aliases = aliases_for(chars, char_name)
 
         # Incremental distillation with aliases for broader chunk matching
         full = ""
@@ -1120,7 +1131,8 @@ async def distill_stream(
         # 失败即错误帧收场（不 fail-open）。本通道是 SSE 生成器，冒泡会变成未处理的
         # 生成器异常而不是错误帧，故就地 yield —— 与其他失败帧同形。
         try:
-            card = distiller.attach_dialogue_examples(
+            card = await asyncio.to_thread(
+                distiller.attach_dialogue_examples,
                 card, content, char_name, aliases, chars)
         except Exception as exc:
             logger.error("Pick dialogue examples failed: %s", exc, exc_info=True)
