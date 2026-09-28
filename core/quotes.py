@@ -110,3 +110,51 @@ def render_candidates(candidates: Sequence[Candidate]) -> str:
         blocks.append(f"[{c.n}] 上一句：{prev}\n"
                       f"    本句：{c.lead}“{c.line}”")
     return "\n".join(blocks)
+
+
+# 一组示例两行（对方一句、角色一句），3 组够看出说话风格；再多只是把卡片撑长。
+# 上限只能写在代码里：strict 的 Schema 里 array 不支持 maxItems（约束 6），服务端不拦。
+MAX_EXAMPLES = 3
+
+
+def valid_picks(raw, total: int) -> list[int]:
+    """留下 `raw` 里合法的编号：整数、在 1..total 内、去重（保序），最多 `MAX_EXAMPLES` 个。
+
+    非 strict 供应商可能给不合法 JSON 或编造参数（约束 6），越界编号直接索引会抛
+    KeyError —— 调用方分不清是挑选失败（预期内，该报任务失败）还是代码错误。故这里只挑
+    出能用的，一个都没有时返回空列表，由调用方判「没有可用的挑选结果」。
+    """
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list[int] = []
+    for p in raw:
+        if isinstance(p, bool) or not isinstance(p, int):
+            continue
+        if 1 <= p <= total and p not in out:
+            out.append(p)
+            if len(out) == MAX_EXAMPLES:
+                break
+    return out
+
+
+def speaker_in(lead: str, names: Sequence[str]) -> str:
+    """引导语里**恰好**一个 `names` 中的名字时返回它，否则返回空串。
+
+    只认「恰好一个」：约 15% 的引导语含两个人名（「凤姐忙和刘姥姥摆手道：」，说话的是
+    凤姐，约束 7），取第一个会把这句的对方记成错的人。判不出就不给名字，由调用方写
+    「对方」—— 少一个称呼好过给一个可能错的称呼。
+
+    名字互为子串时（「刘姥姥」与「姥姥」都收）两个都命中 → 也判不出，同样退化为「对方」。
+    """
+    hits = [n for n in dict.fromkeys(names) if n and n in lead]
+    return hits[0] if len(hits) == 1 else ""
+
+
+def build_example(candidate: Candidate, name: str, other_names: Sequence[str]) -> str:
+    """一组示例：`对方名：上一句` + `角色名：本句` —— 两行都是候选里的原文，一字不改。
+
+    对方的称呼由代码从上一句的引导语里取（`speaker_in`），模型不生成任何文字；引导语
+    判不出归属时写「对方」。`prev_line` 为空（首句）时调用方不该调本函数 —— 成不了对。
+    """
+    other = speaker_in(candidate.prev_lead, other_names) or "对方"
+    return f"{other}：{candidate.prev_line}\n{name}：{candidate.line}"

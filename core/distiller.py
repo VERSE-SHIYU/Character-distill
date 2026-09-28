@@ -13,7 +13,7 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Sequence, TypeVar
 import collections.abc as _cabc
 
 import yaml
@@ -23,6 +23,7 @@ from openai import AsyncOpenAI
 
 from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_facing_error
 from core.chat_preprocessor import ChatPreprocessor
+from core.quotes import build_example, extract_candidates, render_candidates, valid_picks
 from core.roster_aggregate import (
     alias_prompt_rows,
     finalize_identify_roster,
@@ -1595,6 +1596,71 @@ class Distiller:
                 yield {"heartbeat": True}
 
         self._try_record_usage("distill_longcontext", usage)
+
+    def pick_dialogue_examples(
+        self,
+        content: str,
+        name: str,
+        aliases: Sequence[str] = (),
+        other_names: Sequence[str] = (),
+    ) -> list[str]:
+        """从原文挑 1-3 组对话示例，**文字一律由代码从原文复制**（WP17）。
+
+        模型的选择能力够、逐字复现能力不够：实测它会把被人插话打断的两段话拼成一句
+        （对话示例 3 组只命中 1 组，都是在中间吞掉了另一个说话人的台词）。故这里换成
+        「代码抽取带编号的候选 → 模型只回编号 → 代码按编号取原文」，逐字由构造保证。
+
+        `other_names` 是名单里**除本人外**的称呼，只用来给上一句标注对方是谁（由
+        `speaker_in` 从引导语里取，模型不生成任何文字）；判不出就写「对方」。
+
+        无可用的候选、或挑选结果一组都成不了对，都抛 `DistillError` —— 与其他后置步骤
+        同口径：任务是失败，不是落一张没有对话示例的卡。
+        """
+        candidates = extract_candidates(content, [name, *aliases])
+        if not candidates:
+            raise DistillError(
+                f"挑选对话示例失败：原文里找不到「{name}」的对话句")
+        function = {
+            "name": "pick_dialogue_examples",
+            "description": f"按编号挑选最能体现「{name}」说话风格的对话示例",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "picks": {
+                        "type": "array",
+                        # maximum 是候选数：越界的编号服务端就该拦下（strict 方言），
+                        # 非 strict 方言由 `valid_picks` 兜第二层。
+                        "items": {"type": "integer", "minimum": 1,
+                                  "maximum": len(candidates)},
+                        "description": "候选编号，按想要的顺序给 1-3 个；"
+                                       "只挑本角色本人说话、且能看出对方怎么接的那些。",
+                    },
+                },
+                "required": ["picks"],
+                # strict 模式要求对象显式关闭额外字段（约束 6）。
+                "additionalProperties": False,
+            },
+        }
+        args = self._llm.select_by_schema(
+            f"下面是原文里抽出的候选对话句（含编号、上一句、本句，以及紧贴引号的引导语"
+            f"——说话人写在引导语里）。请挑出最能体现「{name}」说话风格的对话示例。\n"
+            f"只挑引导语表明说话人是「{name}」的候选：引导语里出现的是别人的名字时，"
+            f"那句是别人说的，不要挑。上一句是对方的回应，用来判断这一问一答是否成组。",
+            [{"role": "user", "content": render_candidates(candidates)}],
+            function,
+        )
+        self._try_record_usage("distill_dialogue")
+
+        by_n = {c.n: c for c in candidates}
+        examples = [
+            build_example(by_n[n], name, other_names)
+            for n in valid_picks(args.get("picks"), len(candidates))
+            if by_n[n].prev_line        # 首句没有上一句，成不了对
+        ]
+        if not examples:
+            raise DistillError(
+                "挑选对话示例失败：模型没有选出可用的编号")
+        return examples
 
     def _auto_tag(self, card_dict: dict) -> list[str]:
         """Lightweight LLM call to pick 1-3 preset tags matching the card.

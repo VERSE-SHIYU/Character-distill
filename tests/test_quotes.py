@@ -10,7 +10,15 @@
 """
 from __future__ import annotations
 
-from core.quotes import extract_candidates, render_candidates, verbatim_in
+from core.quotes import (
+    MAX_EXAMPLES,
+    build_example,
+    extract_candidates,
+    render_candidates,
+    speaker_in,
+    valid_picks,
+    verbatim_in,
+)
 
 # 真实形态：整段的叙述 + 引导语 + 引号。《红楼梦》的对话一律「“……”」，说话人写在紧贴
 # 引号的引导语里；这里刻意混入四种形态 —— 引导语含两个人名、引导语带（）动作、
@@ -113,3 +121,50 @@ def test_one_changed_char_is_not_verbatim_and_empty_quotes_find_nothing():
     assert verbatim_in(ELIDED, "我不过是替你张罗张罗，你倒来挑我的不是，真真让人伤心") is False
     assert verbatim_in(ELIDED, "") is False
     assert verbatim_in(ELIDED, "……") is False
+
+
+# ── 挑选结果的校验与拼装（WP17：模型只回编号，文字由代码从原文复制）──────────
+
+def test_out_of_range_and_duplicate_picks_are_dropped_and_at_most_three_survive():
+    """编号越界 / 重复 / 非整数一律丢，顺序保留，最多 3 个。
+
+    变异：`[by_n[p] for p in picks]` 直接索引 → 越界抛 KeyError（调用方分不清是挑选
+    失败还是代码错误）、重复拼出两组一样的话、多于 3 组照单全收 —— 三条断言各红一条。
+    """
+    assert valid_picks([2, 2, 1, 0, 8, 3, 4], 5) == [2, 1, 3]
+    assert valid_picks([1, "2", True, 2.0, None, 3], 5) == [1, 3]
+    assert valid_picks(None, 5) == []
+    assert valid_picks(2, 5) == [], "不是数组（非 strict 供应商可能编造）"
+    assert MAX_EXAMPLES == 3
+
+
+def test_the_other_speaker_comes_from_the_previous_lead_only_when_unambiguous():
+    """上一句的引导语里恰好一个候选名 → 用它；零个、或多个 → 判不出。
+
+    只收「恰好一个」：`凤姐忙和刘姥姥摆手道：`（约束 7 的 15%）里两个名字都在，挑第一
+    个会把这句记成凤姐说的 —— 宁可退化成「对方」也不给一个可能错的归属。
+    """
+    assert speaker_in("刘姥姥笑道：", ["刘姥姥", "凤姐"]) == "刘姥姥"
+    assert speaker_in("凤姐忙和刘姥姥摆手道：", ["刘姥姥", "凤姐"]) == ""
+    assert speaker_in("众人道：", ["刘姥姥", "凤姐"]) == ""
+    assert speaker_in("刘姥姥笑道：", ["刘姥姥", "刘姥姥"]) == "刘姥姥", "别名重复仍是一个人"
+    assert speaker_in("刘姥姥笑道：", []) == ""
+
+
+def test_an_example_pairs_the_previous_line_with_the_subject_line_verbatim():
+    """一组示例 = 「对方名：上一句\\n角色名：本句」，两行都逐字来自原文。
+
+    变异：少写上一句（只留本句）→ 不再成对，模型看不到对方怎么接的话；把「对方名」写成
+    固定字面量 → 第 1 条断言的 `凤姐：` 变红。
+    """
+    cands = extract_candidates(PARA, ["刘姥姥"])
+
+    assert build_example(cands[1], "刘姥姥", ["凤姐"]) == (
+        "凤姐：你老快别这样说，我不过是替你张罗张罗，你倒来挑我的不是。\n"
+        "刘姥姥：姑娘说的我心里熨帖，我哪敢挑姑娘的不是。"
+    )
+    # 上一句没有引导语（裸引号）→ 归属判不出，写「对方」而不是编一个人名。
+    assert build_example(cands[2], "刘姥姥", ["凤姐"]) == (
+        "对方：这话怎么讲？\n"
+        "刘姥姥：阿弥陀佛！我这一辈子也没见过这样的排场。"
+    )

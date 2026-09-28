@@ -505,9 +505,24 @@ def _run_distill_task(
             _set_task(task_id, {"status": "error", "message": "蒸馏失败：数据校验错误，请重试", "character": name})
             return
 
+        card_dict = card.model_dump()
+
+        # 对话示例：按编号从原文挑选、文字由代码复制（WP17）。**不 fail-open** ——
+        # 挑不出来（原文里没有这个角色的对话句 / 模型没选出可用的编号）按任务失败处理：
+        # 静默落一张没有对话示例的卡，等于把「挑不出」伪装成「本来就没有」。
+        # `other_names` 只用来给上一句标对方是谁（代码从引导语里取，模型不生成文字）；
+        # 本角色自己的名字与别名必须排除，否则会把本角色认成对方。
+        other_names = [
+            n for c in chars
+            for n in (c.get("name"), *(c.get("aliases") or []))
+            if n and n != name and n not in aliases
+        ]
+        card_dict["dialogue_examples"] = distiller.pick_dialogue_examples(
+            content, name, aliases, other_names)
+        card = CharacterCard.model_validate(card_dict)
+
         # AI auto-tagging (fails open)
         try:
-            card_dict = card.model_dump()
             tags = distiller._auto_tag(card_dict)
             if tags:
                 card_dict["tags"] = tags

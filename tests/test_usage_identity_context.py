@@ -399,6 +399,11 @@ class _FakeLLM:
     # 长输出入口在生产里是 chat_stream 的薄委托（只放宽读超时）：桩共用同一份记录
     chat_stream_long = chat_stream
 
+    def select_by_schema(self, system_prompt, messages, function, max_tokens=None):
+        """挑选对话示例：只回编号（文字由代码从原文复制，这里给的是可用候选的最小号）。"""
+        self.last_usage = {"prompt_tokens": 17, "completion_tokens": 3}
+        return {"picks": [2]}
+
     def _make_async_client(self):
         return _FakeClient()
 
@@ -512,7 +517,12 @@ def test_start_route_lands_usage_rows(monkeypatch):
     try:
         with _LoopSubmitter() as sub:
             sub.run(store.create_user(uid, uid, "probe-hash"))
-            sub.run(store.save_text(tid, "src.txt", "甲说了一句话。" * 40, user_id=uid))
+            # 正文要带「甲」说话的引号句，且至少有一句前面还有别人的话 —— 挑选对话示例
+            # 只从这样的候选里成组（首句没有上一句，挑中也成不了对）。
+            sub.run(store.save_text(
+                tid, "src.txt",
+                "甲道：“我说一句话。”\n乙道：“我也说一句。”\n甲道：“再说一句。”\n" * 40,
+                user_id=uid))
             r = TestClient(app).post(
                 "/api/distill/start",
                 json={"text_id": tid, "character_name": "甲", "force": True},
@@ -524,7 +534,8 @@ def test_start_route_lands_usage_rows(monkeypatch):
             # 格式化的**笔数** = 字段组数（每组一笔，WP7 起并行）。组数从 `FORMAT_GROUPS`
             # 读，不写死 —— 关系拆到 G5 时这里不该跟着改。`_wait_for_rows` 的 expected
             # 必须给足，给少了会在跑到一半时快照返回，下面那条 == 断言就成了竞态。
-            n_rows = 5 + len(FORMAT_GROUPS)     # 识别/逐片/归并/自动标签/苏醒台词各 1 笔
+            # 识别/逐片/归并/挑选对话/自动标签/苏醒台词各 1 笔
+            n_rows = 6 + len(FORMAT_GROUPS)
             rows = _wait_for_rows(str(db), expected=n_rows)
     finally:
         C.ctx_thread = real_ctx_thread
@@ -538,7 +549,7 @@ def test_start_route_lands_usage_rows(monkeypatch):
     assert len(rows) == n_rows, f"落库 {len(rows)} 行（{actions}）—— 出口发出 {n_rows} 笔却只落这么些"
     assert all(u == uid for _, u in rows), f"落库归属不是请求身份：{rows}"
     assert sorted(actions) == sorted([
-        "distill_identify", "distill_map", "distill_reduce",
+        "distill_identify", "distill_map", "distill_reduce", "distill_dialogue",
         *["distill_format"] * len(FORMAT_GROUPS),
         "distill_autotag", "chat_awakening",
     ]), f"落库的 action 面不对：{actions}"
