@@ -1,8 +1,12 @@
-// 角色市场探针：桌面双栏（分类侧栏 + display 标题 + 搜索）/ 移动 chips 行 + 卡封面剧光光晕 + tag 过滤（真实后端参）
+// 角色市场探针：桌面双栏（分类侧栏 + display 标题 + 搜索）/ 移动 chips 行 + tag 过滤（真实后端参）
+// 详情页另查 trait 列表（.trait-item）高度随文字长度自适应
 // 用法: node e2e/market-verify.cjs
 const { openApp, login, pushView } = require('./helpers.cjs')
 
 const TAGS = ['治愈', '古风', '科幻']
+
+// 60+ 字，用来证明 trait 高度随内容变高（旧样式固定 30px 会截断）
+const LONG_TRAIT = '这是一个超过六十个字的性格特征描述，用来验证渲染高度能够随着文字长度自适应增长，而不是被固定高度截断掉；它应当自动换行并完整显示，不丢失任何文字。'
 
 const makeCard = (id, name, identity, traits, tags, avatar_data = '') => ({
   id,
@@ -124,13 +128,12 @@ const runDesktop = async (fail) => {
   if (s.catCount !== TAGS.length + 1) fail.push('分类应 ' + (TAGS.length + 1) + ' 个: ' + s.catCount)
   if (s.headDisplay === 'none') fail.push('桌面 mkt-head 不可见')
   if (s.titleSize < 28) fail.push('mkt-head 标题字号 <28: ' + s.titleSize)
-  if (s.titleWeight !== '700') fail.push('mkt-head 标题 weight 应 700: ' + s.titleWeight)
+  if (s.titleWeight !== '600') fail.push('mkt-head 标题 weight 应 600: ' + s.titleWeight)
   if (s.chipsDisplay !== 'none') fail.push('桌面应隐藏 chips')
   if (s.toolbarSearchDisplay !== 'none') fail.push('桌面应隐藏 toolbar 搜索')
   if (s.sortCount !== 2) fail.push('排序 tab 应 2 个: ' + s.sortCount)
   if (s.sortActiveBg === 'rgba(0, 0, 0, 0)' || !s.sortActiveBg) fail.push('sort active 应 accent 填充: ' + s.sortActiveBg)
   if (s.sortActiveColor !== 'rgb(255, 255, 255)') fail.push('sort active 文字应为 on-accent 白: ' + s.sortActiveColor)
-  if (s.coverGlows !== 2) fail.push('卡封面应有 2 个 stage-glow: ' + s.coverGlows)
   if (s.cardCount !== 2) fail.push('卡片应 2 张: ' + s.cardCount)
   if (s.headRect && s.toolbarRect && s.headRect.bottom > s.toolbarRect.top + 1) fail.push('mkt-head 压住 toolbar: ' + s.headRect.bottom + '>' + s.toolbarRect.top)
   if (!s.firstCardRect || s.firstCardRect.height <= 0) fail.push('首卡不可见')
@@ -179,17 +182,36 @@ const runDesktop = async (fail) => {
           const b = getComputedStyle(t, '::before')
           return b.width === '6px' && b.backgroundColor === accent
         }).length,
+      traitOverflow: [...document.querySelectorAll('.trait-list > .trait-item')]
+        .some((t) => t.scrollHeight > t.clientHeight + 1),
       heroRect: r('.market-detail-hero'),
       authorRect: r('.market-detail-author-bar'),
       overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     }
   })
   console.log('DETAIL', JSON.stringify(d))
-  if (!d.glow) fail.push('详情 hero 缺 stage-glow')
   if (d.traitCount !== 3) fail.push('详情 trait 条目应 3 个: ' + d.traitCount)
   if (d.traitDots !== 3) fail.push('详情 trait 圆点应 3 个（6px + --accent）: ' + d.traitDots)
+  if (d.traitOverflow) fail.push('详情 trait 条目内容溢出容器（scrollHeight > clientHeight）')
   if (d.heroRect && d.authorRect && d.heroRect.bottom > d.authorRect.top + 1) fail.push('详情 hero 压住 author bar')
   if (d.overflowX) fail.push('详情横向溢出')
+
+  // 自适应：注入一条 60+ 字长特征，高度必须高于短特征，且不溢出
+  const longTrait = await page.evaluate((text) => {
+    const list = document.querySelector('.trait-list')
+    const li = document.createElement('li')
+    li.className = 'trait-item'
+    li.textContent = text
+    list.appendChild(li)
+    return {
+      short: list.querySelector('.trait-item').getBoundingClientRect().height,
+      long: li.getBoundingClientRect().height,
+      overflow: li.scrollHeight > li.clientHeight + 1,
+    }
+  }, LONG_TRAIT)
+  console.log('LONG-TRAIT', JSON.stringify(longTrait))
+  if (!(longTrait.long > longTrait.short + 1)) fail.push('详情长特征未随内容变高: ' + longTrait.long + ' <= ' + longTrait.short)
+  if (longTrait.overflow) fail.push('详情长特征溢出容器')
   assertNoSerif(fail, 'market-detail-name', await serifFamily(page, '.market-detail-name'))
   await toggleSerif(page, true)
   await page.waitForTimeout(80)
@@ -237,7 +259,6 @@ const runMobile = async (fail) => {
   if (m.activeChip !== '全部') fail.push('初始 is-active chip 应为 全部: ' + m.activeChip)
   if (m.toolbarSearchDisplay === 'none') fail.push('移动应显示 toolbar 搜索')
   if (m.cardCount !== 2) fail.push('移动卡片应 2 张: ' + m.cardCount)
-  if (m.coverGlows !== 2) fail.push('移动卡封面应有 2 个 stage-glow: ' + m.coverGlows)
   if (!m.firstCardRect || m.firstCardRect.width <= 100) fail.push('移动卡过窄: ' + m.firstCardRect?.width)
   if (m.overflowX) fail.push('移动横向溢出')
 

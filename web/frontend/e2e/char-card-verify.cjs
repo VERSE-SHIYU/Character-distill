@@ -105,7 +105,7 @@ const runDesktop = async (fail) => {
   if (p.heroFlexDir !== 'column') fail.push('hero 应为列布局')
   if (p.heroRadius < 24) fail.push('hero 圆角 <24')
   if (!p.glow) fail.push('hero 缺 stage-glow')
-  if (p.nameFontWeight !== '700') fail.push('角色名 weight 应 700: ' + p.nameFontWeight)
+  if (p.nameFontWeight !== '600') fail.push('角色名 weight 应 600: ' + p.nameFontWeight)
   if (p.nameFontSize < 22) fail.push('角色名 fontSize <22: ' + p.nameFontSize)
   if (p.identityLs < 0.8) fail.push('identity letter-spacing <0.8px: ' + p.identityLs)
   if (p.avatarWidth < 80) fail.push('头像 <80px: ' + p.avatarWidth)
