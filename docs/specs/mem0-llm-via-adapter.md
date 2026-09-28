@@ -74,3 +74,152 @@
 
 ## 验收（部署后，免费）
 部署后用演示账号和一张卡聊两轮：容器日志无 `Mem0 add failed`，第二轮能检索到第一轮写入的记忆。按 Flash 价约 0.005 元。
+
+
+---
+
+## 补充 1（2026-09-28，审计 PR #44 / `505d1ab` 后）
+
+> **执行方**：`distill-mainline` 窗口。先 `git fetch origin`，从 `origin/main`（`505d1ab`）新开分支 `fix/mem0-followups`（`--unset-upstream`）；**不要**在已合入的 `fix/mem0-llm-via-adapter` 上继续做。
+> 起因：审计已合入的 PR #44 时发现以下 4 处。前 3 处是本 spec 漏写的，不是执行偏差。本节与上文冲突时，以本节为准。
+
+### 审计清单（PR #44，`ae89f7d..505d1ab`；受影响 4 个测试文件 39/39 通过，变异 7 条中 5 条变红）
+| 文件 | 看过 | 结论 |
+|---|---|---|
+| `adapters/llm_adapter.py` | 是 | 通过（`default_model`、`response_format` 透传） |
+| `core/mem0_llm.py` | 是 | 通过 |
+| `core/memory_manager.py` | 是 | 问题 2（采样参数） |
+| `storage/postgres_store.py`、`storage/sqlite_store.py` | 是 | 问题 1（PG 一侧无测试；「PG 存储恢复写死」变异存活） |
+| `web/deps.py`、`web/routers/auth.py` | 是 | 通过（「deps 恢复写死」变异存活，但它是等价变异：键存在时 `get` 默认值不生效，适配器仍回落 `default_model()`） |
+| `config.example.yaml` | 是 | 通过 |
+| `tests/test_mem0_llm.py`、`test_memory_manager.py`、`test_llm_adapter_thinking.py`、`test_default_model.py` | 是 | 通过；`test_default_model.py` 只测了 SQLite（问题 1）；`result_len` 的改正只影响打印，不补测试 |
+| 前端 `ApiConfigPanel.jsx`、`scripts/backfill_psyche.py` | 是 | 不在 PR 内，审计时发现：问题 3、4 |
+
+### 目标
+- 默认模型的「只定义一处」真正做完：前端也要跟上，且存储层的改动在 PG 上有测试守着。
+- mem0 提炼沿用 mem0 原本的采样参数。
+- 仓内不再有已停用的模型名。
+
+### 问题与证据（基线 main `505d1ab`）
+1. **PG 存储层没有测试守着**：`tests/test_default_model.py:46-47` 的 `store` fixture 只用 `SQLiteStore`。把 `storage/postgres_store.py:2554` 改回 `row[2] or "deepseek-v4-pro"`，测试照样全绿（审计已实测）。
+2. **提炼的采样参数被悄悄改了**：
+   - mem0 2.0.20 默认 `temperature=0.1`（`mem0/configs/llms/base.py:19`），openai 提供方只发 temperature，不发 presence_penalty；
+   - 现在走适配器，用的是全局配置 `temperature: 0.7`（`config.example.yaml:21`）加 `presence_penalty: 0.3`（`:19`）；
+   - 原 spec 的路径机制清单漏了「采样参数」这一项。
+3. **前端写死了模型名**：`web/frontend/src/components/ApiConfigPanel.jsx` 有三处：
+   - `:59` 的 `savedModel || 'deepseek-v4-pro'`；
+   - `:108` 点「DeepSeek」卡片时，填入 `model: 'deepseek-v4-pro'`；
+   - `:174` 的提示文案写死「推荐使用 deepseek-v4-pro 或 claude-sonnet-4-20250514」。
+
+   另外，前端读的 `/api/settings/config` 返回的是 `str(llm.get("model", ""))`（`web/server.py:525`，管理员保存后的返回在 `:596`），配置里没写模型时给的是空串，不是 `default_model()`。
+4. **已停用的模型名**：`scripts/backfill_psyche.py:160-170` 直接新建 OpenAI 客户端，并写死 `model="deepseek-chat"`。这个名字官方 2026-07-24 起已停用，而且这条调用绕过了适配器的关闭思考和出站守卫。全仓非测试代码里只剩这一处（grep `deepseek-chat|deepseek-reasoner`）。
+
+### 已查实的约束（S0 逐条复核，不成立即停）
+- a. `LLMAdapter.__init__`（`adapters/llm_adapter.py:683`）已有关键字参数 `temperature`（`:700` 使用）。`presence_penalty` 目前只从配置读取（`:702`），没有构造参数。
+- b. mem0 的适配器实例在 `core/memory_manager.py:178` 构造。
+- c. PG 存储 fixture 的现成写法在 `tests/test_demo_seed.py:43-48`（`PostgresStore(os.environ["DATABASE_URL"])` + `_ensure_initialized` + `close`）。
+- d. 请求之外调用 LLM 的合法身份是 `core/request_context.py:54` 的 `system_llm_context()`。缺身份时守卫 fail-closed，见 `web/llm_gate.py:65-70`。
+- e. `default_model()` 在 `adapters/llm_adapter.py`（`505d1ab`）。它读配置文件的顺序（config.yaml → config.example.yaml）与 `web/deps.py:36-38` 的 `_CFG_PATH` 一致；管理员保存设置时会先落盘，所以保存后立刻读到的就是新值。
+
+### 路径机制清单（本改动碰到的机制）
+| 机制 | 前提 | 本改动怎么处理 |
+|---|---|---|
+| 采样参数（适配器实例级） | 全局配置 0.7 / 0.3 是按角色扮演选的 | mem0 实例单独传 0.1 / 0.0，其他实例不变 |
+| 出站守卫（脚本） | 请求之外没有身份时 fail-closed | 脚本调用包在 `system_llm_context()` 里 |
+| 关闭思考 | 走适配器才会注入 | 脚本改走适配器后自动生效，写测试锁住 |
+
+### 通道 × 执行上下文（本补充碰到的调用点）
+| 调用点 | 执行上下文 | 身份 | 守它的测试 |
+|---|---|---|---|
+| mem0 提炼（`core/memory_manager.py` 写入线程） | 后台线程（`C.ctx_thread`，拷贝了调用方上下文） | 发起聊天的用户（原 spec 约束 10），本补充不改 | T2 |
+| 回填脚本 `_call_llm_for_psyche` | 命令行脚本，同步，不在任何请求里 | 没有 → 包 `system_llm_context()` | T5 |
+| `/api/settings/config` | FastAPI 同步路由 | 不涉及 LLM | T3 |
+
+### 步骤（按依赖顺序，每步独立 commit）
+1. **[test] 默认模型测试改到 PG 上**：`tests/test_default_model.py` 的 `store` fixture 改用 PG（写法同约束 c）。SQLite 不再为此单独写测试（PG 为准）。
+2. **[adapter + core] 提炼参数**：
+   - `LLMAdapter.__init__` 增加关键字参数 `presence_penalty: float | None = None`，写法与 `temperature` 对称。
+   - `core/memory_manager.py` 定义两个常量并注明出处：
+     - `_EXTRACT_TEMPERATURE = 0.1`，出处 mem0 2.0.20 `configs/llms/base.py:19`；
+     - `_EXTRACT_PRESENCE_PENALTY = 0.0`，出处：mem0 openai 提供方不发该参数，即 API 默认值 0。
+   - 构造 mem0 的适配器时（`:178`）传入这两个常量。
+3. **[web + frontend] 前端不写死模型名**：
+   - 后端：`web/server.py` 读设置（`:519-529`）与保存设置后的返回（`:592-598`）各拼了一份相同的设置字典，只有 `api_key` 的判定不同（读取时还看环境变量）、保存时多一个提示字段。
+     - 收成一个模块内的私有函数 `_settings_payload(llm, voice, has_key)`，两处都调用它，`"model"` 在这一处改为 `default_model()`；
+     - 保存那处在返回值上再加它自己的提示字段；
+     - 不要逐处改两行。在模块顶部 `from adapters.llm_adapter import default_model`，T3 靠替换模块属性来测。
+   - 前端 `ApiConfigPanel.jsx`：从 `/api/settings/config` 取 `model` 存为默认模型。
+     - `:59` 的回落改用它；
+     - `:108` 点 DeepSeek 卡片时填入它；
+     - `:174` 的文案改为「推荐使用 {默认模型}」，删掉写死的模型名。
+4. **[scripts] 回填脚本改走适配器**：
+   - `_call_llm_for_psyche` 改用 `LLMAdapter(api_key=api_key, temperature=0.3, max_tokens=1024).chat(PSYCHE_SYSTEM_PROMPT, [{"role": "user", "content": prompt}])`，外面包 `system_llm_context()`。
+   - 后面的 JSON 提取和字段校验不动。
+
+### 测试（本地只跑受影响文件，改前端的一步加跑 `npm test`；库用 docker PG；合并门是分支 CI；合并只做 git 操作，不跑测试、不等 CI）
+- **T1**：`tests/test_default_model.py` 在 PG 上的现有 6 条全部通过。
+- **T2 提炼参数**：经 `MemoryManager` 构造出的适配器（把它的 `_client` 换成记录请求的假客户端）发出的请求体里：
+  - `temperature == 0.1`、`presence_penalty == 0.0`；
+  - 同时断言一个普通 `LLMAdapter()` 仍为配置值，证明没有改到全局。
+- **T3 后端**：把 `web/server.py` 模块命名空间里的 `default_model`（测试里 `import server`，同 `tests/test_client_config.py:26`；即 `monkeypatch.setattr(server, "default_model", ...)`）替换为返回探针值 `probe-model` 的函数，`/api/settings/config` 返回的 `model == "probe-model"`。不要去改真实的配置文件：`default_model()` 读的是磁盘文件，与 `get_config()` 的内存副本是两份。
+  - 读设置与管理员保存设置两个接口都要测：两者返回的 `model` 都等于探针值。
+- **T4 前端**（新文件 `web/frontend/src/components/__tests__/ApiConfigPanelDefaultModel.test.jsx`）：mock `/api/settings/config` 返回 `{model: 'probe-model'}`，`/api/auth/me` 返回 `{model: ''}`。
+  - 模型输入框的值为 `probe-model`；
+  - 点 DeepSeek 卡片后，值仍为 `probe-model`；
+  - `/me` 返回 `{model: 'mine'}` 时，值为 `mine`。
+- **T5 脚本**：`_call_llm_for_psyche` 发出的请求：
+  - 模型为 `default_model()`；
+  - 带关闭思考参数；
+  - 装上生产守卫（`set_call_guard(geo_call_guard)`，写法同 `tests/test_mem0_llm.py` 的 `gate` fixture）后，在没有请求身份的线程里调用，不被 fail-closed 拒绝。
+
+### 对账表（S0 先审：逐条确认变异在改后代码上可观测、每个决定都有测试；有问题先停下报告）
+| 行为变化（含连带效果） | 守它的测试 | 让它变红的变异 | 改后能触发的具体状态 |
+|---|---|---|---|
+| PG 存储层不再自带默认模型 | T1 | `postgres_store.py:2554` 恢复 `or "deepseek-v4-pro"` | PG 上未设模型的用户，拿到的是配置里的模型 |
+| mem0 提炼用 temperature 0.1 | T2 | 删掉传入的 temperature | 提炼请求体的 temperature 是 0.1 |
+| mem0 提炼用 presence_penalty 0 | T2 | 删掉传入的 presence_penalty | 请求体的 presence_penalty 是 0 |
+| 全局实例的采样参数不变（连带） | T2 | 构造参数的默认值改成 0.1 | 聊天请求仍是 0.7 / 0.3 |
+| 设置接口回落到默认模型 | T3 | `_settings_payload` 里恢复 `llm.get("model", "")`（返回真实配置值，不等于探针值） | 配置缺模型时，设置页显示配置默认值而不是空 |
+| 读、存两个接口共用一份设置字典 | T3（保存接口用例） | 保存接口改回自己拼字典 | 管理员保存后，返回的模型名与读取时一致 |
+| 前端初值回落用默认模型 | T4 | `:59` 恢复写死值 | 未设模型的用户在设置页看到的是配置模型 |
+| DeepSeek 卡片填默认模型 | T4 | `:108` 恢复写死值 | 点卡片后保存，存下的是配置模型 |
+| 脚本不再用停用模型名 | T5 | 恢复直连 OpenAI + `deepseek-chat` | 回填脚本能正常请求 |
+| 脚本关闭思考 | T5 | 脚本改回不走适配器 | 回填请求不进入思考模式 |
+| 脚本有合法系统身份 | T5 | 去掉 `system_llm_context()` | 回填不会被 fail-closed 拦下 |
+
+### skill
+| 步骤 | skill | 用途 |
+|---|---|---|
+| S0 | `@search-first` | 复核坐标与 grep 结论 |
+| 1–4 | `@tdd` | 先写 T1–T5 变红，再改代码 |
+
+### 范围规矩
+执行中新发现的问题，属于本段改动面的直接修；只有会撞车或需要 Shiyu 拍板时才停下报告，不自行记账。
+
+### S0（执行方先做，只读，报完停下等审计）
+1. 在 `505d1ab` 上复核「问题与证据」1–4 和约束 a–e 的坐标，不成立即停。
+2. 重新 grep 前端 `web/frontend/src` 里所有写死的模型名，报清单；清单与问题 3 不一致就停下报告。
+3. 审对账表。
+4. 交付报告只报受影响文件与分支 CI，不写本地全量数字。
+
+### 验收
+无需真跑。部署后打开设置页，模型栏显示的是配置里的模型（当前为 `deepseek-flash`）。
+
+### 补充 1 · S0 裁决（2026-09-28，Claude 审 S0 报告后）
+- **问题 2 的表述更正**：mem0 2.0.20 的 openai 提供方实际发出三个参数，`temperature=0.1`、`top_p=0.1`、`max_tokens=2000`（`mem0/llms/base.py:156-165` 的 `_get_common_params`，默认值见 `mem0/configs/llms/base.py:19-22`），不发 `presence_penalty`。
+- **裁决：选 (b) 的一部分。复原 `top_p`，`max_tokens` 不复原。**
+  - `top_p` 会改变采样分布，属于「采样参数」，按本补充的目标复原为 0.1。`LLMAdapter.__init__` 增加关键字参数 `top_p: float | None = None`，写法与 `presence_penalty` 对称。**只在设置了值时才放进请求体**，写法同 `response_format` 的条件展开。这样其他调用方的请求体逐字不变。
+  - `max_tokens` 只是输出上限，不影响采样分布。保持适配器的 4096：上限越低越容易被截断，而截断会被适配器判成失败（`IncompleteResponseError`），mem0 这条记忆就丢了。
+  - 常量：`core/memory_manager.py` 增加 `_EXTRACT_TOP_P = 0.1`，注明出处。
+- **约束 d 坐标更正**：fail-closed 抛错块是 `web/llm_gate.py:66-70`。
+- **步骤 4 的连带效果**：回填脚本改走适配器后，会带上配置里的 `presence_penalty: 0.3`（原先不发）。接受，理由：这是一次性运维脚本，本补充不为它单设参数。已写入对账表。
+- **补测试与对账**：
+  - T2 增加一条断言：经 `MemoryManager` 构造的适配器，请求体里 `top_p == 0.1`；普通 `LLMAdapter()` 的请求体里**没有** `top_p` 这个键。
+
+| 行为变化（含连带效果） | 守它的测试 | 让它变红的变异 | 改后能触发的具体状态 |
+|---|---|---|---|
+| mem0 提炼用 top_p 0.1 | T2 | 删掉传入的 top_p | 提炼请求体里带 `top_p: 0.1` |
+| 其他调用方不带 top_p（连带） | T2 | 把 top_p 改为无条件发送 | 聊天等请求体逐字不变 |
+| 回填脚本带 presence_penalty 0.3（连带，接受） | T5 | 脚本改回直连 | 不单独约束，T5 已锁「走适配器」 |
+
+- S0 其余各项全部成立。**准许进入补充 1 的步骤 1–4 编码**（步骤 2 按本裁决加上 top_p）。

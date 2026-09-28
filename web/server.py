@@ -71,7 +71,7 @@ from inter_node_auth import validate_inter_node_secret
 from routers.admin import require_admin, router as admin_router
 from cross_border_sync import _cross_border_resync_loop
 from deps import get_config, get_llm, get_storage, reset_llm_and_dependents, _session_cleanup_loop
-from adapters.llm_adapter import llm_error_payload, llm_error_types, user_facing_error
+from adapters.llm_adapter import default_model, llm_error_payload, llm_error_types, user_facing_error
 from web.llm_gate import install_llm_gate
 from web.demo_gate import install_demo_gate
 from storage.base import StorageBase
@@ -512,6 +512,24 @@ async def health_ready(
     return JSONResponse({"status": "ready"})
 
 
+def _settings_payload(llm: dict, voice: dict, has_key: bool) -> dict[str, Any]:
+    """设置页那份响应体 —— **读、存两个接口共用同一份**，免得两边悄悄分叉。
+
+    `model` 走 `default_model()`（磁盘上 config.yaml 的 `llm.model`），不是
+    `llm.get("model", "")`：管理员保存时先落盘再回这个响应，故两者一致；而配置里没写
+    模型时，给的是项目默认值而不是空串 —— 空串会让设置页显示一个并不存在的「未设模型」。
+    `api_key` 的判定两个接口不同（读还看环境变量），故由调用方算好传进来。
+    """
+    return {
+        "base_url": str(llm.get("base_url", "")),
+        "model": default_model(),
+        "api_key": "***" if has_key else "",
+        "summary_threshold": int(llm.get("summary_threshold", 50)),
+        "gptsovits_url": str(voice.get("gptsovits_url", "http://127.0.0.1:9880")),
+        "funasr_url": str(voice.get("funasr_url", "ws://127.0.0.1:10095")),
+    }
+
+
 @app.get("/api/settings/config")
 def read_settings_config(
     _user: dict = Depends(get_current_user),
@@ -520,14 +538,7 @@ def read_settings_config(
     llm = get_config().get("llm", {})
     voice = get_config().get("voice", {})
     has_key = bool(llm.get("api_key") or os.getenv("DEEPSEEK_API_KEY"))
-    return {
-        "base_url": str(llm.get("base_url", "")),
-        "model": str(llm.get("model", "")),
-        "api_key": "***" if has_key else "",
-        "summary_threshold": int(llm.get("summary_threshold", 50)),
-        "gptsovits_url": str(voice.get("gptsovits_url", "http://127.0.0.1:9880")),
-        "funasr_url": str(voice.get("funasr_url", "ws://127.0.0.1:10095")),
-    }
+    return _settings_payload(llm, voice, has_key)
 
 
 class UpdateConfigRequest(BaseModel):
@@ -592,12 +603,7 @@ async def update_settings_config(
     reset_llm_and_dependents()
 
     return {
-        "base_url": str(llm.get("base_url", "")),
-        "model": str(llm.get("model", "")),
-        "api_key": "***" if llm.get("api_key") else "",
-        "summary_threshold": int(llm.get("summary_threshold", 50)),
-        "gptsovits_url": str(voice.get("gptsovits_url", "http://127.0.0.1:9880")),
-        "funasr_url": str(voice.get("funasr_url", "ws://127.0.0.1:10095")),
+        **_settings_payload(llm, voice, bool(llm.get("api_key"))),
         # 保存**不拦**：全局 LLM 置 None 是 C4 已定的口径，管理员可能就是有意清空。
         # 但调用方得知道这件事发生了 —— 没有个人 key 的用户此后一律 503。
         "llm_available": get_llm() is not None,

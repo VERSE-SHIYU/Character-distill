@@ -56,7 +56,7 @@ export default function ApiConfigPanel() {
           setProvider(savedBaseUrl.includes('deepseek.com') ? 'deepseek' : 'custom')
           setApiForm({
             base_url: savedBaseUrl || 'https://api.deepseek.com',
-            model: savedModel || 'deepseek-v4-pro',
+            model: savedModel || sysData.model,
             api_key: meData.has_api_key ? MASKED_KEY : '',
           })
           setHasEmbeddingKey(meData.has_embedding_key || false)
@@ -105,7 +105,7 @@ export default function ApiConfigPanel() {
                 className={`provider-card${provider === 'deepseek' ? ' active' : ''}`}
                 onClick={() => {
                   setProvider('deepseek')
-                  setApiForm((f) => ({ ...f, base_url: 'https://api.deepseek.com', model: 'deepseek-v4-pro' }))
+                  setApiForm((f) => ({ ...f, base_url: 'https://api.deepseek.com', model: config?.model || '' }))
                 }}
               >
                 <div className="provider-card-title">DeepSeek <span className="provider-card-badge">推荐</span></div>
@@ -171,7 +171,7 @@ export default function ApiConfigPanel() {
                   />
                 </label>
                 <p className="settings-hint">
-                  模型能力直接影响角色扮演质量。推荐使用 deepseek-v4-pro 或 claude-sonnet-4-20250514。
+                  模型能力直接影响角色扮演质量。推荐使用 {config?.model}。
                 </p>
                 <label className="settings-field">
                   <span className="settings-label">api_key</span>
