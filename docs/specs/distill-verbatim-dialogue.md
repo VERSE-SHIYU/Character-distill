@@ -256,3 +256,30 @@
   - 被拒就停下，带着报错回来，不自行改 schema。
 - **T1 只能用构造文本**：本地全文只有 `“”`（S0 实测），与约束 12 一致，接受。
 - S0 其余各项全部成立。**准许进入补充 1-第 1～4 步的编码。**
+
+### 补充 1 · 编码审计（2026-09-28，`c21e15c`）
+结论：**通过。** 逐文件清单（`d1e278e..c21e15c`）：
+| 文件 | 看过 | 结论 |
+|---|---|---|
+| `core/quotes.py` | 是 | 通过：取主引号样式；`context` 按第 2 步定义切片；首句不成候选；删掉 `speaker_in` 与「对方」；`valid_picks` 校验 enum 与「无法判断」 |
+| `core/distiller.py` | 是 | 通过：`_other_people` 是唯一出处；`dialogue_candidates` 在两种情况下抛 `DistillError`；挑选只收候选；schema 为对象数组 + enum |
+| `web/routers/distill.py` | 是 | 通过：bg 同步预检；SSE 把预检并进识别那个 `try`、挑选走 `to_thread` |
+| `core/text_manager.py` | 是 | 通过：预检走 `to_thread` |
+| `tests/test_quotes.py`、`test_distiller_dialogue_pick.py`、`test_identify_failure_channels.py`、`test_distill_task_api.py`、`test_usage_identity_context.py` | 是 | 通过：零花费失败三通道各一条（断言除识别外 0 次调用）；T4 另加最长停顿断言，接受；夹具改动没有放宽判据 |
+
+本地 PG 上跑受影响的 9 个文件，163/163 通过。审计方另做 9 条变异，全部变红：只认 `“”`、混匹配三对、接受「无法判断」、enum 含本人、`context` 只含引导语、删 bg 预检、删 TextManager 预检、SSE 挑选改回同步、`attach` 绕开 `dialogue_candidates`。
+
+**两处记录，不挡：**
+- SSE 那个共用的 `except` 日志仍写 `Identify failed`，现在也涵盖预检失败。只是日志措辞，报给前端的错误帧是对的。
+- `render_candidates` 在片段之后又把上一句、本句各写了一遍，模型要靠这个知道片段里哪两句是候选，输入因此约翻倍。宝玉按公开版实测约 25 万 token，本地估计约 40 万，仍低于 50 万的停下阈值，约 17 秒、约 0.4 元。
+
+**授权（三步依次做，任一步失败即停，不重试）：**
+1. 报出持有最新 v4 名单的 `text_id`，以及分支 CI run 36389827984 的结论。
+2. 选项数量试探：用刘姥姥名单的完整 enum、只带 3 条候选，调一次 `select_by_schema`（约 0.001 元）。报服务端是否接受、返回的 `picks`。被拒就停下报告。
+3. 刘姥姥真跑（一次读完 + 挑选）。报：
+   - 3 组对话示例原文；
+   - 每组在原文里的出处（附前后各一句）；
+   - 逐字核对结果；
+   - 本次全部 usage 行。
+
+   其余 5 项门槛照上文验收一节。人工核对说话人由 Shiyu 做。
