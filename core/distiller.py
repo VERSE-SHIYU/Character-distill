@@ -158,7 +158,6 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ),
     ("G2", 'G. 内在矛盾（1-3个）：此人身上自相矛盾之处，以及矛盾如何影响行为'),
     ("G3", 'H. 开场白：以此角色的口吻写一句开场白，用于对话开始时'),
-    ("G3", 'I. 对话示例（2-3轮）：从原文中提取最能体现此角色说话风格的2-3组对话交互。格式为"对方：xxx\n角色：xxx"。选择的对话必须能展示角色的口癖、语气、态度。如果原文有动作描写，用（）包裹保留，如"（冷笑）你以为你是谁？"'),
     ("G2", 'J. 情感模式（2-3个）：什么情况下会生气、开心、沉默、逃避？触发条件是什么？'),
     ("G2", 'K. 决策风格：面对选择时是冲动还是谨慎？靠情感还是逻辑？举例说明。'),
     ("G4", 'L. 角色弧线：此人从故事开始到结束经历了怎样的变化？分2-4个阶段描述，每阶段一句话。如果无明显变化则写"无明显变化"。'),
@@ -207,7 +206,6 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("inner_tensions", '  "inner_tensions": ["内在矛盾1（原文出处）", "内在矛盾2（原文出处）"]'),
     ("background", '  "background": "背景摘要"'),
     ("first_message", '  "first_message": "角色开场白"'),
-    ("dialogue_examples", '  "dialogue_examples": ["对方：xxx\n角色：xxx"]'),
     ("emotional_patterns", '  "emotional_patterns": ["情感模式1（原文出处）", "情感模式2（原文出处）"]'),
     ("decision_style", '  "decision_style": "决策风格描述（含原文依据）"'),
     ("character_arc", '  "character_arc": ["阶段1变化", "阶段2变化"]'),
@@ -2009,7 +2007,6 @@ class Distiller:
             f"以下是关于「{character_name}」的完整分析档案，请严格按照JSON格式输出角色卡。\n"
             f"特别注意：\n"
             f"- catchphrases 必须是原文中的真实口癖，不要编造\n"
-            f"- dialogue_examples 必须是原文对话，不要改写\n"
             f"- personality_traits 每条必须附带具体场景证据\n\n"
             f"{profile_draft}"
         }]
