@@ -23,6 +23,7 @@ from openai import AsyncOpenAI
 
 from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_facing_error
 from core.card_quotes import retract_unverified
+from core.card_relationships import dedupe_relationship_targets
 from core.chat_preprocessor import ChatPreprocessor
 from core.quotes import (
     UNDECIDED,
@@ -1780,14 +1781,19 @@ class Distiller:
         aliases: Sequence[str] = (),
         roster: Sequence[dict] = (),
     ) -> CharacterCard:
-        """落卡前的后置步骤：先核对引文、再贴对话示例（WP18 / WP17），签名同后者。
+        """落卡前的后置步骤：先关系去重、再核对引文、最后贴对话示例（WP18 / WP17）。
 
-        合成一个入口是因为三条产卡通道各接一次后置步骤 —— 分成两个方法就有四条调用线，
+        合成一个入口是因为三条产卡通道各接一次后置步骤 —— 分成三个方法就有六条调用线，
         其中一条漏掉一步从成品看不出来（卡上「没有引文 / 示例」与「本来就没有」同形）。
-        两条都由代码保证「引号里的必是原文」：核对去掉查不到的引文的引号，示例由按编号
-        从原文复制（`attach_dialogue_examples`）。失败口径不变：挑选失败照旧抛
-        `DistillError` 交给调用方按任务失败处理。
+        三条都由代码保证：关系按 target 去重（`dedupe_relationship_targets`）、引号里的
+        必是原文（核对去掉查不到的引文的引号）、示例按编号从原文复制
+        （`attach_dialogue_examples`）。失败口径不变：挑选失败照旧抛 `DistillError` 交给
+        调用方按任务失败处理。
+
+        去重放在核对之前：先丢掉重复条目，引文撤回日志就只涉及留下来的那些条目，不会为一条
+        随后被丢的重复关系报一次撤回。
         """
+        card, _ = dedupe_relationship_targets(card)
         card, _ = retract_unverified(card, content)
         return self.attach_dialogue_examples(card, content, name, aliases, roster)
 
