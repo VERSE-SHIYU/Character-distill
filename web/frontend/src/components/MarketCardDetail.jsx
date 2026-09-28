@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import { likeComment } from '../api/comments'
 import Avatar from './common/Avatar'
+import TraitList from './common/TraitList'
 import useIsMobile from '../hooks/useIsMobile'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
@@ -671,11 +672,7 @@ export default function MarketCardDetail() {
               {cardData.personality_traits?.length > 0 && (
                 <div className={`card-section${isMobile && collapsedSections.has('personality') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('personality')}>
                   <h3>性格特征</h3>
-                  <div className="card-trait-list">
-                    {cardData.personality_traits.map((t, i) => (
-                      <span key={i} className="pill pill-trait"><i className="pill-trait-dot" />{t}</span>
-                    ))}
-                  </div>
+                  <TraitList items={cardData.personality_traits} />
                 </div>
               )}
 
