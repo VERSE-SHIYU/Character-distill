@@ -40,6 +40,19 @@ def test_a_labelled_multiline_group_hits_and_a_one_char_change_misses():
     assert broken["hit"] == 0 and len(broken["miss"]) == 1
 
 
+def test_a_dialogue_excerpt_spliced_with_ellipsis_still_hits_the_source():
+    """「甲……乙」这种节选按省略号拆段逐段核对 —— 验收与产品共用 `core/quotes` 的判定。
+
+    挡住变异：验收侧留一份自己的「归一后整串查原文」（旧 `_norm`）—— 归一丢掉的省略号
+    把两段拼成一句，原文里这两段并不相连，于是产品的合法节选被验收判成编造，报错的
+    是验收不是产品。
+    """
+    src = ("宝玉道：「好姐姐，你别说这些，我听着心里难受。你别怕。」\n"
+           "黛玉道：「我知道了。」\n")
+    group = "宝玉：好姐姐，你别说这些……你别怕。"
+    assert acc.dialogue_hits([group], src) == {"n": 1, "hit": 1, "miss": []}
+
+
 def test_a_quote_changed_by_one_char_is_reported_with_its_field():
     """卡片里任意字符串字段的成对引文都要查原文；查不到的原样带回字段名。
 

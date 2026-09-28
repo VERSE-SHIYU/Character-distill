@@ -54,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import yaml  # noqa: E402
 from evidence_writer import code_sha, write_evidence  # noqa: E402
 from core.distiller import Distiller  # noqa: E402
+from core.quotes import normalize, verbatim_in  # noqa: E402
 from core.schema import CharacterCard  # noqa: E402
 
 # ── §10 的硬数字与门槛（照抄蓝图，不在这里另立一套） ──────────────────────
@@ -540,16 +541,9 @@ def _check_card(args, token: str, content: str, run_status: str | None) -> dict:
 
 
 # ── §10 C4：卡片逐条核对（纯函数，不碰 HTTP；`_check_card` 只是取卡再调它们） ──
-# 原文与卡片里的标点/空白写法不保证一致（全角半角、有无皆可能），归一成「只留实义
-# 字符」再比，否则同一句话会因为一个逗号全角半角之差被判查不到。
-_DROP_CHARS = frozenset("，。！？、；：“”‘’「」『』（）《》…—" + ",.!?;:\"'()<>-")
-
-
-def _norm(s) -> str:
-    """去空白与标点。**只此一处**：对话示例与引文查原文前都过它。"""
-    return "".join(ch for ch in str(s) if not ch.isspace() and ch not in _DROP_CHARS)
-
-
+# 归一化与「逐字」的判定**只有一份**：`core/quotes.py`（产品侧按编号从原文复制对话示例
+# 也走它）。各写一份的结果是验收口径与产品保证分家 —— 那时验收再也证明不了产品。
+# 本脚本只留验收侧独有的那层：怎么把一个多行「说话人：台词（动作）」拆成逐句。
 _SPEAKER = re.compile(r"^[^：:\n]{1,12}[：:]")   # 行首「说话人：」
 _ACTION = re.compile(r"[（(][^（()）]*[)）]")     # （…）里的动作补白
 
@@ -571,11 +565,10 @@ def dialogue_lines(group) -> list[str]:
 def dialogue_hits(groups, content: str) -> dict:
     """对话示例逐句查原文：**一组全句命中才算命中**（任一句查不到就整组算 miss）。"""
     groups = [str(g) for g in (groups or [])]
-    src = _norm(content)
     miss = []
     for g in groups:
         lines = dialogue_lines(g)
-        if not (lines and all(_norm(x) in src for x in lines)):
+        if not (lines and all(verbatim_in(content, x) for x in lines)):
             miss.append(g)
     return {"n": len(groups), "hit": len(groups) - len(miss), "miss": miss}
 
@@ -603,13 +596,12 @@ def quote_misses(card, content: str) -> list[dict]:
     引文（角色自述、他人评价）是卡片里最容易被编造的成分：读着像原文，却查无此句。
     查不到就原样报出来由人判，不在这里改判据。
     """
-    src = _norm(content)
     seen, out = set(), []
     for field, s in _strings(card):
         for lq, rq in _QUOTE_PAIRS:
             pattern = re.escape(lq) + f"([^{re.escape(lq)}{re.escape(rq)}]+)" + re.escape(rq)
             for q in re.findall(pattern, s):
-                if len(_norm(q)) < QUOTE_MIN_CHARS or _norm(q) in src:
+                if len(normalize(q)) < QUOTE_MIN_CHARS or verbatim_in(content, q):
                     continue
                 if (field, q) not in seen:
                     seen.add((field, q))
@@ -634,8 +626,7 @@ def catchphrase_misses(catchphrases, content: str) -> list[str]:
     字数下限**：口癖短到两个字也算（「无事忙」「凤辣子」），套 4 字下限会把它们整个
     跳过，判据就漏了最典型的那一类。
     """
-    src = _norm(content)
-    return [str(c) for c in (catchphrases or []) if _norm(c) not in src]
+    return [str(c) for c in (catchphrases or []) if not verbatim_in(content, c)]
 
 
 # ══ §10 D3：读数模板 ══════════════════════════════════════════════════
