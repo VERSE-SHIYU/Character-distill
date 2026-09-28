@@ -165,10 +165,20 @@ const runDesktop = async (fail) => {
       const b = el.getBoundingClientRect()
       return { top: b.top, bottom: b.bottom }
     }
+    // 圆点是 ::before 伪元素：把 --accent 经探针解析成 rgb，再与伪元素背景比
+    const probeEl = document.createElement('span')
+    probeEl.style.color = 'var(--accent)'
+    document.body.appendChild(probeEl)
+    const accent = getComputedStyle(probeEl).color
+    probeEl.remove()
     return {
       glow: !!document.querySelector('.market-detail-hero .stage-glow'),
-      traitCount: document.querySelectorAll('.pill-trait').length,
-      traitDots: document.querySelectorAll('.pill-trait .pill-trait-dot').length,
+      traitCount: document.querySelectorAll('.trait-list > .trait-item').length,
+      traitDots: [...document.querySelectorAll('.trait-list > .trait-item')]
+        .filter((t) => {
+          const b = getComputedStyle(t, '::before')
+          return b.width === '6px' && b.backgroundColor === accent
+        }).length,
       heroRect: r('.market-detail-hero'),
       authorRect: r('.market-detail-author-bar'),
       overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -176,8 +186,8 @@ const runDesktop = async (fail) => {
   })
   console.log('DETAIL', JSON.stringify(d))
   if (!d.glow) fail.push('详情 hero 缺 stage-glow')
-  if (d.traitCount !== 3) fail.push('详情 trait 胶囊应 3 个: ' + d.traitCount)
-  if (d.traitDots !== 3) fail.push('详情 trait 圆点应 3 个: ' + d.traitDots)
+  if (d.traitCount !== 3) fail.push('详情 trait 条目应 3 个: ' + d.traitCount)
+  if (d.traitDots !== 3) fail.push('详情 trait 圆点应 3 个（6px + --accent）: ' + d.traitDots)
   if (d.heroRect && d.authorRect && d.heroRect.bottom > d.authorRect.top + 1) fail.push('详情 hero 压住 author bar')
   if (d.overflowX) fail.push('详情横向溢出')
   assertNoSerif(fail, 'market-detail-name', await serifFamily(page, '.market-detail-name'))
