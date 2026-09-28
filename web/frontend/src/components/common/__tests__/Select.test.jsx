@@ -122,6 +122,18 @@ describe('B5 键盘', () => {
     expect(screen.getAllByRole('option')[1].className).toContain('is-active')
   })
 
+  it('收起时按 Space 展开，且 preventDefault', () => {
+    const onChange = vi.fn()
+    render(<Select value="user" options={OPTIONS} onChange={onChange} />)
+    const trigger = screen.getByRole('combobox')
+    trigger.getBoundingClientRect = () => rect()
+    trigger.focus()
+    const ev = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true })
+    fireEvent(trigger, ev)
+    expect(ev.defaultPrevented).toBe(true)
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+  })
+
   it('↓↓ 移动后 Enter 选中对应值', () => {
     const { onChange, trigger } = setup({ value: 'admin' })
     // 展开时高亮在 admin(0)，两次 ↓ 到 guest(2)

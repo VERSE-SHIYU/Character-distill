@@ -134,6 +134,7 @@ Skill：本机装有 `frontend-design` 就调用这一个，只用于视觉细�
 | （补充）B5 Tab 关闭 | Select：展开后按 Tab，listbox 消失 | 删除 Tab 分支 | 展开状态按 Tab |
 | （补充）B2 宽度不小于触发器 | Select：mock 触发器 rect 宽 200，断言弹层 `minWidth` 为 `200px` | 删除宽度设置 | 选项文字比触发器短 |
 | （补充·审计）展开时再点触发器（真实 mousedown+click 序列）会关闭 | Select：展开后对触发器依次 `fireEvent.mouseDown` 和 `fireEvent.click`，listbox 消失 | 删除 `onMouseDown` 里的 `triggerRef.contains` 豁免（审计实测该变异当前存活） | 展开后再点一次触发器 |
+| （补充·审计 d78ceb7）收起时 Space 展开 | Select：聚焦触发器后按 Space，listbox 出现，且该 keydown 的 `defaultPrevented` 为 true | 把收起分支的条件改成只认 `ArrowDown` 和 `Enter`（审计实测该变异当前存活） | 键盘用户按空格打开 |
 | （补充·审计）展开时 Space 选中 | Select：展开，↓ 后按 Space，onChange 收到对应值，listbox 消失，且该 keydown 的 `defaultPrevented` 为 true | 删除 Space 分支 | 键盘用户按空格选择 |
 | （补充·审计）aria-activedescendant | Select：展开后触发器的 `aria-activedescendant` 等于高亮 option 的 id，↓ 后跟着变化；收起后属性消失 | 不设置该属性，或 id 不跟随高亮 | 读屏用户用键盘浏览 |
 | （补充·审计）高亮项滚入可视区 | Select：mock `Element.prototype.scrollIntoView`，30 个选项时按 ↓，断言它在新高亮项上被调用，参数为 `{ block: 'nearest' }` | 删除该 effect | 长列表键盘下移 |
