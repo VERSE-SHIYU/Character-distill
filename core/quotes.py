@@ -32,6 +32,17 @@ def normalize(s) -> str:
 _ELLIPSIS = re.compile(r"…+|\.{3,}")
 
 
+def verbatim_in_normalized(source_norm: str, quote: str) -> bool:
+    """`quote` 是否逐字出现在**已归一化**的 `source_norm` 里（省略处允许跳过）。
+
+    与 `verbatim_in` 的分工：核一张卡片要拿整本原文比几十条引文，`verbatim_in` 每条都会
+    重新归一化一遍整段 source（80 万字 × 几十条），这一层只接受调用方归一化好的 source，
+    把「整本归一化一次」的成本省下来。节选仍按省略号拆开逐段核对。
+    """
+    segs = [s for s in (normalize(p) for p in _ELLIPSIS.split(str(quote))) if s]
+    return bool(segs) and all(s in source_norm for s in segs)
+
+
 def verbatim_in(source: str, quote: str) -> bool:
     """`quote` 是否逐字出现在 `source` 里（归一化后比对，省略处允许跳过）。
 
@@ -41,9 +52,35 @@ def verbatim_in(source: str, quote: str) -> bool:
 
     没有任何实义字符的 quote（空串、「……」）返回 False：无可核对的东西不算「找到了」。
     """
-    src = normalize(source)
-    segs = [s for s in (normalize(p) for p in _ELLIPSIS.split(str(quote))) if s]
-    return bool(segs) and all(s in src for s in segs)
+    return verbatim_in_normalized(normalize(source), quote)
+
+
+# 卡片里成对的引文（角色自述、他人评价）—— **与抽对话的 `_QUOTE_PAIRS` 用途不同**：
+# 那份按「一份文本只用出现最多的那一对」抽对话候选，这份是逐对找出卡片里所有被引号括住
+# 的片段来做逐字核对。故英文双引号 `"` 也收进来（卡片里大量用它，此前默认配对表不含它，
+# 引文一条都没查过），且六对各自独立匹配、互不排除 —— 嵌套的引语各算一条。
+CITATION_PAIRS = (('"', '"'), ("'", "'"), ("‘", "’"), ("“", "”"), ("「", "」"), ("『", "』"))
+
+# 归一化后不足这么长的引文太短、子串命中没有分辨力（「你老」满篇都是）——抽取时就丢掉，
+# 调用方（卡片核对、验收）不必各自再判一次。
+CITATION_MIN_CHARS = 4
+
+
+def quoted_spans(text: str) -> list[tuple[int, int, str]]:
+    """`text` 里每一条成对引文：`(起, 止, 引号内文字)`，起止含引号本身，按先后排序。
+
+    只返回归一化后 ≥ `CITATION_MIN_CHARS` 的（更短的无分辨力，见上）。嵌套的引语各算一条
+    （`“他说"好"。”` 里外层与内层都在），故六对独立匹配、不做互相排除。
+    """
+    spans: list[tuple[int, int, str]] = []
+    for lq, rq in CITATION_PAIRS:
+        pattern = re.escape(lq) + "([^" + re.escape(lq) + re.escape(rq) + "]+)" + re.escape(rq)
+        for m in re.finditer(pattern, str(text)):
+            if len(normalize(m.group(1))) < CITATION_MIN_CHARS:
+                continue
+            spans.append((m.start(), m.end(), m.group(1)))
+    spans.sort()
+    return spans
 
 
 # 原文的对话引号样式：不同版本的书用不同的一对，同一本书里外层对话与内层引语用的是不同

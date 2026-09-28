@@ -11,10 +11,13 @@
 from __future__ import annotations
 
 from core.quotes import (
+    CITATION_MIN_CHARS,
     MAX_EXAMPLES,
     UNDECIDED,
     build_example,
     extract_candidates,
+    normalize,
+    quoted_spans,
     render_candidates,
     valid_picks,
     verbatim_in,
@@ -268,3 +271,44 @@ def test_an_example_pairs_the_previous_line_with_the_subject_line_verbatim():
         "凤姐：这话怎么讲？\n"
         "刘姥姥：阿弥陀佛！我这一辈子也没见过这样的排场。"
     )
+
+
+# ── 引文抽取：卡片里成对的引文（含英文双引号）与 4 字下限（卡片引文逐字核对）──
+
+def test_an_english_double_quoted_citation_is_extracted_with_its_span():
+    """卡片里的引文常用英文双引号 `"…"`：抽出来的是整段（含引号）的起止与引号内文字。
+
+    变异：`CITATION_PAIRS` 去掉 `('"', '"')` → 空列表，两条断言同时红。
+    """
+    text = '他道："姑娘说得是。"\n'
+    spans = quoted_spans(text)
+
+    assert [s[2] for s in spans] == ["姑娘说得是。"]
+    start, end, _ = spans[0]
+    assert text[start:end] == '"姑娘说得是。"', "起止含引号本身"
+
+
+def test_the_cjk_quote_styles_are_all_extracted_in_text_order():
+    """`“”` 与 `「」` 都要抽，按在文里的先后返回。"""
+    text = '凤姐道：“你老先坐。”\n刘姥姥笑道：「我念了句，姑娘别见怪。」\n'
+    assert [s[2] for s in quoted_spans(text)] == ["你老先坐。", "我念了句，姑娘别见怪。"]
+
+
+def test_an_english_quote_nested_inside_a_cjk_quote_is_extracted_too():
+    """中文引号里嵌英文双引号时，外层与内层各是一条（`"…"` 不被外层吞掉）。
+
+    变异：配对表只留 CJK → 内层那条查不到，断言红。
+    """
+    text = '凤姐道：“他说"我不知道"就走了。”\n'
+    assert [s[2] for s in quoted_spans(text)] == ['他说"我不知道"就走了。', "我不知道"]
+
+
+def test_quotes_shorter_than_the_minimum_after_normalizing_are_skipped():
+    """归一化后不足 `CITATION_MIN_CHARS` 字的引文太短、子串命中没有分辨力：不返回。
+
+    变异：去掉下限 → `"好。"` 也被抽出来，第一条断言红。
+    """
+    text = '他道："好。"\n'
+    assert quoted_spans(text) == []
+    assert CITATION_MIN_CHARS == 4
+    assert len(normalize("好")) < CITATION_MIN_CHARS
