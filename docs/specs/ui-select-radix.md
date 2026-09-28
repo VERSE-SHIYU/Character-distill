@@ -164,7 +164,58 @@ export default function Select({ value, options, onChange, disabled = false, siz
 - 3 个接线测试文件不改。
 - 本地只跑：`npx vitest run` 上述 3 个测试文件，然后 `npm test`，再跑 `npx eslint src -c eslint.ci.config.js --quiet`。不跑后端测试，也不需要 Docker PG。合并门是分支 CI；合并本身只做 git 操作，不跑测试，不等 CI。
 
-## 手动验证（由 Shiyu 在浏览器里做）
+## S4（补充）：浏览器自动验收，取代原「手动验证」
+
+复用仓库现成的 e2e 做法：`web/frontend/e2e/helpers.cjs` 导出的 `openApp / login / goToView / cs / shot`。写法参照 `e2e/settings-verify.cjs`，用 `page.route` 注入假数据。
+
+新建 `web/frontend/e2e/ui-select-verify.cjs`（与同目录其他 verify 脚本一样入库），用法：`node e2e/ui-select-verify.cjs`。
+
+**已查实约束（补充，基线 `2986443`）**
+
+| # | 事实 | 坐标 |
+|---|---|---|
+| E1 | helpers 连接 `http://localhost:7861`，账号 `testadmin`，密码只从环境变量 `TEST_PASSWORD` 读取 | `e2e/helpers.cjs:11-12,17-21` |
+| E2 | 7861 是本地 docker 编排的端口：在 worktree 根目录执行 `docker compose -f docker-compose.local.yml up -d --build`，会用当前分支代码现场构建 | `README.md:105` |
+| E3 | 主题由 `<html>` 的类名 `theme-<key>` 切换，共 6 个：aurora / milktea / ocean / sakura / midnight / galaxy（后两个是深色） | `src/utils/theme.js:20-23`、`src/utils/themes.js:3-8` |
+| E4 | 视图名 `admin`（管理，内含用户管理标签页）和 `history`，可用 `goToView(page, name)` 进入 | `src/components/MobileTabBar.jsx:33`、`src/components/Sidebar.jsx:78,95` |
+| E5 | 接口：`/api/admin/users/federated`、`/api/text/list`、`/api/history/list` | `src/api/client.js:297`、`src/store/useAppStore.js:658`、`HistoryPanel.jsx:211` |
+
+**补充·环境（回应执行方报告的端口与容器冲突）**
+- 同意只起两个服务：`docker compose -f docker-compose.local.yml up -d --build postgres app`。依据：`app` 的 `depends_on` 只有 `postgres`（`docker-compose.local.yml:107-109`），OTel 默认关闭（`:100-103`，`OTEL_ENABLED` 默认 0），不需要 jaeger。报告里单列这处对 E2 的偏离。
+- 新发现：本 worktree 起的是一套**空库**。`pg_data` 是按项目名隔离的卷（`:17-18,125-126`），`./data` 挂的是 worktree 自己的目录，所以没有 testadmin 账号，真登录必然失败。处理：**登录也用 mock，不依赖任何真实账号**。
+  - 做法：先注册一条兜底路由 `**/api/**`，统一返回 `{}`；再注册下面的具体路由。Playwright 优先匹配后注册的路由。
+  - `POST /api/auth/login` 返回 `{ access_token: 'e2e', refresh_token: 'e2e', user: ADMIN }`，`/api/auth/me` 返回 `ADMIN`。其中 `ADMIN = { id: 'admin1', username: 'testadmin', role: 'admin' }`。登录流程见 `src/store/useAppStore.js:72-77`。
+  - `helpers.login` 会检查 `TEST_PASSWORD` 是否存在（`helpers.cjs:17-21`），运行时设 `TEST_PASSWORD=e2e-mock`。这是占位值，不是凭据，可以写进命令，也可以出现在报告里。
+- 跑完执行 `docker compose -f docker-compose.local.yml down`（不加 `-v`）停掉本 worktree 的栈。
+
+**假数据（page.route）**
+- `/api/admin/users/federated` 返回：本地 `[自己 testadmin, 他人 u2 role:user]`，对端 `[]`。
+- `/api/text/list` 返回 30 条文本，文件名依次为「文本01」到「文本30」。
+- `/api/history/list*` 返回 `{ items: [], total: 0 }`，同时记录每次请求的 URL。
+
+**断言（桌面视口 1280×800；V2 还要在 390×844 下再跑一遍；V1–V3 对 6 个主题各跑一遍）**
+
+| # | 场景 | 断言 |
+|---|---|---|
+| V1 | 用户管理页，打开 u2 行的角色下拉 | ① 弹层上沿 ≥ 触发器下沿；② 弹层整体在视口内；③ 在弹层中心点调用 `document.elementFromPoint`，命中的元素位于 `.ui-select-menu` 内（证明没被表格裁掉或被其他层盖住）；④ 弹层宽度 ≥ 触发器宽度 |
+| V2 | 历史页两个筛选框 | 高度为 40px，宽度 ≥ 140px；未选择时文字分别为「全部文本」「全部角色」 |
+| V3 | 配色（每个主题） | 用一个临时元素设 `color: var(--accent)` 取出计算值，与 `[data-state="checked"]` 选项的文字色一致；同样方法比对 `[data-highlighted]` 选项背景色与 `--accent-soft` 一致；角色下拉触发器高度为 30px |
+| V4 | 历史页打开文本筛选 | 弹层高度 ≤ 280px；Viewport 的 `scrollHeight > clientHeight`；滚动到底后「文本30」可见 |
+| V5 | 键盘，文本筛选 | 聚焦触发器 → Enter 打开 → 按 ↓ → 输入「文」→ Enter；断言最后一次 `/api/history/list` 请求带 `text_id`，且下拉已关闭 |
+| V6 | 键盘，Esc | 打开后按 Esc，弹层消失，焦点回到触发器 |
+
+**截图**：每个主题的 V1、V4 各截一张，文件名 `ui-select-<主题>-<V1|V4>.png`，存到默认的 `e2e/screenshots/`（该目录是否被 git 忽略由执行方先查；被忽略就不入库）。
+
+**报告格式**：逐条列出 V1–V6 × 主题的结果（通过或失败，附实测值）；如有 `pageerror`，全部列出；附截图路径。
+
+**变异（证明脚本有分辨力，跑前先确认无变异基线全过）**
+- 去掉 `position="popper"` → V1① 应失败；
+- 删掉 `.ui-select-menu` 的 `max-height` → V4 应失败；
+- 把 `.ui-select-option[data-state="checked"]` 的 `color` 改成 `#000` → V3 应失败。
+
+跑完这 3 个变异立即还原代码。
+
+## 手动验证（补充：已由 S4 自动验收取代；Shiyu 只需浏览截图，判断主观观感）
 
 1. 用户管理：角色下拉不被表格裁掉，贴在触发器下方，配色跟随当前主题色。
 2. 历史页：两个筛选框尺寸和原来一致；未选时显示「全部文本」「全部角色」；长列表可以滚动。
