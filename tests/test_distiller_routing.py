@@ -961,26 +961,59 @@ class _InflightUpstream:
 
 
 class TestMapConcurrencyAdaptsToTheAccount:
-    """WP14 A2：上游「超过 N 路即 429」时 Map 零失败，且在途数收敛到 N 附近。
+    """WP14 A2：上游「超过 N 路即 429」时 Map 零失败，且闸放行时在途从不超过它当时的自身上限。
 
     变异：闸只包整次调用（不进重试循环）—— 退避期间名额没还掉。`test_backoff_...`
     读的就是退避那一刻的 `gate.inflight`，直接打红；端到端那条负责证明「零失败」。
 
-    片数取 80 而不是规格里写的 40：闸的初始上限就是 `map_concurrency`，冷启动那一波
-    必然把它探满，片数不够就没有「收敛后」可判。峰值只看后半程，并列在失败信息里供复核。
+    片数取 80 而不是规格里写的 40：闸的初始上限就是 `map_concurrency`（AIMD 从 cap 探起），
+    冷启动那一波齐发即大面积 429；片数够多，`admissions` 才覆盖得到「上限已被乘性下调、
+    闸仍按新上限放行」的样本。
     """
 
     CHUNKS = 80
     LIMIT = 5
     CAP = 20
-    # 尾部窗口跳过的是**上游请求数**（不是分片数）。AIMD 一波只下调一次（同波其余 429
-    # 已被时代代数拦掉），20 → 15 → 11 → 8 → 6 → 4 要 5 波才收敛完，而每波都带回重试，
-    # `served` 涨得比分片快 —— 实测收敛点在 served≈65（80 片整场 served≈155）。窗口从
-    # 100 起，跳过整段下降过程；实测尾峰值稳定在 LIMIT+1。
-    WARM = 100
 
-    async def test_map_finishes_with_zero_failures(self):
-        upstream = _InflightUpstream(self.LIMIT, warm=self.WARM)
+    async def test_map_finishes_with_zero_failures(self, monkeypatch):
+        """上游限流时 Map 零失败；**闸自己的不变量** = 每次放行时在途 ≤ 当时上限。
+
+        两层判据：
+        ① 闸的不变量 —— 每次放行后记 (ceiling, inflight)，断言 inflight ≤ ceiling。准入是
+           `while self._inflight >= self._ceiling: await wait()` 再 +1（`core/concurrency.py`），
+           这把锁的就是它。仪器包在 `__aenter__` 之外，**不读上游侧的在途数** —— 那是另一
+           回事：上限乘性下调时已在途的那批会暂时高于**新**上限
+           （`tests/test_concurrency.py::TestAcquireWaitsWhileTheCeilingSitsBelowInflight`
+           正锁着这个「高于上限就不再放行」的行为）。
+        ② 端到端 —— 全部分片零失败，且假上游确实限过流（`n429 > 0`，证明走到了被锁处）。
+
+        **不**断言上游侧在途峰值 ≤ LIMIT+1：闸的上限是 AIMD 锯齿逼近的估计值，满载成功会
+        把它加性上探（`on_success`，探到 cap 为止），而 200 不含「离上限多远」的信息 ——
+        收敛期上限探到 LIMIT+2 是算法的正常一步（见 `TestMapConcurrencyRemembersTheAccount`
+        的注释：实测 4–7、负载高时见过一次 9）。AIMD 的算术（乘性下调、加性上探、退避不
+        占名额、排队顺延）由 A1 的 `tests/test_concurrency.py` 与同文件 A3/A4 的确定性用例守着。
+
+        变异：准入改成 `while self._inflight > self._ceiling`（允许越限一格）→ 某次放行
+        记到 inflight = ceiling + 1，① 变红。
+        """
+        admissions: list[tuple[int, int]] = []
+
+        class _RecordingGate(AdaptiveGate):
+            """记下每次放行后的 (ceiling, inflight)。
+
+            子类化而非包装实例：闸由 `_run_map_concurrent` 自己构造，只有替换类才拿得到
+            每一次准入。`__aenter__` 先走父类（真准入），再读闸自报的状态。
+            """
+
+            async def __aenter__(self):
+                gate = await super().__aenter__()
+                admissions.append((self.ceiling, self.inflight))
+                return gate
+
+        # 全仓只 `core/distiller.py` 一处构造闸（`C.AdaptiveGate`），替换模块属性即覆盖。
+        monkeypatch.setattr("core.concurrency.AdaptiveGate", _RecordingGate)
+
+        upstream = _InflightUpstream(self.LIMIT)
         llm = upstream.adapter()
         try:
             d = Distiller(llm=llm, config_path=None)
@@ -997,15 +1030,16 @@ class TestMapConcurrencyAdaptsToTheAccount:
         finally:
             upstream.close()
 
-        n429 = upstream.statuses.count(429)
-        assert n429 > 0, "假上游一次都没限流 —— 这条锁没走到被锁的地方"
+        assert upstream.statuses.count(429) > 0, "假上游一次都没限流 —— 这条锁没走到被锁的地方"
         assert failures == [], f"限流把片打挂了：{failures[:3]}"
         assert len(results) == self.CHUNKS
-        assert upstream.tail_peak > 0, "尾部窗口一个请求都没量到 —— 这条锁空转"
-        assert upstream.tail_peak <= self.LIMIT + 1, (
-            f"收敛后仍在途 {upstream.tail_peak}，超过上游上限 {self.LIMIT}（+1 是 AIMD 的探针："
-            f"不探到上限之上就永远学不到上限）；整场峰值 {upstream.peak}（含冷启动那波），"
-            f"429 共 {n429} 次")
+        # 每片至少放行一次；少于此说明仪器没覆盖到全部放行（锁空转）。
+        assert len(admissions) >= self.CHUNKS, (
+            f"只记到 {len(admissions)} 次放行（< {self.CHUNKS} 片）—— 这条锁空转")
+        over = [(ceil, inf) for ceil, inf in admissions if inf > ceil]
+        assert not over, (
+            f"闸放行时在途超过了自己当时的上限（ceiling, inflight）：{over[:3]}"
+            f"（共 {len(over)} 次越限 / 全部 {len(admissions)} 次放行）")
 
     async def test_backoff_does_not_hold_a_slot(self, monkeypatch):
         """退避睡眠必须落在闸**外**：睡着的请求若占着名额，上限永远探不上去。
