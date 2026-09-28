@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import threading
+import time
+
 import pytest
 
 from core.memory_manager import (
+    MemoryManager,
     _lookup_vad, _emotion_affinity, _emotion_match, _get_emotion_polarity,
     RERANK_ALPHA, RERANK_BETA, RERANK_GAMMA, RERANK_LAMBDA,
 )
@@ -117,3 +122,49 @@ class TestMultiplicativeGate:
             assert 0.0 <= aff <= 1.0
         aff = _emotion_affinity("开心", "愤怒")
         assert 0.0 <= aff <= 1.0
+
+
+class _FailingMem:
+    """`add` 必失败的 mem0 替身。"""
+
+    def add(self, *a, **kw):
+        raise RuntimeError("boom")
+
+
+def _bare_manager(mem) -> MemoryManager:
+    """绕开 __init__ 的构造需求，只装配 add/add_manual 用得到的字段。"""
+    mm = MemoryManager.__new__(MemoryManager)
+    mm._enabled = True
+    mm._search_top_k = 10
+    mm._context_window = 30
+    mm._mem = mem
+    mm._lock = threading.Lock()
+    return mm
+
+
+class TestWriteFailureIsVisible:
+    """写入失败 = 记忆丢了且不会自愈。WARNING 进不了 GlitchTip 的问题列表，必须 ERROR。"""
+
+    def _records(self, caplog, needle: str) -> list:
+        return [r for r in caplog.records if needle in r.getMessage()]
+
+    def test_add_failure_logs_at_error(self, caplog):
+        mm = _bare_manager(_FailingMem())
+        with caplog.at_level(logging.ERROR):
+            mm.add([{"role": "user", "content": "hi"}], "card1")  # 入库在后台线程
+            deadline = time.time() + 5
+            while not self._records(caplog, "Mem0 add failed") and time.time() < deadline:
+                time.sleep(0.02)
+
+        rec = self._records(caplog, "Mem0 add failed")
+        assert rec, "写入失败没留下任何日志"
+        assert rec[0].levelno == logging.ERROR
+
+    def test_manual_add_failure_logs_at_error(self, caplog):
+        mm = _bare_manager(_FailingMem())
+        with caplog.at_level(logging.ERROR):
+            assert mm.add_manual("一条记忆", "card1") is False
+
+        rec = self._records(caplog, "Mem0 manual add failed")
+        assert rec, "手动写入失败没留下任何日志"
+        assert rec[0].levelno == logging.ERROR

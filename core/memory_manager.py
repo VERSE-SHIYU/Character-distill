@@ -342,9 +342,14 @@ class MemoryManager:
                 total_chars = sum(len(m.get("content", "")) for m in messages if isinstance(m, dict))
                 print(f"[embed-stats] Mem0 add est_tok={total_chars // 2} card={card_id}")
                 result = self._mem.add(messages, **kwargs)
-                print(f"[MemoryManager] add OK: card={card_id} result_len={len(result) if isinstance(result, list) else 'N/A'}")
+                # mem0 2.0.20 成功时返回 `{"results": [...]}`，一条都没提炼出来时返回 `[]`
+                # （memory/main.py:877 与 :989）—— 两种形态都在，故不能只看一种。
+                n_results = len(result.get("results", [])) if isinstance(result, dict) else len(result)
+                print(f"[MemoryManager] add OK: card={card_id} result_len={n_results}")
             except Exception as exc:
-                logger.warning("Mem0 add failed: %s", exc, exc_info=True)
+                # ERROR 不是「更吓人」：写入失败 = 这条记忆丢了且不会自愈，而 WARNING
+                # 进不了 GlitchTip 的问题列表 —— 之前 SZ/SG 静默了 48 小时没人知道。
+                logger.error("Mem0 add failed: %s", exc, exc_info=True)
 
         C.ctx_thread(_do_add, daemon=True).start()  # context 传播点：记忆入库线程
 
@@ -377,7 +382,7 @@ class MemoryManager:
             print(f"[MemoryManager] manual add result: {result}")
             return True
         except Exception as exc:
-            logger.warning("Mem0 manual add failed: %s", exc, exc_info=True)
+            logger.error("Mem0 manual add failed: %s", exc, exc_info=True)
             return False
 
     def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str,
