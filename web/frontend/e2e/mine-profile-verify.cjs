@@ -202,11 +202,43 @@ async function runMobile(fail) {
   return errors
 }
 
+// 他人主页：在线状态查对方 id、对方隐藏时不显示；页头标题与其他二级页（回收站，.panel）左边距一致
+async function runOtherProfile(fail) {
+  const { browser, page, errors } = await openApp({ width: 1280, height: 900 })
+  await mockRoutes(page)
+  const presenceUrls = []
+  await page.route('**/api/auth/user/u-other/online', (r) => { presenceUrls.push(r.request().url()); return r.fulfill({ json: { online: null, last_active_at: null, hidden: true } }) })
+  await login(page, { settleMs: 1200 })
+  const titleLeft = (sel) => page.evaluate((q) => { const t = document.querySelector(q); return t ? Math.round(t.getBoundingClientRect().left) : null }, sel)
+  const out = {}
+  for (const w of [1280, 390]) {
+    await page.setViewportSize({ width: w, height: 900 })
+    await goToView(page, 'trash', { viaHome: true })
+    await page.waitForSelector('.page-header-title', { timeout: 10000 })
+    await page.waitForTimeout(600) // 等二级页进场动画结束再量
+    const ref = await titleLeft('.page-header-title')
+    await goToView(page, 'author', { viaHome: true, authorUserId: 'u-other' })
+    await page.waitForSelector('.mine-page-v2 > .page-header .page-header-title', { timeout: 10000 })
+    await page.waitForTimeout(600)
+    const mine = await titleLeft('.mine-page-v2 > .page-header .page-header-title')
+    const status = await page.evaluate(() => !!document.querySelector('.mine-online'))
+    out[w] = { ref, mine, status }
+    if (ref == null || mine !== ref) fail.push(`他人主页标题左边距 ${mine} ≠ 回收站 ${ref}（宽 ${w}）`)
+    if (status) fail.push(`对方隐藏在线状态时仍显示（宽 ${w}）`)
+  }
+  const selfQueried = presenceUrls.length > 0
+  console.log('OTHER PROFILE', JSON.stringify({ out, presenceUrls: presenceUrls.length }))
+  if (!selfQueried) fail.push('他人主页没有按对方 id 查询在线状态')
+  if (errors.length) fail.push('他人主页 pageErrors: ' + JSON.stringify(errors))
+  await browser.close()
+}
+
 ;(async () => {
   const fail = []
   const errs = []
   const d = await runDesktop(fail)
   const m = await runMobile(fail)
+  await runOtherProfile(fail)
   errs.push(...d, ...m)
   console.log('pageErrors:', JSON.stringify(errs))
   if (errs.length) fail.push('存在 pageErrors: ' + JSON.stringify(errs))
