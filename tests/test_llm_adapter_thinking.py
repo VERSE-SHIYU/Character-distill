@@ -147,3 +147,24 @@ def test_chat_with_tools_sends_dialect_payload():
     llm._client = fake
     llm.chat_with_tools("sys", [{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
     assert fake.chat.completions.kwargs["extra_body"] == DEEPSEEK_OFF
+
+
+# ── response_format 透传（mem0 的 JSON 提炼走这里）──────────────────────
+# 适配器过去不支持这个参数，mem0 的 `add` 是**唯一**要它的调用方。两条一起钉：
+# 给了就原样到场，不给则请求体里没有这个键（现有调用点逐字不变）。
+
+def test_chat_forwards_response_format_verbatim():
+    llm = _make_llm()
+    fake = _Client()
+    llm._client = fake
+    rf = {"type": "json_object"}
+    assert llm.chat("sys", [{"role": "user", "content": "hi"}], response_format=rf) == "ok"
+    assert fake.chat.completions.kwargs["response_format"] is rf
+
+
+def test_chat_omits_response_format_when_not_asked():
+    llm = _make_llm()
+    fake = _Client()
+    llm._client = fake
+    llm.chat("sys", [{"role": "user", "content": "hi"}])
+    assert "response_format" not in fake.chat.completions.kwargs

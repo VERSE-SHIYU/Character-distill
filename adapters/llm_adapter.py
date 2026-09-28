@@ -790,8 +790,13 @@ class LLMAdapter:
         return result
 
     @T.spanned("llm.chat", op="chat", finalize=_infer_finalize)
-    def chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> str:
-        """非流式对话，返回完整文本回复。重试预算=生成轮（3 次非429 / 总墙钟 60s，_RetryBudget）。"""
+    def chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None,
+             *, response_format: dict[str, Any] | None = None) -> str:
+        """非流式对话，返回完整文本回复。重试预算=生成轮（3 次非429 / 总墙钟 60s，_RetryBudget）。
+
+        *response_format* 原样透传给 API（mem0 的提炼要 `{"type": "json_object"}`）。
+        **不给这个参数时请求体逐字与从前一致** —— 它是可选项，不是新默认值。
+        """
         self._before_call()
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
@@ -810,6 +815,8 @@ class LLMAdapter:
                     presence_penalty=self._presence_penalty,
                     timeout=timeout,
                     extra_body=self._request_options(),
+                    # 不给 response_format 时这个 **展开为空 —— 请求体与从前逐字一致。
+                    **({} if response_format is None else {"response_format": response_format}),
                 )
                 choices = completion.choices
                 if not choices:
