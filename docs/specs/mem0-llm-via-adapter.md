@@ -204,3 +204,22 @@
 
 ### 验收
 无需真跑。部署后打开设置页，模型栏显示的是配置里的模型（当前为 `deepseek-flash`）。
+
+### 补充 1 · S0 裁决（2026-09-28，Claude 审 S0 报告后）
+- **问题 2 的表述更正**：mem0 2.0.20 的 openai 提供方实际发出三个参数，`temperature=0.1`、`top_p=0.1`、`max_tokens=2000`（`mem0/llms/base.py:156-165` 的 `_get_common_params`，默认值见 `mem0/configs/llms/base.py:19-22`），不发 `presence_penalty`。
+- **裁决：选 (b) 的一部分。复原 `top_p`，`max_tokens` 不复原。**
+  - `top_p` 会改变采样分布，属于「采样参数」，按本补充的目标复原为 0.1。`LLMAdapter.__init__` 增加关键字参数 `top_p: float | None = None`，写法与 `presence_penalty` 对称。**只在设置了值时才放进请求体**，写法同 `response_format` 的条件展开。这样其他调用方的请求体逐字不变。
+  - `max_tokens` 只是输出上限，不影响采样分布。保持适配器的 4096：上限越低越容易被截断，而截断会被适配器判成失败（`IncompleteResponseError`），mem0 这条记忆就丢了。
+  - 常量：`core/memory_manager.py` 增加 `_EXTRACT_TOP_P = 0.1`，注明出处。
+- **约束 d 坐标更正**：fail-closed 抛错块是 `web/llm_gate.py:66-70`。
+- **步骤 4 的连带效果**：回填脚本改走适配器后，会带上配置里的 `presence_penalty: 0.3`（原先不发）。接受，理由：这是一次性运维脚本，本补充不为它单设参数。已写入对账表。
+- **补测试与对账**：
+  - T2 增加一条断言：经 `MemoryManager` 构造的适配器，请求体里 `top_p == 0.1`；普通 `LLMAdapter()` 的请求体里**没有** `top_p` 这个键。
+
+| 行为变化（含连带效果） | 守它的测试 | 让它变红的变异 | 改后能触发的具体状态 |
+|---|---|---|---|
+| mem0 提炼用 top_p 0.1 | T2 | 删掉传入的 top_p | 提炼请求体里带 `top_p: 0.1` |
+| 其他调用方不带 top_p（连带） | T2 | 把 top_p 改为无条件发送 | 聊天等请求体逐字不变 |
+| 回填脚本带 presence_penalty 0.3（连带，接受） | T5 | 脚本改回直连 | 不单独约束，T5 已锁「走适配器」 |
+
+- S0 其余各项全部成立。**准许进入补充 1 的步骤 1–4 编码**（步骤 2 按本裁决加上 top_p）。
