@@ -406,7 +406,7 @@ class _FakeLLM:
         是乙说的；上一句说话人只能从名单 enum（这里 = 乙）里取 —— 名单里没有乙就成不了组。
         """
         self.last_usage = {"prompt_tokens": 17, "completion_tokens": 3}
-        return {"picks": [{"n": 1, "prev_speaker": "乙"}]}
+        return {"pick1": 1, "speaker1": "乙"}
 
     def _make_async_client(self):
         return _FakeClient()
