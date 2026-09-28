@@ -1,6 +1,6 @@
 # Spec：他人主页在线状态与页头 + 角色管理页空态缺页头
 
-基线 `main` `4c2ffbb`。只改前端。改动全文在 `presence-and-charcard.diff`（含测试、验收脚本、依赖），已在沙箱基于该基线实跑。本文件取代此前单独发出的 `presence-fix.md`、`charcard-empty-header.md`（未入库，直接作废）。
+基线 `main` `4c2ffbb`。只改前端。改动已随 PR #54 合入 main（merge e0fd868d）；原 .diff 未入库，以 PR 为准。本文件取代此前单独发出的 `presence-fix.md`、`charcard-empty-header.md`（未入库，直接作废）。
 
 ## 问题与根因
 1. **他人主页显示的是自己的在线状态**：`MinePage.jsx:277` 用 `authUser.id` 查询；页面对自己和他人共用，应查当前展示的人。同一查询在 `PrivateMessageChat.jsx:313` 另写一份。
@@ -74,7 +74,7 @@ src/components/PrivateMessageChat.jsx:313:      const res = await fetchWithTimeo
 - 本地只跑上述新测试与 PrivateMessageChat / MinePage / CharCard 既有测试、`npm test`、eslint；两个验收脚本在 docker 环境跑（`docker compose -f docker-compose.local.yml up -d --build postgres app`，先查端口 / 容器名 / 数据卷冲突并记入报告，跑完 `down` 不加 `-v`）。合并门是分支 CI，合并只做 git 操作
 
 ## 实测（沙箱：Vite 开发服务器 + 登录 mock）
-`npm test` 277/277；eslint 无告警；两个验收脚本修复后 PASS。
+`npm test` 277/277；CI 口径 `npx eslint src -c eslint.ci.config.js --quiet` exit 0（`npm run lint` 在 main 上原本即红，非本改动引入）；两个验收脚本修复后 PASS。
 
 ## 对账表（调用点 × 可观测输出；全部预跑）
 | 调用点 | 可观测输出 | 守它的测试 | 变异 → 结果 |
@@ -90,4 +90,4 @@ src/components/PrivateMessageChat.jsx:313:      const res = await fetchWithTimeo
 | CharCard 空态 | 有页头、返回、入口 | E1、E2、验收 | 换回 main 原文件 🔴；空态不渲染页头 🔴 |
 | CharCard 空态 | 内容可见 | E1、验收 | 内容被隐藏 🔴 |
 
-未验证：验收脚本在 docker 构建版上的表现（我跑的是开发服务器 + 登录 mock）。
+已验证：两个验收脚本在 docker 构建版（docker-compose.local.yml）上实跑 PASS，pageErrors 为空（PR #54）。
