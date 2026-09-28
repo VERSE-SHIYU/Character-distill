@@ -8,7 +8,7 @@ import { visibleEntries } from './common/visibleEntries'
 import useCanWrite from '../hooks/useCanWrite'
 import { THEMES } from '../utils/themes'
 import { applyTheme, getTheme, applyFontDisplay, getFontDisplay } from '../utils/theme'
-import { Check, Home, Edit3, Users, Clock, Globe, Trash2, Heart, User, Shield, MessageSquare, Palette, Mic, Settings, LogIn, Book, Close } from './common/Icon'
+import { Check, Home, Edit3, Users, Clock, Globe, Trash2, Heart, User, Shield, MessageSquare, Palette, Mic, Settings, LogIn, Book, Close, Terminal } from './common/Icon'
 
 const NAV_ITEMS = [
   {
@@ -20,6 +20,11 @@ const NAV_ITEMS = [
     id: 'workbench',
     icon: <Edit3 size={20} />,
     label: '创作',
+  },
+  {
+    id: 'distillWorkbench',
+    icon: <Terminal size={20} />,
+    label: '蒸馏',
   },
   {
     id: 'groupChat',

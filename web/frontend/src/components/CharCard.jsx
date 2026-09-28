@@ -19,6 +19,7 @@ import RoleSetupModal from './RoleSetupModal'
 import EditCardModal from './EditCardModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
+import DistillWorkbenchButton from './common/DistillWorkbenchButton'
 
 function IdentifyProgress({ active }) {
   const pct = useSmoothProgress(active ? 90 : 100, !active)
@@ -79,7 +80,7 @@ export default function CharCard() {
     <div className="char-panel panel" {...swipeBack}>
       {!(isMobile && currentCard) && (
         <header className="panel-header">
-          <PageHeader title="角色管理" onBack={goBack} />
+          <PageHeader title="角色管理" onBack={goBack} actions={<DistillWorkbenchButton />} />
           <p className="panel-desc">
             当前文本：{filename}
           </p>
