@@ -3191,7 +3191,7 @@ class SQLiteStore(StorageBase):
             return {
                 "api_key": _decrypt(row[0] or ""),
                 "base_url": row[1] or "https://api.deepseek.com",
-                "model": row[2] or "deepseek-v4-pro",
+                "model": row[2],
                 "embedding_key": _decrypt(row[3] or ""),
                 "embedding_region": row[4] or "cn",
             }

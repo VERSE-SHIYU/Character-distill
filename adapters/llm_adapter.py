@@ -620,6 +620,42 @@ def _extract_content(choice: Any, *, where: str) -> str:
     return content
 
 
+_FALLBACK_MODEL = "deepseek-flash"
+
+
+def _load_llm_config(config_path: str | Path | None = None) -> dict[str, Any]:
+    """读 `llm` 段配置 —— **全仓唯一**一处配置读取（`LLMAdapter.__init__` 与
+    `default_model` 共用，不各存一份）。
+
+    显式传 *config_path* 就只认它（读不到得空 dict，不偷偷换文件回落）；不传才是
+    `config.yaml` → `config.example.yaml` 的阶梯。配置损坏不抛：调用方拿到空 dict
+    后各自落到自己的默认值，一个坏文件不该让进程起不来。
+    """
+    root = Path(__file__).resolve().parent.parent
+    cfg_file = Path(config_path) if config_path is not None else root / "config.yaml"
+    if config_path is None and not cfg_file.exists():
+        cfg_file = root / "config.example.yaml"
+    try:
+        data = yaml.safe_load(cfg_file.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and "llm" in data:
+            return data["llm"]
+    except Exception as exc:
+        logger.error("[LLMAdapter] Config file load failed, using defaults: %s", exc, exc_info=True)
+    return {}
+
+
+def default_model(config_path: str | Path | None = None) -> str:
+    """项目默认模型名的**唯一**定义 —— 配置文件里的 `llm.model`。
+
+    从前 `adapters`、`web/deps.py`、`web/routers/auth.py` 与两个存储层各写死一份
+    `deepseek-v4-pro`，改默认模型要同时改五处，漏一处就「前端显示一个模型、实际请求
+    另一个」。现在只剩「配置文件」这一个真源；`_FALLBACK_MODEL` 是配置**读不到时**
+    的字面量，它必须与 `config.example.yaml` 一致 —— 否则配置文件缺失的那天就会从
+    角落里冒出一个陈旧模型名（tests/test_default_model.py 钉住这条）。
+    """
+    return str(_load_llm_config(config_path).get("model") or _FALLBACK_MODEL)
+
+
 def _resolve_max_tokens(llm_cfg: dict[str, Any]) -> int:
     """max_tokens 取值阶梯：显式 arg > LLM_MAX_TOKENS > config.yaml > 4096。
 
@@ -657,22 +693,10 @@ class LLMAdapter:
         root = Path(__file__).resolve().parent.parent
         load_dotenv(root / ".env")
 
-        # Load defaults from config.yaml (fallback to config.example.yaml)
-        cfg_file = Path(config_path) if config_path is not None else root / "config.yaml"
-        if config_path is None and not cfg_file.exists():
-            cfg_file = root / "config.example.yaml"
-        llm_cfg: dict[str, Any] = {}
-        try:
-            raw = cfg_file.read_text(encoding="utf-8")
-            data = yaml.safe_load(raw)
-            if isinstance(data, dict) and "llm" in data:
-                llm_cfg = data["llm"]
-        except Exception as exc:
-            logger.error("[LLMAdapter] Config file load failed, using defaults: %s", exc, exc_info=True)
-            pass
+        llm_cfg = _load_llm_config(config_path)
 
         self._base_url = base_url or str(llm_cfg.get("base_url", "https://api.deepseek.com"))
-        self._model = model or str(llm_cfg.get("model", "deepseek-v4-pro"))
+        self._model = model or default_model(config_path)
         self._temperature = temperature if temperature is not None else float(llm_cfg.get("temperature", 0.7))
         self._max_tokens = max_tokens if max_tokens is not None else _resolve_max_tokens(llm_cfg)
         self._presence_penalty = float(llm_cfg.get("presence_penalty", 0.3))
