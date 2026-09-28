@@ -5,25 +5,26 @@
 产品按编号从原文复制对话示例、验收按同一份判定核对成品卡，两边共用本模块。地基判错
 只会在真跑时以「对话示例 0/3 命中」的形态出现，届时既贵又看不出是抽错了还是模型挑错了。
 
-**变异。** 每条用例都配一个「少做一步就红」的反例：不按省略号分段、引导语取整段叙述
-而不是最后一个句读、渲染编号改成 0 起。
+**变异。** 每条用例都配一个「少做一步就红」的反例：只认一种引号、三对混着匹配、引导语
+取整段叙述而不是最后一个句读、片段不给上一句、首句也收、渲染编号改成 0 起。
 """
 from __future__ import annotations
 
 from core.quotes import (
     MAX_EXAMPLES,
+    UNDECIDED,
     build_example,
     extract_candidates,
     render_candidates,
-    speaker_in,
     valid_picks,
     verbatim_in,
 )
 
 # 真实形态：整段的叙述 + 引导语 + 引号。《红楼梦》的对话一律「“……”」，说话人写在紧贴
-# 引号的引导语里；这里刻意混入四种形态 —— 引导语含两个人名、引导语带（）动作、
-# 无引导语的裸引号、以及「最后一个句读之后才是引导语」的多句叙述。
+# 引号的引导语里；这里刻意混入五种形态 —— 开头的裸引号、引导语含两个人名、引导语带（）
+# 动作、无引导语的裸引号、以及「最后一个句读之后才是引导语」的多句叙述。
 PARA = (
+    "“老太太来了？”\n"
     "贾母听了，也笑了。凤姐忙和刘姥姥摆手道：“你老快别这样说，"
     "我不过是替你张罗张罗，你倒来挑我的不是。”\n"
     "刘姥姥笑道：“姑娘说的我心里熨帖，我哪敢挑姑娘的不是。”\n"
@@ -43,7 +44,7 @@ def test_candidates_carry_their_lead_the_previous_line_and_a_running_number():
     assert [c.n for c in cands] == [1, 2, 3], [(c.n, c.lead) for c in cands]
     assert cands[0].lead == "凤姐忙和刘姥姥摆手道："      # 含第二个人名，仍收（见下条）
     assert cands[0].line == "你老快别这样说，我不过是替你张罗张罗，你倒来挑我的不是。"
-    assert (cands[0].prev_lead, cands[0].prev_line) == ("", ""), "首句没有上一句"
+    assert (cands[0].prev_lead, cands[0].prev_line) == ("", "老太太来了？"), "开头那条裸引号"
 
     assert cands[1].lead == "刘姥姥笑道："
     assert cands[1].prev_lead == "凤姐忙和刘姥姥摆手道："
@@ -54,37 +55,56 @@ def test_candidates_carry_their_lead_the_previous_line_and_a_running_number():
     assert (cands[2].prev_lead, cands[2].prev_line) == ("", "这话怎么讲？")
 
 
-def test_a_two_name_lead_is_still_collected_so_the_model_can_reject_it():
-    """引导语含第二个人名只算「多收」，不算漏 —— 归属对不对由模型读完整引导语判。
+def test_the_very_first_quote_is_not_a_candidate():
+    """全文第一句没有上一句，成不了对 —— 连候选都不进（补充 1-第 2 步）。
 
-    变异：改成「只认引导语里唯一的人名」→ 第 1 条被丢掉（凤姐的台词从此不进候选，
-    模型再想挑也挑不到）；渲染时不给引导语 → 模型判不出这句其实是凤姐说的。
+    变异：恢复「首句也收、prev 留空」→ 候选多一条，断言红。
+    """
+    text = "刘姥姥笑道：“姑娘说得是。”\n凤姐道：“你老慢慢说。”\n"
+
+    assert extract_candidates(text, ["刘姥姥"]) == []
+
+
+def test_a_candidate_carries_the_source_fragment_ending_at_its_own_line():
+    """`context` 是原文的连续子串：从上一句之前起，到本句结尾止（含上一句与引导语）。
+
+    模型据片段判「本句到底是不是我说的」「上一句是不是另一个人说的」—— 只给引导语的话
+    它看不出名字是宾语（约束 ①：「送入刘姥姥口中，因笑道」是凤姐说的）。
+
+    变异：片段改回只含引导语 → 第二条断言红，且第四条看不到上一句。
     """
     cands = extract_candidates(PARA, ["刘姥姥"])
-    assert "本句：凤姐忙和刘姥姥摆手道：“你老快别这样说" in render_candidates(cands)
+    c = cands[1]                                    # 刘姥姥笑道那条，上一句是凤姐
+
+    assert c.context in PARA, "片段必须是原文的连续子串，不是拼出来的"
+    assert c.context.endswith(c.lead + "“" + c.line + "”"), "到本句结尾止"
+    assert "你老快别这样说" in c.context, "上一句（凤姐那句）在片段里"
+    assert PARA.index(c.context) <= PARA.index("凤姐忙和刘姥姥摆手道："), "从上一句之前起"
 
 
-def test_a_paren_action_in_the_lead_neither_hides_nor_invents_a_candidate():
-    """引导语里的（）动作不影响归属：凤姐（笑）道 → 是凤姐的候选。
+def test_the_fragment_keeps_the_previous_line_and_caps_narration_before_it_at_sixty():
+    """片段必含上一句（模型得看对方怎么接的话），上一句之前最多带 60 字叙述，且不吞掉
+    再上一句的台词：一段长叙述整段塞进去是几倍的成本与注意力。
 
-    变异：拿去掉（）后的引导语去比人名（（笑）被当成人名的一部分）→ 凤姐的两条全丢。
+    变异：起点取再上一句结尾（不设 60 字上限）→ 整段叙述连「先这么说」一起进片段，红。
     """
-    assert [c.line for c in extract_candidates(PARA, ["凤姐"])] == [
-        "你老快别这样说，我不过是替你张罗张罗，你倒来挑我的不是。",
-        "你老慢慢说，别急。",
-    ]
+    text = ("凤姐道：“先这么说。”\n"
+            + "贾母听了，也不言语。" * 10
+            + "凤姐笑道：“你老慢慢说。”\n"
+            + "刘姥姥道：“姑娘说得是。”\n")
 
+    c = extract_candidates(text, ["刘姥姥"])[0]
 
-def test_no_names_or_no_quotes_yields_nothing():
-    assert extract_candidates(PARA, []) == []
-    assert extract_candidates(PARA, [""]) == []
-    assert extract_candidates("只有叙述，没有对话。", ["刘姥姥"]) == []
-    assert extract_candidates(PARA, ["薛宝钗"]) == []
+    assert c.context.endswith("刘姥姥道：“姑娘说得是。”"), "到本句收尾引号止"
+    assert "你老慢慢说" in c.context, "上一句（凤姐那句）在片段里"
+    assert c.context == text[text.index("凤姐笑道：") - 60:text.rindex("”") + 1]
+    assert "先这么说" not in c.context, "再上一句整个落在 60 字之外，不该进来"
 
 
 # ── 引号样式：一份文本只用出现最多的那一对（补充 1-第 1 步）─────────────────
 
-BRACKET = ("刘姥姥笑道：「我念了句『阿弥陀佛』，姑娘别见怪。」\n"
+BRACKET = ("凤姐道：「你老先坐。」\n"
+           "刘姥姥笑道：「我念了句『阿弥陀佛』，姑娘别见怪。」\n"
            "凤姐道：「你老慢慢说。」\n")
 
 
@@ -117,9 +137,12 @@ def test_a_tie_goes_to_the_first_pair_in_the_list():
     """开引号数并列时按 `_QUOTE_PAIRS` 的顺序取（`“”` 优先）—— 两种样式混用的文本结果
     是确定的，不随扫描顺序漂。
 
-    变异：比较写成 `>=`（后来者居上）→ 抽到 `「」` 那句，断言红。
+    变异：比较写成 `>=`（后来者居上）→ 抽到 `「」` 那两句，断言红。
     """
-    text = "刘姥姥道：“好。”\n凤姐道：「也好。」\n"
+    text = ("贾母道：“你且听。”\n"
+            "刘姥姥道：“好。”\n"
+            "凤姐道：「也罢。」\n"
+            "刘姥姥道：「丁。」\n")
 
     assert [c.line for c in extract_candidates(text, ["刘姥姥", "凤姐"])] == ["好。"]
 
@@ -131,14 +154,42 @@ def test_ascii_quotes_yield_no_candidates():
     assert extract_candidates(text, ["刘姥姥", "凤姐"]) == []
 
 
+def test_a_two_name_lead_is_still_collected_so_the_model_can_reject_it():
+    """引导语含第二个人名只算「多收」，不算漏 —— 归属对不对由模型读完整片段判。
+
+    变异：改成「只认引导语里唯一的人名」→ 第 1 条被丢掉（凤姐的台词从此不进候选，
+    模型再想挑也挑不到）。
+    """
+    cands = extract_candidates(PARA, ["刘姥姥"])
+    assert "本句：凤姐忙和刘姥姥摆手道：“你老快别这样说" in render_candidates(cands)
+
+
+def test_a_paren_action_in_the_lead_neither_hides_nor_invents_a_candidate():
+    """引导语里的（）动作不影响归属：凤姐（笑）道 → 是凤姐的候选。
+
+    变异：拿去掉（）后的引导语去比人名（（笑）被当成人名的一部分）→ 凤姐的两条全丢。
+    """
+    assert [c.line for c in extract_candidates(PARA, ["凤姐"])] == [
+        "你老快别这样说，我不过是替你张罗张罗，你倒来挑我的不是。",
+        "你老慢慢说，别急。",
+    ]
+
+
+def test_no_names_or_no_quotes_yields_nothing():
+    assert extract_candidates(PARA, []) == []
+    assert extract_candidates(PARA, [""]) == []
+    assert extract_candidates("只有叙述，没有对话。", ["刘姥姥"]) == []
+    assert extract_candidates(PARA, ["薛宝钗"]) == []
+
+
 def test_rendered_numbers_are_the_same_numbers_the_caller_indexes_by():
     """渲染块里的编号就是 `Candidate.n`（从 1 起）—— 提示词与「按编号复制」共用一份清单。
 
     变异：渲染时改用 enumerate 的下标（0 起）→ 模型回 1 会被复制成第 2 条。
     """
     rendered = render_candidates(extract_candidates(PARA, ["刘姥姥"]))
-    assert rendered.count("[1] 上一句：") == 1
-    assert rendered.count("[3] 上一句：") == 1
+    assert rendered.count("[1] 片段：") == 1
+    assert rendered.count("[3] 片段：") == 1
     assert "[4]" not in rendered and "[0]" not in rendered
 
 
@@ -172,48 +223,48 @@ def test_one_changed_char_is_not_verbatim_and_empty_quotes_find_nothing():
     assert verbatim_in(ELIDED, "……") is False
 
 
-# ── 挑选结果的校验与拼装（WP17：模型只回编号，文字由代码从原文复制）──────────
+# ── 挑选结果的校验与拼装（WP17 补充 1：模型回编号 + 上一句说话人，文字由代码复制）──
 
 def test_out_of_range_and_duplicate_picks_are_dropped_and_at_most_three_survive():
-    """编号越界 / 重复 / 非整数一律丢，顺序保留，最多 3 个。
+    """编号越界 / 重复 / 非整数 / 说话人不在 enum / 判不准 —— 一律丢，顺序保留，最多 3 组。
 
-    变异：`[by_n[p] for p in picks]` 直接索引 → 越界抛 KeyError（调用方分不清是挑选
-    失败还是代码错误）、重复拼出两组一样的话、多于 3 组照单全收 —— 三条断言各红一条。
+    变异：`by_n[p["n"]]` 直接索引 → 越界抛 KeyError（调用方分不清是挑选失败还是代码
+    错误）、重复拼出两组一样的话、多于 3 组照单全收、接受「无法判断」→ 拼出没有对方名
+    的组 —— 各断言各红一条。
     """
-    assert valid_picks([2, 2, 1, 0, 8, 3, 4], 5) == [2, 1, 3]
-    assert valid_picks([1, "2", True, 2.0, None, 3], 5) == [1, 3]
-    assert valid_picks(None, 5) == []
-    assert valid_picks(2, 5) == [], "不是数组（非 strict 供应商可能编造）"
+    enum = ["凤姐", "薛宝钗", UNDECIDED]
+
+    assert valid_picks(
+        [{"n": 2, "prev_speaker": "凤姐"}, {"n": 1, "prev_speaker": "薛宝钗"},
+         {"n": 0, "prev_speaker": "凤姐"}, {"n": 8, "prev_speaker": "凤姐"},
+         {"n": 3, "prev_speaker": "凤姐"}, {"n": 4, "prev_speaker": "凤姐"}], 5, enum,
+    ) == [(2, "凤姐"), (1, "薛宝钗"), (3, "凤姐")]
+    assert valid_picks(
+        [{"n": 1, "prev_speaker": "凤姐"}, {"n": 2, "prev_speaker": UNDECIDED},
+         {"n": 3, "prev_speaker": "袭人"}, {"n": 4}, {"n": "5", "prev_speaker": "凤姐"},
+         {"n": 5, "prev_speaker": "凤姐"}, {"n": 5, "prev_speaker": "薛宝钗"},
+         "不是对象", None], 5, enum,
+    ) == [(1, "凤姐"), (5, "凤姐")]
+    assert valid_picks(None, 5, enum) == []
+    assert valid_picks(2, 5, enum) == [], "不是数组（非 strict 供应商可能编造）"
     assert MAX_EXAMPLES == 3
-
-
-def test_the_other_speaker_comes_from_the_previous_lead_only_when_unambiguous():
-    """上一句的引导语里恰好一个候选名 → 用它；零个、或多个 → 判不出。
-
-    只收「恰好一个」：`凤姐忙和刘姥姥摆手道：`（约束 7 的 15%）里两个名字都在，挑第一
-    个会把这句记成凤姐说的 —— 宁可退化成「对方」也不给一个可能错的归属。
-    """
-    assert speaker_in("刘姥姥笑道：", ["刘姥姥", "凤姐"]) == "刘姥姥"
-    assert speaker_in("凤姐忙和刘姥姥摆手道：", ["刘姥姥", "凤姐"]) == ""
-    assert speaker_in("众人道：", ["刘姥姥", "凤姐"]) == ""
-    assert speaker_in("刘姥姥笑道：", ["刘姥姥", "刘姥姥"]) == "刘姥姥", "别名重复仍是一个人"
-    assert speaker_in("刘姥姥笑道：", []) == ""
+    assert UNDECIDED == "无法判断"
 
 
 def test_an_example_pairs_the_previous_line_with_the_subject_line_verbatim():
     """一组示例 = 「对方名：上一句\\n角色名：本句」，两行都逐字来自原文。
 
-    变异：少写上一句（只留本句）→ 不再成对，模型看不到对方怎么接的话；把「对方名」写成
-    固定字面量 → 第 1 条断言的 `凤姐：` 变红。
+    变异：少写上一句（只留本句）→ 不再成对，模型看不到对方怎么接的话；对方名写成固定
+    字面量 → 第 1 条断言的 `凤姐：` 变红。
     """
     cands = extract_candidates(PARA, ["刘姥姥"])
 
-    assert build_example(cands[1], "刘姥姥", ["凤姐"]) == (
+    assert build_example(cands[1], "刘姥姥", "凤姐") == (
         "凤姐：你老快别这样说，我不过是替你张罗张罗，你倒来挑我的不是。\n"
         "刘姥姥：姑娘说的我心里熨帖，我哪敢挑姑娘的不是。"
     )
-    # 上一句没有引导语（裸引号）→ 归属判不出，写「对方」而不是编一个人名。
-    assert build_example(cands[2], "刘姥姥", ["凤姐"]) == (
-        "对方：这话怎么讲？\n"
+    # 上一句是裸引号（模型给不出说话人时会在校验那层被丢掉）——这里只验拼装本身。
+    assert build_example(cands[2], "刘姥姥", "凤姐") == (
+        "凤姐：这话怎么讲？\n"
         "刘姥姥：阿弥陀佛！我这一辈子也没见过这样的排场。"
     )

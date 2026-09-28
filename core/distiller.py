@@ -23,7 +23,13 @@ from openai import AsyncOpenAI
 
 from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_facing_error
 from core.chat_preprocessor import ChatPreprocessor
-from core.quotes import build_example, extract_candidates, render_candidates, valid_picks
+from core.quotes import (
+    UNDECIDED,
+    build_example,
+    extract_candidates,
+    render_candidates,
+    valid_picks,
+)
 from core.roster_aggregate import (
     alias_prompt_rows,
     finalize_identify_roster,
@@ -415,6 +421,18 @@ def _run_async_in_ctx_thread(factory: _cabc.Callable[[], _cabc.Awaitable[_T]]) -
     if not ok:
         raise payload
     return payload
+
+
+def _roster_hint(others: Sequence[dict]) -> str:
+    """名单提示词里的那行：每个人物的标准名与它的别名（无别名只写标准名）。"""
+    parts = []
+    for o in others:
+        name = o.get("name")
+        if not name:
+            continue
+        aliases = [a for a in (o.get("aliases") or []) if a]
+        parts.append(f"{name}（{'、'.join(aliases)}）" if aliases else name)
+    return "；".join(parts)
 
 
 class Distiller:
@@ -1602,7 +1620,7 @@ class Distiller:
         content: str,
         name: str,
         aliases: Sequence[str] = (),
-        other_names: Sequence[str] = (),
+        others: Sequence[dict] = (),
     ) -> list[str]:
         """从原文挑 1-3 组对话示例，**文字一律由代码从原文复制**（WP17）。
 
@@ -1610,8 +1628,12 @@ class Distiller:
         （对话示例 3 组只命中 1 组，都是在中间吞掉了另一个说话人的台词）。故这里换成
         「代码抽取带编号的候选 → 模型只回编号 → 代码按编号取原文」，逐字由构造保证。
 
-        `other_names` 是名单里**除本人外**的称呼，只用来给上一句标注对方是谁（由
-        `speaker_in` 从引导语里取，模型不生成任何文字）；判不出就写「对方」。
+        上一句的说话人（`prev_speaker`）同理由模型读整段片段后从名单 enum 里选 —— 按
+        引导语里的人名取名会把宾语当主语（问题①：「送入刘姥姥口中，因笑道」是凤姐说的），
+        代码只负责校验与拼装。
+
+        `others` 是名单里**除本人外**的人物（`[{"name", "aliases"}]`）：标准名做 enum 的
+        可选项，标准名加别名写进提示词，好让模型把原文里的别称（「凤丫头」）对回标准名。
 
         无可用的候选、或挑选结果一组都成不了对，都抛 `DistillError` —— 与其他后置步骤
         同口径：任务是失败，不是落一张没有对话示例的卡。
@@ -1620,6 +1642,8 @@ class Distiller:
         if not candidates:
             raise DistillError(
                 f"挑选对话示例失败：原文里找不到「{name}」的对话句")
+        enum = [*(dict.fromkeys(o.get("name") for o in others if o.get("name"))),
+                UNDECIDED]
         function = {
             "name": "pick_dialogue_examples",
             "description": f"按编号挑选最能体现「{name}」说话风格的对话示例",
@@ -1628,12 +1652,18 @@ class Distiller:
                 "properties": {
                     "picks": {
                         "type": "array",
-                        # maximum 是候选数：越界的编号服务端就该拦下（strict 方言），
-                        # 非 strict 方言由 `valid_picks` 兜第二层。
-                        "items": {"type": "integer", "minimum": 1,
-                                  "maximum": len(candidates)},
-                        "description": "候选编号，按想要的顺序给 1-3 个；"
-                                       "只挑本角色本人说话、且能看出对方怎么接的那些。",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                # maximum 是候选数：越界的编号服务端就该拦下（strict
+                                # 方言），非 strict 方言由 `valid_picks` 兜第二层。
+                                "n": {"type": "integer", "minimum": 1,
+                                      "maximum": len(candidates)},
+                                "prev_speaker": {"type": "string", "enum": enum},
+                            },
+                            "required": ["n", "prev_speaker"],
+                            "additionalProperties": False,
+                        },
                     },
                 },
                 "required": ["picks"],
@@ -1642,10 +1672,16 @@ class Distiller:
             },
         }
         args = self._llm.select_by_schema(
-            f"下面是原文里抽出的候选对话句（含编号、上一句、本句，以及紧贴引号的引导语"
-            f"——说话人写在引导语里）。请挑出最能体现「{name}」说话风格的对话示例。\n"
-            f"只挑引导语表明说话人是「{name}」的候选：引导语里出现的是别人的名字时，"
-            f"那句是别人说的，不要挑。上一句是对方的回应，用来判断这一问一答是否成组。",
+            f"下面是原文里抽出的候选对话句（含编号、原文片段、上一句、本句）。片段是原文"
+            f"的连续一段，请读片段判断说话人 —— 片段里出现某个名字，不等于是他说的话"
+            f"（名字常是宾语，如「送入{name}口中，因笑道」）。\n"
+            f"人物名单（标准名（别名））：{_roster_hint(others)}\n"
+            f"请只挑同时满足以下三条的候选，按想要的顺序给出编号与上一句说话人：\n"
+            f"① 读片段确认本句确实是「{name}」说的；\n"
+            f"② 上一句是另一个人说的；\n"
+            f"③ 两句是同一场景里的一问一答。\n"
+            f"上一句的说话人从名单里取标准名；判不准就填「{UNDECIDED}」"
+            f"（那一组会被丢弃）。",
             [{"role": "user", "content": render_candidates(candidates)}],
             function,
         )
@@ -1653,9 +1689,8 @@ class Distiller:
 
         by_n = {c.n: c for c in candidates}
         examples = [
-            build_example(by_n[n], name, other_names)
-            for n in valid_picks(args.get("picks"), len(candidates))
-            if by_n[n].prev_line        # 首句没有上一句，成不了对
+            build_example(by_n[n], name, speaker)
+            for n, speaker in valid_picks(args.get("picks"), len(candidates), enum)
         ]
         if not examples:
             raise DistillError(
@@ -1680,18 +1715,17 @@ class Distiller:
         一份的结果是其中一条悄悄漏了这一步，而卡上「没有对话示例」与「本来就没有」从
         成品看不出来。
 
-        `roster` 是识别出的名单（`resolve_characters` 的形状），只用来给示例里的上一句
-        标对方是谁；本角色自己的名字与别名必须排除，否则「甲把乙列成自己的别名」这类
-        名单会把本角色认成对方。
+        `roster` 是识别出的名单（`resolve_characters` 的形状）；本角色自己的名字与别名
+        必须排除，否则 enum 里多出一个「自己」，模型可能选出自己接自己的组。
         """
-        other_names = [
-            n for c in roster
-            for n in (c.get("name"), *(c.get("aliases") or []))
-            if n and n != name and n not in aliases
+        others = [
+            {"name": c.get("name"), "aliases": list(c.get("aliases") or [])}
+            for c in roster
+            if c.get("name") and c.get("name") != name and c.get("name") not in aliases
         ]
         card_dict = card.model_dump()
         card_dict["dialogue_examples"] = self.pick_dialogue_examples(
-            content, name, aliases, other_names)
+            content, name, aliases, others)
         return CharacterCard.model_validate(card_dict)
 
     def _auto_tag(self, card_dict: dict) -> list[str]:

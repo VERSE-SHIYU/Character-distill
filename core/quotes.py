@@ -9,8 +9,9 @@
 保证的口径分家 —— 那时验收就再也证明不了产品。
 
 判据的中心是「引导语」：原文的对话形态是「凤姐忙和刘姥姥摆手道：“……”」，说话人写在
-紧贴引号的引导语里（公开版本实测：86% 的对话句有引导语）。抽取靠它归属说话人，核对
-靠它把引号内的台词与出处对上。
+紧贴引号的引导语里（公开版本实测：86% 的对话句有引导语）。抽取靠它召回候选，核对靠它
+把引号内的台词与出处对上；**归属**则由模型读整段 `context` 判定 —— 引导语里的人名常是
+宾语（「送入刘姥姥口中，因笑道」是凤姐说的），按子串判会错。
 """
 
 from __future__ import annotations
@@ -67,14 +68,22 @@ def _quote_re(text: str) -> "re.Pattern[str] | None":
                       + re.escape(right) + "]*)" + re.escape(right))
 
 
+# 片段里上一句之前最多再带这么长的叙述：一段长叙述整段塞进去，是几倍的成本与注意力。
+_CONTEXT_BACK = 60
+
+
 class Candidate(NamedTuple):
-    """一条候选：本角色的那句（`lead`/`line`）与紧邻的上一句（`prev_*`，可能是对方说的）。"""
+    """一条候选：本角色的那句（`lead`/`line`）、紧邻的上一句（`prev_*`）与原文片段。
+
+    `context` 是原文的**连续子串**，说话人由模型读它判定（见 `render_candidates`）。
+    """
 
     n: int
     lead: str
     line: str
     prev_lead: str
     prev_line: str
+    context: str
 
 
 def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
@@ -84,13 +93,12 @@ def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
     别人（「贾母听了，也笑了。宝玉道：“……”」），整段看会把人错记成贾母。
 
     引导语含人名即收 —— 含两个人名的引导语（约 15%：「凤姐忙和刘姥姥摆手道：」，说话
-    的是凤姐）会因此多收一条错归属的候选。这里宁可多收不可漏：漏掉的是整句台词，多收
-    的只是靠后的一个编号，而**归属对不对由模型读完整引导语确认后再挑**（产品侧按编号
-    挑选的取舍），故 `render_candidates` 必须把引导语一并给模型看。
+    的是凤姐）会因此多收一条错归属的候选。名字还常是宾语（「送入刘姥姥口中，因笑道」
+    是凤姐说的），所以**归属对不对不靠这段子串判定**：模型读 `context` 整段确认后再挑。
 
-    无引导语的裸引号（约 14%）归不到人，给不出说话人，不进候选。每项带上上一句 ——
-    对话示例要成对呈现，模型得看见对方那句才判得出这一问一答算不算「体现角色说话
-    风格的交互」。
+    无引导语的裸引号（约 14%）归不到人，不进候选。全文第一句没有上一句、成不了对，也
+    不进候选。每项带上上一句与原文片段 —— 对话示例要成对呈现，模型得看见对方那句与它
+    前后的叙述，才判得出这一问一答算不算「体现角色说话风格的交互」。
     """
     wanted = [n for n in names if n]
     quote_re = _quote_re(text)
@@ -98,25 +106,32 @@ def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
         return []
     quotes = list(quote_re.finditer(text))
     out: list[Candidate] = []
-    for i, m in enumerate(quotes):
-        lead = _lead_before(text, quotes, i, m.start())
+    for i, m in enumerate(quotes[1:], start=1):        # 第一句没有上一句
+        lead, _ = _lead_before(text, quotes, i, m.start())
         if not any(name in lead for name in wanted):
             continue
-        if i == 0:
-            prev_lead = prev_line = ""
-        else:
-            prev = quotes[i - 1]
-            prev_lead = _lead_before(text, quotes, i - 1, prev.start())
-            prev_line = prev.group(1)
+        prev = quotes[i - 1]
+        prev_lead, prev_start = _lead_before(text, quotes, i - 1, prev.start())
+        # 片段从上一句开头往前 60 字、与再上一句结尾里较后处起，到本句收尾引号止。
+        start = max(prev_start - _CONTEXT_BACK,
+                    quotes[i - 2].end() if i >= 2 else 0)
         out.append(Candidate(n=len(out) + 1, lead=lead, line=m.group(1),
-                             prev_lead=prev_lead, prev_line=prev_line))
+                             prev_lead=prev_lead, prev_line=prev.group(1),
+                             context=text[start:m.end()]))
     return out
 
 
-def _lead_before(text: str, quotes: list, i: int, start: int) -> str:
-    """第 i 个引号之前、离它最近的那截引导语（上一个引号结尾到此引号之间）。"""
+def _lead_before(text: str, quotes: list, i: int, start: int) -> tuple[str, int]:
+    """第 i 个引号之前、离它最近的那截引导语，以及它在原文里的起点。
+
+    起点返回的是**切掉前后空白之前**的位置：片段按下限截取时用它算「往前 60 字」。
+    """
     gap_start = quotes[i - 1].end() if i else 0
-    return _LEAD_BREAK.split(text[gap_start:start])[-1].strip()
+    head = text[gap_start:start]
+    cut = gap_start
+    for mb in _LEAD_BREAK.finditer(head):
+        cut = gap_start + mb.end()
+    return head[cut - gap_start:].strip(), cut
 
 
 def render_candidates(candidates: Sequence[Candidate]) -> str:
@@ -127,8 +142,8 @@ def render_candidates(candidates: Sequence[Candidate]) -> str:
     """
     blocks = []
     for c in candidates:
-        prev = f"{c.prev_lead}“{c.prev_line}”" if c.prev_line else "（无上一句）"
-        blocks.append(f"[{c.n}] 上一句：{prev}\n"
+        blocks.append(f"[{c.n}] 片段：{c.context}\n"
+                      f"    上一句：{c.prev_lead}“{c.prev_line}”\n"
                       f"    本句：{c.lead}“{c.line}”")
     return "\n".join(blocks)
 
@@ -137,45 +152,42 @@ def render_candidates(candidates: Sequence[Candidate]) -> str:
 # 上限只能写在代码里：strict 的 Schema 里 array 不支持 maxItems（约束 6），服务端不拦。
 MAX_EXAMPLES = 3
 
+# 上一句说话人判不准时的取值：模型选它、以及代码把它当不合格丢掉，用的是同一个字面量。
+UNDECIDED = "无法判断"
 
-def valid_picks(raw, total: int) -> list[int]:
-    """留下 `raw` 里合法的编号：整数、在 1..total 内、去重（保序），最多 `MAX_EXAMPLES` 个。
 
-    非 strict 供应商可能给不合法 JSON 或编造参数（约束 6），越界编号直接索引会抛
-    KeyError —— 调用方分不清是挑选失败（预期内，该报任务失败）还是代码错误。故这里只挑
-    出能用的，一个都没有时返回空列表，由调用方判「没有可用的挑选结果」。
+def valid_picks(raw, total: int, enum: Sequence[str]) -> list[tuple[int, str]]:
+    """留下 `raw` 里合法的挑选项，返回 `(编号, 上一句说话人)`，顺序保留，最多 3 组。
+
+    合格 = `n` 是整数、在 1..total 内、未重复，且 `prev_speaker` 在 `enum` 里又并非
+    `UNDECIDED`。非 strict 供应商可能给不合法 JSON 或编造参数（约束 6），越界编号直接
+    索引会抛 KeyError —— 调用方分不清是挑选失败（预期内，该报任务失败）还是代码错误。
+    故这里只挑出能用的，一个都没有时返回空列表，由调用方判「没有可用的挑选结果」。
     """
     if not isinstance(raw, (list, tuple)):
         return []
-    out: list[int] = []
+    allowed = set(enum) - {UNDECIDED}
+    out: list[tuple[int, str]] = []
+    seen: set[int] = set()
     for p in raw:
-        if isinstance(p, bool) or not isinstance(p, int):
+        if not isinstance(p, dict):
             continue
-        if 1 <= p <= total and p not in out:
-            out.append(p)
-            if len(out) == MAX_EXAMPLES:
-                break
+        n, speaker = p.get("n"), p.get("prev_speaker")
+        if isinstance(n, bool) or not isinstance(n, int):
+            continue
+        if not 1 <= n <= total or n in seen or speaker not in allowed:
+            continue
+        seen.add(n)
+        out.append((n, speaker))
+        if len(out) == MAX_EXAMPLES:
+            break
     return out
 
 
-def speaker_in(lead: str, names: Sequence[str]) -> str:
-    """引导语里**恰好**一个 `names` 中的名字时返回它，否则返回空串。
-
-    只认「恰好一个」：约 15% 的引导语含两个人名（「凤姐忙和刘姥姥摆手道：」，说话的是
-    凤姐，约束 7），取第一个会把这句的对方记成错的人。判不出就不给名字，由调用方写
-    「对方」—— 少一个称呼好过给一个可能错的称呼。
-
-    名字互为子串时（「刘姥姥」与「姥姥」都收）两个都命中 → 也判不出，同样退化为「对方」。
-    """
-    hits = [n for n in dict.fromkeys(names) if n and n in lead]
-    return hits[0] if len(hits) == 1 else ""
-
-
-def build_example(candidate: Candidate, name: str, other_names: Sequence[str]) -> str:
+def build_example(candidate: Candidate, name: str, prev_speaker: str) -> str:
     """一组示例：`对方名：上一句` + `角色名：本句` —— 两行都是候选里的原文，一字不改。
 
-    对方的称呼由代码从上一句的引导语里取（`speaker_in`），模型不生成任何文字；引导语
-    判不出归属时写「对方」。`prev_line` 为空（首句）时调用方不该调本函数 —— 成不了对。
+    对方的称呼是模型读片段后从名单 enum 里选的（`prev_speaker`），代码只负责拼装；判不准
+    的那些在 `valid_picks` 就丢掉了，这里拿到的必是名单里的标准名。
     """
-    other = speaker_in(candidate.prev_lead, other_names) or "对方"
-    return f"{other}：{candidate.prev_line}\n{name}：{candidate.line}"
+    return f"{prev_speaker}：{candidate.prev_line}\n{name}：{candidate.line}"

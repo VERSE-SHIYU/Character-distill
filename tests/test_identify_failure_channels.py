@@ -402,7 +402,7 @@ class _RosterDistiller:
 
     def attach_dialogue_examples(self, card, content, name, aliases=(), roster=()):
         card_dict = card.model_dump()
-        card_dict["dialogue_examples"] = ["对方：先前的话。\n角色：我说一句话。"]
+        card_dict["dialogue_examples"] = ["路人：先前的话。\n角色：我说一句话。"]
         return CharacterCard.model_validate(card_dict)
 
 
@@ -427,7 +427,7 @@ class TestRunAttachesDialogueExamples:
             "/api/distill/run", json={"text_id": tid, "character_name": "角色"})
 
         assert r.status_code == 200, r.text
-        assert r.json()["dialogue_examples"] == ["对方：先前的话。\n角色：我说一句话。"]
+        assert r.json()["dialogue_examples"] == ["路人：先前的话。\n角色：我说一句话。"]
 
 
 # ── 6. WP7：4 组并行的产物在两条消费路径上都是「一张能解析的卡」 ──────────
@@ -450,8 +450,12 @@ class _FormattingLLM:
         return _FakeAsyncClient()            # Map 阶段：建 client → 跑 → 关
 
     def chat(self, system, messages):
-        """识别（与 `_auto_tag`）那一跳 —— 名字得在正文里出现过，分片才被选中。"""
-        return json.dumps([{"name": "角色"}])
+        """识别（与 `_auto_tag`）那一跳 —— 名字得在正文里出现过，分片才被选中。
+
+        名单里必须有上一句的说话人「路人」：挑选对话示例的 enum 只由名单里的**其他人**
+        组成，没有它就没有可选的对方，成不了组（补充1-第2步）。
+        """
+        return json.dumps([{"name": "角色"}, {"name": "路人"}])
 
     async def async_chat(self, system, messages, max_tokens=None, client=None, **kw):
         return ("片段分析", {"prompt_tokens": 1, "completion_tokens": 1})
@@ -466,10 +470,10 @@ class _FormattingLLM:
         return {"prompt_tokens": 1, "completion_tokens": 1}
 
     def select_by_schema(self, system_prompt, messages, function, max_tokens=None):
-        """挑选对话示例：只回编号（文字由代码从原文复制）。编号只发给说话人是「角色」的
-        候选，正文里那条就是 1 号 —— 让这一步真的跑通，别把它桩掉（本组考的是 4 组怎么
-        并成一张卡）。"""
-        return {"picks": [1]}
+        """挑选对话示例：只回编号与上一句说话人（文字由代码从原文复制）。编号只发给说话人
+        是「角色」的候选，正文里那条就是 1 号；上一句说话人从名单 enum 里取「路人」——
+        让这一步真的跑通，别把它桩掉（本组考的是 4 组怎么并成一张卡）。"""
+        return {"picks": [{"n": 1, "prev_speaker": "路人"}]}
 
 
 def _card_distiller() -> Distiller:
@@ -544,4 +548,4 @@ class TestOneParseableCardOnBothChannels:
         self._assert_all_groups_landed(CharacterCard.model_validate(json.loads(tokens[0])))
         # 对话示例是落卡前的后置步骤（WP17），**不在流出的 token 帧里**（那是格式化阶段
         # 的原始 JSON）；落库的那张卡上必须有它 —— 本通道漏接这一步就是静默空示例。
-        assert tm.saved[0].dialogue_examples == ["对方：先前的话。\n角色：我说一句话。"]
+        assert tm.saved[0].dialogue_examples == ["路人：先前的话。\n角色：我说一句话。"]
