@@ -1978,13 +1978,21 @@ label[for] {
 }
 
 /* ===== Panel ===== */
+:root {
+  /* 二级页的内边距与头部间距：.panel 与不走 .panel 的页头（他人主页）共用 */
+  --panel-pad-top: 28px;
+  --panel-pad-x: 32px;
+  --panel-pad-bottom: 24px;
+  --panel-gap: 20px;
+}
+
 .panel {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 28px 32px 24px;
-  gap: 20px;
+  padding: var(--panel-pad-top) var(--panel-pad-x) var(--panel-pad-bottom);
+  gap: var(--panel-gap);
 }
 
 .panel-header {
@@ -13985,6 +13993,9 @@ label[for] {
 /* ══════════════════════════════════════
    MinePage V2 — Creator Profile
    ══════════════════════════════════════ */
+/* 他人主页不走 .panel（横幅要满宽），页头用同一组变量与其他二级页对齐 */
+.mine-page-v2 > .page-header { padding: var(--panel-pad-top) var(--panel-pad-x) var(--panel-gap); }
+
 .mine-page-v2 {
   display: flex;
   flex-direction: column;
