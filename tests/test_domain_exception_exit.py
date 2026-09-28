@@ -53,7 +53,7 @@ class _FakeTM:
 
 
 class _FakeDistiller:
-    """只提供 /run_stream 真正走到的那两个入口。
+    """只提供 /run_stream 真正走到的那三个入口。
 
     ``distill_incremental_stream`` 写成 generator：函数体在**首次 next()** 时才执行，
     异常正落在路由那圈 ``try`` 里 —— 与生产里「流读到一半炸」同形状。
@@ -64,6 +64,12 @@ class _FakeDistiller:
 
     def identify_characters(self, content: str) -> list:
         return []
+
+    def dialogue_candidates(self, content, name, aliases=(), roster=()):
+        # 预检（补充 1-第 4 步）：通道拿到别名之后先调它一眼，返回值不保留。本组不考
+        # 抽取，给个非空即可 —— 缺了它，预检的 AttributeError 会落进那圈共用 except，
+        # 把下面那个 DistillError 的文案换成通用文案。
+        return [object()]
 
     def distill_incremental_stream(self, content, name, aliases, text_type):
         raise self._exc
