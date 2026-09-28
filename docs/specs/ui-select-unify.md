@@ -69,8 +69,8 @@
 -3 -2 -1 0 1 2 3 5 10 11 19 20 50 99 100 101 140 150 200 201 1000×8 1001×4 1100(本组件) 9999 10000
 == JSX 内联 zIndex 最大值
 1000
-== texts / cards 数量上限（core、web/backend 全文 grep）
-无
+== texts / cards 数量上限
+（补充·更正：原命令 grep 的 web/backend 目录不存在，扫描不完整。实际路径为 web/routers/text.py + storage/*_store.py：路由只有 @limiter.limit 频率限制和 MAX_FILE_SIZE 单文件大小限制；list_texts 的 SELECT 无 LIMIT。结论不变：无数量上限）
 ```
 
 结论：761–769、5945、18757 是本段要清理的遗留 `select` 样式；弹层取 1100，仅低于图片预览的 9999/10000，与 C6 一致。
@@ -176,7 +176,11 @@ Skill：本机装有 `frontend-design` 就调用这一个，只用于视觉细�
 
 - A1：收起时按 ↑，展开并把高亮放在第一项。
 - A2：Home / End。收起时展开并高亮首项 / 末项；展开时直接把高亮移到首项 / 末项。
-- A3：键入跳转。可打印单字符（`e.key.length === 1`，且没有按 Ctrl/Meta/Alt）追加进缓冲串，缓冲 500ms 后清空；按不区分大小写的前缀匹配 label。缓冲串若全由同一个字符组成，就在以该字符开头的选项之间循环。收起时先展开。**Space 仍按 B5 处理，不进入缓冲。**
+- （补充·审计 fa864cf）A3 以 APG 官方源码为准，逐项照抄，不再用上面的转述：`w3c/aria-practices` main 分支 `content/patterns/combobox/examples/js/select-only.js` 的 `onComboType`、`getSearchString`、`getIndexByLetter` 三个函数。与当前实现的差异有 3 处，必须改：
+  1. 键入时**无论是否匹配都先展开**（`onComboType` 第一行 `updateMenuState(true)`）；
+  2. **没有匹配时立即清空缓冲串和计时器**；
+  3. 整串匹配也从 `activeIndex + 1` 开始、绕回查找（`getIndexByLetter(options, searchString, activeIndex + 1)`）：先找整串前缀匹配，找不到且缓冲串全是同一个字符时，再按首字符找。
+- A3（原文，已被上一条取代）：键入跳转。可打印单字符（`e.key.length === 1`，且没有按 Ctrl/Meta/Alt）追加进缓冲串，缓冲 500ms 后清空；按不区分大小写的前缀匹配 label。缓冲串若全由同一个字符组成，就在以该字符开头的选项之间循环。收起时先展开。**Space 仍按 B5 处理，不进入缓冲。**
 - A4：展开时按 Tab，先 `commit(activeIndex)`，**不要** `preventDefault`，让焦点正常移走。
 - A5：展开时按 Alt+↑，等同于 Enter。
 - A6：PageUp / PageDown 让高亮上下跳 10 项，到首尾为止。
@@ -245,6 +249,9 @@ Skill：本机装有 `frontend-design` 就调用这一个，只用于视觉细�
 | （补充·APG）A3 键入跳转 | Select：选项为「甲一」「乙一」「乙二」，按「乙」高亮在「乙一」，再按「乙」高亮在「乙二」；等 fake timer 走过 500ms 后按「甲」，高亮在「甲一」 | 去掉同字符循环；或不清空缓冲 | 长列表按首字定位 |
 | （补充·APG）A4 Tab 选中 | Select：展开后 ↓，按 Tab，onChange 收到高亮值，listbox 消失，且 `defaultPrevented` 为 false | Tab 只关闭不选中；或加上 `preventDefault` | 键盘用户 Tab 离开 |
 | （补充·APG）A5 Alt+↑ | Select：展开后 ↓，按 Alt+↑，onChange 收到高亮值并关闭 | 删除 Alt+↑ 分支 | 键盘用户 |
+| （补充·审计 fa864cf）A6 PageUp | Select：30 个选项，高亮在 25 时按 PageUp 到 15，在 4 时按 PageUp 到 0 | PageUp 步长改为 1（审计实测存活） | 长列表向上翻页 |
+| （补充·审计 fa864cf）A3 无匹配也展开并清空缓冲 | Select：收起时按一个无匹配的字符，listbox 出现，高亮仍在当前值；紧接着按一个有匹配的字符，高亮跳到该项（证明缓冲已清空，没有拼成两字串） | 无匹配时不展开；或不清空缓冲 | 键入了不存在的首字 |
+| （补充·审计 fa864cf）A3 整串匹配从高亮项之后开始 | Select：选项为「ab1」「ab2」「ab3」，高亮在「ab1」，快速连打 a、b，高亮到「ab3」（按 APG 源码逐键推演：a 从第 1 项找到 ab2，ab 再从第 2 项找到 ab3；当前实现得到 ab1） | 整串匹配改为从 0 开始 | 同前缀的多个选项 |
 | （补充·APG）A6 翻页 | Select：30 个选项，高亮在 0 时按 PageDown 到 10，在 25 时按 PageDown 到 29 | 不做末项封顶；或步长不是 10 | 长列表翻页 |
 | （补充·APG）A7 aria-controls | Select：展开后触发器的 `aria-controls` 等于 listbox 的 id；收起后属性消失 | 删除 `aria-controls` | 读屏用户 |
 | （补充·APG）A8 aria-selected 跟随高亮 | Select：value 为 user，展开后 ↓，`aria-selected="true"` 只在高亮项上，`is-current` 仍在「用户」上 | `aria-selected` 仍按当前值 | 读屏用户浏览选项 |

@@ -347,6 +347,44 @@ describe('A1–A8 对齐 APG 补齐的行为', () => {
     }
   })
 
+  // APG 的 onComboType 第一行就是 updateMenuState(true)：没有匹配也要展开，否则用户
+  // 打错一个字会以为组件没反应。清空缓冲同理 —— 死字符留在串里，后面每一下都拼不上。
+  it('A3 无匹配也展开，并立刻清空缓冲（下一键不拼成两字串）', () => {
+    const AB = [
+      { value: 'a1', label: '甲一' },
+      { value: 'b1', label: '乙一' },
+      { value: 'b2', label: '乙二' },
+    ]
+    const onChange = vi.fn()
+    render(<Select value="b1" options={AB} onChange={onChange} />)
+    const trigger = screen.getByRole('combobox')
+    trigger.getBoundingClientRect = () => rect()
+    trigger.focus()
+
+    fireEvent.keyDown(trigger, { key: '丙' })
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    expect(screen.getAllByRole('option')[1].className).toContain('is-active')
+
+    fireEvent.keyDown(trigger, { key: '乙' })
+    expect(screen.getAllByRole('option')[2].className).toContain('is-active')
+  })
+
+  // 整串匹配也从高亮项之后开始绕回：高亮在 ab1 时连打 a、b，a 先绕到 ab2，ab 再从
+  // ab2 之后绕到 ab3。若整串从 0 开始找，会一直停在 ab1。
+  it('A3 整串匹配从高亮项之后开始绕回', () => {
+    const AB3 = ['ab1', 'ab2', 'ab3'].map((s) => ({ value: s, label: s }))
+    const onChange = vi.fn()
+    render(<Select value="ab1" options={AB3} onChange={onChange} />)
+    const trigger = screen.getByRole('combobox')
+    trigger.getBoundingClientRect = () => rect()
+    fireEvent.click(trigger)
+
+    fireEvent.keyDown(trigger, { key: 'a' })
+    expect(screen.getAllByRole('option')[1].className).toContain('is-active')
+    fireEvent.keyDown(trigger, { key: 'b' })
+    expect(screen.getAllByRole('option')[2].className).toContain('is-active')
+  })
+
   it('A4 展开后按 Tab 选中高亮项，且不 preventDefault', () => {
     const { onChange, trigger } = setup({ value: 'user' })
     fireEvent.keyDown(trigger, { key: 'ArrowDown' })
@@ -381,6 +419,24 @@ describe('A1–A8 对齐 APG 补齐的行为', () => {
     fireEvent.click(t25)
     fireEvent.keyDown(t25, { key: 'PageDown' })
     expect(screen.getAllByRole('option')[29].className).toContain('is-active')
+  })
+
+  it('A6 PageUp 一次跳 10 项，首项封顶', () => {
+    const onChange = vi.fn()
+    const first = render(<Select value="t25" options={many} onChange={onChange} />)
+    const t25 = screen.getByRole('combobox')
+    t25.getBoundingClientRect = () => rect()
+    fireEvent.click(t25)
+    fireEvent.keyDown(t25, { key: 'PageUp' })
+    expect(screen.getAllByRole('option')[15].className).toContain('is-active')
+    first.unmount()
+
+    render(<Select value="t4" options={many} onChange={onChange} />)
+    const t4 = screen.getByRole('combobox')
+    t4.getBoundingClientRect = () => rect()
+    fireEvent.click(t4)
+    fireEvent.keyDown(t4, { key: 'PageUp' })
+    expect(screen.getAllByRole('option')[0].className).toContain('is-active')
   })
 
   it('A7 aria-controls 指向 listbox，收起后消失', () => {

@@ -17,6 +17,21 @@ const TYPE_RESET_MS = 500
 
 const CARET_SIZE = { md: 16, sm: 14 }
 
+// A3 键入匹配，照抄 APG《Select-Only Combobox》的 getIndexByLetter：把选项按 startIndex
+// 旋转（即「从当前高亮之后开始找、绕回」），整串前缀匹配优先；整串全是同一个字符时退化成
+// 按首字符在候选间循环（连按同一个字母要在候选里轮转，而不是永远停在第一个）。
+function getIndexByLetter(options, filter, startIndex = 0) {
+  const ordered = [...options.slice(startIndex), ...options.slice(0, startIndex)]
+  const startingWith = (list, needle) =>
+    list.filter((o) => o.label.toLowerCase().indexOf(needle.toLowerCase()) === 0)
+  const firstMatch = startingWith(ordered, filter)[0]
+  if (firstMatch) return options.indexOf(firstMatch)
+  if (filter.split('').every((c) => c === filter[0])) {
+    return options.indexOf(startingWith(ordered, filter[0])[0])
+  }
+  return -1
+}
+
 export default function Select({
   value,
   options,
@@ -70,23 +85,21 @@ export default function Select({
   const isPrintableKey = (e) =>
     e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey
 
-  // A3 键入跳转：缓冲串追加本键，按不区分大小写的前缀找首个匹配项。
-  // 缓冲串全是同一个字符时改为「在该首字选项之间循环」—— 连按同一个字母要在候选里轮转，
-  // 而不是永远停在第一个，所以从当前高亮之后（含绕回）开始找，匹配键只取该字符本身。
+  // A3 键入缓冲，照抄 APG 的 getSearchString：缓冲串追加本键，500ms 无新键即清空。
   const typeahead = (char) => {
     clearTimeout(typeTimerRef.current)
     const buffer = (typeBufferRef.current + char).toLowerCase()
     typeBufferRef.current = buffer
     typeTimerRef.current = setTimeout(clearTypeBuffer, TYPE_RESET_MS)
+    return getIndexByLetter(options, buffer, activeIndex + 1)
+  }
 
-    const sameChar = [...buffer].every((c) => c === buffer[0])
-    const first = sameChar ? activeIndex + 1 : 0
-    const needle = sameChar ? buffer[0] : buffer
-    for (let n = 0; n < options.length; n += 1) {
-      const i = (first + n) % options.length
-      if (options[i].label.toLowerCase().startsWith(needle)) return i
-    }
-    return -1
+  // A3 照抄 APG 的 onComboType 尾段：有匹配就移高亮；没匹配就当场清掉缓冲与计时器，
+  // 否则下一次按键会跟这个死字符拼成两字串，永远匹配不上。
+  const onType = (char) => {
+    const next = typeahead(char)
+    if (next >= 0) setActiveIndex(next)
+    else clearTypeBuffer()
   }
 
   // 展开期间的三种关闭来源。处理器定义在 effect 内：既不留陈旧闭包，
@@ -141,8 +154,9 @@ export default function Select({
         e.preventDefault()
         openMenu(options.length - 1)
       } else if (isPrintableKey(e)) {
-        const next = typeahead(e.key)
-        if (next >= 0) openMenu(next)
+        // A3：无论有没有匹配都先展开 —— APG onComboType 第一行就是 updateMenuState(true)。
+        openMenu()
+        onType(e.key)
       }
       return
     }
@@ -181,8 +195,7 @@ export default function Select({
       // A4：Tab 先选中高亮项，但不 preventDefault —— 焦点要照常移到下一个可聚焦元素。
       commit(activeIndex)
     } else if (isPrintableKey(e)) {
-      const next = typeahead(e.key)
-      if (next >= 0) setActiveIndex(next)
+      onType(e.key)
     }
   }
 
