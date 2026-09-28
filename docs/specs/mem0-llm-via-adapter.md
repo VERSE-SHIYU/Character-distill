@@ -13,15 +13,16 @@
 - 项目默认模型名写死在多处，且与 `config.example.yaml`（`deepseek-flash`）不一致（见约束 5）。
 
 ## 已查实的约束（基线 main `ae89f7d`；执行方 S0 逐条复核，不成立即停）
-1. mem0 配置：`core/memory_manager.py:174-200`；LLM 部分 `provider: openai`、`model: "deepseek-chat"`（`:186`）、`api_key` 取自全局环境变量 `DEEPSEEK_API_KEY`（`:156`）；向量部分用 DashScope `text-embedding-v4`（`:198` 起），**不受影响、不改**；`Memory.from_config`（`:204`）；初始化失败记 ERROR（`:216`）；`add` 在 `:317`，调用 mem0 在 `:331`，失败记 WARNING（`:334`）；`add_manual` 失败同为 WARNING（`:367`）。
-2. mem0 版本：仓内锁定 `mem0ai==2.0.20`（`requirements.txt:166`）。PyPI 最新为 2.2.1（2026-09-25）；两版源码核过：DeepSeek 提供方默认模型仍是 `deepseek-chat`（`mem0/llms/deepseek.py:37`），**没有传 `extra_body` 的通道**；提供方白名单写死在 `mem0/llms/configs.py` 的 `validate_config`；工厂有 `LlmFactory.register_provider`（`mem0/utils/factory.py:128`，2.2.1）；`add` 对 LLM 的调用是**一次** `generate_response(messages=[system, user], response_format={"type": "json_object"})`（2.0.20 `mem0/memory/main.py:956`），不带 tools。
+1. mem0 配置：`core/memory_manager.py:174-203`；LLM 部分 `provider: openai`（`:184`）、`model: "deepseek-chat"`（`:186`）、`api_key` 取自全局环境变量 `DEEPSEEK_API_KEY`（`:156`）；向量部分用 DashScope `text-embedding-v4`（`:198` 起），**不受影响、不改**；`Memory.from_config`（`:204`）；初始化失败记 ERROR（`:216`）；`add` 在 `:317`，调用 mem0 在 `:331`，失败记 WARNING（`:334`）；`add_manual` 失败同为 WARNING（`:367`）。
+2. mem0 版本：仓内锁定 `mem0ai==2.0.20`（`requirements.txt:166`）。PyPI 最新为 2.2.1（2026-09-25）。本仓用的是 mem0 的 **openai 提供方**（`mem0/llms/openai.py:85-152`），`deepseek-chat` 是**我们自己写死在 `:186` 的**；openai 与 deepseek 两个提供方都**没有传 `extra_body` 的通道**（mem0 自带 DeepSeek 提供方默认也是 `deepseek-chat`，`mem0/llms/deepseek.py:37`，仅作背景）；每轮 `add` 恰好 1 次 LLM 调用（`:956`；`:2014` 的程序性记忆只在 `agent_id` + PROCEDURAL 时进入，我们不传；视觉解析需 `enable_vision`，我们没开）；提供方白名单写死在 `mem0/llms/configs.py` 的 `validate_config`；工厂有 `LlmFactory.register_provider`（`mem0/utils/factory.py:128`，2.2.1）；`add` 对 LLM 的调用是**一次** `generate_response(messages=[system, user], response_format={"type": "json_object"})`（2.0.20 `mem0/memory/main.py:956`），不带 tools。
 3. DeepSeek 官方「思考模式」页（2026-09-28 核对）：思考默认开启；OpenAI 格式下关闭思考**只能**用 `extra_body={"thinking": {"type": "disabled"}}`，`reasoning_effort` 只调强度、关不掉。官方「模型 & 价格」页：`deepseek-flash` 支持 JSON Output 与 Tool Calls。
-4. 项目适配器：`LLMAdapter.chat(system_prompt, messages, max_tokens)`（`adapters/llm_adapter.py:769`），**不支持 `response_format`**；关闭思考由 `_request_options`（`:748`）统一注入；出站守卫 `check_outbound_guard`（`:315`）→ 生产注册的 `geo_call_guard`（`web/llm_gate.py:53`），**拿不到调用方身份时 fail-closed 抛 `LLMCallerMissing`（`web/llm_gate.py:67`）**，报错原文要求「请求之外的调用请显式声明 `core.request_context.system_llm_context()`」；SYSTEM 调用方无条件放行（`:71`）。现成的 SYSTEM 身份写法：`core/request_context.py:54` 的 `system_llm_context()`。
+4. 项目适配器：`LLMAdapter.chat(system_prompt, messages, max_tokens)`（`adapters/llm_adapter.py:769`），**不支持 `response_format`**；关闭思考由 `_request_options`（`:748`）统一注入；出站守卫 `check_outbound_guard`（`:315`）→ 生产注册的 `geo_call_guard`（`web/llm_gate.py:53`），**拿不到调用方身份时 fail-closed 抛 `LLMCallerMissing`（`web/llm_gate.py:65-70`）**，报错原文要求「请求之外的调用请显式声明 `core.request_context.system_llm_context()`」；SYSTEM 调用方无条件放行（`:71`）。现成的 SYSTEM 身份写法：`core/request_context.py:54` 的 `system_llm_context()`。
 5. 默认模型写死处：`adapters/llm_adapter.py:675`（`llm_cfg.get("model", "deepseek-v4-pro")`）、`web/deps.py:87`（用户自带 key 未填模型）、`web/routers/auth.py:608`（返回给前端的当前模型）、`storage/postgres_store.py:2554` 与 `storage/sqlite_store.py:3194`（`row[2] or "deepseek-v4-pro"`）、迁移里的列默认值 `storage/migrations_pg/001_init.sql:98`、`storage/migrations/018_user_api_config.sql:3`。`config.example.yaml:17` 已是 `model: deepseek-flash`。
 6. `config.example.yaml:13-16` 的注释写「2026-09-14 12:00 起 `deepseek-v4-pro` 的请求已被全部路由到 V4.1-Flash 并按 Flash 单价计费」——与官方更新日志不符（官方 2026-09-10：V4-Pro 在 9 月 14 日后**继续提供**、计费不变）。
 7. mem0 同步版 `Memory` 在 `__init__` 里设置 `self.llm = LlmFactory.create(...)`（2.0.20 `mem0/memory/main.py:499`），之后 `add`（`:956`）等都通过 `self.llm.generate_response` 调用；`:2184` 的重建属于 `AsyncMemory`，我们不用。`core/memory_manager.py` 只调 `add / search / get_all / update / delete / delete_all`，都不重建 `llm`。
-8. 适配器的配置读取目前内联在 `LLMAdapter.__init__`（`adapters/llm_adapter.py:657-672`）；`web/deps.py:461` 另有 `get_config()`，但 `adapters` 不能依赖 `web`。
-9. `core/memory_manager.py:188-190` 保留了本地压测用的环境变量 `MEM0_LLM_BASE_URL` 覆盖。
+8. 适配器的配置读取目前内联在 `LLMAdapter.__init__`（`adapters/llm_adapter.py:657-688`）；`web/deps.py:461` 另有 `get_config()`，但 `adapters` 不能依赖 `web`。
+9. `core/memory_manager.py:190` 保留了本地压测用的环境变量 `MEM0_LLM_BASE_URL` 覆盖。
+10. **调用方身份在场（S0 实测）**：`MemoryManager.add` 唯一调用点 `core/chat_engine.py:536`（`_post_turn`）；生产经 `web/routers/chat.py:609` 的 `asyncio.to_thread` → `core/memory_manager.py:336` 的 `C.ctx_thread`（`core/concurrency.py:74` 拷贝上下文）→ 写入线程里 `LLM_CALLER` 是**发起聊天的真实用户**（Web 单聊，`web/server.py:429` 设置）；MCP 路径已在 `system_llm_context()` 内（`mcp_server/server.py:260`）。群聊不写 mem0（`core/group_session.py:164`）。
 
 ## 方案对比与拍板（Shiyu 已选 A）
 | 方案 | 做法 | 依据 | 取舍 |
@@ -32,7 +33,7 @@
 ## 路径机制清单（mem0 提炼调用改走适配器后）
 | 机制 | 计时/计数起点、前提 | 本改动怎么处理 |
 |---|---|---|
-| 出站守卫（fail-closed） | 需要调用方身份 | **S0 核对**：`MemoryManager.add` 在哪个线程被调用、`LLM_CALLER` 是否在场。mem0 用的是全局 key，按系统调用处理：在提供方内部用 `system_llm_context()`（`core/request_context.py:54`）包住调用 |
+| 出站守卫（地理合规） | 按**调用方身份**判定：大陆 IP 的用户 + 非白名单主机即拒绝（`web/geo_guard.py:204`） | **不改身份**：mem0 提炼的内容是该用户的聊天，出站应归属该用户，地理合规判定照常生效；`add` 路径上身份已在场（约束 10），无需也**不应**用 `system_llm_context()` 绕过。缺身份时 fail-closed 是正确行为 |
 | 关闭思考（`_request_options`） | 按方言注入 | 经适配器自动生效，写测试锁住 |
 | JSON 输出 | mem0 传 `response_format=json_object` | 适配器 `chat` 增加可选 `response_format`，原样透传给 API；不传时行为不变 |
 | 超时 | 原先 mem0 自带的 OpenAI 客户端用 SDK 默认超时 | **前提改变**：改为适配器生成轮预算（单次 45 秒、总 60 秒，`adapters/llm_adapter.py:105/116`）；按下方核算单次数秒，装得下 |
@@ -47,8 +48,8 @@
 ## 步骤（按依赖顺序，每步独立 commit）
 1. **[adapter] 默认模型只定义一处**：把 `LLMAdapter.__init__` 里内联的配置读取（约束 8）提成模块级函数，`__init__` 与新的 `default_model()` 都调用它（不复制读取逻辑）。回落值统一改为 `value or default_model()`：`adapters/llm_adapter.py:675`、`web/deps.py:87`、`web/routers/auth.py:608`。**存储层不再知道默认模型**：`storage/postgres_store.py:2554`、`storage/sqlite_store.py:3194` 改为原样返回库里的值（未设置即空），由上面几处调用方回落——存储层只管存取，默认值归解析层。**迁移里的列默认值本轮不动**（改它会影响新用户数据，属于单独的设计决定，待 Shiyu 另行拍板）；已有用户行不改（V4-Pro 官方仍在提供）。
 2. **[adapter] `chat` 增加可选 `response_format`**，原样透传；不传时请求体与现在完全一致。
-3. **[core] 新建 `core/mem0_llm.py`，只放 mem0 与适配器之间的这一层**（mem0 升级时只看这个文件）：一个类实现 mem0 `LLMBase.generate_response(messages, tools=None, tool_choice="auto", **kwargs)`——把 mem0 的 messages 拆成 system 与其余，用 `system_llm_context()` 包住调用 `LLMAdapter.chat(..., response_format=kwargs.get("response_format"))`，返回文本；收到 tools 即抛错。`core/memory_manager.py` 在 `Memory.from_config` 之后把它注入为 `self._mem.llm`；构造 mem0 时 LLM 配置里的模型名改用 `default_model()`（不再写死）；适配器实例用全局 key，`base_url` 仍尊重 `MEM0_LLM_BASE_URL`（约束 9）。向量（embedder）配置不动。
-4. **[core] 日志级别**：`Mem0 add failed`（`:334`）与 `Mem0 manual add failed`（`:367`）改为 ERROR（写入失败即记忆丢失、不会自愈）。放在第 3 步之后，避免修好前刷屏。
+3. **[core] 新建 `core/mem0_llm.py`，只放 mem0 与适配器之间的这一层**（mem0 升级时只看这个文件）：一个类实现 mem0 `LLMBase.generate_response(messages, tools=None, tool_choice="auto", **kwargs)`——把 mem0 的 messages 拆成 system 与其余，直接调用 `LLMAdapter.chat(..., response_format=kwargs.get("response_format"))`（**不包 `system_llm_context()`**，沿用调用方身份，理由见路径机制清单），返回原始文本（mem0 在 `:956` 之后自行去代码块、解析 JSON）；收到 tools 即抛错。`core/memory_manager.py` 在 `Memory.from_config` 之后把它注入为 `self._mem.llm`；构造 mem0 时 LLM 配置里的模型名改用 `default_model()`（不再写死）；适配器实例用全局 key，`base_url` 仍尊重 `MEM0_LLM_BASE_URL`（约束 9）。向量（embedder）配置不动。
+4. **[core] 日志级别**：`Mem0 add failed`（`:334`）与 `Mem0 manual add failed`（`:367`）改为 ERROR（写入失败即记忆丢失、不会自愈）。放在第 3 步之后，避免修好前刷屏。同处 `:332` 的 `result_len` 按 2.0.20 的返回形态（`{"results": [...]}`，`mem0/memory/main.py:878`）改正——本段改动面，直接修。
 5. **[docs]** 更正 `config.example.yaml:13-16` 注释为官方口径（V4-Pro 9 月 14 日后继续提供），附官方更新日志出处。
 
 ## 测试
@@ -56,7 +57,7 @@
 
 需要的测试（假服务，不花钱）：
 - 注入与请求形态：用锁定的 mem0 版本构造 `Memory.from_config` 并注入后，`add` 的请求打到假服务，请求体里模型名 = `default_model()`、带关闭思考参数、带 `response_format=json_object`；**变异：去掉注入（请求改由 mem0 自带客户端发出）/ 去掉关闭思考 → 变红**。
-- 出站守卫：在没有调用方上下文的线程里调用也能通过；**变异：去掉 `system_llm_context()` → 抛 `LLMCallerMissing` 变红**。
+- 出站守卫：在带真实用户身份（大陆 IP）的上下文里调用、`base_url` 为非白名单主机 → 被拒（`LLMCallRefused`）；白名单主机 → 通过；**变异：提供方内部改为 `system_llm_context()` → 大陆 IP + 非白名单也放行，变红**。
 - tools：`generate_response` 收到 tools 抛错。
 - 默认模型：`default_model()` 读配置；库里模型为空时，`web/deps.py` 与 `auth.py` 的结果等于 `default_model()`；**变异：存储层恢复写死回落值 → 变红**。
 - 超时不另写测试：本改动没有新增计时机制，mem0 调用走适配器现有的生成轮预算（已有测试覆盖）；单次数秒 ≪ 45 秒，见真实规模核算。
