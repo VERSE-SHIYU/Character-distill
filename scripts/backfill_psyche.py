@@ -154,21 +154,20 @@ def _build_psyche_prompt(card_data: dict) -> str:
 # ── LLM 调用 ───────────────────────────────────────────────
 
 def _call_llm_for_psyche(api_key: str, prompt: str) -> dict | None:
-    """调用 DeepSeek 生成 psyche 字段。"""
-    from openai import OpenAI
+    """调用 LLM 生成 psyche 字段 —— 走项目适配器：模型名、关闭思考、出站守卫都在那里。
 
-    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com/v1", timeout=120)
+    脚本是**请求之外**的独立进程，故显式声明系统身份：不带身份时 geo 门 fail-closed
+    （`web/llm_gate.py:66-70`）。原来自己建 `OpenAI` 的那版既发不了关闭思考、也绕开了门。
+    """
+    from adapters.llm_adapter import LLMAdapter
+    from core.request_context import system_llm_context
+
     try:
-        resp = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {"role": "system", "content": PSYCHE_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-            max_tokens=1024,
-        )
-        text = resp.choices[0].message.content.strip()
+        with system_llm_context():
+            adapter = LLMAdapter(api_key=api_key, temperature=0.3, max_tokens=1024)
+            text = adapter.chat(
+                PSYCHE_SYSTEM_PROMPT, [{"role": "user", "content": prompt}]
+            ).strip()
     except Exception as exc:
         print(f"    LLM call error: {exc}")
         return None
