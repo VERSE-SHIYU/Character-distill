@@ -28,6 +28,10 @@ from storage.sqlite_store import SQLiteStore
 _PW_HASH = PasswordHash.recommended().hash("Pass1234")
 _SAVE_BODY = {"base_url": "https://api.deepseek.com", "model": "deepseek-v4-pro"}
 
+#: 响应里的 `model` 走 `default_model()`（磁盘上 config.yaml 的值），不再回显请求体里
+#: 存下的那个。换成探针，用例与本机恰好有没有 config.yaml 脱钩。
+_PROBE = "probe-model"
+
 
 def _run(coro):
     loop = asyncio.new_event_loop()
@@ -62,6 +66,7 @@ def client(store, admin, monkeypatch, tmp_path):
     monkeypatch.setattr(server, "_REPO_ROOT", tmp_path)
     monkeypatch.setattr(server, "get_config", lambda: {"llm": {}, "voice": {}})
     monkeypatch.setattr(server, "reset_llm_and_dependents", lambda: None)
+    monkeypatch.setattr(server, "default_model", lambda: _PROBE)
     return TestClient(server.app, raise_server_exceptions=False)
 
 
@@ -92,4 +97,4 @@ class TestResponseReportsGlobalLlmAvailability:
         r = _save(client, admin, monkeypatch, object())
         body = r.json()
         assert body["base_url"] == "https://api.deepseek.com"
-        assert body["model"] == "deepseek-v4-pro"
+        assert body["model"] == _PROBE

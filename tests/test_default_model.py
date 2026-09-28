@@ -18,19 +18,31 @@ Run: pytest tests/test_default_model.py -v
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from pathlib import Path
 
 import pytest
 import yaml
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from pwdlib import PasswordHash
 
+import deps
+import server
 from adapters.llm_adapter import default_model
 from conftest import PG_ENV, TEST_DATABASE_URL
+from core import roles
 from deps import get_storage, get_user_llm
-from routers.auth import get_current_user, router as auth_router
+from routers.auth import (
+    _create_access_token,
+    get_current_user,
+    get_jwt_secret,
+    router as auth_router,
+)
 from storage.postgres_store import PostgresStore
+from storage.sqlite_store import SQLiteStore
 
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE_CFG = ROOT / "config.example.yaml"
@@ -55,6 +67,15 @@ async def _seed_user(store) -> str:
     uid = f"usr_{uuid.uuid4().hex[:12]}"
     await store.create_user(uid, f"u_{uuid.uuid4().hex[:6]}", "x")
     return uid
+
+
+def _run(coro):
+    """给「同步 fixture + TestClient」那条路用：SQLite 没有 loop 亲和，开一个即可。"""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 def test_default_model_reads_the_configured_file(tmp_path):
@@ -114,3 +135,55 @@ async def test_stored_model_still_wins_over_the_default(store):
 
     assert (await store.get_user_api_config(uid))["model"] == "mine"
     assert (await get_user_llm(uid, store)).model == "mine"
+
+
+# ── 设置接口：模型名回落到 default_model() ─────────────────────────────
+#
+# `default_model()` 换成一个探针，是为了把「读的是这个函数」和「读到的值究竟是什么」
+# 分开：真实配置文件在磁盘上，探针不受它内容影响，用例也就不会因为本机 config.yaml
+# 长什么样而红绿不定。
+
+_PROBE = "probe-model"
+_PW_HASH = PasswordHash.recommended().hash("Pass1234")
+
+
+@pytest.fixture
+def settings_client(tmp_path, monkeypatch):
+    """生产 app（`server.app`）—— 路由、鉴权中间件与响应装配都是生产那一份。
+
+    照着 `tests/test_settings_config_llm_available.py::client` 来：身份解析走真实 JWT，
+    故这里自己签一个；存储换成一次性 SQLite（本用例观测的是响应体，不碰存储层的 PG
+    那一半，故不需要 PG）。三处出站副作用就地切断：写真 config.yaml、重建真全局 LLM、
+    真去构造全局 LLM。
+    """
+    store = SQLiteStore(str(tmp_path / "settings.db"))
+    uid = f"usr_{uuid.uuid4().hex[:16]}"
+    _run(store.create_user(uid, "Admin_" + uuid.uuid4().hex[:6], _PW_HASH))
+    _run(store.set_user_role(uid, roles.ADMIN))
+    admin = _run(store.get_user_by_id(uid))
+
+    monkeypatch.setattr(deps, "_storage", store)
+    monkeypatch.setattr(server, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(server, "get_config", lambda: {"llm": {}, "voice": {}})
+    monkeypatch.setattr(server, "reset_llm_and_dependents", lambda: None)
+    monkeypatch.setattr(server, "get_llm", lambda: object())
+    monkeypatch.setattr(server, "default_model", lambda: _PROBE)
+
+    tok = _create_access_token(admin["id"], admin["username"], get_jwt_secret())
+    client = TestClient(server.app, raise_server_exceptions=False)
+    client.headers["Authorization"] = f"Bearer {tok}"
+    return client
+
+
+def test_both_settings_endpoints_report_the_default_model(settings_client):
+    read = settings_client.get("/api/settings/config").json()
+    saved = settings_client.post("/api/settings/config", json={}).json()
+
+    assert read["model"] == _PROBE
+    assert saved["model"] == _PROBE
+    # 读、存共用同一份字典：字段集合一致，且除 `api_key` 外逐一同形。两边各拼一份就会
+    # 从这里红。`api_key` 有意不同 —— 读取时还看环境变量 `DEEPSEEK_API_KEY`，保存只看
+    # 配置里有没有。
+    assert set(saved) - {"llm_available"} == set(read)
+    assert ({k: v for k, v in saved.items() if k not in ("llm_available", "api_key")}
+            == {k: v for k, v in read.items() if k != "api_key"})
