@@ -3728,32 +3728,37 @@ label[for] {
   color: var(--accent);
 }
 
-/* 性格特征 → 剧光 trait 胶囊（accent 圆点） */
-.card-trait-list {
+/* 性格特征：每条是一整句话，换行即变高 —— 故无固定高度、也不是胶囊圆角 */
+.trait-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 8px;
 }
 
-.pill-trait {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 13px;
-  border-radius: 99px;
+.trait-item {
+  display: flex;
+  gap: 8px;
+  padding: 6px 13px;
+  line-height: 1.6;
+  font-size: 13px;
+  color: var(--text-sec);
   background: var(--surface-2);
   border: 1px solid var(--border);
-  color: var(--text-sec);
-  font-size: 13px;
+  border-radius: 12px;
 }
 
-.pill-trait-dot {
+/* 圆点对齐首行：1lh 是当前行高，减掉点高后上下各一半 */
+.trait-item::before {
+  content: '';
+  flex-shrink: 0;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
-  flex-shrink: 0;
+  margin-block: calc((1lh - 6px) / 2);
 }
 
 /* Speaking style */
@@ -3766,7 +3771,7 @@ label[for] {
 
 .card-style-chip {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   padding: 5px 10px;
   background: var(--glass-bg);
@@ -3774,10 +3779,14 @@ label[for] {
   border-radius: 10px;
 }
 
+/* 标签不许被压：否则「句式」「用词」两字被挤成竖排 */
 .card-style-chip-label {
   font-size: 11px;
   color: var(--text-dim);
   font-weight: 500;
+  flex-shrink: 0;
+  white-space: nowrap;
+  line-height: 1.6;
 }
 
 .card-style-chip-value {
