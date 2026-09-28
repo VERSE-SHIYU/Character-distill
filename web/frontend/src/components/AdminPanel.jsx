@@ -11,6 +11,7 @@ import { displayName } from '../utils/displayName'
 import { isAdmin } from '../utils/role'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import EmojiPicker from './common/EmojiPicker'
+import Select from './common/Select'
 
 const NAV_GROUPS = [
   { label: '概览', items: [
@@ -39,6 +40,7 @@ const NAV_GROUPS = [
 const ROLE_LABELS = { admin: '管理员', user: '用户', guest: '演示（只读）' }
 const ROLE_KEYS = ['admin', 'user', 'guest']
 const roleLabel = (role) => ROLE_LABELS[role] || role || ''
+const ROLE_OPTIONS = ROLE_KEYS.map((r) => ({ value: r, label: roleLabel(r) }))
 
 /* ── SVG 圆环进度条 ── */
 function CircularProgress({ percent, size = 72, strokeWidth = 5 }) {
@@ -547,14 +549,14 @@ function UsersTab() {
                     {u.id === authUser?.id || u.node_region === 'peer' ? (
                       <span>{roleLabel(u.role)}</span>
                     ) : (
-                      <select
-                        className="admin-role-select"
+                      <Select
+                        size="sm"
+                        ariaLabel="角色"
                         value={u.role || 'user'}
+                        options={ROLE_OPTIONS}
                         disabled={rolePending === u.id}
-                        onChange={(e) => changeRole(u, e.target.value)}
-                      >
-                        {ROLE_KEYS.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
-                      </select>
+                        onChange={(v) => changeRole(u, v)}
+                      />
                     )}
                   </td>
                   <td>

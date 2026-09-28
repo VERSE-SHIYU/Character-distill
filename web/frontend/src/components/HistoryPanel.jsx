@@ -13,6 +13,7 @@ import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 import { Book, Clipboard, Trash2, ArrowLeft } from './common/Icon'
 import { parseCardJson } from '../utils/card'
+import Select from './common/Select'
 import { formatChatTime } from '../utils/time'
 
 function parseCardIds(raw) {
@@ -568,26 +569,24 @@ export default function HistoryPanel({ initialTrash = false }) {
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
             />
-            <select
-              className="history-filter"
+            <Select
+              ariaLabel="文本筛选"
               value={textFilter}
-              onChange={(e) => setTextFilter(e.target.value)}
-            >
-              <option value="">全部文本</option>
-              {texts.map((t) => (
-                <option key={t.id} value={t.id}>{t.filename}</option>
-              ))}
-            </select>
-            <select
-              className="history-filter"
+              options={[
+                { value: '', label: '全部文本' },
+                ...texts.map((t) => ({ value: String(t.id), label: t.filename })),
+              ]}
+              onChange={setTextFilter}
+            />
+            <Select
+              ariaLabel="角色筛选"
               value={character}
-              onChange={(e) => setCharacter(e.target.value)}
-            >
-              <option value="">全部角色</option>
-              {characterOptions.map((name) => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
+              options={[
+                { value: '', label: '全部角色' },
+                ...characterOptions.map((name) => ({ value: name, label: name })),
+              ]}
+              onChange={setCharacter}
+            />
             <button
               type="button"
               className="btn-secondary btn-sm"
