@@ -444,6 +444,13 @@ export const ChevronLeft = (props) => (
   </Svg>
 )
 
+export const PanelLeft = (props) => (
+  <Svg {...props}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <line x1="9" y1="4" x2="9" y2="20" />
+  </Svg>
+)
+
 export const ChevronRight = (props) => (
   <Svg {...props}>
     <polyline points="9 18 15 12 9 6" />

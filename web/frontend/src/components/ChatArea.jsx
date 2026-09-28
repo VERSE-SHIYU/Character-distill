@@ -26,6 +26,7 @@ import ChatHistoryPanel from './common/ChatHistoryPanel'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 import ChatSessionList from './common/ChatSessionList'
+import SplitLayout, { PaneToggle } from './common/SplitLayout'
 
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
@@ -106,12 +107,11 @@ export default function ChatArea() {
   if (isMobile) return <ChatView />
   // 桌面端双栏：左侧历史会话列表 + 右侧对话区
   return (
-    <div className="chat-desktop">
-      <ChatSessionList />
+    <SplitLayout id="chat" label="会话列表" hasActive list={<ChatSessionList />} className="chat-desktop">
       <div className="conv-panel">
         <ChatView />
       </div>
-    </div>
+    </SplitLayout>
   )
 }
 
@@ -499,6 +499,7 @@ function ChatView() {
           <div className="chat-main-content" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ position: 'relative', flexShrink: 0 }}>
           <header className="dm-header">
+        <PaneToggle />
         <button type="button" className="dm-back" onClick={handleChatBack} title="返回">
           <ArrowLeft size={20} />
         </button>
@@ -524,8 +525,8 @@ function ChatView() {
             <div className="dm-peer-status online"><span className="dot" aria-hidden="true" /><span>在线</span></div>
           </div>
           <div className="dm-peer-tags">
-            {charIdentity && <span className="dm-peer-tag">{charIdentity}</span>}
-            {geoLabel && <span className="dm-peer-tag">{geoLabel}</span>}
+            {charIdentity && <span className="dm-peer-tag" data-shed="1">{charIdentity}</span>}
+            {geoLabel && <span className="dm-peer-tag" data-shed="1">{geoLabel}</span>}
           </div>
         </div>
         <div className="dm-header-actions">

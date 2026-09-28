@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { PaneToggle } from './common/SplitLayout'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
@@ -470,6 +471,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
               <div className="dm-bg-glow" />
               {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
               <header className="dm-header">
+                <PaneToggle />
                 <button type="button" className="dm-back" onClick={() => history.back()} title="返回会话列表">
                   <ArrowLeft size={20} />
                 </button>
@@ -486,7 +488,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                       </div>
                     )}
                   </div>
-                  {isCrossRegion && <span className="dm-peer-tag">跨区</span>}
+                  {isCrossRegion && <span className="dm-peer-tag" data-shed="1">跨区</span>}
                 </div>
                 <div className="dm-header-actions">
                   {canShowInnerVoice && (

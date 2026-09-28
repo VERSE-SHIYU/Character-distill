@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import SplitLayout, { PaneToggle } from './common/SplitLayout'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import useTypewriter from '../hooks/useTypewriter'
 import useIsMobile from '../hooks/useIsMobile'
@@ -867,8 +868,7 @@ export default function GroupChatPage() {
 
   return (
     <div className="chat-view panel group-chat-page" {...swipeBack}>
-      <div className="messages-layout">
-        {/* ── 左栏：群聊列表 ── */}
+      <SplitLayout id="group" label="群聊列表" hasActive={!!currentGroup} className="messages-layout" list={(
         <div
           className={`messages-sidebar hide-scrollbar${isMobile && currentGroup ? ' group-sidebar-hidden' : ''}`}
         >
@@ -935,6 +935,7 @@ export default function GroupChatPage() {
             )
           })}
         </div>
+        )}>
 
         {/* ── 右栏：聊天区 ── */}
         <div
@@ -953,6 +954,7 @@ export default function GroupChatPage() {
               {isMobile && <PageHeader title="群聊" onBack={backToList} />}
               {/* Header */}
               <div className="private-chat-header">
+                <PaneToggle />
                 {editingName ? (
                   <input
                     className="private-chat-title-input"
@@ -965,7 +967,7 @@ export default function GroupChatPage() {
                 ) : (
                   <div className="group-header-left">
                     <span className="private-chat-title" style={{ cursor: 'pointer' }} title="点击修改群名" onClick={startEditing}>{currentGroup.name || '群聊'}</span>
-                    <div className="group-avatar-stack">
+                    <div className="group-avatar-stack" data-shed="2">
                       {currentGroup.card_ids?.slice(0, 5).map(id => (
                         <Avatar key={id} name={resolveCard(id)?.name || '?'} size={22} src={cardAvatars[id]} />
                       ))}
@@ -982,7 +984,7 @@ export default function GroupChatPage() {
                       className="group-header-my-avatar"
                       title="更换我的头像"
                     />
-                    <span className="group-header-count">{currentGroup.card_ids?.length || 0} 个角色</span>
+                    <span className="group-header-count" data-shed="1">{currentGroup.card_ids?.length || 0} 个角色</span>
                   </div>
                 )}
                 {!editingName && (
@@ -1436,7 +1438,7 @@ export default function GroupChatPage() {
             />
           )}
         </div>
-      </div>
+      </SplitLayout>
 
       {/* ── Create modal ── */}
       {showCreate && (
