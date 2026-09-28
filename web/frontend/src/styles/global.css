@@ -758,19 +758,6 @@ html.theme-midnight::before {
   border-color: rgba(251, 191, 36, 0.25);
 }
 
-/* Dropdown / select */
-.theme-midnight select.settings-input,
-.theme-galaxy select.settings-input {
-  background: var(--input-bg);
-  color: var(--text-primary);
-}
-
-.theme-midnight select.settings-input option,
-.theme-galaxy select.settings-input option {
-  background: #16131a;
-  color: var(--text-primary);
-}
-
 /* Midnight — page background applied to panels */
 .theme-midnight .panel,
 .theme-galaxy .panel {
@@ -5942,10 +5929,6 @@ label[for] {
   cursor: not-allowed;
 }
 
-select.settings-input {
-  cursor: pointer;
-}
-
 .settings-theme-row {
   display: flex;
   gap: 10px;
@@ -6927,13 +6910,13 @@ select.settings-input {
   background: var(--accent-soft);
 }
 
-.ui-select-option[aria-selected="true"] {
+.ui-select-option.is-current {
   padding-right: 26px;
   color: var(--accent);
   font-weight: 600;
 }
 
-.ui-select-option[aria-selected="true"]::after {
+.ui-select-option.is-current::after {
   content: '✓';
   position: absolute;
   right: 10px;
@@ -18753,8 +18736,7 @@ select.settings-input {
 /* ── Mobile inputs: 16px to prevent iOS auto-zoom on focus ── */
 @media (max-width: 768px) {
   input:not([type=checkbox]):not([type=radio]),
-  textarea,
-  select {
+  textarea {
     font-size: 16px;
   }
 }

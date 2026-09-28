@@ -75,11 +75,13 @@ describe('B2 弹层定位', () => {
   })
 })
 
-describe('B3 选中态', () => {
-  it('当前值 aria-selected=true，其余 false', () => {
+describe('B3 当前值标记', () => {
+  // A8 之后 aria-selected 跟的是键盘高亮项，「当前值」改用 .is-current 标 —— 否则
+  // 展开瞬间（高亮=当前值）两者同值，测不出区别。
+  it('当前值带 is-current，其余不带', () => {
     setup({ value: 'guest' })
     const opts = screen.getAllByRole('option')
-    expect(opts.map((o) => o.getAttribute('aria-selected'))).toEqual(['false', 'false', 'true'])
+    expect(opts.map((o) => o.classList.contains('is-current'))).toEqual([false, false, true])
   })
 })
 
@@ -289,6 +291,112 @@ describe('B9 长列表', () => {
     } finally {
       delete Element.prototype.scrollIntoView
     }
+  })
+})
+
+describe('A1–A8 对齐 APG 补齐的行为', () => {
+  const many = Array.from({ length: 30 }, (_, i) => ({ value: `t${i}`, label: `项${i}` }))
+
+  // 收起时按 ↑ 的高亮落点必须与 ↓ 不同：↓ 落在当前值，↑ 落首项。
+  it('A1 收起时按 ↑ 展开并高亮首项', () => {
+    const onChange = vi.fn()
+    render(<Select value="guest" options={OPTIONS} onChange={onChange} />)
+    const trigger = screen.getByRole('combobox')
+    trigger.getBoundingClientRect = () => rect()
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'ArrowUp' })
+    expect(screen.getAllByRole('option')[0].className).toContain('is-active')
+  })
+
+  it('A2 收起按 End 高亮末项，展开后按 Home 高亮首项', () => {
+    const onChange = vi.fn()
+    render(<Select value="admin" options={OPTIONS} onChange={onChange} />)
+    const trigger = screen.getByRole('combobox')
+    trigger.getBoundingClientRect = () => rect()
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'End' })
+    expect(screen.getAllByRole('option')[2].className).toContain('is-active')
+    fireEvent.keyDown(trigger, { key: 'Home' })
+    expect(screen.getAllByRole('option')[0].className).toContain('is-active')
+  })
+
+  it('A3 键入跳转：连按同字符在候选间循环，500ms 后缓冲清空', () => {
+    const AB = [
+      { value: 'a1', label: '甲一' },
+      { value: 'b1', label: '乙一' },
+      { value: 'b2', label: '乙二' },
+    ]
+    vi.useFakeTimers()
+    try {
+      const onChange = vi.fn()
+      render(<Select value="" options={AB} onChange={onChange} />)
+      const trigger = screen.getByRole('combobox')
+      trigger.getBoundingClientRect = () => rect()
+      trigger.focus()
+
+      fireEvent.keyDown(trigger, { key: '乙' })
+      expect(screen.getAllByRole('option')[1].className).toContain('is-active')
+      fireEvent.keyDown(trigger, { key: '乙' })
+      expect(screen.getAllByRole('option')[2].className).toContain('is-active')
+
+      vi.advanceTimersByTime(600)
+      fireEvent.keyDown(trigger, { key: '甲' })
+      expect(screen.getAllByRole('option')[0].className).toContain('is-active')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('A4 展开后按 Tab 选中高亮项，且不 preventDefault', () => {
+    const { onChange, trigger } = setup({ value: 'user' })
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    const ev = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    fireEvent(trigger, ev)
+    expect(ev.defaultPrevented).toBe(false)
+    expect(onChange).toHaveBeenCalledWith('guest')
+    expect(screen.queryByRole('listbox')).toBeNull()
+  })
+
+  it('A5 展开后按 Alt+↑ 选中高亮项并关闭', () => {
+    const { onChange, trigger } = setup({ value: 'user' })
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    fireEvent.keyDown(trigger, { key: 'ArrowUp', altKey: true })
+    expect(onChange).toHaveBeenCalledWith('guest')
+    expect(screen.queryByRole('listbox')).toBeNull()
+  })
+
+  it('A6 PageDown 一次跳 10 项，末项封顶', () => {
+    const onChange = vi.fn()
+    const first = render(<Select value="t0" options={many} onChange={onChange} />)
+    const t0 = screen.getByRole('combobox')
+    t0.getBoundingClientRect = () => rect()
+    fireEvent.click(t0)
+    fireEvent.keyDown(t0, { key: 'PageDown' })
+    expect(screen.getAllByRole('option')[10].className).toContain('is-active')
+    first.unmount()
+
+    render(<Select value="t25" options={many} onChange={onChange} />)
+    const t25 = screen.getByRole('combobox')
+    t25.getBoundingClientRect = () => rect()
+    fireEvent.click(t25)
+    fireEvent.keyDown(t25, { key: 'PageDown' })
+    expect(screen.getAllByRole('option')[29].className).toContain('is-active')
+  })
+
+  it('A7 aria-controls 指向 listbox，收起后消失', () => {
+    const { trigger } = setup()
+    const listbox = screen.getByRole('listbox')
+    expect(trigger).toHaveAttribute('aria-controls', listbox.id)
+    fireEvent.keyDown(trigger, { key: 'Escape' })
+    expect(trigger).not.toHaveAttribute('aria-controls')
+  })
+
+  it('A8 aria-selected 只在高亮项上，is-current 留在当前值', () => {
+    const { trigger } = setup({ value: 'user' })
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    const opts = screen.getAllByRole('option')
+    expect(opts.map((o) => o.getAttribute('aria-selected'))).toEqual(['false', 'false', 'true'])
+    expect(opts.map((o) => o.classList.contains('is-current'))).toEqual([false, true, false])
   })
 })
 

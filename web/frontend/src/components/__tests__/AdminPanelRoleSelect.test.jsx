@@ -8,6 +8,8 @@ import { adminAPI } from '../../api/client'
 // 所以只 mock adminAPI 的边界。
 
 const ROW = { id: 'u2', username: 'bob', role: 'user', node_region: 'local', is_disabled: false }
+const SELF = { id: 'admin1', username: 'me', role: 'admin', node_region: 'local', is_disabled: false }
+const PEER = { id: 'p1', username: 'peer', role: 'user', node_region: 'peer', is_disabled: false }
 
 const { mockState } = vi.hoisted(() => ({
   mockState: { authUser: { id: 'admin1', role: 'admin' }, popView: () => {} },
@@ -56,5 +58,22 @@ describe('AdminPanel 角色下拉接线', () => {
     fireEvent.click(screen.getByRole('combobox'))
     fireEvent.click(screen.getByRole('option', { name: '管理员' }))
     await waitFor(() => expect(screen.getByRole('combobox')).toBeDisabled())
+  })
+
+  // 自己那行不能改自己（权限），对端节点的用户不归本节点管（PATCH 会 404）——
+  // 两种都只显示角色文字，绝不能渲染出可点的下拉。
+  it('自己那行与对端行不渲染下拉，只显示角色文字', async () => {
+    adminAPI.listUsersFederated.mockResolvedValue({ local: [SELF, ROW], peer: [PEER] })
+    const { container } = render(<AdminPanel />)
+    fireEvent.click(screen.getByRole('button', { name: /用户管理/ }))
+    await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument())
+
+    const rows = container.querySelectorAll('.admin-table tbody tr')
+    expect(rows).toHaveLength(3)
+    expect(rows[0].querySelector('[role="combobox"]')).toBeNull()
+    expect(rows[0].textContent).toContain('管理员')
+    expect(rows[2].querySelector('[role="combobox"]')).toBeNull()
+    expect(rows[2].textContent).toContain('用户')
+    expect(rows[1].querySelector('[role="combobox"]')).not.toBeNull()
   })
 })

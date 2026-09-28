@@ -21,9 +21,83 @@
 | C10 | 箭头图标已有 `ChevronDown` | `components/common/Icon.jsx:536` |
 | C9 | 仓库内没有自定义下拉组件，`MentionDropdown` 是 @ 提及专用（内联样式、token 名不同），不复用，也不改 | `components/common/MentionDropdown.jsx` |
 
+## ① 出处对照表（补充·按 APG 重订，基线 `0ad2f9f`）
+
+出处：W3C WAI-ARIA APG《Select-Only Combobox Example》，https://www.w3.org/WAI/ARIA/apg/patterns/combobox/examples/combobox-select-only/ （页面最后更新 2025-08-12），取其中的 Keyboard Support 与 Role/Property/State 两节。行为逐条照抄，偏离必须写明理由。
+
+| APG 条目 | 本 spec 行为 | 现状（`0ad2f9f`） |
+|---|---|---|
+| 收起 · Down Arrow：展开，不改选中值 | B5 | ✅ |
+| 收起 · Alt+Down：展开，不改选中值 | B5 | ✅（按 ArrowDown 处理） |
+| 收起 · Up Arrow：展开，高亮移到**第一项** | A1 | ❌ 待做 |
+| 收起 · Enter / Space：展开 | B5 | ✅ |
+| 收起 · Home / End：展开，高亮移到首项 / 末项 | A2 | ❌ 待做 |
+| 收起/展开 · 可打印字符：展开并跳到首个匹配项；快速连打按整串匹配；重复同一字符在同首字母项间循环 | A3 | ❌ 待做 |
+| 展开 · Enter / Space：选中高亮项并关闭 | B5 | ✅ |
+| 展开 · Tab：**选中高亮项**并关闭，保留默认的焦点移动 | A4 | ❌ 现在只关闭不选中，待改 |
+| 展开 · Escape：关闭，保留原值 | B5 | ✅ |
+| 展开 · Down / Up：移动高亮，首尾不循环 | B5 | ✅ |
+| 展开 · Alt+Up：选中高亮项并关闭 | A5 | ❌ 待做 |
+| 展开 · Home / End：高亮移到首项 / 末项 | A2 | ❌ 待做 |
+| 展开 · PageUp / PageDown：高亮跳 10 项，到头为止 | A6 | ❌ 待做 |
+| 点击触发器收起：保留原值 | B6 | ✅ |
+| 焦点离开 combobox 时写入值 | —— | **有意偏离**：外部点击或失焦只关闭、不写值。理由：角色变更是高权限写操作，鼠标移开就误提交不可接受；原生 `<select>` 失焦也不提交。 |
+| 高亮变化时把高亮项滚入可视区 | B9 | ✅ |
+| combobox：`aria-expanded`、`aria-activedescendant` | B1/B5 | ✅ |
+| combobox：`aria-controls` 指向 listbox 的 id | A7 | ❌ 待做 |
+| combobox：`aria-labelledby` | B1 | 等价实现：用 `aria-label`（调用方没有可见的 label 元素） |
+| option：`aria-selected="true"` 标在**高亮项**上（APG 原文：只出现在被 `aria-activedescendant` 引用的选项上） | A8 | ❌ 现在标在当前值上，待改。当前值的 ✓ 改挂 `.is-current` 类 |
+
+## ② 全量扫描原文（补充，基线 `0ad2f9f`，在 `web/frontend/src` 下执行）
+
+```
+== JSX <select / role=combobox|listbox
+./components/common/Select.jsx:137:        role="combobox"
+./components/common/Select.jsx:151:        <div ref={menuRef} role="listbox" ...>
+== CSS select 元素选择器
+761:/* Dropdown / select */
+762:.theme-midnight select.settings-input,
+763:.theme-galaxy select.settings-input {
+768:.theme-midnight select.settings-input option,
+769:.theme-galaxy select.settings-input option {
+5945:select.settings-input {
+6849:/* ===== Themed select (ui-select) =====
+18757:  select {
+== 旧类名 .history-filter / admin-role-select
+（空）
+== z-index 全部取值（global.css，数量 取值）
+-3 -2 -1 0 1 2 3 5 10 11 19 20 50 99 100 101 140 150 200 201 1000×8 1001×4 1100(本组件) 9999 10000
+== JSX 内联 zIndex 最大值
+1000
+== texts / cards 数量上限（core、web/backend 全文 grep）
+无
+```
+
+结论：761–769、5945、18757 是本段要清理的遗留 `select` 样式；弹层取 1100，仅低于图片预览的 9999/10000，与 C6 一致。
+
+## ③ 规模表（补充）
+
+| 数据源 | 上限 | 来源 | 展示策略 |
+|---|---|---|---|
+| 角色选项 | 固定 3 个 | `AdminPanel.jsx` 的 `ROLE_KEYS` | 不滚动 |
+| 历史 · 文本选项 | **无上限**，随用户上传增长 | store `texts`；后端无数量限制（见 ②） | B9：最大高度 280 可滚，单行省略，A3 键入跳转，A6 翻页 |
+| 历史 · 角色选项 | **无上限**，随卡片数量增长 | `HistoryPanel.jsx` 中由 `cards` 推导的 `characterOptions`（:163） | 同上 |
+
+## ④ 调用点矩阵（补充）
+
+| 调用点 | 可观测输出 | 守它的测试 | 发出前预跑的变异及结果 |
+|---|---|---|---|
+| AdminPanel 角色 | 选中值原样提交为 `setUserRole(id, v)` | AdminPanelRoleSelect「选管理员后提交」 | 把提交值写死成 `'user'` → 🔴 红 |
+| AdminPanel 角色 | 请求进行中该行禁用 | AdminPanelRoleSelect「pending 期间禁用」 | 删除 `disabled` → 🔴 红 |
+| AdminPanel 角色 | **自己那行和对端节点的行不渲染下拉，只显示文字** | **缺，待补** | 条件改成 `false` → 🟢 **存活** |
+| HistoryPanel 文本 | 选中后请求带 `text_id`，选「全部」后不带 | HistoryPanelFilter「文本」 | 空项写成 `'all'` → 🔴 红 |
+| HistoryPanel 角色 | 选中后请求带 `character`，选「全部」后不带 | **缺，待补** | 空项写成 `'all'` → 🟢 **存活**；`onChange` 断开 → 🟢 **存活** |
+
+预跑说明：上表 6 个变异由我在 `0ad2f9f` 上实跑。Select 本体的变异，我在 `c5f7a79` 上抽检 6 个、在 `d78ceb7` 上抽检 6 个，存活的已补测试，其余均为红。A1–A8 是新行为，代码尚未实现，无法预跑，改由执行方实现后跑、审计复跑。
+
 ## S0：动手前先审
 
-1. 逐条复核 C1–C9。
+1. 逐条复核 C1–C10，以及 ①–④ 四节（补充：出处表逐条对照 APG 原页；扫描命令原样重跑并比对输出；矩阵里标「存活」的变异先复现存活，再补测试）。
 2. 审文末对账表：逐行确认「变异」在改后代码上能让对应测试变红，每个行为都有测试。
 3. 有问题先停下报告，再写代码。
 
@@ -96,6 +170,21 @@ Skill：本机装有 `frontend-design` 就调用这一个，只用于视觉细�
 - `HistoryPanel.jsx:571/581`：换成 `<Select>`（md）。第一项分别是 `{ value: '', label: '全部文本' }` 和 `{ value: '', label: '全部角色' }`，其余选项照原 map 生成。`setTextFilter` 和 `setCharacter` 直接作为 `onChange` 传入。
 - 完成后 （补充）`grep -rnE "<select|\.history-filter|[\"' ]history-filter|admin-role-select" src` 必须为空。
 
+## S4（补充·按 APG 重订）：补齐 A1–A8
+
+对 `Select.jsx` 做如下修改，逻辑全部留在组件内部，不拆 hook：
+
+- A1：收起时按 ↑，展开并把高亮放在第一项。
+- A2：Home / End。收起时展开并高亮首项 / 末项；展开时直接把高亮移到首项 / 末项。
+- A3：键入跳转。可打印单字符（`e.key.length === 1`，且没有按 Ctrl/Meta/Alt）追加进缓冲串，缓冲 500ms 后清空；按不区分大小写的前缀匹配 label。缓冲串若全由同一个字符组成，就在以该字符开头的选项之间循环。收起时先展开。**Space 仍按 B5 处理，不进入缓冲。**
+- A4：展开时按 Tab，先 `commit(activeIndex)`，**不要** `preventDefault`，让焦点正常移走。
+- A5：展开时按 Alt+↑，等同于 Enter。
+- A6：PageUp / PageDown 让高亮上下跳 10 项，到首尾为止。
+- A7：listbox 加 `id={listId}`；触发器加 `aria-controls={listId}`，仅在展开时设置。
+- A8：`aria-selected` 改为 `i === activeIndex`；当前值加 `.is-current` 类。CSS 中 `.ui-select-option[aria-selected="true"]` 的规则（文字色、加粗、✓）全部改挂到 `.is-current`。
+
+调用点补 2 条测试：AdminPanel 自己那行和对端行不出现 combobox；HistoryPanel 角色筛选的接线（同「补充·审计 0ad2f9f」）。
+
 ## 测试
 
 新建 `components/common/__tests__/Select.test.jsx`（vitest + Testing Library），覆盖 B1–B8。另在两处调用方各补一条接线测试：
@@ -109,6 +198,8 @@ Skill：本机装有 `frontend-design` 就调用这一个，只用于视觉细�
 - 报告里不得出现本地全量的数字。
 
 （补充·审计）B8 测试里的 4 个 `vi.spyOn` 结束时要 `mockRestore()`（或包 try/finally），避免泄漏到同文件的后续用例。
+
+（补充·审计 0ad2f9f）遗留死样式一并清掉，属本段改动面：`global.css` 的 `.theme-midnight/.theme-galaxy select.settings-input`（`:762-772`，含 option 规则）和 `select.settings-input`（`:5945`）。基线起全仓就没有 `<select className="settings-input">`，`settings-input` 只挂在 input 上。移动端 `@media (max-width: 768px)` 选择器列表里的 `select`（`:18757`）顺手删掉，`input` 和 `textarea` 保留。
 
 ## 手动验证
 
@@ -124,7 +215,7 @@ Skill：本机装有 `frontend-design` 就调用这一个，只用于视觉细�
 | B1 触发器语义、显示当前 label | Select：渲染后 `getByRole('combobox')` 文本等于当前 label | label 改取 `options[0]` | value=`'user'` 时显示「用户」 |
 | B2 弹层 portal 到 body | （补充）Select：`expect(container.contains(listbox)).toBe(false)` | 去掉 `createPortal` 直接渲染 | 放在 `overflow:auto` 容器内展开 |
 | B2 空间不足向上翻 | Select：mock `getBoundingClientRect` 让触发器贴近底部，断言弹层 `bottom` 已设置（未设置 `top`） | 删除翻转分支 | 触发器位于视口底部 |
-| B3 选中态 | Select：当前值 option 带 `aria-selected="true"`，其余为 false | 比较条件取反 | value=`'guest'` |
+| B3 选中态（补充：已被 A8 取代，当前值改用 `.is-current` 断言） | Select：当前值 option 带 `aria-selected="true"`，其余为 false | 比较条件取反 | value=`'guest'` |
 | B4 选新值触发一次并关闭 | Select：点「管理员」后 onChange 收到 `'admin'` 1 次，listbox 消失 | 选中后不关闭，或调用两次 | 点击其他选项 |
 | B4 选同值不触发 | Select：点当前值后 onChange 调用 0 次 | 删除同值判断 | 点击已选中项 |
 | B5 键盘展开与高亮 | Select：聚焦后按 ↓，listbox 出现且高亮在当前值 | 高亮初值改为 0 | value 为中间项时按 ↓ |
@@ -147,5 +238,16 @@ Skill：本机装有 `frontend-design` 就调用这一个，只用于视觉细�
 | 角色下拉接线 | AdminPanel 接线测试：选「管理员」后 `changeRole` 收到 `(u, 'admin')` | onChange 传错值 | 管理员改他人角色 |
 | 角色请求中禁用 | AdminPanel 接线测试：pending 期间 combobox 为 disabled | 删除 disabled 传参 | 改角色请求未返回 |
 | 历史筛选接线 | （补充）HistoryPanel 接线测试：先选某文本，断言请求 URL 带 `text_id=<id>`（`HistoryPanel.jsx:208`）；再选「全部文本」，断言请求 URL 不带 `text_id` | 空项 value 写成 `'all'` | 切换筛选 |
+| （补充·审计 0ad2f9f）角色筛选接线 | HistoryPanel 接线测试：`mockState.cards` 放一张 `name: '甲'` 的卡；选「甲」后请求 URL 带 `character=`（值为 `encodeURIComponent('甲')`）；再选「全部角色」后不带 `character` | 角色空项写成 `'all'`；`onChange={() => {}}`（审计实测两条都存活） | 按角色筛选历史 |
+| （补充·审计 0ad2f9f）遗留 select 样式清除 | 验收 grep 追加 `grep -nE "select\.settings-input" src/styles/global.css` 为空 | 保留任一条 | 全站 |
+| （补充·APG）A1 收起时 ↑ | Select：value 为末项，聚焦后按 ↑，listbox 出现且高亮在第 0 项 | ↑ 走与 ↓ 相同的分支（高亮落在当前值） | 键盘用户按 ↑ |
+| （补充·APG）A2 Home/End | Select：收起按 End，高亮在末项；展开后按 Home，高亮在首项 | 删除 Home/End 分支 | 长列表首尾跳转 |
+| （补充·APG）A3 键入跳转 | Select：选项为「甲一」「乙一」「乙二」，按「乙」高亮在「乙一」，再按「乙」高亮在「乙二」；等 fake timer 走过 500ms 后按「甲」，高亮在「甲一」 | 去掉同字符循环；或不清空缓冲 | 长列表按首字定位 |
+| （补充·APG）A4 Tab 选中 | Select：展开后 ↓，按 Tab，onChange 收到高亮值，listbox 消失，且 `defaultPrevented` 为 false | Tab 只关闭不选中；或加上 `preventDefault` | 键盘用户 Tab 离开 |
+| （补充·APG）A5 Alt+↑ | Select：展开后 ↓，按 Alt+↑，onChange 收到高亮值并关闭 | 删除 Alt+↑ 分支 | 键盘用户 |
+| （补充·APG）A6 翻页 | Select：30 个选项，高亮在 0 时按 PageDown 到 10，在 25 时按 PageDown 到 29 | 不做末项封顶；或步长不是 10 | 长列表翻页 |
+| （补充·APG）A7 aria-controls | Select：展开后触发器的 `aria-controls` 等于 listbox 的 id；收起后属性消失 | 删除 `aria-controls` | 读屏用户 |
+| （补充·APG）A8 aria-selected 跟随高亮 | Select：value 为 user，展开后 ↓，`aria-selected="true"` 只在高亮项上，`is-current` 仍在「用户」上 | `aria-selected` 仍按当前值 | 读屏用户浏览选项 |
+| （补充·矩阵）自己和对端行不渲染下拉 | AdminPanel：列表里放自己（`authUser.id`）一行和 `node_region: 'peer'` 一行，两行都没有 combobox，并显示角色文字 | 渲染条件改为 `false`（预跑存活） | 管理员查看自己或对端用户 |
 | 连带：旧样式删除，无残留引用 | S3 末尾的 grep 为空（CI 前手动核查，写进交付报告） | 保留任一旧 className | 全站 |
 | 连带：配色随主题 | 手动验证 1、3（纯 CSS token，jsdom 无法断言） | 写死十六进制色 | 切换主题色或深浅色 |

@@ -10,6 +10,11 @@ const MENU_PAD = 8
 const MAX_MENU_H = 280
 const GAP = 4
 
+// 键盘行为对齐 W3C WAI-ARIA APG《Select-Only Combobox》：PageUp/PageDown 一次跳 10 项；
+// 键入缓冲 500ms 无新键即清空（APG 用搜键串匹配，超时后重新开始）。
+const PAGE_JUMP = 10
+const TYPE_RESET_MS = 500
+
 const CARET_SIZE = { md: 16, sm: 14 }
 
 export default function Select({
@@ -27,19 +32,29 @@ export default function Select({
   const triggerRef = useRef(null)
   const menuRef = useRef(null)
   const listId = useId()
+  const typeBufferRef = useRef('')
+  const typeTimerRef = useRef(null)
 
   const optionId = (i) => `${listId}-opt-${i}`
   const selectedIndex = options.findIndex((o) => o.value === value)
   const selectedLabel = selectedIndex >= 0 ? options[selectedIndex].label : ''
 
-  const openMenu = () => {
+  const clearTypeBuffer = () => {
+    clearTimeout(typeTimerRef.current)
+    typeBufferRef.current = ''
+  }
+
+  useEffect(() => clearTypeBuffer, [])
+
+  const openMenu = (index = selectedIndex >= 0 ? selectedIndex : 0) => {
     if (disabled) return
-    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0)
+    setActiveIndex(index)
     setRect(triggerRef.current.getBoundingClientRect())
     setOpen(true)
   }
 
   const closeMenu = () => {
+    clearTypeBuffer()
     setOpen(false)
     setActiveIndex(-1)
   }
@@ -49,6 +64,29 @@ export default function Select({
     if (!opt) return
     closeMenu()
     if (opt.value !== value) onChange(opt.value)
+  }
+
+  // 可打印单字符才算键入；Space 归 B5，带修饰键的交给浏览器。
+  const isPrintableKey = (e) =>
+    e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey
+
+  // A3 键入跳转：缓冲串追加本键，按不区分大小写的前缀找首个匹配项。
+  // 缓冲串全是同一个字符时改为「在该首字选项之间循环」—— 连按同一个字母要在候选里轮转，
+  // 而不是永远停在第一个，所以从当前高亮之后（含绕回）开始找，匹配键只取该字符本身。
+  const typeahead = (char) => {
+    clearTimeout(typeTimerRef.current)
+    const buffer = (typeBufferRef.current + char).toLowerCase()
+    typeBufferRef.current = buffer
+    typeTimerRef.current = setTimeout(clearTypeBuffer, TYPE_RESET_MS)
+
+    const sameChar = [...buffer].every((c) => c === buffer[0])
+    const first = sameChar ? activeIndex + 1 : 0
+    const needle = sameChar ? buffer[0] : buffer
+    for (let n = 0; n < options.length; n += 1) {
+      const i = (first + n) % options.length
+      if (options[i].label.toLowerCase().startsWith(needle)) return i
+    }
+    return -1
   }
 
   // 展开期间的三种关闭来源。处理器定义在 effect 内：既不留陈旧闭包，
@@ -95,15 +133,41 @@ export default function Select({
       if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         openMenu()
+      } else if (e.key === 'ArrowUp' || e.key === 'Home') {
+        // A1/A2：收起时 ↑ 与 Home 都是「展开 + 高亮首项」，不是当前值。
+        e.preventDefault()
+        openMenu(0)
+      } else if (e.key === 'End') {
+        e.preventDefault()
+        openMenu(options.length - 1)
+      } else if (isPrintableKey(e)) {
+        const next = typeahead(e.key)
+        if (next >= 0) openMenu(next)
       }
       return
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       setActiveIndex((i) => (i + 1 < options.length ? i + 1 : i))
+    } else if (e.key === 'ArrowUp' && e.altKey) {
+      // A5：Alt+↑ 等同于 Enter（先于普通 ↑ 判断）。
+      e.preventDefault()
+      commit(activeIndex)
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setActiveIndex((i) => (i - 1 >= 0 ? i - 1 : i))
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      setActiveIndex(0)
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      setActiveIndex(options.length - 1)
+    } else if (e.key === 'PageDown') {
+      e.preventDefault()
+      setActiveIndex((i) => Math.min(i + PAGE_JUMP, options.length - 1))
+    } else if (e.key === 'PageUp') {
+      e.preventDefault()
+      setActiveIndex((i) => Math.max(i - PAGE_JUMP, 0))
     } else if (e.key === 'Enter' || e.key === ' ') {
       // Space 必须与 Enter 同效并 preventDefault：否则按钮会在 keyup 时触发一次
       // 原生 click，只把弹层关掉而选不中。
@@ -114,7 +178,11 @@ export default function Select({
       closeMenu()
       triggerRef.current?.focus()
     } else if (e.key === 'Tab') {
-      closeMenu()
+      // A4：Tab 先选中高亮项，但不 preventDefault —— 焦点要照常移到下一个可聚焦元素。
+      commit(activeIndex)
+    } else if (isPrintableKey(e)) {
+      const next = typeahead(e.key)
+      if (next >= 0) setActiveIndex(next)
     }
   }
 
@@ -138,6 +206,7 @@ export default function Select({
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={ariaLabel}
+        aria-controls={open ? listId : undefined}
         aria-activedescendant={open && activeIndex >= 0 ? optionId(activeIndex) : undefined}
         disabled={disabled}
         className={`ui-select ui-select--${size}${className ? ` ${className}` : ''}`}
@@ -148,15 +217,17 @@ export default function Select({
         <ChevronDown size={CARET_SIZE[size] || CARET_SIZE.md} />
       </button>
       {open && menuStyle && createPortal(
-        <div ref={menuRef} role="listbox" aria-label={ariaLabel} className="ui-select-menu" style={menuStyle}>
+        <div id={listId} ref={menuRef} role="listbox" aria-label={ariaLabel} className="ui-select-menu" style={menuStyle}>
           {options.map((o, i) => (
             <div
               key={o.value}
               id={optionId(i)}
               role="option"
               title={o.label}
-              aria-selected={o.value === value}
-              className={`ui-select-option${i === activeIndex ? ' is-active' : ''}`}
+              // A8：aria-selected 跟的是键盘高亮项（APG 原文：只出现在被
+              // aria-activedescendant 引用的选项上）；「当前值」改用 .is-current 标。
+              aria-selected={i === activeIndex}
+              className={`ui-select-option${i === activeIndex ? ' is-active' : ''}${o.value === value ? ' is-current' : ''}`}
               onMouseEnter={() => setActiveIndex(i)}
               onClick={() => commit(i)}
             >
