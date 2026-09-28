@@ -49,44 +49,45 @@ export default function CharCard() {
 
   const swipeBack = useSwipeBack(goBack)
 
-  if (!currentTextId) {
-    return (
-      <div className="shell-placeholder">
-        <div className="shell-placeholder-inner">
-          <div className="shell-placeholder-icon"><User size={28} /></div>
-          <div className="shell-placeholder-title">
-            请先选择一份文本
-          </div>
-          <div className="shell-placeholder-sub">
-            在"文本管理"中上传并选中一个文本
-          </div>
-          <button
-            type="button"
-            className="btn-primary"
-            style={{ marginTop: 16 }}
-            onClick={() => navigateTo('text')}
-          >
-            前往文本管理
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   const currentText = texts.find((t) => t.id === currentTextId)
-  const filename = currentText?.filename || currentTextId.slice(0, 8)
+  const filename = currentText?.filename || currentTextId?.slice(0, 8)
 
+  // 页头只有一份：有无文本都渲染（标题、返回、蒸馏工作台入口），只有内容区在「空态 / 角色列表」之间切换
   return (
     <div className="char-panel panel" {...swipeBack}>
       {!(isMobile && currentCard) && (
         <header className="panel-header">
           <PageHeader title="角色管理" onBack={goBack} actions={<DistillWorkbenchButton />} />
-          <p className="panel-desc">
-            当前文本：{filename}
-          </p>
+          {currentTextId && (
+            <p className="panel-desc">
+              当前文本：{filename}
+            </p>
+          )}
         </header>
       )}
-      <CharPanelBody textId={currentTextId} goBack={goBack} />
+      {currentTextId ? (
+        <CharPanelBody textId={currentTextId} goBack={goBack} />
+      ) : (
+        <div className="shell-placeholder">
+          <div className="shell-placeholder-inner">
+            <div className="shell-placeholder-icon"><User size={28} /></div>
+            <div className="shell-placeholder-title">
+              请先选择一份文本
+            </div>
+            <div className="shell-placeholder-sub">
+              在"文本管理"中上传并选中一个文本
+            </div>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ marginTop: 16 }}
+              onClick={() => navigateTo('text')}
+            >
+              前往文本管理
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

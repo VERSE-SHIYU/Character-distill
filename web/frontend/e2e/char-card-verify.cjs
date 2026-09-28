@@ -182,10 +182,50 @@ const runMobile = async (fail) => {
   await browser.close()
 }
 
+// 角色管理页没选文本（空态）：页头、返回、蒸馏工作台入口都在，空态内容可见，返回能离开
+async function runEmptyState(fail) {
+  const { browser, page, errors } = await openApp({ width: 1280, height: 800 })
+  await login(page, { settleMs: 1200 })
+  for (const w of [1280, 390]) {
+    try {
+    await page.setViewportSize({ width: w, height: w === 390 ? 844 : 800 })
+    await page.evaluate(() => { const st = window.__appStore; st.getState().setView('home'); st.setState({ currentTextId: null, currentCard: null, texts: [] }) })
+    await page.waitForTimeout(200)
+    await pushView(page, 'character')
+    await page.waitForSelector('.char-panel, .shell-placeholder', { timeout: 10000 })
+    const e = await page.evaluate(() => {
+      const q = (s) => document.querySelector(s)
+      const inner = q('.shell-placeholder-inner')
+      const r = inner ? inner.getBoundingClientRect() : null
+      return {
+        title: q('.char-panel .page-header-title')?.textContent || null,
+        back: !!q('.char-panel .page-header-back'),
+        entry: q('.char-panel .page-header .dw-entry-btn')?.textContent || null,
+        emptyVisible: !!r && r.width > 0 && r.top < innerHeight,
+      }
+    })
+    if (e.back) await page.locator('.char-panel .page-header-back').click()
+    await page.waitForTimeout(400)
+    e.leftPage = await page.evaluate(() => window.__appStore.getState().currentView !== 'character')
+    console.log('EMPTY', w, JSON.stringify(e))
+    if (e.title !== '角色管理') fail.push(`空态缺标题（宽 ${w}）`)
+    if (!e.back) fail.push(`空态缺返回（宽 ${w}）`)
+    if (e.entry !== '蒸馏工作台') fail.push(`空态缺蒸馏工作台入口（宽 ${w}）`)
+    if (!e.emptyVisible) fail.push(`空态内容不可见（宽 ${w}）`)
+    if (!e.leftPage) fail.push(`空态点返回没有离开（宽 ${w}）`)
+    } catch (err) {
+      fail.push(`空态检查异常（宽 ${w}）: ${String(err).split('\n')[0]}`)
+    }
+  }
+  if (errors.length) fail.push('空态 pageErrors: ' + JSON.stringify(errors))
+  await browser.close()
+}
+
 ;(async () => {
   const fail = []
   await runDesktop(fail)
   await runMobile(fail)
+  await runEmptyState(fail)
   console.log(fail.length ? '✗ FAIL\n - ' + fail.join('\n - ') : '✓ PASS')
   process.exit(fail.length ? 1 : 0)
 })().catch((e) => { console.error(e); process.exit(1) })
