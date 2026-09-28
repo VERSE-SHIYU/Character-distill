@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown } from './Icon'
 
@@ -26,7 +26,9 @@ export default function Select({
   const [rect, setRect] = useState(null)
   const triggerRef = useRef(null)
   const menuRef = useRef(null)
+  const listId = useId()
 
+  const optionId = (i) => `${listId}-opt-${i}`
   const selectedIndex = options.findIndex((o) => o.value === value)
   const selectedLabel = selectedIndex >= 0 ? options[selectedIndex].label : ''
 
@@ -80,6 +82,13 @@ export default function Select({
     }
   }, [open])
 
+  // 长列表里 ↓ 走到第 9 项以后，高亮会滚出可视区 —— 跟着滚回来。
+  // jsdom 没有实现 scrollIntoView，用可选调用，测试里 mock 后即可断言。
+  useEffect(() => {
+    if (!open || activeIndex < 0) return
+    menuRef.current?.children[activeIndex]?.scrollIntoView?.({ block: 'nearest' })
+  }, [open, activeIndex])
+
   const onTriggerKeyDown = (e) => {
     if (disabled) return
     if (!open) {
@@ -95,7 +104,9 @@ export default function Select({
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setActiveIndex((i) => (i - 1 >= 0 ? i - 1 : i))
-    } else if (e.key === 'Enter') {
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      // Space 必须与 Enter 同效并 preventDefault：否则按钮会在 keyup 时触发一次
+      // 原生 click，只把弹层关掉而选不中。
       e.preventDefault()
       commit(activeIndex)
     } else if (e.key === 'Escape') {
@@ -127,6 +138,7 @@ export default function Select({
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={ariaLabel}
+        aria-activedescendant={open && activeIndex >= 0 ? optionId(activeIndex) : undefined}
         disabled={disabled}
         className={`ui-select ui-select--${size}${className ? ` ${className}` : ''}`}
         onClick={() => (open ? closeMenu() : openMenu())}
@@ -140,6 +152,7 @@ export default function Select({
           {options.map((o, i) => (
             <div
               key={o.value}
+              id={optionId(i)}
               role="option"
               title={o.label}
               aria-selected={o.value === value}

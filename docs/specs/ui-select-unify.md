@@ -66,6 +66,10 @@ Skill：本机装有 `frontend-design` 就调用这一个，只用于视觉细�
 - B8 卸载时移除全部监听。
 - （补充）B9 列表过长：弹层 `max-height: 280px`、`overflow-y: auto`。历史筛选的文本数不设上限，必须能滚动。选项单行显示，加 `white-space: nowrap; overflow: hidden; text-overflow: ellipsis`，完整 label 放进 `title`。行高因此固定为 32px，翻转判断用 `min(n*32+8, 280)` 估高是精确的，不需要 `useLayoutEffect` 实测。
 - （补充）size 落到 DOM 的方式：触发器加 `ui-select--md` / `ui-select--sm` 修饰类；箭头 md 16px、sm 14px。已认可。
+- （补充·审计 c5f7a79）B5 对齐 WAI-ARIA APG 的 select-only combobox 模式：
+  - 展开时按 Space 与 Enter 同效，选中高亮项并关闭，且要 `preventDefault`。否则按钮在 keyup 时触发原生 click，只关闭不选中。
+  - 选项加 `id`（`useId` 前缀 + 下标），触发器加 `aria-activedescendant` 指向当前高亮项；收起时去掉该属性。
+- （补充·审计 c5f7a79）B9 键盘可达：`activeIndex` 变化时，对高亮项调用 `scrollIntoView({ block: 'nearest' })`。否则长列表里用 ↓ 移到第 9 项以后，高亮就不可见了。
 - （补充）弹层内部的滚动不关闭弹层：B6 的 scroll 监听要判断 `menuRef.contains(e.target)`，是则忽略，否则 B9 一滚就关。
 
 ## S2：样式（`global.css`，新增 `.ui-select*` 一块，删掉 C2 的 4 条）
@@ -104,6 +108,8 @@ Skill：本机装有 `frontend-design` 就调用这一个，只用于视觉细�
 - 合并门是分支 CI。合并本身只做 git 操作，不跑测试，不等 CI。
 - 报告里不得出现本地全量的数字。
 
+（补充·审计）B8 测试里的 4 个 `vi.spyOn` 结束时要 `mockRestore()`（或包 try/finally），避免泄漏到同文件的后续用例。
+
 ## 手动验证
 
 1. 用户管理的角色下拉：弹层没有被表格裁掉，配色跟随当前主题色（青色主题下为青色）。
@@ -127,6 +133,10 @@ Skill：本机装有 `frontend-design` 就调用这一个，只用于视觉细�
 | B5 Esc 关闭并归还焦点 | Select：按 Esc 后 listbox 消失，`document.activeElement` 是触发器 | 删除 `focus()` | 展开状态按 Esc |
 | （补充）B5 Tab 关闭 | Select：展开后按 Tab，listbox 消失 | 删除 Tab 分支 | 展开状态按 Tab |
 | （补充）B2 宽度不小于触发器 | Select：mock 触发器 rect 宽 200，断言弹层 `minWidth` 为 `200px` | 删除宽度设置 | 选项文字比触发器短 |
+| （补充·审计）展开时再点触发器（真实 mousedown+click 序列）会关闭 | Select：展开后对触发器依次 `fireEvent.mouseDown` 和 `fireEvent.click`，listbox 消失 | 删除 `onMouseDown` 里的 `triggerRef.contains` 豁免（审计实测该变异当前存活） | 展开后再点一次触发器 |
+| （补充·审计）展开时 Space 选中 | Select：展开，↓ 后按 Space，onChange 收到对应值，listbox 消失，且该 keydown 的 `defaultPrevented` 为 true | 删除 Space 分支 | 键盘用户按空格选择 |
+| （补充·审计）aria-activedescendant | Select：展开后触发器的 `aria-activedescendant` 等于高亮 option 的 id，↓ 后跟着变化；收起后属性消失 | 不设置该属性，或 id 不跟随高亮 | 读屏用户用键盘浏览 |
+| （补充·审计）高亮项滚入可视区 | Select：mock `Element.prototype.scrollIntoView`，30 个选项时按 ↓，断言它在新高亮项上被调用，参数为 `{ block: 'nearest' }` | 删除该 effect | 长列表键盘下移 |
 | B6 外部点击关闭 | Select：在 body 上触发 `mousedown` 后 listbox 消失 | 删除 mousedown 监听 | 点击页面其他位置 |
 | B6 滚动或 resize 关闭 | （补充）Select：在容器内元素上 `fireEvent.scroll`（经捕获阶段到达 document），以及在 window 上 dispatch `resize`，listbox 都消失 | 删除任一监听 | 展开后滚动表格 |
 | （补充）B9 长列表可滚、滚动不关闭 | Select：30 个选项，断言弹层 style 含 `maxHeight: 280px`；在弹层内 `fireEvent.scroll` 后 listbox 仍在 | 删除 `menuRef.contains` 判断；去掉 maxHeight | 历史页上传了大量文本 |

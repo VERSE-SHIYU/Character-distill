@@ -155,6 +155,28 @@ describe('B5 键盘', () => {
     fireEvent.keyDown(trigger, { key: 'Tab' })
     expect(screen.queryByRole('listbox')).toBeNull()
   })
+
+  // Space 与 Enter 同效。不 preventDefault 的话，按钮会在 keyup 触发原生 click ——
+  // 只会把弹层关掉，选不中。
+  it('展开后按 Space 选中高亮项并关闭，且 preventDefault', () => {
+    const { onChange, trigger } = setup({ value: 'user' })
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    const ev = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true })
+    fireEvent(trigger, ev)
+    expect(ev.defaultPrevented).toBe(true)
+    expect(onChange).toHaveBeenCalledWith('guest')
+    expect(screen.queryByRole('listbox')).toBeNull()
+  })
+
+  it('触发器 aria-activedescendant 跟随高亮，收起后消失', () => {
+    const { trigger } = setup({ value: 'user' })
+    const opts = screen.getAllByRole('option')
+    expect(trigger).toHaveAttribute('aria-activedescendant', opts[1].id)
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    expect(trigger).toHaveAttribute('aria-activedescendant', opts[2].id)
+    fireEvent.keyDown(trigger, { key: 'Escape' })
+    expect(trigger).not.toHaveAttribute('aria-activedescendant')
+  })
 })
 
 describe('B6 展开期间的关闭来源', () => {
@@ -173,6 +195,15 @@ describe('B6 展开期间的关闭来源', () => {
   it('window resize 关闭', () => {
     setup()
     fireEvent.resize(window)
+    expect(screen.queryByRole('listbox')).toBeNull()
+  })
+
+  // 真实点击序列里触发器也有 mousedown。若它被当成「外部点击」，弹层先关；随后的
+  // click 看到 open=false 又调 openMenu —— 结果点一下像没反应。
+  it('展开后再点触发器会关闭（真实 mousedown+click 序列）', () => {
+    const { trigger } = setup()
+    fireEvent.mouseDown(trigger)
+    fireEvent.click(trigger)
     expect(screen.queryByRole('listbox')).toBeNull()
   })
 })
@@ -223,6 +254,30 @@ describe('B9 长列表', () => {
     expect(menu.style.top).not.toBe('')
     expect(menu.style.bottom).toBe('')
   })
+
+  // jsdom 没实现 scrollIntoView，先自己塞一个记录器（不用 vi.spyOn，属性本就不存在）。
+  it('↓ 后在新高亮项上调用 scrollIntoView({ block: nearest })', () => {
+    const seen = []
+    Element.prototype.scrollIntoView = function (arg) {
+      seen.push([this, arg])
+    }
+    try {
+      const onChange = vi.fn()
+      render(<Select value="t0" options={MANY} onChange={onChange} />)
+      const trigger = screen.getByRole('combobox')
+      trigger.getBoundingClientRect = () => rect()
+      fireEvent.click(trigger)
+      seen.length = 0 // 展开时高亮初值也算一次，只看 ↓ 这一次
+      fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+
+      const opts = screen.getAllByRole('option')
+      expect(seen).toHaveLength(1)
+      expect(seen[0][0]).toBe(opts[1])
+      expect(seen[0][1]).toEqual({ block: 'nearest' })
+    } finally {
+      delete Element.prototype.scrollIntoView
+    }
+  })
 })
 
 describe('B8 卸载清理', () => {
@@ -231,28 +286,36 @@ describe('B8 卸载清理', () => {
     const remDoc = vi.spyOn(document, 'removeEventListener')
     const addWin = vi.spyOn(window, 'addEventListener')
     const remWin = vi.spyOn(window, 'removeEventListener')
-    const baseDoc = addDoc.mock.calls.length
-    const baseWin = addWin.mock.calls.length
+    try {
+      const baseDoc = addDoc.mock.calls.length
+      const baseWin = addWin.mock.calls.length
 
-    const onChange = vi.fn()
-    const { unmount } = render(<Select value="user" options={OPTIONS} onChange={onChange} />)
-    const trigger = screen.getByRole('combobox')
-    trigger.getBoundingClientRect = () => rect()
-    fireEvent.click(trigger)
-    expect(screen.getByRole('listbox')).toBeInTheDocument()
+      const onChange = vi.fn()
+      const { unmount } = render(<Select value="user" options={OPTIONS} onChange={onChange} />)
+      const trigger = screen.getByRole('combobox')
+      trigger.getBoundingClientRect = () => rect()
+      fireEvent.click(trigger)
+      expect(screen.getByRole('listbox')).toBeInTheDocument()
 
-    const ours = [
-      ...addDoc.mock.calls.slice(baseDoc).map(([type, handler]) => ({ rem: remDoc.mock.calls, type, handler })),
-      ...addWin.mock.calls.slice(baseWin).map(([type, handler]) => ({ rem: remWin.mock.calls, type, handler })),
-    ].filter((c) => ['mousedown', 'scroll', 'resize'].includes(c.type))
+      const ours = [
+        ...addDoc.mock.calls.slice(baseDoc).map(([type, handler]) => ({ rem: remDoc.mock.calls, type, handler })),
+        ...addWin.mock.calls.slice(baseWin).map(([type, handler]) => ({ rem: remWin.mock.calls, type, handler })),
+      ].filter((c) => ['mousedown', 'scroll', 'resize'].includes(c.type))
 
-    expect(ours.map((c) => c.type).sort()).toEqual(['mousedown', 'resize', 'scroll'])
+      expect(ours.map((c) => c.type).sort()).toEqual(['mousedown', 'resize', 'scroll'])
 
-    unmount()
+      unmount()
 
-    for (const c of ours) {
-      const removed = c.rem.some(([type, handler]) => type === c.type && handler === c.handler)
-      expect(removed, `未移除监听：${c.type}`).toBe(true)
+      for (const c of ours) {
+        const removed = c.rem.some(([type, handler]) => type === c.type && handler === c.handler)
+        expect(removed, `未移除监听：${c.type}`).toBe(true)
+      }
+    } finally {
+      // spy 不恢复会泄漏到本文件后续用例（它们也吃 document/window 上的监听）。
+      addDoc.mockRestore()
+      remDoc.mockRestore()
+      addWin.mockRestore()
+      remWin.mockRestore()
     }
   })
 })
