@@ -97,7 +97,7 @@ FORMAT_GROUPS: dict[str, tuple[str, ...]] = {
     "G1": ("name", "identity", "background"),
     "G2": ("personality_traits", "values", "inner_tensions",
            "emotional_patterns", "decision_style"),
-    "G3": ("speaking_style", "dialogue_examples", "first_message", "cognitive"),
+    "G3": ("speaking_style", "first_message", "cognitive"),
     # relationships 从 G4 拆出来单独成组：关系条数随登场人数增长（宝玉这种主角几十
     # 条），与其余字段同组会把这组的输出顶到 token 上限；分组之间各给各的上限，
     # 拆开后关系再长也只挤自己那一组。
@@ -105,8 +105,8 @@ FORMAT_GROUPS: dict[str, tuple[str, ...]] = {
     "G5": ("relationships",),
 }
 
-# 后置步骤产出的字段（_auto_tag / _generate_awakening），不进分组。
-POST_FORMAT_FIELDS: tuple[str, ...] = ("tags", "awakening_message")
+# 后置步骤产出的字段（_auto_tag / _generate_awakening / 挑选对话示例），不进分组。
+POST_FORMAT_FIELDS: tuple[str, ...] = ("tags", "awakening_message", "dialogue_examples")
 
 
 def format_group_schema(group: str) -> dict[str, Any]:

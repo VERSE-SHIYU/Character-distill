@@ -654,7 +654,6 @@ _SAMPLE_FIELD_VALUES = {
     "decision_style": "谨慎型",
     "speaking_style": {"tone": "冷淡", "sentence_pattern": "短句", "catchphrases": ["哼"],
                        "vocabulary_level": "日常", "taboo_words": []},
-    "dialogue_examples": ["对方：你来了\n角色：嗯"],
     "first_message": "你来了。",
     "cognitive": {"education_level": "普通", "knowledge_scope": "常识",
                   "speech_style": "平实", "vocabulary_level": "日常"},

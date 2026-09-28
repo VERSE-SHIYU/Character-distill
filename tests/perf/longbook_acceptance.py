@@ -43,6 +43,7 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -53,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import yaml  # noqa: E402
 from evidence_writer import code_sha, write_evidence  # noqa: E402
 from core.distiller import Distiller  # noqa: E402
+from core.quotes import normalize, verbatim_in  # noqa: E402
 from core.schema import CharacterCard  # noqa: E402
 
 # ── §10 的硬数字与门槛（照抄蓝图，不在这里另立一套） ──────────────────────
@@ -79,7 +81,6 @@ IDENTIFY_CHUNK_SIZE = 5000     # 识别用 self._chunk_size，不看 text_type�
 IDENTIFY_LIMIT_S = 480.0       # §10 B4 / D2：整请求 ≤ 8 分钟
 DISTILL_LIMIT_S = 300.0        # §10 D2：宝玉 > 5 分钟即停
 POLL_S = 1.0                   # §10 C1：每 1 s 轮询
-HITS = 5                       # §10 C4：对话示例 / 口癖各取前 5 条做原文命中
 
 # ── D1：服务端日志计数 ────────────────────────────────────────────────
 # 5xx 只认访问日志里状态码的位置，不数正文里的「5xx」字样 —— 后者会把
@@ -489,7 +490,7 @@ def _aliases_of_from_usage(args, token: str) -> list[str]:
 
 
 def _check_card(args, token: str, content: str, run_status: str | None) -> dict:
-    """§10 C4：`CharacterCard.model_validate` + 顶层字段非空 + 前 5 条原文命中。
+    """§10 C4：`CharacterCard.model_validate` + 顶层字段非空 + 对话/引文/关系逐条核对。
 
     卡片只在本函数内存里存在，不回写库、不落盘；未命中的原样返回给调用方打印
     （§10 C4 明写要贴出来由 Shiyu 判）。
@@ -530,19 +531,102 @@ def _check_card(args, token: str, content: str, run_status: str | None) -> dict:
         if v in ("", [], {}, None):
             empty.append(field)
 
-    def hits(items: list[str]) -> dict:
-        items = [str(x) for x in (items or [])][:HITS]
-        found = [x for x in items if _clean(x) and _clean(x) in content]
-        return {"n": len(items), "hit": len(found),
-                "miss": [x for x in items if x not in found]}
-
+    dumped = card.model_dump()
     return {"valid": True, "empty": empty,
-            "dialogue": hits(card.dialogue_examples),
-            "catchphrases": hits(card.speaking_style.catchphrases)}
+            "dialogue": dialogue_hits(dumped.get("dialogue_examples"), content),
+            "catchphrase_miss": catchphrase_misses(
+                (dumped.get("speaking_style") or {}).get("catchphrases"), content),
+            "quote_miss": quote_misses(dumped, content),
+            "dup_targets": duplicate_targets(dumped.get("relationships"))}
 
 
-def _clean(s: str) -> str:
-    return s.strip().strip('"').strip("“”「」『』").strip()
+# ── §10 C4：卡片逐条核对（纯函数，不碰 HTTP；`_check_card` 只是取卡再调它们） ──
+# 归一化与「逐字」的判定**只有一份**：`core/quotes.py`（产品侧按编号从原文复制对话示例
+# 也走它）。各写一份的结果是验收口径与产品保证分家 —— 那时验收再也证明不了产品。
+# 本脚本只留验收侧独有的那层：怎么把一个多行「说话人：台词（动作）」拆成逐句。
+_SPEAKER = re.compile(r"^[^：:\n]{1,12}[：:]")   # 行首「说话人：」
+_ACTION = re.compile(r"[（(][^（()）]*[)）]")     # （…）里的动作补白
+
+
+def dialogue_lines(group) -> list[str]:
+    """一组对话示例拆成逐句，去掉行首「说话人：」与（…）动作说明。
+
+    卡片里一组是多行的「说话人：台词（动作）」，原文里只有台词本身 —— 整组拿去
+    做子串永远查不到（旧 `hits()` 就是这么 0/3 的）。
+    """
+    out = []
+    for line in str(group).splitlines():
+        line = _ACTION.sub("", _SPEAKER.sub("", line.strip())).strip()
+        if line:
+            out.append(line)
+    return out
+
+
+def dialogue_hits(groups, content: str) -> dict:
+    """对话示例逐句查原文：**一组全句命中才算命中**（任一句查不到就整组算 miss）。"""
+    groups = [str(g) for g in (groups or [])]
+    miss = []
+    for g in groups:
+        lines = dialogue_lines(g)
+        if not (lines and all(verbatim_in(content, x) for x in lines)):
+            miss.append(g)
+    return {"n": len(groups), "hit": len(groups) - len(miss), "miss": miss}
+
+
+def _strings(obj, path: str = ""):
+    """递归取卡片里的所有字符串，带上所在字段路径（引文查不到时要报字段名）。"""
+    if isinstance(obj, str):
+        yield path, obj
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from _strings(v, f"{path}.{k}" if path else str(k))
+    elif isinstance(obj, (list, tuple)):
+        for i, v in enumerate(obj):
+            yield from _strings(v, f"{path}[{i}]")
+
+
+# 成对引号：左/右相同的一对（ASCII '）用同字符匹配，其余各自对称。
+_QUOTE_PAIRS = (("'", "'"), ("‘", "’"), ("“", "”"), ("「", "」"), ("『", "』"))
+QUOTE_MIN_CHARS = 4   # §10 C4：归一化后不足 4 字的引文太短，子串命中没有分辨力
+
+
+def quote_misses(card, content: str) -> list[dict]:
+    """卡片所有字符串字段里成对的引文，归一化后 ≥4 字的逐条查原文，返回查不到的。
+
+    引文（角色自述、他人评价）是卡片里最容易被编造的成分：读着像原文，却查无此句。
+    查不到就原样报出来由人判，不在这里改判据。
+    """
+    seen, out = set(), []
+    for field, s in _strings(card):
+        for lq, rq in _QUOTE_PAIRS:
+            pattern = re.escape(lq) + f"([^{re.escape(lq)}{re.escape(rq)}]+)" + re.escape(rq)
+            for q in re.findall(pattern, s):
+                if len(normalize(q)) < QUOTE_MIN_CHARS or verbatim_in(content, q):
+                    continue
+                if (field, q) not in seen:
+                    seen.add((field, q))
+                    out.append({"field": field, "quote": q})
+    return out
+
+
+def duplicate_targets(relationships) -> list[list]:
+    """relationships 里出现多次的 target 及次数（按次数降序）。空 target 不算。
+
+    同一人在一张卡的关系里重复出现 = 同一段证据被拆成多条，或干脆重复。§10 C4
+    的关系判据就是「不许有重复 target」。
+    """
+    counts = Counter(str((r or {}).get("target") or "") for r in (relationships or []))
+    return [[t, n] for t, n in counts.most_common() if n > 1 and t]
+
+
+def catchphrase_misses(catchphrases, content: str) -> list[str]:
+    """口癖逐条查原文，返回查不到的（原样）。
+
+    口癖是**本人原话里的固定说法**，本该逐字出现在原文里。与引文不同，这里**不设
+    字数下限**：口癖短到两个字也算（「无事忙」「凤辣子」），套 4 字下限会把它们整个
+    跳过，判据就漏了最典型的那一类。
+    """
+    return [str(c) for c in (catchphrases or []) if not verbatim_in(content, c)]
 
 
 # ══ §10 D3：读数模板 ══════════════════════════════════════════════════
@@ -600,13 +684,21 @@ def print_distill(stats: dict, character: str) -> None:
     if card.get("error"):
         print(f"[蒸馏-{character}] 卡片校验 失败 | {card['error']}")
         return
-    d, cp = card.get("dialogue") or {}, card.get("catchphrases") or {}
+    d = card.get("dialogue") or {}
+    cpm = card.get("catchphrase_miss") or []
+    qm, dup = card.get("quote_miss") or [], card.get("dup_targets") or []
     print(f"[蒸馏-{character}] 卡片校验 {'通过' if card.get('valid') else '失败'} "
           f"| 空字段 {card.get('empty')} "
-          f"| 原文命中 对话 {d.get('hit')}/{d.get('n')} 口癖 {cp.get('hit')}/{cp.get('n')}")
-    for label, block in (("对话", d), ("口癖", cp)):
-        if block.get("miss"):
-            print(f"[蒸馏-{character}] {label}未命中（原样）: {json.dumps(block['miss'], ensure_ascii=False)}")
+          f"| 对话示例 {d.get('hit')}/{d.get('n')} | 口癖查不到 {len(cpm)} "
+          f"| 引文查不到 {len(qm)} | 关系重复 target {len(dup)}")
+    if d.get("miss"):
+        print(f"[蒸馏-{character}] 对话示例未命中（原样）: {json.dumps(d['miss'], ensure_ascii=False)}")
+    if cpm:
+        print(f"[蒸馏-{character}] 口癖查不到（原样）: {json.dumps(cpm, ensure_ascii=False)}")
+    for m in qm:
+        print(f"[蒸馏-{character}] 引文查不到（{m['field']}）: {m['quote']}")
+    if dup:
+        print(f"[蒸馏-{character}] 关系重复 target: {json.dumps(dup, ensure_ascii=False)}")
 
 
 def print_logs(counts: dict) -> None:
@@ -616,9 +708,9 @@ def print_logs(counts: dict) -> None:
 def _evidence_payload(stats: dict) -> dict:
     """给证据产物（入库文件）的投影：只留计数与判定结果，丢掉正文与名单。
 
-    `card.*.miss` 是原文子串、`b2` 的名单与判据跟语料走、`attribution` 是别名
-    —— 这些一律不进任何落盘文件（版权语料只留统计量）。D3 的 stdout 读数不受此限：
-    那是给人看的报告，不落盘。
+    `card.dialogue.miss` / `card.quote_miss` / `card.dup_targets` 是原文子串与人名、
+    `b2` 的名单与判据跟语料走、`attribution` 是别名 —— 这些一律不进任何落盘文件
+    （版权语料只留统计量）。D3 的 stdout 读数不受此限：那是给人看的报告，不落盘。
     """
     def scrub_hits(block: dict) -> dict:
         out = {k: v for k, v in (block or {}).items() if k != "miss"}
@@ -628,10 +720,14 @@ def _evidence_payload(stats: dict) -> dict:
     out = {k: v for k, v in stats.items() if k not in ("chars", "criteria")}
     card = out.get("card")
     if isinstance(card, dict):
-        card = {k: v for k, v in card.items() if k not in ("dialogue", "catchphrases")}
-        for key in ("dialogue", "catchphrases"):
-            if key in (out.get("card") or {}):
-                card[key] = scrub_hits(out["card"][key])
+        raw = out["card"]
+        card = {k: v for k, v in card.items()
+                if k not in ("dialogue", "catchphrase_miss", "quote_miss", "dup_targets")}
+        if isinstance(raw.get("dialogue"), dict):
+            card["dialogue"] = scrub_hits(raw["dialogue"])
+        card["catchphrase_miss_n"] = len(raw.get("catchphrase_miss") or [])
+        card["quote_miss_n"] = len(raw.get("quote_miss") or [])
+        card["dup_targets_n"] = len(raw.get("dup_targets") or [])
         out["card"] = card
     b2 = out.get("b2")
     if isinstance(b2, dict):
@@ -676,6 +772,19 @@ def over_limit(stats: dict, counts: dict, env: dict) -> list[str]:
         for i, b in enumerate((stats.get("stages") or {}).get("batches") or []):
             if (b.get("tok") or 0) >= cap:
                 why.append(f"批{i + 1} completion {b['tok']} ≥ {cap}（疑截断）")
+        # §10 C4 的三条卡片判据。卡片本身校验失败（valid=False / 无卡）不在这里报：
+        # 那是「没产物」，由 `print_distill` 直接打出来，不当成「产物有毛病」的措辞。
+        card = stats.get("card") or {}
+        if card.get("valid"):
+            d = card.get("dialogue") or {}
+            if d.get("miss"):
+                why.append(f"对话示例未命中 {len(d['miss'])}/{d.get('n')}")
+            if card.get("catchphrase_miss"):
+                why.append(f"口癖查不到 × {len(card['catchphrase_miss'])}")
+            if card.get("quote_miss"):
+                why.append(f"引文查不到 × {len(card['quote_miss'])}")
+            if card.get("dup_targets"):
+                why.append(f"关系重复 target × {len(card['dup_targets'])}")
     # 429 不再是停下条件：WP14 把 map 并发压到闸以下之后，收敛途中打 429 是**正常信号**，
     # 次数由 `print_logs` 照报，不作判据。分片失败才是 —— 那片结果是空串，会一路污染合并。
     # 计数只在「数过」时才算命中：没给日志时值是「未提供」这个字符串，直接当布尔用

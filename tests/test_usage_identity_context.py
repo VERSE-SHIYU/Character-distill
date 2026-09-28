@@ -64,7 +64,7 @@ from storage.sqlite_store import SQLiteStore
 from core import concurrency as C
 from core import scheduling as S
 from core.request_context import Caller, LLM_CALLER, current_user_id
-from core.distiller import IDENTIFY_SYSTEM_PROMPT
+from core.distiller import IDENTIFY_JUDGE_PROMPT, IDENTIFY_SYSTEM_PROMPT
 from core.schema import FORMAT_GROUPS
 
 # WP7 复用：从格式化系统提示词认组别 + 按组回字段齐备的 JSON（不另抄字段样例）
@@ -358,7 +358,7 @@ def test_auth_middleware_sets_identity_for_downstream(monkeypatch):
 
 # ── 5. 落库：真 app + 真中间件 + 真 /start 路由 ──────────────────────────────
 
-IDENTIFY_JSON = '[{"name": "甲", "aliases": []}]'
+IDENTIFY_JSON = '[{"name": "甲", "aliases": []}, {"name": "乙", "aliases": []}]'
 CARD_JSON = '{"name": "甲", "identity": "测试", "personality_traits": ["寡言"]}'
 
 
@@ -399,6 +399,15 @@ class _FakeLLM:
     # 长输出入口在生产里是 chat_stream 的薄委托（只放宽读超时）：桩共用同一份记录
     chat_stream_long = chat_stream
 
+    def select_by_schema(self, system_prompt, messages, function, max_tokens=None):
+        """挑选对话示例：只回编号与上一句说话人（文字由代码从原文复制）。
+
+        正文是「甲道／乙道／甲道」循环，1 号候选（第一句「甲道：再说一句。」）的上一句
+        是乙说的；上一句说话人只能从名单 enum（这里 = 乙）里取 —— 名单里没有乙就成不了组。
+        """
+        self.last_usage = {"prompt_tokens": 17, "completion_tokens": 3}
+        return {"picks": [{"n": 1, "prev_speaker": "乙"}]}
+
     def _make_async_client(self):
         return _FakeClient()
 
@@ -408,11 +417,14 @@ class _FakeLLM:
         # `return IDENTIFY_SYSTEM_PROMPT, chunk`）。**不能按「识别」二字筛** —— 识别系统
         # 提示词里没有那两个字，含它的是全书判定（`IDENTIFY_JUDGE_PROMPT`）。
         if system == IDENTIFY_SYSTEM_PROMPT:
-            # 合法**空**名单（不是空串、不是失败）：分片全返回 `[]` → 无组可归 →
-            # `_identify_over_chunks` 在 `if not groups: return []` 短路，不进全书判定。
-            # 于是「点名蒸馏 + 这本书没有具名角色」照常蒸馏下去，identify 恰好记 1 行（逐片
-            # 汇总那条）；若这里换成非空名单，判定会再记 1 行 → 全流程多 1 行，与 n_rows 不符。
-            return "[]", usage
+            # 每片都识别出甲、乙两个人：挑选对话示例的 enum 只由名单里**除本角色外**的
+            # 人物组成，名单只有甲就成不了组（补充1-第2步）。非空名单会让归组后的
+            # 全书判定多记 1 行（见下面 n_rows 的口径）。
+            return IDENTIFY_JSON, usage
+        if system == IDENTIFY_JUDGE_PROMPT:
+            # 归组判定：不合并、无泛称。合法样本必须够 `IDENTIFY_JUDGE_QUORUM` 份，
+            # 否则整段识别失败。
+            return '{"merge": [], "impersonal": []}', usage
         return "甲很沉默，说了一句话。", usage
 
 
@@ -512,7 +524,12 @@ def test_start_route_lands_usage_rows(monkeypatch):
     try:
         with _LoopSubmitter() as sub:
             sub.run(store.create_user(uid, uid, "probe-hash"))
-            sub.run(store.save_text(tid, "src.txt", "甲说了一句话。" * 40, user_id=uid))
+            # 正文要带「甲」说话的引号句，且至少有一句前面还有别人的话 —— 挑选对话示例
+            # 只从这样的候选里成组（首句没有上一句，挑中也成不了对）。
+            sub.run(store.save_text(
+                tid, "src.txt",
+                "甲道：“我说一句话。”\n乙道：“我也说一句。”\n甲道：“再说一句。”\n" * 40,
+                user_id=uid))
             r = TestClient(app).post(
                 "/api/distill/start",
                 json={"text_id": tid, "character_name": "甲", "force": True},
@@ -524,7 +541,9 @@ def test_start_route_lands_usage_rows(monkeypatch):
             # 格式化的**笔数** = 字段组数（每组一笔，WP7 起并行）。组数从 `FORMAT_GROUPS`
             # 读，不写死 —— 关系拆到 G5 时这里不该跟着改。`_wait_for_rows` 的 expected
             # 必须给足，给少了会在跑到一半时快照返回，下面那条 == 断言就成了竞态。
-            n_rows = 5 + len(FORMAT_GROUPS)     # 识别/逐片/归并/自动标签/苏醒台词各 1 笔
+            # 识别逐片 1 笔 + 全书分组判定 1 笔 + 逐片蒸馏/归并/挑选对话/自动标签/苏醒台词
+            # 各 1 笔
+            n_rows = 7 + len(FORMAT_GROUPS)
             rows = _wait_for_rows(str(db), expected=n_rows)
     finally:
         C.ctx_thread = real_ctx_thread
@@ -538,7 +557,8 @@ def test_start_route_lands_usage_rows(monkeypatch):
     assert len(rows) == n_rows, f"落库 {len(rows)} 行（{actions}）—— 出口发出 {n_rows} 笔却只落这么些"
     assert all(u == uid for _, u in rows), f"落库归属不是请求身份：{rows}"
     assert sorted(actions) == sorted([
-        "distill_identify", "distill_map", "distill_reduce",
+        "distill_identify", "distill_identify", "distill_map", "distill_reduce",
+        "distill_dialogue",
         *["distill_format"] * len(FORMAT_GROUPS),
         "distill_autotag", "chat_awakening",
     ]), f"落库的 action 面不对：{actions}"

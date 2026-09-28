@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import asyncio
 import random
 import time
 from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import os
 
@@ -395,6 +396,19 @@ def _detect_dialect(base_url: str | None, model: str | None) -> str:
     return _DIALECT_UNKNOWN
 
 
+def _strict_base_url(base_url: str) -> str:
+    """严格模式工具调用的地址：DeepSeek 只在 ``/beta`` 上提供（服务端校验 schema）。
+
+    官方两种等价写法（``https://api.deepseek.com``、``https://api.deepseek.com/v1``）
+    都要落到同一个 ``/beta``：先去掉路径末尾的 ``/v1`` 再拼，否则第二种写法会得到
+    ``/v1/beta`` 这个不存在的路径。
+    """
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+    return base + "/beta"
+
+
 # ── 响应校验层（唯一 finish_reason 裁决点）─────────────────────────────
 # 缺陷（与重试嵌套/线程弃船/维度不符同根因的第四次显形）：全仓生产代码从不读
 # finish_reason → 截断或「被思考吃光」的响应被当成功返回并落库（实测：52 字节半截内容
@@ -609,6 +623,27 @@ def _checked_message(choice: Any, *, where: str) -> Any:
     return choice.message
 
 
+def _tool_arguments(msg: Any, *, where: str) -> dict[str, Any]:
+    """取强制工具调用的参数并解析成 JSON 对象 —— 非 strict 时模型可能给不合法 JSON
+    或编造参数（官方 Chat Completions 页明写），所以这里必须校验，不能直接信。
+
+    没有 tool_calls（模型没调工具）、不是合法 JSON、不是对象，三种都抛 —— 调用方按
+    「挑选失败」处理。异常类型用 ValueError：它既不是截断（`IncompleteResponseError`）
+    也不是工具不支持（`ToolsNotSupportedError`），三种失败在调用方眼里必须可辨。
+    """
+    calls = getattr(msg, "tool_calls", None) or []
+    if not calls:
+        raise ValueError(f"{where}: 模型没有调用工具，返回的正文不是可用的挑选结果")
+    raw = getattr(getattr(calls[0], "function", None), "arguments", None)
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError as exc:
+        raise ValueError(f"{where}: 工具参数不是合法 JSON：{exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{where}: 工具参数不是 JSON 对象（{type(parsed).__name__}）")
+    return parsed
+
+
 def _extract_content(choice: Any, *, where: str) -> str:
     """校验后取正文；空 content 仍是空串（那是「无内容」，≠ 截断）。
 
@@ -713,6 +748,9 @@ class LLMAdapter:
         # （web/deps.py），一轮 Map 结束写回、下一轮从它起步，冷启动那波不必再撞一遍。
         # `None` = 还没学过，闸从配的 `map_concurrency` 起。
         self.learned_map_concurrency: int | None = None
+        # 严格模式工具调用的客户端（只有 DeepSeek 方言会用到），按需创建后缓存：
+        # 一个实例一个客户端是既有约定（同 `_client`），每次调用都新建会把连接池丢掉。
+        self._beta_client: Any | None = None
 
         resolved_key = api_key or llm_cfg.get("api_key") or os.getenv("DEEPSEEK_API_KEY")
         self._api_key = resolved_key
@@ -1047,53 +1085,57 @@ class LLMAdapter:
         return (yield from self._stream(system_prompt, messages, max_tokens,
                                         read_s=_BATCH_STREAM_READ_S))
 
-    @T.spanned("llm.chat_with_tools", op="chat", finalize=_infer_finalize)
-    def chat_with_tools(
+    def _tool_call(
         self,
-        system_prompt: str,
-        messages: list[dict[str, Any]],
+        *,
+        payload: list[dict[str, Any]],
         tools: list[dict[str, Any]],
-        max_tokens: int | None = None,
+        tool_choice: dict[str, Any] | None,
+        max_tokens: int | None,
+        budget: _RetryBudget,
+        client: Any,
+        where: str,
+        extract: Callable[[Any], Any] | None = None,
     ) -> Any:
-        """非流式 function-calling 对话，返回完整 message 对象（含 tool_calls）。
+        """发一次带 tools 的请求（重试由 `budget` 裁决），返回 `extract(message)`。
 
-        重试预算=决策轮（2 次非429 / 总墙钟 6s / 退避 1s，_RetryBudget）——决策是路由，
-        失败应快速降级（agent_loop 捕获后走 legacy 纯生成），不再烧 5s+10s 的旧退避墙；
-        provider 不支持 tools（400 + tool/function 关键词）→ ToolsNotSupportedError，不重试；
-        其他 400 → 原样抛出，不重试。
+        `chat_with_tools`（决策轮）与 `select_by_schema`（生成轮）共用这一处循环 —— 两份
+        循环必然漂移出「一边重试 429、一边不重试」这类差异，而那种差异从调用点看不出来。
+        两者只有预算、客户端、是否指定工具、以及「要不要解析参数」不同，全由参数表达。
+
+        `extract=None` = 直接返回 message（旧 chat_with_tools 口径）；给了 `extract` 就在
+        循环**内**调用它，解析失败同样进重试 —— 非 strict 的供应商会给出不合法 JSON，
+        那和一次失败的请求一样值得重发一次，而不是整步作废。
         """
-        self._before_call()
-        payload = self._build_messages(system_prompt, messages)
-        _mt = max_tokens if max_tokens is not None else self._max_tokens
-        budget = _RetryBudget(attempts=_DECISION_ATTEMPTS, deadline_s=_DECISION_DEADLINE_S,
-                              ceiling_s=_DECISION_ATTEMPT_S, backoff_mult_s=_DECISION_BACKOFF_S,
-                              log_prefix="LLMAdapter chat_with_tools",
-                              err_prefix="chat_with_tools")
         self.last_usage = None  # 切断上一轮污染：本轮无 usage 时不能冒充真实值
         while True:
             timeout = budget.attempt_timeout()
             try:
-                completion = self._client.chat.completions.create(
+                kwargs: dict[str, Any] = dict(
                     model=self._model,
                     messages=payload,
                     tools=tools,
                     temperature=self._temperature,
-                    max_tokens=_mt,
+                    max_tokens=max_tokens,
                     presence_penalty=self._presence_penalty,
                     timeout=timeout,
                     extra_body=self._request_options(),
                     **({} if self._top_p is None else {"top_p": self._top_p}),
                 )
+                # 不传 None：`tool_choice=None` 在部分供应商那边是「显式空值」而非「不指定」。
+                if tool_choice is not None:
+                    kwargs["tool_choice"] = tool_choice
+                completion = client.chat.completions.create(**kwargs)
                 choices = completion.choices
                 if not choices:
                     raise RuntimeError("API returned empty choices")
-                msg = _checked_message(choices[0], where="chat_with_tools")
+                msg = _checked_message(choices[0], where=where)
                 if completion.usage:
                     self.last_usage = {
                         "prompt_tokens": completion.usage.prompt_tokens or 0,
                         "completion_tokens": completion.usage.completion_tokens or 0,
                     }
-                return msg
+                return msg if extract is None else extract(msg)
             except IncompleteResponseError:
                 raise  # 截断：确定性失败，不烧重试预算（同 ToolsNotSupportedError 形状）
             except BadRequestError as exc:
@@ -1107,3 +1149,86 @@ class LLMAdapter:
                 raise  # 其他 400：不重试，原样抛出
             except Exception as exc:
                 time.sleep(budget.on_failure(exc))
+
+    @T.spanned("llm.chat_with_tools", op="chat", finalize=_infer_finalize)
+    def chat_with_tools(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int | None = None,
+    ) -> Any:
+        """非流式 function-calling 对话，返回完整 message 对象（含 tool_calls）。
+
+        重试预算=决策轮（2 次非429 / 总墙钟 6s / 退避 1s，_RetryBudget）——决策是路由，
+        失败应快速降级（agent_loop 捕获后走 legacy 纯生成），不再烧 5s+10s 的旧退避墙；
+        provider 不支持 tools（400 + tool/function 关键词）→ ToolsNotSupportedError，不重试；
+        其他 400 → 原样抛出，不重试。**本预算的前提是输入短**（路由决策）——输入大的调用
+        走 `select_by_schema`。
+        """
+        self._before_call()
+        return self._tool_call(
+            payload=self._build_messages(system_prompt, messages),
+            tools=tools,
+            tool_choice=None,
+            max_tokens=max_tokens if max_tokens is not None else self._max_tokens,
+            budget=_RetryBudget(attempts=_DECISION_ATTEMPTS, deadline_s=_DECISION_DEADLINE_S,
+                                ceiling_s=_DECISION_ATTEMPT_S, backoff_mult_s=_DECISION_BACKOFF_S,
+                                log_prefix="LLMAdapter chat_with_tools",
+                                err_prefix="chat_with_tools"),
+            client=self._client,
+            where="chat_with_tools",
+        )
+
+    def _strict_client(self) -> Any:
+        """严格模式工具调用的客户端（按需创建、缓存在实例上）。
+
+        只 DeepSeek 方言该走这里：官方把 strict 放在 ``/beta``，且要求每个 function 带
+        ``strict: true``（服务端校验 schema）。其他方言返回主客户端 —— 拍板：非 DeepSeek
+        接口不用 strict，退回普通工具调用、由代码校验参数。
+        """
+        if self._dialect != _DIALECT_DEEPSEEK:
+            return self._client
+        if self._beta_client is None:
+            self._beta_client = OpenAI(
+                api_key=self._api_key, base_url=_strict_base_url(self._base_url),
+                timeout=600.0, max_retries=0)
+        return self._beta_client
+
+    @T.spanned("llm.select_by_schema", op="chat", finalize=_infer_finalize)
+    def select_by_schema(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        function: dict[str, Any],
+        max_tokens: int | None = None,
+    ) -> dict[str, Any]:
+        """强制模型调用 `function` 并返回它的参数（已解析）。
+
+        **不能用 `chat_with_tools`**：那条走决策轮预算（单次 5s / 总 6s），前提是「短小的
+        路由决策」；本步骤的输入可达数万 token，读入本身就要数秒，决策轮必然超时。故用
+        生成轮预算（单次 45s / 总 60s），输出只有几个编号，远在单次时限之内。
+
+        `function` 是 OpenAI 的 function 对象（name/description/parameters）；`strict` 由
+        本方法按方言补，调用方不拼 —— 否则「只有 DeepSeek 用 strict」这条约束会散到每个
+        调用点。关闭思考的参数照旧由 `_request_options()` 注入，`/beta` 客户端同样要带：
+        思考模式下带 tools 的请求必须回传 `reasoning_content`，否则 400。
+        """
+        self._before_call()
+        fn = dict(function)
+        client = self._strict_client()
+        if self._dialect == _DIALECT_DEEPSEEK:
+            fn["strict"] = True
+        return self._tool_call(
+            payload=self._build_messages(system_prompt, messages),
+            tools=[{"type": "function", "function": fn}],
+            tool_choice={"type": "function", "function": {"name": fn["name"]}},
+            max_tokens=max_tokens if max_tokens is not None else self._max_tokens,
+            budget=_RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
+                                ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
+                                log_prefix="LLMAdapter select_by_schema",
+                                err_prefix="select_by_schema"),
+            client=client,
+            where="select_by_schema",
+            extract=lambda msg: _tool_arguments(msg, where="select_by_schema"),
+        )

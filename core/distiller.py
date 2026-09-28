@@ -13,7 +13,7 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Sequence, TypeVar
 import collections.abc as _cabc
 
 import yaml
@@ -23,6 +23,14 @@ from openai import AsyncOpenAI
 
 from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_facing_error
 from core.chat_preprocessor import ChatPreprocessor
+from core.quotes import (
+    UNDECIDED,
+    Candidate,
+    build_example,
+    extract_candidates,
+    render_candidates,
+    valid_picks,
+)
 from core.roster_aggregate import (
     alias_prompt_rows,
     finalize_identify_roster,
@@ -123,11 +131,21 @@ _FORMAT_IRON_LAWS = (
     '1. 跨场景验证：一个特质必须在至少2个不同场景出现才能写入\n'
     '2. 有预测力：提取的特质能预测此人在新情境下的反应\n'
     '3. 保留矛盾：矛盾是真实人格的标志，不准美化、不准调和\n'
-    '4. 忠于原文：他是什么样就是什么样。不添加、不美化、不删减'
+    '4. 忠于原文：他是什么样就是什么样。不添加、不美化、不删减\n'
+    '5. 只用所给原文：不用你对这部作品已有的了解补充情节或台词\n'
+    '6. 引号里必须是原文逐字摘录，并写明是谁说的；做不到逐字摘录就用转述，不加引号'
 )
+# 前置步骤与维度 F 的口径：一次读完路径里「全文」就是整本书，旧规则（枚举「所有有
+# 名字且有对话或行为描写的角色」+ F 要求「覆盖全部、不遗漏次要角色」）会把本角色从未
+# 打过交道的人也逼进卡片 —— 刘姥姥卡 57 个关系对象里有 36 个被卡片自己标成「无直接
+# 交往」。改成只枚举有直接言行往来的角色，一人一条。
+#
+# 铁律 5/6 依据 Anthropic 官方 Reduce hallucinations 指南：长文档里以逐字引文为依据、
+# 指得出出处；找不到逐字引文就改转述、不硬凑引号；并且只用所给文档。
+# https://docs.claude.com/en/docs/test-and-evaluate/strengthen-guardrails/reduce-hallucinations
 _FORMAT_PRESTEP = (
     '## 前置步骤\n'
-    '先通读全文，枚举出所有【有名字且有对话或行为描写】的角色（包括前任、现任、配角等次要角色，戏份少也要算）；同一人有多个称呼的归为一组。后续维度 F 必须覆盖这里枚举出的全部角色。'
+    '先通读全文，枚举出与本角色有直接言行往来（同场对话或互动）的有名字角色；同一人有多个称呼的归为一组。后续维度 F 覆盖这里枚举出的角色。'
 )
 _FORMAT_DIMS_HEADING = '## 分析维度（每个维度必须给出原文证据）'
 _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
@@ -138,7 +156,7 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ("G4", 'E. 关键记忆（3-5个）：塑造此人的重要经历'),
     ("G5",
         'F. 人际关系（站在本角色自己的视角，单向抽取）：\n'
-        '   覆盖前置步骤中枚举的【所有】有名字角色，逐一独立成条，不遗漏次要角色（前任/现任/配角），不合并不同角色，不列入宠物等非人物。\n'
+        '   覆盖前置步骤中枚举的角色，每人只写一条；不合并不同角色，不列入宠物等非人物。\n'
         '   关键：只写【本角色对对方的看法】，不要写"对方怎么看本角色"。关系可以不对称——A把B当挚友，B可能对A别有心思，各自视角各自抽，这是合理的。\n'
         '   每条给出：\n'
         '   - target：对方名（必须用前置步骤中的标准名，确保能和其他角色卡对上）\n'
@@ -148,7 +166,6 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ),
     ("G2", 'G. 内在矛盾（1-3个）：此人身上自相矛盾之处，以及矛盾如何影响行为'),
     ("G3", 'H. 开场白：以此角色的口吻写一句开场白，用于对话开始时'),
-    ("G3", 'I. 对话示例（2-3轮）：从原文中提取最能体现此角色说话风格的2-3组对话交互。格式为"对方：xxx\n角色：xxx"。选择的对话必须能展示角色的口癖、语气、态度。如果原文有动作描写，用（）包裹保留，如"（冷笑）你以为你是谁？"'),
     ("G2", 'J. 情感模式（2-3个）：什么情况下会生气、开心、沉默、逃避？触发条件是什么？'),
     ("G2", 'K. 决策风格：面对选择时是冲动还是谨慎？靠情感还是逻辑？举例说明。'),
     ("G4", 'L. 角色弧线：此人从故事开始到结束经历了怎样的变化？分2-4个阶段描述，每阶段一句话。如果无明显变化则写"无明显变化"。'),
@@ -197,7 +214,6 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("inner_tensions", '  "inner_tensions": ["内在矛盾1（原文出处）", "内在矛盾2（原文出处）"]'),
     ("background", '  "background": "背景摘要"'),
     ("first_message", '  "first_message": "角色开场白"'),
-    ("dialogue_examples", '  "dialogue_examples": ["对方：xxx\n角色：xxx"]'),
     ("emotional_patterns", '  "emotional_patterns": ["情感模式1（原文出处）", "情感模式2（原文出处）"]'),
     ("decision_style", '  "decision_style": "决策风格描述（含原文依据）"'),
     ("character_arc", '  "character_arc": ["阶段1变化", "阶段2变化"]'),
@@ -406,6 +422,35 @@ def _run_async_in_ctx_thread(factory: _cabc.Callable[[], _cabc.Awaitable[_T]]) -
     if not ok:
         raise payload
     return payload
+
+
+def _other_people(
+    roster: Sequence[dict], name: str, aliases: Sequence[str]
+) -> list[dict]:
+    """名单里**除本角色外**的人物：`[{"name", "aliases"}]`。
+
+    预检（`dialogue_candidates` 判「有没有别人可当对方」）与挑选（enum 的可选项、提示词里
+    的名单）都从这一处取，不各写一份 —— 两处一旦分家，预检放行的名单与挑选看到的名单就
+    不是同一份。本角色的标准名与别名一并排除，否则 enum 里多出一个「自己」，模型可能
+    选出自己接自己的组。
+    """
+    return [
+        {"name": c.get("name"), "aliases": list(c.get("aliases") or [])}
+        for c in roster
+        if c.get("name") and c.get("name") != name and c.get("name") not in aliases
+    ]
+
+
+def _roster_hint(others: Sequence[dict]) -> str:
+    """名单提示词里的那行：每个人物的标准名与它的别名（无别名只写标准名）。"""
+    parts = []
+    for o in others:
+        name = o.get("name")
+        if not name:
+            continue
+        aliases = [a for a in (o.get("aliases") or []) if a]
+        parts.append(f"{name}（{'、'.join(aliases)}）" if aliases else name)
+    return "；".join(parts)
 
 
 class Distiller:
@@ -1588,6 +1633,144 @@ class Distiller:
 
         self._try_record_usage("distill_longcontext", usage)
 
+    def dialogue_candidates(
+        self,
+        content: str,
+        name: str,
+        aliases: Sequence[str] = (),
+        roster: Sequence[dict] = (),
+    ) -> list[Candidate]:
+        """抽取「本角色」（含别名）的候选对话句；抽不出就抛 `DistillError`。
+
+        预检与挑选共用这一个方法（补充 1-第 3 步）：三条通道在花钱之前先调一眼，挑选时
+        `attach_dialogue_examples` 再调一次 —— 同一个纯函数、同样的输入，结果必然相同，
+        所以「预检过了，挑选就不会因为没候选而失败」这句成立。抽候选约 0.1 秒（约束 11），
+        跨长步骤把候选对象带着走不值这点钱。
+
+        两种抽不出都是任务失败（不是落一张没有示例的卡）：
+        - 名单里除本角色外没有别人 —— enum 没有可选的对方，成不了「一问一答」；
+        - 原文里找不到带本角色名的对话句 —— 提示里点出认的引号，版本用了别的引号时能看出
+          来（本轮只认 `“”`/`「」`/`『』`，见 `core/quotes.py`）。
+        """
+        if not _other_people(roster, name, aliases):
+            raise DistillError(
+                f"挑选对话示例失败：名单里除「{name}」外没有别人，凑不成一问一答")
+        candidates = extract_candidates(content, [name, *aliases])
+        if not candidates:
+            raise DistillError(
+                f"挑选对话示例失败：原文里找不到「{name}」的对话句"
+                f"（识别的引号：“”「」『』）")
+        return candidates
+
+    def pick_dialogue_examples(
+        self,
+        candidates: Sequence[Candidate],
+        name: str,
+        others: Sequence[dict] = (),
+    ) -> list[str]:
+        """从候选里挑 1-3 组对话示例，**文字一律由代码从原文复制**（WP17）。
+
+        模型的选择能力够、逐字复现能力不够：实测它会把被人插话打断的两段话拼成一句
+        （对话示例 3 组只命中 1 组，都是在中间吞掉了另一个说话人的台词）。故这里换成
+        「代码抽取带编号的候选 → 模型只回编号 → 代码按编号取原文」，逐字由构造保证。
+
+        上一句的说话人（`prev_speaker`）同理由模型读整段片段后从名单 enum 里选 —— 按
+        引导语里的人名取名会把宾语当主语（问题①：「送入刘姥姥口中，因笑道」是凤姐说的），
+        代码只负责校验与拼装。
+
+        候选由调用方从 `dialogue_candidates` 取（本方法不再自己抽取，两处判据因此同源）；
+        `others` 是 `_other_people` 算出的名单里**除本人外**的人物（`[{"name", "aliases"}]`）：
+        标准名做 enum 的可选项，标准名加别名写进提示词，好让模型把原文里的别称（「凤丫头」）
+        对回标准名。
+
+        挑选结果一组都成不了对，抛 `DistillError` —— 与其他后置步骤同口径：任务是失败，
+        不是落一张没有对话示例的卡。
+        """
+        enum = [*(dict.fromkeys(o.get("name") for o in others if o.get("name"))),
+                UNDECIDED]
+        function = {
+            "name": "pick_dialogue_examples",
+            "description": f"按编号挑选最能体现「{name}」说话风格的对话示例",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "picks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                # maximum 是候选数：越界的编号服务端就该拦下（strict
+                                # 方言），非 strict 方言由 `valid_picks` 兜第二层。
+                                "n": {"type": "integer", "minimum": 1,
+                                      "maximum": len(candidates)},
+                                "prev_speaker": {"type": "string", "enum": enum},
+                            },
+                            "required": ["n", "prev_speaker"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["picks"],
+                # strict 模式要求对象显式关闭额外字段（约束 6）。
+                "additionalProperties": False,
+            },
+        }
+        args = self._llm.select_by_schema(
+            f"下面是原文里抽出的候选对话句（含编号、原文片段、上一句、本句）。片段是原文"
+            f"的连续一段，请读片段判断说话人 —— 片段里出现某个名字，不等于是他说的话"
+            f"（名字常是宾语，如「送入{name}口中，因笑道」）。\n"
+            f"人物名单（标准名（别名））：{_roster_hint(others)}\n"
+            f"请只挑同时满足以下三条的候选，按想要的顺序给出编号与上一句说话人：\n"
+            f"① 读片段确认本句确实是「{name}」说的；\n"
+            f"② 上一句是另一个人说的；\n"
+            f"③ 两句是同一场景里的一问一答。\n"
+            f"上一句的说话人从名单里取标准名；判不准就填「{UNDECIDED}」"
+            f"（那一组会被丢弃）。",
+            [{"role": "user", "content": render_candidates(candidates)}],
+            function,
+        )
+        self._try_record_usage("distill_dialogue")
+
+        by_n = {c.n: c for c in candidates}
+        examples = [
+            build_example(by_n[n], name, speaker)
+            for n, speaker in valid_picks(args.get("picks"), len(candidates), enum)
+        ]
+        if not examples:
+            raise DistillError(
+                "挑选对话示例失败：模型没有选出可用的编号")
+        return examples
+
+    def attach_dialogue_examples(
+        self,
+        card: CharacterCard,
+        content: str,
+        name: str,
+        aliases: Sequence[str] = (),
+        roster: Sequence[dict] = (),
+    ) -> CharacterCard:
+        """把挑选出的对话示例贴到卡上 —— 后置步骤（WP17），卡上其余字段一个不动。
+
+        **不 fail-open**：挑不出来（原文里没有这个角色的对话句 / 模型没选出可用的编号）
+        就把 `pick_dialogue_examples` 的 `DistillError` 抛出去，由调用方按任务失败处理。
+        静默落一张没有对话示例的卡，等于把「挑不出」伪装成「本来就没有」。
+
+        三条产卡通道（bg 任务、SSE 流、`TextManager.get_or_distill`）共用这一处：各写
+        一份的结果是其中一条悄悄漏了这一步，而卡上「没有对话示例」与「本来就没有」从
+        成品看不出来。
+
+        `roster` 是识别出的名单（`resolve_characters` 的形状）；本角色自己的名字与别名由
+        `_other_people` 排除，否则 enum 里多出一个「自己」，模型可能选出自己接自己的组。
+
+        候选只从 `dialogue_candidates` 取：预检走的是同一个方法，两处不会分家。
+        """
+        others = _other_people(roster, name, aliases)
+        candidates = self.dialogue_candidates(content, name, aliases, roster)
+        card_dict = card.model_dump()
+        card_dict["dialogue_examples"] = self.pick_dialogue_examples(
+            candidates, name, others)
+        return CharacterCard.model_validate(card_dict)
+
     def _auto_tag(self, card_dict: dict) -> list[str]:
         """Lightweight LLM call to pick 1-3 preset tags matching the card.
 
@@ -1999,7 +2182,6 @@ class Distiller:
             f"以下是关于「{character_name}」的完整分析档案，请严格按照JSON格式输出角色卡。\n"
             f"特别注意：\n"
             f"- catchphrases 必须是原文中的真实口癖，不要编造\n"
-            f"- dialogue_examples 必须是原文对话，不要改写\n"
             f"- personality_traits 每条必须附带具体场景证据\n\n"
             f"{profile_draft}"
         }]

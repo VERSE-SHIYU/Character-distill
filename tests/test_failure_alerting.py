@@ -422,8 +422,8 @@ _KEPT_BROAD_EXCEPTS: dict[tuple[str, str], tuple[int, str]] = {
         (1, "交给下游：同 chat 的 _RetryBudget"),
     ("adapters/llm_adapter.py", "_stream"):
         (1, "交给下游：同 chat 的 _RetryBudget"),
-    ("adapters/llm_adapter.py", "chat_with_tools"):
-        (1, "交给下游：同 chat 的 _RetryBudget"),
+    ("adapters/llm_adapter.py", "_tool_call"):
+        (1, "交给下游：同 chat 的 _RetryBudget（chat_with_tools 与 select_by_schema 共用的重试循环）"),
     # 注：`core/agent/tools.py::execute` 曾是「交给下游：随 evidence 上屏」的登记项 ——
     # 按「只上屏不算留痕」的规则改判为补日志 WARNING，已从本表移除（`logger.warning` 在
     # 该分支里，判据不再把它算作静默）。

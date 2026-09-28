@@ -15,6 +15,7 @@ D  distill_task_status 只读覆盖：DB running + 内存活跃 → 覆盖 messa
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import uuid
@@ -26,7 +27,7 @@ from httpx import ASGITransport, AsyncClient
 
 from core import concurrency as C  # 派生与上下文传播
 import deps
-from core.distiller import Distiller, text_fingerprint
+from core.distiller import DistillError, Distiller, text_fingerprint
 from deps import get_storage
 from routers import distill as D
 from routers.auth import get_current_user
@@ -239,6 +240,124 @@ class TestA2Wiring:
         events = self._test_events(monkeypatch, acquired=True, distiller_boom=True)
         D._run_distill_task("tW2", "txt_x", "甲", False, "usr_x", "正文", "story", self._LLM)
         assert events == ["acquire", "confirm:tW2", "release"]
+
+
+# ── 后置步骤「挑选对话示例」（WP17 步骤 4）──────────────────────────────────
+# 挑选本体在 tests/test_distiller_dialogue_pick.py 里锁（逐字、编号校验）；这里锁**接线**：
+# 挑出来的东西真的落到卡上、失败真的把任务判失败。少了这一段，「方法写对了但没人调」
+# 或「调用点被挪进 fail-open 的 auto-tag 里」都不会红 —— 成品卡安静地没有示例。
+
+
+class _CardStubDistiller:
+    """跑到落卡那一段的假蒸馏器：识别给一份名单，格式化吐一份最小卡 JSON。
+
+    `attach_dialogue_examples` 记下实参并把自己那份示例贴上去 —— 路由必须调这一步、且把
+    它的产物落库。对方名怎么从名单里取由 `Distiller.attach_dialogue_examples` 自己算，
+    那条在 test_distiller_dialogue_pick 里核（桩上再写一份就是第二处判据）。
+    """
+
+    CARD = {"name": "乙", "first_message": "", "dialogue_examples": ["模型编的示例"]}
+
+    def __init__(self, examples=None, pick_error=None):
+        self.examples = ["对方：甲\n乙：丙"] if examples is None else list(examples)
+        self.pick_error = pick_error
+        self.pick_calls: list[tuple] = []
+
+    def identify_characters(self, content):
+        # 甲把「乙」列成自己的别名：别名既不该混进对方名单，也不该顶掉本角色。
+        return [{"name": "乙", "aliases": ["小乙"]},
+                {"name": "甲", "aliases": ["阿甲", "乙"]}]
+
+    def distill_incremental_stream(self, text, character_name, *, aliases=None,
+                                   text_type="story", on_chunk_done=None,
+                                   resume_candidates=None):
+        yield {"status": "formatting", "current": 1, "total": 1}
+        yield json.dumps(self.CARD, ensure_ascii=False)
+
+    def dialogue_candidates(self, content, name, aliases=(), roster=()):
+        # 预检（补充 1-第 4 步）：路由拿到别名之后先调它一眼，返回值不保留。本组不考
+        # 抽取，给个非空即可 —— 抽取与两条失败判据在 test_distiller_dialogue_pick 里核。
+        return [object()]
+
+    def _auto_tag(self, card_dict):
+        return []
+
+    def attach_dialogue_examples(self, card, content, name, aliases=(), roster=()):
+        self.pick_calls.append((content, name, tuple(aliases), len(roster)))
+        if self.pick_error is not None:
+            raise self.pick_error
+        card_dict = card.model_dump()
+        card_dict["dialogue_examples"] = list(self.examples)
+        return type(card).model_validate(card_dict)
+
+
+def _run_to_card(monkeypatch, store, distiller, *, task_id="tCard", user_id="usr_card"):
+    """驱动 `_run_distill_task` 直到落卡：真 SQLiteStore + 假蒸馏器 / 假 TextManager。
+
+    不走后台线程也不看进度帧（本段只验接线）：直接在本线程调，与 `TestA2Wiring` 同法。
+    返回 (TextManager 收到的卡列表, 每次 `_set_task` 收到的增量)。
+    """
+    saved: list = []
+    snapshots: list[dict] = []
+
+    class _TM:
+        async def save_distilled_card(self, text_id, card, user_id, *,
+                                      embedding_key="", embedding_region=""):
+            saved.append(card)
+            return {"card_id": "card_x"}
+
+    _install(monkeypatch, store)
+    monkeypatch.setattr("deps.get_distiller", lambda llm=None: distiller)
+    monkeypatch.setattr("deps.get_text_manager", lambda llm=None: _TM())
+    monkeypatch.setattr(D, "_DISTILL_SEMAPHORE", threading.Semaphore(1))
+    real_set_task = D._set_task
+    monkeypatch.setattr(D, "_set_task", lambda tid, upd: (
+        snapshots.append(dict(upd)), real_set_task(tid, upd))[1])
+
+    with D._task_lock:
+        D._tasks[task_id] = {
+            "status": "running", "progress_pct": 0, "user_id": user_id,
+            "text_id": "txt_card", "character": "", "message": "",
+            "card_id": "", "awakening": "", "_db": ("running", 0),
+        }
+
+    D._run_distill_task(task_id, "txt_card", "", False, user_id,
+                        "正文", "story", object())
+    return saved, snapshots
+
+
+class TestDialogueExamplesPostStep:
+    def test_the_picks_land_on_the_card_and_replace_whatever_the_model_wrote(
+            self, monkeypatch, store):
+        """挑出来的示例覆盖掉格式化阶段可能写的示例；原文/本角色/别名/名单按序交下去。
+
+        变异：删掉路由里那一行 → 卡上还是 `["模型编的示例"]`，第一条断言红。
+        """
+        distiller = _CardStubDistiller()
+
+        saved, _ = _run_to_card(monkeypatch, store, distiller)
+
+        assert len(saved) == 1
+        assert saved[0].dialogue_examples == ["对方：甲\n乙：丙"]
+        # 名单整份交给这一步（本人与别名怎么剔由 `attach_dialogue_examples` 自己算），
+        # 别名的来源是 `aliases_for` —— 路由不在这里重挑一遍名字。
+        assert distiller.pick_calls == [("正文", "乙", ("小乙",), 2)]
+
+    def test_a_failed_pick_fails_the_task_instead_of_saving_a_card_without_examples(
+            self, monkeypatch, store):
+        """挑选失败按任务失败处理：不落卡、上屏拿到挑选失败的原因。
+
+        变异：把这次调用挪进上面那段 fail-open 的 auto-tag try（或就地 try 掉）→
+        `saved` 非空，两条断言都红 —— 成品卡会安静地没有对话示例。
+        """
+        distiller = _CardStubDistiller(
+            pick_error=DistillError("挑选对话示例失败：没有可用的编号"))
+
+        saved, snapshots = _run_to_card(monkeypatch, store, distiller)
+
+        assert saved == []
+        errors = [s for s in snapshots if s.get("status") == "error"]
+        assert errors and errors[-1]["message"] == "挑选对话示例失败：没有可用的编号"
 
 
 # ── 路由测试（B / C / D）：独立 app + 真 SQLiteStore ────────────────────────
@@ -609,6 +728,11 @@ class _ChunkEmittingDistiller:
 
     def identify_characters(self, content):
         return [{"name": "甲", "aliases": []}]
+
+    def dialogue_candidates(self, content, name, aliases=(), roster=()):
+        # 预检（补充 1-第 4 步）：路由拿到别名之后先调它一眼，返回值不保留。本组不考
+        # 抽取，给个非空即可 —— 抽取与两条失败判据在 test_distiller_dialogue_pick 里核。
+        return [object()]
 
     def distill_incremental_stream(self, text, character_name, *,
                                    aliases=None, text_type="story",
