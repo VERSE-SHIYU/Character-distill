@@ -457,6 +457,13 @@ class TextManager:
                 card = await asyncio.to_thread(
                     self._distiller.distill_incremental, content, character_name, aliases
                 )
+                # 对话示例是后置步骤（WP17）：格式化模板里已没有这个字段，三条产卡通道
+                # 各接一次。漏接的那条静默落一张没有示例的卡 —— 与「本来就没有」从成品
+                # 看不出来。失败（挑不出）冒泡，与识别失败同口径交给统一出口。
+                card = await asyncio.to_thread(
+                    self._distiller.attach_dialogue_examples,
+                    card, content, character_name, aliases, chars,
+                )
             except Exception as exc:
                 print(f"[TextManager] Distill '{character_name}' failed: {exc}")
                 raise

@@ -15,6 +15,7 @@ import pytest
 
 from core.distiller import DistillError, Distiller
 from core.quotes import verbatim_in
+from core.schema import CharacterCard
 
 # 刘姥姥四条候选（1..4），每条上一句都是凤姐的话：四组都能成对，好验「最多 3 组」。
 CONTENT = (
@@ -132,3 +133,53 @@ def test_no_candidates_at_all_is_a_task_failure_and_the_model_is_not_called():
             "只有叙述，没有对话。", "刘姥姥", [], [])
 
     assert llm.seen == {}, "没候选还去问模型 = 让它在空清单上编编号"
+
+
+# ── 贴到卡上（后置步骤）：三条产卡通道共用，卡上其余字段一个不动 ──────────────
+
+
+def test_attach_fills_the_field_from_the_source_and_leaves_the_rest_of_the_card_alone():
+    """后置步骤只改 `dialogue_examples`：模型写在卡片 JSON 里的示例被替换成原文那两行。
+
+    变异：不做这一步（后置只当装饰）→ 卡上留着模型编的示例，第一条断言红。
+    """
+    d = Distiller(llm=_PickLLM({"picks": [2]}), config_path=None)
+    card = CharacterCard.model_validate(
+        {"name": "刘姥姥", "identity": "乡下老妪", "dialogue_examples": ["模型编的示例"]})
+
+    out = d.attach_dialogue_examples(
+        card, CONTENT, "刘姥姥", [], [{"name": "刘姥姥"}, {"name": "凤姐"}])
+
+    assert out.dialogue_examples == [GROUP2]
+    assert out.identity == "乡下老妪", "其余字段不该被这一步碰到"
+    assert card.dialogue_examples == ["模型编的示例"], "原卡不就地改（调用方可能还在用）"
+
+
+def test_the_subject_and_its_aliases_are_not_taken_as_the_other_speaker():
+    """上一句的引导语里有两个人名时，把本人剔出去才判得出对方是谁。
+
+    「凤姐忙和刘姥姥摆手道：」这一形态（实测约 15%）里两个名都在，说话的是凤姐。名单
+    里替上一句找对方时若不排除本角色与它的别名，`speaker_in` 会同时命中两个而退化成
+    「对方」—— 判据还在，只是永远给不出名字。
+
+    变异：`other_names` 不排除本角色名/别名 → 拼出「对方：…」，第一条断言红。
+    """
+    d = Distiller(llm=_PickLLM({"picks": [2]}), config_path=None)
+    source = ("凤姐忙和刘姥姥摆手道：“你老快别这样说。”\n"
+              "刘姥姥笑道：“姑娘说得是。”\n")
+
+    out = d.attach_dialogue_examples(
+        CharacterCard(name="刘姥姥"), source, "刘姥姥", ["姥姥"],
+        [{"name": "刘姥姥", "aliases": ["姥姥"]},
+         {"name": "凤姐", "aliases": ["凤丫头"]}])
+
+    assert out.dialogue_examples == ["凤姐：你老快别这样说。\n刘姥姥：姑娘说得是。"]
+
+
+def test_attach_passes_the_failure_through_instead_of_saving_an_empty_field():
+    """挑不出来 → 抛出，绝不返回一张示例为空的卡（空示例与「本来就没有」从成品分不出）。"""
+    d = Distiller(llm=_PickLLM({"picks": [1]}), config_path=None)
+
+    with pytest.raises(DistillError, match="对话示例"):
+        d.attach_dialogue_examples(
+            CharacterCard(name="刘姥姥"), "只有叙述，没有对话。", "刘姥姥")

@@ -1662,6 +1662,38 @@ class Distiller:
                 "挑选对话示例失败：模型没有选出可用的编号")
         return examples
 
+    def attach_dialogue_examples(
+        self,
+        card: CharacterCard,
+        content: str,
+        name: str,
+        aliases: Sequence[str] = (),
+        roster: Sequence[dict] = (),
+    ) -> CharacterCard:
+        """把挑选出的对话示例贴到卡上 —— 后置步骤（WP17），卡上其余字段一个不动。
+
+        **不 fail-open**：挑不出来（原文里没有这个角色的对话句 / 模型没选出可用的编号）
+        就把 `pick_dialogue_examples` 的 `DistillError` 抛出去，由调用方按任务失败处理。
+        静默落一张没有对话示例的卡，等于把「挑不出」伪装成「本来就没有」。
+
+        三条产卡通道（bg 任务、SSE 流、`TextManager.get_or_distill`）共用这一处：各写
+        一份的结果是其中一条悄悄漏了这一步，而卡上「没有对话示例」与「本来就没有」从
+        成品看不出来。
+
+        `roster` 是识别出的名单（`resolve_characters` 的形状），只用来给示例里的上一句
+        标对方是谁；本角色自己的名字与别名必须排除，否则「甲把乙列成自己的别名」这类
+        名单会把本角色认成对方。
+        """
+        other_names = [
+            n for c in roster
+            for n in (c.get("name"), *(c.get("aliases") or []))
+            if n and n != name and n not in aliases
+        ]
+        card_dict = card.model_dump()
+        card_dict["dialogue_examples"] = self.pick_dialogue_examples(
+            content, name, aliases, other_names)
+        return CharacterCard.model_validate(card_dict)
+
     def _auto_tag(self, card_dict: dict) -> list[str]:
         """Lightweight LLM call to pick 1-3 preset tags matching the card.
 

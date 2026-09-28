@@ -110,7 +110,12 @@ def _clean_tasks():
         D._user_slots.clear()
 
 
-def _seed_text(store, uid, body="角色说的话"):
+# 正文默认带角色的对话引号句：落卡前要按编号从原文挑对话示例（WP17），挑不出即任务
+# 失败 —— 用「角色说的话」这种无引号正文，几条通道用例会全部红在「找不到对话句」上。
+_BODY = "路人道：“先前的话。”\n角色道：“我说一句话。”"
+
+
+def _seed_text(store, uid, body=_BODY):
     tid = f"txt_{uuid.uuid4().hex}"
     _run_async(store.save_text(tid, "src.txt", body, user_id=uid))
     return tid
@@ -164,7 +169,7 @@ def _run_bg(store, user_id, text_id, distiller, monkeypatch):
     monkeypatch.setattr("deps.get_distiller", lambda llm=None: distiller)
 
     D._run_distill_task(
-        task_id, text_id, "", False, user_id, "角色说的话", "story", object(),
+        task_id, text_id, "", False, user_id, _BODY, "story", object(),
     )
     return _run_async(store.get_distill_task_unscoped(task_id))
 
@@ -381,6 +386,50 @@ class TestNamedRunKeepsIdentifyFailure:
         assert r.json()["detail"] != EMPTY_ROSTER_TEXT, "上游故障被渲染成了「没有角色」"
 
 
+class _RosterDistiller:
+    """点名蒸馏的最小桩：识别给一份名单、格式化回一张卡、后置贴示例。
+
+    `attach_dialogue_examples` 贴的与 `distill_incremental` 写进卡里的**不同** ——
+    这样「示例最终落在成品里」才不是自证的（漏接时成品留着前者）。
+    """
+
+    def identify_characters(self, content):
+        return [{"name": "角色"}]
+
+    def distill_incremental(self, content, character_name, aliases=None, **kw):
+        return CharacterCard.model_validate(
+            {"name": character_name, "dialogue_examples": ["模型编的示例"]})
+
+    def attach_dialogue_examples(self, card, content, name, aliases=(), roster=()):
+        card_dict = card.model_dump()
+        card_dict["dialogue_examples"] = ["对方：先前的话。\n角色：我说一句话。"]
+        return CharacterCard.model_validate(card_dict)
+
+
+class TestRunAttachesDialogueExamples:
+    """点名 `/run` 走 `TextManager.get_or_distill` —— 这条通道也要贴对话示例（WP17）。
+
+    三条产卡通道（bg 任务 / SSE 流 / TextManager）共用
+    `Distiller.attach_dialogue_examples`，各接一次；漏接的那条静默落一张空示例的卡，
+    成品上与「本来就没有」分不出来。
+
+    变异：删掉 `core/text_manager.py` 里那一跳 → 成品留着模型编的示例，断言红。
+    """
+
+    def test_the_card_from_run_carries_the_examples(self, store, user_id, monkeypatch):
+        tid = _seed_text(store, user_id)
+        distiller = _RosterDistiller()
+        tm = TextManager(lambda: store, distiller, None, {}, memory_manager=None)
+        client = _build_client(
+            store, user_id, monkeypatch, distiller=distiller, tm=tm)
+
+        r = client.post(
+            "/api/distill/run", json={"text_id": tid, "character_name": "角色"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["dialogue_examples"] == ["对方：先前的话。\n角色：我说一句话。"]
+
+
 # ── 6. WP7：4 组并行的产物在两条消费路径上都是「一张能解析的卡」 ──────────
 
 
@@ -415,6 +464,12 @@ class _FormattingLLM:
         self.format_groups.append(group)
         yield _group_reply(group)
         return {"prompt_tokens": 1, "completion_tokens": 1}
+
+    def select_by_schema(self, system_prompt, messages, function, max_tokens=None):
+        """挑选对话示例：只回编号（文字由代码从原文复制）。编号只发给说话人是「角色」的
+        候选，正文里那条就是 1 号 —— 让这一步真的跑通，别把它桩掉（本组考的是 4 组怎么
+        并成一张卡）。"""
+        return {"picks": [1]}
 
 
 def _card_distiller() -> Distiller:
@@ -475,8 +530,9 @@ class TestOneParseableCardOnBothChannels:
 
     def test_sse_accumulates_exactly_one_str_frame(self, store, user_id, monkeypatch):
         tid = _seed_text(store, user_id)
+        tm = _SavingTM()
         client = _build_client(
-            store, user_id, monkeypatch, distiller=_card_distiller(), tm=_SavingTM())
+            store, user_id, monkeypatch, distiller=_card_distiller(), tm=tm)
 
         r = client.post("/api/distill/run_stream", json={"text_id": tid})
 
@@ -486,3 +542,6 @@ class TestOneParseableCardOnBothChannels:
         tokens = [f["token"] for f in frames if "token" in f]
         assert len(tokens) == 1, f"成品卡的 str 帧不是恰 1 个：{len(tokens)}"
         self._assert_all_groups_landed(CharacterCard.model_validate(json.loads(tokens[0])))
+        # 对话示例是落卡前的后置步骤（WP17），**不在流出的 token 帧里**（那是格式化阶段
+        # 的原始 JSON）；落库的那张卡上必须有它 —— 本通道漏接这一步就是静默空示例。
+        assert tm.saved[0].dialogue_examples == ["对方：先前的话。\n角色：我说一句话。"]

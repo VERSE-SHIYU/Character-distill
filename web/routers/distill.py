@@ -505,21 +505,9 @@ def _run_distill_task(
             _set_task(task_id, {"status": "error", "message": "蒸馏失败：数据校验错误，请重试", "character": name})
             return
 
+        # 对话示例：按编号从原文挑选、文字由代码复制（WP17）。失败按任务失败（不 fail-open）。
+        card = distiller.attach_dialogue_examples(card, content, name, aliases, chars)
         card_dict = card.model_dump()
-
-        # 对话示例：按编号从原文挑选、文字由代码复制（WP17）。**不 fail-open** ——
-        # 挑不出来（原文里没有这个角色的对话句 / 模型没选出可用的编号）按任务失败处理：
-        # 静默落一张没有对话示例的卡，等于把「挑不出」伪装成「本来就没有」。
-        # `other_names` 只用来给上一句标对方是谁（代码从引导语里取，模型不生成文字）；
-        # 本角色自己的名字与别名必须排除，否则会把本角色认成对方。
-        other_names = [
-            n for c in chars
-            for n in (c.get("name"), *(c.get("aliases") or []))
-            if n and n != name and n not in aliases
-        ]
-        card_dict["dialogue_examples"] = distiller.pick_dialogue_examples(
-            content, name, aliases, other_names)
-        card = CharacterCard.model_validate(card_dict)
 
         # AI auto-tagging (fails open)
         try:
@@ -1126,6 +1114,17 @@ async def distill_stream(
         except Exception as exc:
             logger.error("Card validation failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': '蒸馏失败：数据校验错误，请重试'}, ensure_ascii=False, default=str)}\n\n"
+            return
+
+        # 对话示例：按编号从原文挑选、文字由代码复制（WP17）。与 bg 任务同一步，
+        # 失败即错误帧收场（不 fail-open）。本通道是 SSE 生成器，冒泡会变成未处理的
+        # 生成器异常而不是错误帧，故就地 yield —— 与其他失败帧同形。
+        try:
+            card = distiller.attach_dialogue_examples(
+                card, content, char_name, aliases, chars)
+        except Exception as exc:
+            logger.error("Pick dialogue examples failed: %s", exc, exc_info=True)
+            yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
 
         # Persist card + create session (RAG built in _create_session for chat use)

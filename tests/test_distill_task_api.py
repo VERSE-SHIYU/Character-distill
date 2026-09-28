@@ -251,8 +251,9 @@ class TestA2Wiring:
 class _CardStubDistiller:
     """跑到落卡那一段的假蒸馏器：识别给一份名单，格式化吐一份最小卡 JSON。
 
-    `pick_dialogue_examples` 记下实参 —— 路由必须把（原文、本角色、别名、**其余**角色名）
-    按序交下去：对方名由代码从名单里取，模型不生成任何文字。
+    `attach_dialogue_examples` 记下实参并把自己那份示例贴上去 —— 路由必须调这一步、且把
+    它的产物落库。对方名怎么从名单里取由 `Distiller.attach_dialogue_examples` 自己算，
+    那条在 test_distiller_dialogue_pick 里核（桩上再写一份就是第二处判据）。
     """
 
     CARD = {"name": "乙", "first_message": "", "dialogue_examples": ["模型编的示例"]}
@@ -276,11 +277,13 @@ class _CardStubDistiller:
     def _auto_tag(self, card_dict):
         return []
 
-    def pick_dialogue_examples(self, content, name, aliases=(), other_names=()):
-        self.pick_calls.append((content, name, tuple(aliases), tuple(other_names)))
+    def attach_dialogue_examples(self, card, content, name, aliases=(), roster=()):
+        self.pick_calls.append((content, name, tuple(aliases), len(roster)))
         if self.pick_error is not None:
             raise self.pick_error
-        return list(self.examples)
+        card_dict = card.model_dump()
+        card_dict["dialogue_examples"] = list(self.examples)
+        return type(card).model_validate(card_dict)
 
 
 def _run_to_card(monkeypatch, store, distiller, *, task_id="tCard", user_id="usr_card"):
@@ -321,9 +324,9 @@ def _run_to_card(monkeypatch, store, distiller, *, task_id="tCard", user_id="usr
 class TestDialogueExamplesPostStep:
     def test_the_picks_land_on_the_card_and_replace_whatever_the_model_wrote(
             self, monkeypatch, store):
-        """挑出来的示例覆盖掉格式化阶段可能写的示例；本角色与其余角色名按名单交下去。
+        """挑出来的示例覆盖掉格式化阶段可能写的示例；原文/本角色/别名/名单按序交下去。
 
-        变异：删掉路由里那两行 → 卡上还是 `["模型编的示例"]`，第一条断言红。
+        变异：删掉路由里那一行 → 卡上还是 `["模型编的示例"]`，第一条断言红。
         """
         distiller = _CardStubDistiller()
 
@@ -331,7 +334,9 @@ class TestDialogueExamplesPostStep:
 
         assert len(saved) == 1
         assert saved[0].dialogue_examples == ["对方：甲\n乙：丙"]
-        assert distiller.pick_calls == [("正文", "乙", ("小乙",), ("甲", "阿甲"))]
+        # 名单整份交给这一步（本人与别名怎么剔由 `attach_dialogue_examples` 自己算），
+        # 别名的来源是 `aliases_for` —— 路由不在这里重挑一遍名字。
+        assert distiller.pick_calls == [("正文", "乙", ("小乙",), 2)]
 
     def test_a_failed_pick_fails_the_task_instead_of_saving_a_card_without_examples(
             self, monkeypatch, store):
