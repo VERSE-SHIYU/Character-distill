@@ -20,7 +20,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel, field_validator
 
-from adapters.llm_adapter import llm_error_payload
+from adapters.llm_adapter import default_model, llm_error_payload
 from core import roles
 from core.email_service import send_verification_code
 from core.node import node_region
@@ -605,7 +605,7 @@ async def me(
     config = await storage.get_user_api_config(user["id"])
     resp["has_api_key"] = bool(config.get("api_key"))
     resp["base_url"] = config.get("base_url", "https://api.deepseek.com")
-    resp["model"] = config.get("model", "deepseek-v4-pro")
+    resp["model"] = config.get("model") or default_model()
     resp["has_embedding_key"] = bool(config.get("embedding_key"))
     resp["embedding_region"] = config.get("embedding_region", "cn")
     resp["avatar_data"] = await storage.get_user_avatar(user["id"])

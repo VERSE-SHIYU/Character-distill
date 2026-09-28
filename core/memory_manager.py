@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from adapters.llm_adapter import LLMAdapter
 from core import concurrency as C  # 派生与上下文传播（ctx_thread）
 from core.utils import try_record_usage
 
@@ -139,7 +140,7 @@ class MemoryManager:
     """封装 Mem0 Memory 实例，提供角色级别的记忆读写。
 
     每个角色（card_id）有独立的记忆空间，跨会话持久化。
-    LLM 使用 DeepSeek v4 Pro，Embedding 使用本地 sentence-transformers。
+    提炼用的 LLM 走项目适配器（模型名取配置），Embedding 走 DashScope + 共享缓存。
     """
 
     def __init__(self, config: dict[str, Any] | None = None):
@@ -171,6 +172,14 @@ class MemoryManager:
             repo_root = Path(__file__).resolve().parent.parent
             db_path = str(repo_root / "data" / "mem0_db")
 
+            # mem0 自带的 LLM 提供方关不掉思考、也绕开项目的出站守卫与重试预算，故
+            # 用**适配器**实例：全局 key，MEM0_LLM_BASE_URL 覆盖（本地压测剥离外部
+            # LLM 延迟），未设置时走配置里的地址。
+            llm_adapter = LLMAdapter(
+                api_key=api_key,
+                base_url=os.environ.get("MEM0_LLM_BASE_URL") or None,
+            )
+
             mem0_config = {
                 "vector_store": {
                     "provider": "qdrant",
@@ -180,15 +189,15 @@ class MemoryManager:
                         "embedding_model_dims": 1024,
                     },
                 },
+                # 这一段只用来把 `Memory` 构造起来（`from_config` 在 :499 会按它建一个
+                # 客户端），建完立刻被下面的注入替换掉；取值与适配器一致，免得它显示
+                # 一个我们其实不用的模型名/地址。
                 "llm": {
                     "provider": "openai",
                     "config": {
-                        "model": "deepseek-chat",
+                        "model": llm_adapter.model,
                         "api_key": api_key,
-                        # MEM0_LLM_BASE_URL 覆盖（②④ Step 2：本地压测剥离外部 LLM 延迟）；
-                        # 未设置时走默认 DeepSeek 地址，行为不变。
-                        "openai_base_url": os.environ.get("MEM0_LLM_BASE_URL")
-                        or "https://api.deepseek.com/v1",
+                        "openai_base_url": llm_adapter.base_url,
                     },
                 },
                 "embedder": {
@@ -202,6 +211,9 @@ class MemoryManager:
                 },
             }
             self._mem = Memory.from_config(mem0_config)
+            # 提炼的 LLM 换成走适配器的那一个（注入点与理由见 core/mem0_llm.py）。
+            from core.mem0_llm import AdapterLLM
+            self._mem.llm = AdapterLLM(llm_adapter)
             # Replace embedder with shared-cache bridge so RAG and Mem0
             # share the module-level LRU cache (identical texts embedded once).
             from core.embeddings import Mem0BridgeEmbedder
@@ -211,7 +223,8 @@ class MemoryManager:
                 model="text-embedding-v4",
                 dimensions=1024,
             )
-            print("[MemoryManager] Mem0 initialized (DeepSeek LLM + DashScope Embedding via shared cache)")
+            print(f"[MemoryManager] Mem0 initialized (LLM via adapter: {llm_adapter.model}; "
+                  "DashScope Embedding via shared cache)")
         except Exception as exc:
             logger.error("Mem0 init failed: %s", exc, exc_info=True)
             self._enabled = False
@@ -329,9 +342,14 @@ class MemoryManager:
                 total_chars = sum(len(m.get("content", "")) for m in messages if isinstance(m, dict))
                 print(f"[embed-stats] Mem0 add est_tok={total_chars // 2} card={card_id}")
                 result = self._mem.add(messages, **kwargs)
-                print(f"[MemoryManager] add OK: card={card_id} result_len={len(result) if isinstance(result, list) else 'N/A'}")
+                # mem0 2.0.20 成功时返回 `{"results": [...]}`，一条都没提炼出来时返回 `[]`
+                # （memory/main.py:877 与 :989）—— 两种形态都在，故不能只看一种。
+                n_results = len(result.get("results", [])) if isinstance(result, dict) else len(result)
+                print(f"[MemoryManager] add OK: card={card_id} result_len={n_results}")
             except Exception as exc:
-                logger.warning("Mem0 add failed: %s", exc, exc_info=True)
+                # ERROR 不是「更吓人」：写入失败 = 这条记忆丢了且不会自愈，而 WARNING
+                # 进不了 GlitchTip 的问题列表 —— 之前 SZ/SG 静默了 48 小时没人知道。
+                logger.error("Mem0 add failed: %s", exc, exc_info=True)
 
         C.ctx_thread(_do_add, daemon=True).start()  # context 传播点：记忆入库线程
 
@@ -364,7 +382,7 @@ class MemoryManager:
             print(f"[MemoryManager] manual add result: {result}")
             return True
         except Exception as exc:
-            logger.warning("Mem0 manual add failed: %s", exc, exc_info=True)
+            logger.error("Mem0 manual add failed: %s", exc, exc_info=True)
             return False
 
     def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str,
