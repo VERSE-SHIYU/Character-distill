@@ -1,6 +1,7 @@
 # 卡片引文逐字核对（2026-09-28，Shiyu 已拍板「只做能确定解决的」）
 
 > 放到 worktree 的 `docs/specs/card-quote-verification.md`，以后的补充写进本文件。
+> **源文件**：`E:\Study\ANU\computing\26S1\temp-files\card-quote-verification.md`（入库副本即本文件）。
 > **执行方**：C 窗口，从 origin/main（`fb893b9`）新开分支 `fix/card-quote-verification`（`--unset-upstream`）。**执行方 skill** 见文末。
 
 ## 目标
@@ -69,7 +70,7 @@ DeepSeek 没有 Citations 开关，所以本 spec 用代码实现同一件事，
 1. `core/quotes.py`：`normalize`（`:27`）、`verbatim_in`（`:35`，每次调用都归一化整段 `source`）。`_QUOTE_PAIRS`（`:53`）是从原文里抽**对话**用的，用途不同，本 spec 不动它。
 2. 验收脚本：`_strings`（`tests/perf/longbook_acceptance.py:576`）、`_QUOTE_PAIRS`（`:589`，不含英文双引号）、`QUOTE_MIN_CHARS = 4`（`:590`）、`quote_misses`（`:593`）、`catchphrase_misses`（`:622`）；调用处在 `:537-539`。
 3. 三条产卡通道的后置挑选调用点：bg `web/routers/distill.py:514`（同步）；SSE `:1134-1136`（已在 `await asyncio.to_thread` 里）；TextManager `core/text_manager.py:471-474`（已在 `to_thread` 里）。三处都调 `Distiller.attach_dialogue_examples`（`core/distiller.py:1744`）。
-4. 卡片字段定义在 `core/schema.py`，`CharacterCard` 从 `:52` 起。
+4. 卡片字段定义在 `core/schema.py`，`CharacterCard` 从 `:69` 起（S0 更正：原写 `:52`；`:52` 实为 `PsycheProfile`）。
 5. 手工编辑卡片：`PATCH /api/distill/card/{card_id}`（`web/routers/distill.py:1230`），前端组件 `EditCardModal.jsx`。
 
 ## 方案与拍板
