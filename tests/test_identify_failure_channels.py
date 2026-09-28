@@ -35,7 +35,7 @@ from httpx import ASGITransport, AsyncClient
 
 import deps
 import server
-from core.distiller import DistillError, Distiller
+from core.distiller import DISTILL_PROMPT_BEFORE_NAME, DistillError, Distiller
 from core.schema import FORMAT_GROUPS, CharacterCard
 from core.text_manager import TextManager
 from deps import get_storage
@@ -396,10 +396,10 @@ class TestNamedRunKeepsIdentifyFailure:
 
 
 class _RosterDistiller:
-    """点名蒸馏的最小桩：识别给一份名单、格式化回一张卡、后置贴示例。
+    """点名蒸馏的最小桩：识别给一份名单、格式化回一张卡、后置落卡。
 
-    `attach_dialogue_examples` 贴的与 `distill_incremental` 写进卡里的**不同** ——
-    这样「示例最终落在成品里」才不是自证的（漏接时成品留着前者）。
+    `finalize_card` 贴的与 `distill_incremental` 写进卡里的**不同** —— 这样「示例最终
+    落在成品里」才不是自证的（漏接时成品留着前者）。
     """
 
     def identify_characters(self, content):
@@ -414,7 +414,7 @@ class _RosterDistiller:
         return CharacterCard.model_validate(
             {"name": character_name, "dialogue_examples": ["模型编的示例"]})
 
-    def attach_dialogue_examples(self, card, content, name, aliases=(), roster=()):
+    def finalize_card(self, card, content, name, aliases=(), roster=()):
         card_dict = card.model_dump()
         card_dict["dialogue_examples"] = ["路人：先前的话。\n角色：我说一句话。"]
         return CharacterCard.model_validate(card_dict)
@@ -463,12 +463,23 @@ class _FormattingLLM:
     def _make_async_client(self):
         return _FakeAsyncClient()            # Map 阶段：建 client → 跑 → 关
 
-    def chat(self, system, messages):
-        """识别（与 `_auto_tag`）那一跳 —— 名字得在正文里出现过，分片才被选中。
+    def chat(self, system, messages, max_tokens=None, **kw):
+        """按提示词分三路回：合并稿、整卡格式化、识别名单（与 `_auto_tag`）。
 
-        名单里必须有上一句的说话人「路人」：挑选对话示例的 enum 只由名单里的**其他人**
-        组成，没有它就没有可选的对方，成不了组（补充1-第2步）。
+        识别那一跳的名单里必须有上一句的说话人「路人」：挑选对话示例的 enum 只由名单里
+        的**其他人**组成，没有它就没有可选的对方，成不了组（补充1-第2步）。
+
+        `TextManager` 那条通道走**非流式**的 `distill_incremental`：合并（`_single_reduce`）
+        与建卡都落在 `chat` 上，且建卡是**一次回整张卡**（不分组）。整卡 JSON 由各组样例
+        合并而成（`FORMAT_GROUPS` 是卡字段的一个划分），与流式那条覆盖同一批字段。
         """
+        if "你正在整合关于" in system:
+            return "合并档案"
+        if DISTILL_PROMPT_BEFORE_NAME in system:
+            merged: dict = {}
+            for g in FORMAT_GROUPS:
+                merged.update(json.loads(_group_reply(g)))
+            return json.dumps(merged)
         return json.dumps([{"name": "角色"}, {"name": "路人"}])
 
     async def async_chat(self, system, messages, max_tokens=None, client=None, **kw):
@@ -683,7 +694,7 @@ SLEEPY = 0.3
 
 
 class _SleepyDistiller:
-    """`dialogue_candidates` 与 `attach_dialogue_examples` 各睡 0.3 秒的假蒸馏器。
+    """`dialogue_candidates` 与 `finalize_card` 各睡 0.3 秒的假蒸馏器。
 
     两段都必须挪到线程里（`asyncio.to_thread`）：直接在协程里 `time.sleep`，这 0.6 秒
     事件循环停摆，SSE 通道上的其他请求、别的并发调用全被堵住。
@@ -702,7 +713,7 @@ class _SleepyDistiller:
     def distill_incremental_stream(self, content, name, aliases=None, **kw):
         yield json.dumps({"name": name}, ensure_ascii=False)
 
-    def attach_dialogue_examples(self, card, content, name, aliases=(), roster=()):
+    def finalize_card(self, card, content, name, aliases=(), roster=()):
         time.sleep(SLEEPY)
         card_dict = card.model_dump()
         card_dict["dialogue_examples"] = ["路人：先前的话。\n角色：我说一句话。"]
@@ -768,3 +779,94 @@ class TestAsyncChannelsDoNotBlockTheEventLoop:
         ticks, stall = _run_async(_ticks_while(tm.get_or_distill(tid, "角色", user_id)))
         assert ticks >= 10, f"预检/挑选把事件循环堵住了：0.6 秒里只跳了 {ticks} 次"
         assert stall < _MAX_STALL, f"有同步阻塞：最长 {stall:.3f} 秒没跳一次"
+
+
+# ── 9. 卡片引文核对（WP18）：三条通道落卡前都去掉编造引文的引号 ──────────────
+
+# `_BODY` 里没有这句话：卡片若照原样落库，就是一条冒充原文的编造引文。
+FABRICATED = "我从未到过这里"
+FABRICATED_MEMORY = f"她说“{FABRICATED}”就再没回来"
+RETRACTED_MEMORY = f"她说{FABRICATED}就再没回来"
+
+
+class _QuotingLLM(_FormattingLLM):
+    """G4 的 `key_memories` 换一条**编造**的引文，其余组原样 —— 落卡前必须去引号。
+
+    组模板里的 `关键经历` 只在 G4 出现，替换不波及其它组。替换的是**已序列化**的 JSON
+    串（`json.dumps` 默认 `ensure_ascii`），故也用 `json.dumps` 造同一形态的文本再换，
+    不手抄一份转义后的 JSON。
+
+    流式（bg / SSE）与非流式（TextManager）两条路径各改一处，共用同一个 `_inject`：
+    只改一条的话，另一条通道的用例会因为「卡里压根没有编造引文」而空绿。
+    """
+
+    @staticmethod
+    def _inject(text: str) -> str:
+        return text.replace(json.dumps("关键经历")[1:-1],
+                            json.dumps(FABRICATED_MEMORY)[1:-1])
+
+    def chat(self, system, messages, max_tokens=None, **kw):
+        return self._inject(
+            super().chat(system, messages, max_tokens=max_tokens, **kw))
+
+    def chat_stream_long(self, system, messages, max_tokens=None, **kw):
+        gen = super().chat_stream_long(system, messages, max_tokens=max_tokens, **kw)
+        try:
+            while True:
+                chunk = next(gen)
+                yield self._inject(chunk) if isinstance(chunk, str) else chunk
+        except StopIteration as stop:
+            return stop.value
+
+
+def _quoting_distiller() -> Distiller:
+    d = Distiller(llm=_QuotingLLM(), config_path=None)
+    d._longctx_threshold = 0
+    d._chunk_size = 3000
+    return d
+
+
+class TestQuoteRetractionOnEveryChannel:
+    """三条产卡通道都走 `Distiller.finalize_card`（WP18）：编造引文的引号在落卡前去掉。
+
+    引文核对与贴对话示例共用同一个后置入口，通道漏接那个入口时，卡上留一条冒充原文的
+    引文 —— 成品与「这句确实出自原文」从卡片本身看不出来。三条通道各接一次，各一条用例。
+
+    变异：任一通道改回直接调 `attach_dialogue_examples`（或 `finalize_card` 漏掉核对那
+    一步）→ 该通道的 `key_memories` 断言红；顺带核对话示例仍在，防「换入口把前一步丢了」。
+    """
+
+    def test_bg_task(self, store, user_id, monkeypatch):
+        tid = _seed_text(store, user_id)
+        tm = _SavingTM()
+        monkeypatch.setattr(deps, "get_text_manager", lambda *a, **kw: tm)
+
+        row = _run_bg(store, user_id, tid, _quoting_distiller(), monkeypatch)
+
+        assert row["status"] == "done", row
+        assert tm.saved[0].key_memories == [RETRACTED_MEMORY]
+        assert tm.saved[0].dialogue_examples == ["路人：先前的话。\n角色：我说一句话。"]
+
+    def test_sse(self, store, user_id, monkeypatch):
+        tid = _seed_text(store, user_id)
+        tm = _SavingTM()
+        client = _build_client(
+            store, user_id, monkeypatch, distiller=_quoting_distiller(), tm=tm)
+
+        r = client.post("/api/distill/run_stream", json={"text_id": tid})
+
+        assert r.status_code == 200
+        assert tm.saved[0].key_memories == [RETRACTED_MEMORY]
+
+    def test_text_manager(self, store, user_id, monkeypatch):
+        tid = _seed_text(store, user_id)
+        distiller = _quoting_distiller()
+        tm = TextManager(lambda: store, distiller, None, {}, memory_manager=None)
+        client = _build_client(
+            store, user_id, monkeypatch, distiller=distiller, tm=tm)
+
+        r = client.post(
+            "/api/distill/run", json={"text_id": tid, "character_name": "角色"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["key_memories"] == [RETRACTED_MEMORY]

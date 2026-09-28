@@ -251,9 +251,9 @@ class TestA2Wiring:
 class _CardStubDistiller:
     """跑到落卡那一段的假蒸馏器：识别给一份名单，格式化吐一份最小卡 JSON。
 
-    `attach_dialogue_examples` 记下实参并把自己那份示例贴上去 —— 路由必须调这一步、且把
-    它的产物落库。对方名怎么从名单里取由 `Distiller.attach_dialogue_examples` 自己算，
-    那条在 test_distiller_dialogue_pick 里核（桩上再写一份就是第二处判据）。
+    `finalize_card` 记下实参并把自己那份示例贴上去 —— 路由必须调这一步、且把它的产物
+    落库。对方名怎么从名单里取由 `Distiller.attach_dialogue_examples` 自己算，那条在
+    test_distiller_dialogue_pick 里核（桩上再写一份就是第二处判据）。
     """
 
     CARD = {"name": "乙", "first_message": "", "dialogue_examples": ["模型编的示例"]}
@@ -282,7 +282,7 @@ class _CardStubDistiller:
     def _auto_tag(self, card_dict):
         return []
 
-    def attach_dialogue_examples(self, card, content, name, aliases=(), roster=()):
+    def finalize_card(self, card, content, name, aliases=(), roster=()):
         self.pick_calls.append((content, name, tuple(aliases), len(roster)))
         if self.pick_error is not None:
             raise self.pick_error

@@ -53,8 +53,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import yaml  # noqa: E402
 from evidence_writer import code_sha, write_evidence  # noqa: E402
+from core.card_quotes import verified_slots  # noqa: E402
 from core.distiller import Distiller  # noqa: E402
-from core.quotes import normalize, verbatim_in  # noqa: E402
+from core.quotes import (  # noqa: E402
+    normalize,
+    quoted_spans,
+    verbatim_in,
+    verbatim_in_normalized,
+)
 from core.schema import CharacterCard  # noqa: E402
 
 # ── §10 的硬数字与门槛（照抄蓝图，不在这里另立一套） ──────────────────────
@@ -573,39 +579,29 @@ def dialogue_hits(groups, content: str) -> dict:
     return {"n": len(groups), "hit": len(groups) - len(miss), "miss": miss}
 
 
-def _strings(obj, path: str = ""):
-    """递归取卡片里的所有字符串，带上所在字段路径（引文查不到时要报字段名）。"""
-    if isinstance(obj, str):
-        yield path, obj
-    elif isinstance(obj, dict):
-        for k, v in obj.items():
-            yield from _strings(v, f"{path}.{k}" if path else str(k))
-    elif isinstance(obj, (list, tuple)):
-        for i, v in enumerate(obj):
-            yield from _strings(v, f"{path}[{i}]")
-
-
-# 成对引号：左/右相同的一对（ASCII '）用同字符匹配，其余各自对称。
-_QUOTE_PAIRS = (("'", "'"), ("‘", "’"), ("“", "”"), ("「", "」"), ("『", "』"))
-QUOTE_MIN_CHARS = 4   # §10 C4：归一化后不足 4 字的引文太短，子串命中没有分辨力
-
-
 def quote_misses(card, content: str) -> list[dict]:
-    """卡片所有字符串字段里成对的引文，归一化后 ≥4 字的逐条查原文，返回查不到的。
+    """核对清单内的每处引文是否逐字出自原文，返回查不到的（带字段名与原引文）。
 
     引文（角色自述、他人评价）是卡片里最容易被编造的成分：读着像原文，却查无此句。
     查不到就原样报出来由人判，不在这里改判据。
+
+    字段清单与配对表都从 `core.card_quotes` / `core.quotes` 取：产品去掉查不到的引文的
+    引号，验收按同一份清单复查 —— 各写一份，「核了哪些字段」与「哪些引号算引文」迟早
+    分家，那时验收就再也证明不了产品（旧配对表漏了英文双引号，报出的 0 是假的 0）。
+
+    原文先归一化一次再逐条比：几十条引文各归一化一遍整本书是几十倍的成本。
     """
+    source_norm = normalize(content)
     seen, out = set(), []
-    for field, s in _strings(card):
-        for lq, rq in _QUOTE_PAIRS:
-            pattern = re.escape(lq) + f"([^{re.escape(lq)}{re.escape(rq)}]+)" + re.escape(rq)
-            for q in re.findall(pattern, s):
-                if len(normalize(q)) < QUOTE_MIN_CHARS or verbatim_in(content, q):
-                    continue
-                if (field, q) not in seen:
-                    seen.add((field, q))
-                    out.append({"field": field, "quote": q})
+    for field, parent, key in verified_slots(card):
+        text = parent[key]
+        if not isinstance(text, str):
+            continue
+        for _start, _end, q in quoted_spans(text):
+            if (field, q) in seen or verbatim_in_normalized(source_norm, q):
+                continue
+            seen.add((field, q))
+            out.append({"field": field, "quote": q})
     return out
 
 

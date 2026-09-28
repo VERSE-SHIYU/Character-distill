@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from openai import AsyncOpenAI
 
 from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_facing_error
+from core.card_quotes import retract_unverified
 from core.chat_preprocessor import ChatPreprocessor
 from core.quotes import (
     UNDECIDED,
@@ -1770,6 +1771,25 @@ class Distiller:
         card_dict["dialogue_examples"] = self.pick_dialogue_examples(
             candidates, name, others)
         return CharacterCard.model_validate(card_dict)
+
+    def finalize_card(
+        self,
+        card: CharacterCard,
+        content: str,
+        name: str,
+        aliases: Sequence[str] = (),
+        roster: Sequence[dict] = (),
+    ) -> CharacterCard:
+        """落卡前的后置步骤：先核对引文、再贴对话示例（WP18 / WP17），签名同后者。
+
+        合成一个入口是因为三条产卡通道各接一次后置步骤 —— 分成两个方法就有四条调用线，
+        其中一条漏掉一步从成品看不出来（卡上「没有引文 / 示例」与「本来就没有」同形）。
+        两条都由代码保证「引号里的必是原文」：核对去掉查不到的引文的引号，示例由按编号
+        从原文复制（`attach_dialogue_examples`）。失败口径不变：挑选失败照旧抛
+        `DistillError` 交给调用方按任务失败处理。
+        """
+        card, _ = retract_unverified(card, content)
+        return self.attach_dialogue_examples(card, content, name, aliases, roster)
 
     def _auto_tag(self, card_dict: dict) -> list[str]:
         """Lightweight LLM call to pick 1-3 preset tags matching the card.

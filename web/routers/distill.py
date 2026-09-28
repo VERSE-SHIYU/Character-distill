@@ -510,8 +510,8 @@ def _run_distill_task(
             _set_task(task_id, {"status": "error", "message": "蒸馏失败：数据校验错误，请重试", "character": name})
             return
 
-        # 对话示例：按编号从原文挑选、文字由代码复制（WP17）。失败按任务失败（不 fail-open）。
-        card = distiller.attach_dialogue_examples(card, content, name, aliases, chars)
+        # 后置步骤：核对引文 + 贴对话示例（WP18 / WP17）。失败按任务失败（不 fail-open）。
+        card = distiller.finalize_card(card, content, name, aliases, chars)
         card_dict = card.model_dump()
 
         # AI auto-tagging (fails open)
@@ -1127,15 +1127,15 @@ async def distill_stream(
             yield f"data: {json.dumps({'error': '蒸馏失败：数据校验错误，请重试'}, ensure_ascii=False, default=str)}\n\n"
             return
 
-        # 对话示例：按编号从原文挑选、文字由代码复制（WP17）。与 bg 任务同一步，
-        # 失败即错误帧收场（不 fail-open）。本通道是 SSE 生成器，冒泡会变成未处理的
-        # 生成器异常而不是错误帧，故就地 yield —— 与其他失败帧同形。
+        # 后置步骤：核对引文 + 贴对话示例（WP18 / WP17）。与 bg 任务同一步，失败即错误帧
+        # 收场（不 fail-open）。本通道是 SSE 生成器，冒泡会变成未处理的生成器异常而不是
+        # 错误帧，故就地 yield —— 与其他失败帧同形。
         try:
             card = await asyncio.to_thread(
-                distiller.attach_dialogue_examples,
+                distiller.finalize_card,
                 card, content, char_name, aliases, chars)
         except Exception as exc:
-            logger.error("Pick dialogue examples failed: %s", exc, exc_info=True)
+            logger.error("Finalize card failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
 

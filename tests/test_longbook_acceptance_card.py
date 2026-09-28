@@ -71,6 +71,38 @@ def test_a_quote_changed_by_one_char_is_reported_with_its_field():
     assert acc.quote_misses(short, SOURCE) == []
 
 
+def test_a_quote_in_english_double_quotes_is_checked_too():
+    """卡片里的引文大量用英文双引号 `"`：验收漏掉这一对，「引文查不到 0」就是假的 0。
+
+    挡住变异：配对表改回不含 `"`（旧 `_QUOTE_PAIRS`）→ 反例仍判 0 条。
+    """
+    ok = {"key_memories": ['贾母道："人人都说那宝丫头好，会做人，很大方"']}
+    assert acc.quote_misses(ok, SOURCE) == []
+
+    bad = {"key_memories": ['贾母道："人人都说那薛丫头好，会做人，很大方"']}
+    assert acc.quote_misses(bad, SOURCE) == [
+        {"field": "key_memories[0]", "quote": "人人都说那薛丫头好，会做人，很大方"}]
+
+
+def test_only_the_verified_fields_are_checked():
+    """只查产品也核的那份清单：`first_message` / `taboo_words` 的引号里本就不是原文。
+
+    标签形状也要与产品一致（`relationships[0].attitude`）—— 两边各写一份字段清单，
+    「核了哪些字段」迟早分家，验收就再也证明不了产品。
+
+    挡住变异：改回扫所有字符串字段（旧 `_strings`）→ 清单外那两条被报出来，断言红。
+    """
+    card = {
+        "first_message": '娘，我说"这句是编的"给你听。',
+        "speaking_style": {"taboo_words": ['"卑职不敢"']},
+        "relationships": [{"target": "贾母", "relation": "祖孙",
+                           "attitude": '常念"人人都说那薛丫头好，会做人，很大方"'}],
+    }
+    assert acc.quote_misses(card, SOURCE) == [
+        {"field": "relationships[0].attitude",
+         "quote": "人人都说那薛丫头好，会做人，很大方"}]
+
+
 def test_a_catchphrase_changed_by_one_char_is_reported():
     """口癖是本人原话里的固定说法，须逐字出现在原文；**不设字数下限**。
 
