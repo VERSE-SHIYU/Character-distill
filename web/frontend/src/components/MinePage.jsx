@@ -21,6 +21,7 @@ import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
 import { getCoverGradient } from './BookReader'
+import usePresence from '../hooks/usePresence'
 
 /* ── MineCardMenu ── */
 function MineCardMenu({ card, onRefresh }) {
@@ -143,6 +144,8 @@ export default function MinePage() {
   const userId = isMe ? authUser?.id : authorUserId
   const prof = isMe ? authUser : profileAuthor
   const username = displayName(prof) || '?'
+  // 在线状态跟随当前展示的这个人（自己或对方）；对方隐藏时接口返回 online=null，自然不显示
+  const presence = usePresence(userId)
   const avatarSrc = isMe ? userAvatar : profileAuthor?.avatar_data
 
   // Clear authorUserId when navigating to "mine" view (same component, no remount)
@@ -268,20 +271,6 @@ export default function MinePage() {
   const [followingLocked, setFollowingLocked] = useState(false)
   const [followingFilter, setFollowingFilter] = useState('')
 
-  // Online status (self always visible)
-  const [selfOnline, setSelfOnline] = useState(null)
-  const [selfLastActive, setSelfLastActive] = useState('')
-  const fetchSelfOnline = useCallback(async () => {
-    if (!authUser?.id) return
-    try {
-      const res = await fetchWithTimeout(`/api/auth/user/${authUser.id}/online`)
-      const data = await res.json()
-      setSelfOnline(data.online)
-      setSelfLastActive(data.last_active_at || '')
-    } catch { /* ignore */ }
-  }, [authUser?.id])
-
-  useEffect(() => { fetchSelfOnline() }, [fetchSelfOnline])
   // Followers state
   const [followers, setFollowers] = useState([])
   const [followersLoading, setFollowersLoading] = useState(false)
@@ -587,10 +576,10 @@ export default function MinePage() {
             <div className="mine-name-row">
               <h2 className="mine-profile-name">
                 {username}
-                {selfOnline !== null && (
-                  <span className={`mine-online${selfOnline ? '' : ' off'}`}>
+                {presence.online !== null && (
+                  <span className={`mine-online${presence.online ? '' : ' off'}`}>
                     <span className="mine-online-dot" />
-                    {selfOnline ? '在线' : formatChatTime(selfLastActive)}
+                    {presence.online ? '在线' : formatChatTime(presence.lastActive)}
                   </span>
                 )}
               </h2>

@@ -16,6 +16,7 @@ import ChatInputBar from './common/ChatInputBar'
 import useIsMobile from '../hooks/useIsMobile'
 import useCanWrite from '../hooks/useCanWrite'
 import ErrorBox from './common/ErrorBox'
+import usePresence from '../hooks/usePresence'
 const POLL_INTERVAL = 5000
 const PAGE_SIZE = 30
 const GROUP_GAP = 5 * 60 * 1000
@@ -81,9 +82,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const [otherAvatar, setOtherAvatar] = useState(null)
   const [otherHomeRegion, setOtherHomeRegion] = useState('')
   const [myHomeRegion, setMyHomeRegion] = useState('')
-  const [otherOnline, setOtherOnline] = useState(null) // null=loading, true, false
-  const [otherOnlineHidden, setOtherOnlineHidden] = useState(false)
-  const [otherLastActive, setOtherLastActive] = useState('')
+  const { online: otherOnline, hidden: otherOnlineHidden, lastActive: otherLastActive } = usePresence(otherUserId, { refreshInterval: 30000 })
   const [reactions, setReactions] = useState({})
 
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -306,19 +305,6 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
     [messages, authUser?.id]
   )
 
-  // ── Online status ──
-  const fetchOnlineStatus = useCallback(async () => {
-    if (!otherUserId) return
-    try {
-      const res = await fetchWithTimeout(`/api/auth/user/${otherUserId}/online`)
-      const data = await res.json()
-      setOtherOnline(data.online)
-      setOtherOnlineHidden(data.hidden)
-      setOtherLastActive(data.last_active_at || '')
-    } catch {
-      // ignore
-    }
-  }, [otherUserId])
 
   // Initial load + mark read + fetch other avatar / region
   useEffect(() => {
@@ -339,15 +325,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
         .then((data) => { if (data.author?.home_region) setMyHomeRegion(data.author.home_region) })
         .catch(() => {})
     }
-    fetchOnlineStatus()
-  }, [otherUserId, loadMessages, markRead, fetchOnlineStatus])
-
-  // Poll online status every 30s
-  useEffect(() => {
-    if (!otherUserId) return
-    const timer = setInterval(fetchOnlineStatus, 30000)
-    return () => clearInterval(timer)
-  }, [otherUserId, fetchOnlineStatus])
+  }, [otherUserId, loadMessages, markRead])
 
   // Inner voice affinity: pull the active character session's affinity fresh on
   // mount instead of depending on store state left by the last role chat.
