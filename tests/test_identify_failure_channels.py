@@ -46,7 +46,12 @@ from storage.sqlite_store import SQLiteStore
 # WP7 F4 复用 WP7 那批格式化件（认组别 + 按组回 JSON），不另抄一份字段样例：
 # 抄一份就是第二处「组字段表」，组一变就漂。cross-module import 在本仓有先例
 # （test_postgres_store 引 test_published_from_backfill）。
-from test_distiller_routing import _FakeAsyncClient, _format_group_of, _group_reply
+from test_distiller_routing import (
+    _FakeAsyncClient,
+    _SAMPLE_FIELD_VALUES,
+    _format_group_of,
+    _group_reply,
+)
 
 # 三通道共用的期望文案。改动被锁的是「定义文案的那一处」（character_roster），
 # 所以这里必须是复制过来的字面量 —— 从源码 import 就自证自明，变异杀不掉。
@@ -870,3 +875,99 @@ class TestQuoteRetractionOnEveryChannel:
 
         assert r.status_code == 200, r.text
         assert r.json()["key_memories"] == [RETRACTED_MEMORY]
+
+
+# ── 10. 卡片关系去重：三条通道落卡前同一 target 只留第一条 ──────────────────
+
+# G5 样例里那条关系的 target；两条关系 target 相同、relation 不同 —— 正是刘姥姥验收
+# 实测的形态（同一个人被拆成两条）。
+DUP_TARGET = _SAMPLE_FIELD_VALUES["relationships"][0]["target"]
+KEPT_RELATION = "旧识"
+DROPPED_RELATION = "同乡"
+
+
+class _DuplicateRelationshipLLM(_FormattingLLM):
+    """G5 的 `relationships` 换成两条**同一 target**、relation 各异的条目，其余组原样 ——
+    落卡前必须只剩第一条。
+
+    替换的是**已序列化**的 JSON 串，故用 `json.dumps` 造同一形态的文本再换（同
+    `_QuotingLLM`，不手抄转义后的 JSON）。流式（bg / SSE）与非流式（TextManager）两条路径
+    各改一处，共用同一个 `_inject`：只改一条的话，另一条通道的用例会因为「卡里压根没有重复
+    target」而空绿。
+    """
+
+    @staticmethod
+    def _inject(text: str) -> str:
+        origin = _SAMPLE_FIELD_VALUES["relationships"]
+        two = [dict(origin[0], relation=KEPT_RELATION),
+               dict(origin[0], relation=DROPPED_RELATION)]
+        return text.replace(json.dumps(origin)[1:-1], json.dumps(two)[1:-1])
+
+    def chat(self, system, messages, max_tokens=None, **kw):
+        return self._inject(
+            super().chat(system, messages, max_tokens=max_tokens, **kw))
+
+    def chat_stream_long(self, system, messages, max_tokens=None, **kw):
+        gen = super().chat_stream_long(system, messages, max_tokens=max_tokens, **kw)
+        try:
+            while True:
+                chunk = next(gen)
+                yield self._inject(chunk) if isinstance(chunk, str) else chunk
+        except StopIteration as stop:
+            return stop.value
+
+
+def _dup_rel_distiller() -> Distiller:
+    d = Distiller(llm=_DuplicateRelationshipLLM(), config_path=None)
+    d._longctx_threshold = 0
+    d._chunk_size = 3000
+    return d
+
+
+class TestRelationshipDedupeOnEveryChannel:
+    """三条产卡通道都走 `Distiller.finalize_card`：同一 target 的关系条目落卡前只剩第一条。
+
+    重复 target 是刘姥姥验收实测的形态。成品上「两条」与「一条」差别很小，通道漏接后置入口
+    时从卡片本身看不出来 —— 三条通道各接一次，各一条用例。
+
+    变异：任一通道改回直接调 `attach_dialogue_examples`（或 `finalize_card` 漏掉去重那一步）
+    → 该通道的断言红；顺带核引文核对那一步仍在（`key_memories` 没被丢）。
+    """
+
+    def test_bg_task(self, store, user_id, monkeypatch):
+        tid = _seed_text(store, user_id)
+        tm = _SavingTM()
+        monkeypatch.setattr(deps, "get_text_manager", lambda *a, **kw: tm)
+
+        row = _run_bg(store, user_id, tid, _dup_rel_distiller(), monkeypatch)
+
+        assert row["status"] == "done", row
+        assert [(r.target, r.relation) for r in tm.saved[0].relationships] == [
+            (DUP_TARGET, KEPT_RELATION)]
+        assert tm.saved[0].key_memories == ["关键经历"]
+
+    def test_sse(self, store, user_id, monkeypatch):
+        tid = _seed_text(store, user_id)
+        tm = _SavingTM()
+        client = _build_client(
+            store, user_id, monkeypatch, distiller=_dup_rel_distiller(), tm=tm)
+
+        r = client.post("/api/distill/run_stream", json={"text_id": tid})
+
+        assert r.status_code == 200
+        assert [(rel.target, rel.relation) for rel in tm.saved[0].relationships] == [
+            (DUP_TARGET, KEPT_RELATION)]
+
+    def test_text_manager(self, store, user_id, monkeypatch):
+        tid = _seed_text(store, user_id)
+        distiller = _dup_rel_distiller()
+        tm = TextManager(lambda: store, distiller, None, {}, memory_manager=None)
+        client = _build_client(
+            store, user_id, monkeypatch, distiller=distiller, tm=tm)
+
+        r = client.post(
+            "/api/distill/run", json={"text_id": tid, "character_name": "角色"})
+
+        assert r.status_code == 200, r.text
+        assert [(rel["target"], rel["relation"])
+                for rel in r.json()["relationships"]] == [(DUP_TARGET, KEPT_RELATION)]
