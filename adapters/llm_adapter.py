@@ -689,6 +689,8 @@ class LLMAdapter:
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        presence_penalty: float | None = None,
+        top_p: float | None = None,
     ) -> None:
         root = Path(__file__).resolve().parent.parent
         load_dotenv(root / ".env")
@@ -699,7 +701,11 @@ class LLMAdapter:
         self._model = model or default_model(config_path)
         self._temperature = temperature if temperature is not None else float(llm_cfg.get("temperature", 0.7))
         self._max_tokens = max_tokens if max_tokens is not None else _resolve_max_tokens(llm_cfg)
-        self._presence_penalty = float(llm_cfg.get("presence_penalty", 0.3))
+        self._presence_penalty = presence_penalty if presence_penalty is not None else float(llm_cfg.get("presence_penalty", 0.3))
+        # top_p 没有配置键：项目给角色扮演选的采样只看 temperature/presence_penalty，
+        # 而「不设」是一个有意义的值（不发这个字段 = 用 API 默认）。故只有调用方显式给了
+        # 才进请求体 —— 见下面四处 create 的条件展开。
+        self._top_p = top_p
         self._dialect = _detect_dialect(self._base_url, self._model)
         self.last_usage: dict | None = None
         # 该账号上一轮学到的并发上限（WP14 A3）。放在 adapter 上而不是 map_concurrency
@@ -815,7 +821,8 @@ class LLMAdapter:
                     presence_penalty=self._presence_penalty,
                     timeout=timeout,
                     extra_body=self._request_options(),
-                    # 不给 response_format 时这个 **展开为空 —— 请求体与从前逐字一致。
+                    # 下面两个都是「没给就不发这个字段」—— 展开为空，请求体与不传时逐字一致。
+                    **({} if self._top_p is None else {"top_p": self._top_p}),
                     **({} if response_format is None else {"response_format": response_format}),
                 )
                 choices = completion.choices
@@ -883,6 +890,7 @@ class LLMAdapter:
                             presence_penalty=self._presence_penalty,
                             timeout=timeout,
                             extra_body=self._request_options(),
+                            **({} if self._top_p is None else {"top_p": self._top_p}),
                         )
                     except IncompleteResponseError:
                         raise  # 截断：确定性失败，不烧重试预算
@@ -960,6 +968,7 @@ class LLMAdapter:
                     stream=True,
                     stream_options={"include_usage": True},
                     extra_body=self._request_options(),
+                    **({} if self._top_p is None else {"top_p": self._top_p}),
                 )
                 break
             except Exception as exc:
@@ -1073,6 +1082,7 @@ class LLMAdapter:
                     presence_penalty=self._presence_penalty,
                     timeout=timeout,
                     extra_body=self._request_options(),
+                    **({} if self._top_p is None else {"top_p": self._top_p}),
                 )
                 choices = completion.choices
                 if not choices:

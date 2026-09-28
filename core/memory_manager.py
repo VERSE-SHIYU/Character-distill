@@ -136,6 +136,18 @@ def _emotion_match(current_mood: str | None, memory_mood: str) -> float:
     return 1.0 if cur_p == mem_p else 0.0
 
 
+# ── mem0 提炼的采样参数 ───────────────────────────────────────────────────
+#
+# 提炼记忆要和 mem0 原来发的那一套一致：走适配器后就不再看 mem0 的默认值，得自己带。
+# 原值出处 `mem0/configs/llms/base.py:19-22`（`BaseLlmConfig` 默认）经
+# `mem0/llms/base.py::_get_common_params` 发出；`presence_penalty` 原提供方**不发**，
+# 即 API 默认 0。`max_tokens` 不复原：它只是输出上限，越低越容易被截断，而截断会被
+# 适配器判成 `IncompleteResponseError`，这条记忆就丢了。
+_EXTRACT_TEMPERATURE = 0.1
+_EXTRACT_PRESENCE_PENALTY = 0.0
+_EXTRACT_TOP_P = 0.1
+
+
 class MemoryManager:
     """封装 Mem0 Memory 实例，提供角色级别的记忆读写。
 
@@ -178,6 +190,9 @@ class MemoryManager:
             llm_adapter = LLMAdapter(
                 api_key=api_key,
                 base_url=os.environ.get("MEM0_LLM_BASE_URL") or None,
+                temperature=_EXTRACT_TEMPERATURE,
+                presence_penalty=_EXTRACT_PRESENCE_PENALTY,
+                top_p=_EXTRACT_TOP_P,
             )
 
             mem0_config = {

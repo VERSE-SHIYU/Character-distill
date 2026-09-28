@@ -237,3 +237,65 @@ def test_add_passes_the_gate_for_a_whitelisted_host(tmp_path, gate):
         _add(mem)
 
     assert len(fake.chat.completions.calls) == 1
+
+
+# ── 提炼的采样参数：沿用 mem0 原本发的那一套 ────────────────────────────
+#
+# mem0 2.0.20 的 openai 提供方实际发三个参数：temperature=0.1、top_p=0.1、
+# max_tokens=2000（`mem0/llms/base.py::_get_common_params`，默认值见
+# `mem0/configs/llms/base.py:19-22`），不发 presence_penalty（即 API 默认 0）。
+# 走适配器后若不显式带上，就成了配置里为角色扮演选的 0.7 / 0.3，并把 top_p 整个丢掉。
+
+_EXTRACT_TEMPERATURE = 0.1
+_EXTRACT_PRESENCE_PENALTY = 0.0
+_EXTRACT_TOP_P = 0.1
+
+
+def _production_extraction_adapter(monkeypatch) -> tuple[LLMAdapter, _FakeClient]:
+    """跑 `MemoryManager.__init__` 本体接出来的那个适配器，不是测试自己装配的。
+
+    `Memory.from_config` 换成空壳：本测试只问「生产那行构造出的适配器发什么请求」，
+    qdrant 与 mem0 的其余接线在别的用例里。
+    """
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-fake")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test-fake")
+
+    import mem0
+
+    monkeypatch.setattr(mem0.Memory, "from_config", lambda cfg: type("_BareMemory", (), {})())
+
+    mm = MemoryManager({})
+    adapter = mm._mem.llm._adapter
+    fake = _FakeClient()
+    adapter._client = fake
+    return adapter, fake
+
+
+def test_extraction_uses_mem0s_sampling_params(monkeypatch):
+    adapter, fake = _production_extraction_adapter(monkeypatch)
+
+    adapter.chat("sys", [{"role": "user", "content": "hi"}])
+
+    call = fake.chat.completions.calls[0]
+    assert call["temperature"] == _EXTRACT_TEMPERATURE
+    assert call["presence_penalty"] == _EXTRACT_PRESENCE_PENALTY
+    assert call["top_p"] == _EXTRACT_TOP_P
+
+
+def test_plain_adapter_keeps_the_project_params_and_sends_no_top_p(tmp_path):
+    """连带：`top_p` 只在设了值时才进请求体 —— 其他调用方的请求体逐字不变。
+
+    配置单独写一份并显式传 `config_path`，与工作树里那份 `config.yaml` 脱钩。
+    """
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("llm:\n  temperature: 0.42\n  presence_penalty: 0.24\n", encoding="utf-8")
+    adapter = LLMAdapter(config_path=cfg, api_key="sk-test-fake", base_url=WHITELISTED)
+    fake = _FakeClient()
+    adapter._client = fake
+
+    adapter.chat("sys", [{"role": "user", "content": "hi"}])
+
+    call = fake.chat.completions.calls[0]
+    assert call["temperature"] == 0.42
+    assert call["presence_penalty"] == 0.24
+    assert "top_p" not in call
