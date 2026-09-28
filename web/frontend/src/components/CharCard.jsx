@@ -5,6 +5,7 @@ import { getAuthHeaders, fetchWithTimeout } from '../api/client'
 import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
+import TraitList from './common/TraitList'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import useCanWrite from '../hooks/useCanWrite'
 import ErrorBox from './common/ErrorBox'
@@ -769,11 +770,7 @@ function CardDetail({ card, textId, goBack }) {
         {/* Personality traits */}
         {data.personality_traits?.length > 0 && (
           <CardSection label="性格特征">
-            <div className="card-trait-list">
-              {data.personality_traits.map((t, i) => (
-                <span key={i} className="pill pill-trait"><i className="pill-trait-dot" />{t}</span>
-              ))}
-            </div>
+            <TraitList items={data.personality_traits} />
           </CardSection>
         )}
 
