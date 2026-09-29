@@ -1,7 +1,7 @@
 # 逐字核对把异体字视为同一字（2026-09-29 修订版，Shiyu 已定：先修再部署）
 
 > 放到 worktree 的 `docs/specs/quote-variant-fold.md`，以后的补充写进本文件。
-> **执行方**：C 窗口，从 origin/main 新开分支 `fix/quote-variant-fold`（`--unset-upstream`）。基线 `e0fd868d`（main 上此后只多 PR #55 一个纯文档提交）。skill 见文末。
+> **执行方**：C 窗口，从 origin/main 新开分支 `fix/quote-variant-fold`（`--unset-upstream`）。基线 `e0fd868d`，rebase 到 origin/main `ea005ad0`（其后为 PR #55–#57，与本次无文件重叠）。skill 见文末。
 > **交接核对**：放入 worktree 后先 `Test-Path docs/specs/quote-variant-fold.md` 为 True 再开工。旧版：`e0fd868d` 的 `docs/specs/` 下无同主题文件，`git grep -in "opencc\|zhconv\|quote-variant-fold"` 全仓无命中，无需标「已取代」。
 
 ## 目标
@@ -103,7 +103,7 @@ tests/perf/longbook_acceptance.py:577 verbatim_in(对话示例)  :594 normalize(
 | 非异体字不并 | 把「唬→吓」加进并字表 | **仅 T1c 红**（41 条绿） | 措辞不逐字的引文仍会被撤回 |
 | 产品与验收同口径（连带） | 只在 `card_quotes` 里映射、不改 `normalize` | **T1a、T3、T3b 红；T2、T2b 仍绿**（39 条绿） | 验收与产品判定一致。T2/T2b 拦不住这个变异（映射恰在产品侧），靠 T1a、T3、T3b 拦 |
 
-**改前状态（基线，未改代码）**：同一组测试 **T1a、T2、T2b、T3、T3b 五条红**，T1c 绿，共 5 failed / 37 passed；改后 42 passed。
+**改前状态（基线，未改代码）**：同一组测试 **T1a、T2、T2b、T3、T3b 五条红**，T1c 绿，共 5 failed / 36 passed；改后 41 passed（共 41 条）。
 **发出前已确认**：三个变异均被杀，无存活变异。**C 的落位后复跑**：在真实测试文件里按上表同样打三个变异，红源集合必须与上表一致，不一致停下报告。
 
 ## 以后加新字组的规程
