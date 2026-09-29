@@ -18,6 +18,10 @@
 # 启动：docker compose -f docker-compose.prod.yml up -d
 # ============================================================
 
+# app 镜像表达式只写一份：data-perms 与 app 用同一个镜像，不复制第二份
+# （换 tag / registry 时只改这一行）。
+x-app-image: &app-image ${APP_IMAGE_REGISTRY:-ghcr.io/verse-shiyu}/character-distill-app:${APP_IMAGE_TAG:-latest}
+
 services:
   postgres:
     image: ${PG_IMAGE_REGISTRY:-docker.io/library}/postgres:16-alpine
@@ -74,8 +78,35 @@ services:
     networks:
       - prod
 
+  # 一次性服务：把 ./data（bind mount）里属主不是 appuser(uid 1000) 的条目改回去。
+  # 为什么需要它：`./data` 是宿主机 bind mount，Dockerfile 构建期的 chown 只作用于镜像层，
+  # 对它不生效；属主一旦是 root，appuser 就在 uploads/ 里建不了文件
+  # （POST /api/text/upload → PermissionError [Errno 13]）。
+  # 命令照抄 postgres 官方 docker-entrypoint.sh：只改属主不对的条目，不做 chown -R 全量
+  # 改写，故每次部署重跑的代价只是一遍目录遍历。用 exec 形（不经 shell），免去 ! 与 {} 的
+  # shell 转义问题。
+  data-perms:
+    image: *app-image
+    # 以 root 执行 chown；app 本身仍以 appuser 运行，本服务不改变 app 的 user
+    user: root
+    volumes:
+      - ./data:/app/data
+    # 无 ENTRYPOINT，command 即替换镜像的 CMD；跑完退出，不驻留
+    command: ["find", "/app/data", "!", "-user", "1000", "-exec", "chown", "1000:1000", "{}", "+"]
+    # 一次性：退出后不重启；下次 up -d 会再跑一遍（命令幂等）
+    restart: "no"
+    mem_limit: 128m
+    mem_reservation: 64m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - prod
+
   app:
-    image: ${APP_IMAGE_REGISTRY:-ghcr.io/verse-shiyu}/character-distill-app:${APP_IMAGE_TAG:-latest}
+    image: *app-image
     # 仅本机暴露，外网只能经 nginx 进来
     ports:
       - "127.0.0.1:7860:7860"
@@ -96,6 +127,9 @@ services:
       - SENTRY_FRONTEND_DSN=${SENTRY_FRONTEND_DSN:-}
       - SENTRY_RELEASE=${APP_IMAGE_TAG:-}
     depends_on:
+      # 属主先修好再起 app，否则 appuser 往 uploads/ 写会 [Errno 13]
+      data-perms:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     # app 比数据库更适合被先杀（杀了能自动重启，数据库不能）

@@ -185,6 +185,8 @@ def _hard_consumers(model: dict, db: str) -> dict[str, str]:
 _NOT_A_DB_CONSUMER: dict[tuple[str, str], str] = {
     ("docker-compose.local.yml", "jaeger"):
         "OTel 收集器：只收 app 上报的 OTLP，无 depends_on、无连接串、无 env_file",
+    ("docker-compose.prod.yml", "data-perms"):
+        "一次性 chown 服务：只挂 ./data 改属主后退出，无 depends_on、无连接串、无 env_file",
     ("docker-compose.prod.yml", "nginx"):
         "反向代理：depends_on 的是 app（应用层），不直接连库；无连接串、无 env_file",
     ("docker-compose.prod.yml", "fail2ban"):
