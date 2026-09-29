@@ -324,3 +324,26 @@ def test_quotes_shorter_than_the_minimum_after_normalizing_are_skipped():
     assert quoted_spans(text) == []
     assert CITATION_MIN_CHARS == 4
     assert len(normalize("好")) < CITATION_MIN_CHARS
+
+
+# ── 异体字并字：把「著」「着」当同一个字（docs/specs/quote-variant-fold.md）──────
+#
+# 并字表只放有依据的异体字组（《異體字字典》A03506），写在 `normalize` 内 —— 抽取与
+# 核对、产品与验收共用同一个出口。表里没有的字组（如 唬/吓）不许并。
+
+def test_a_variant_character_counts_as_the_same_character():
+    """原文写「著」、引用写「着」—— 逐字核对视为同一个字。
+
+    真实案例：宝玉卡 `values[3]`「活著……化灰化烟」的引号被误撤回（卡上「着」、本地
+    原文「著」）。变异：删掉 `_VARIANT_FOLD` → 本条断言红。
+    """
+    assert verbatim_in("你放心，活著咱们一处", "活着咱们一处") is True
+
+
+def test_a_non_variant_character_is_not_folded():
+    """并字表只放有依据的异体字组：「唬」不在表里（本地原文那一处写的是「吓」），措辞
+    不逐字的引文仍判假 —— 否则并字从「并用字差异」滑成「并近义字」。
+
+    变异：把「唬→吓」也加进并字表 → 本条断言红。
+    """
+    assert verbatim_in("吓的不敢作声", "唬的不敢作声") is False
