@@ -9,7 +9,6 @@ import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease
 import { saveAvatar, loadCardAvatar } from '../store/db'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
-import EvidenceRail from './common/EvidenceRail'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ImageCropModal from './common/ImageCropModal'
@@ -723,7 +722,6 @@ function ChatView() {
                     msgCid={msg._cid ?? msg.id}
                     content={msg.content}
                     retracted={msg.retracted}
-                    evidence={msg.evidence}
                     saveState={msg.saveState}
                     onRetrySave={flushMessages}
                     charName={charName}
@@ -990,7 +988,7 @@ function ChatView() {
 
 // ---- Message bubble ----
 
-function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, evidence, saveState, onRetrySave, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage, msgCid }) {
+function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, saveState, onRetrySave, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage, msgCid }) {
   const isMobile = useIsMobile()
   const [showRetracted, setShowRetracted] = useState(false)
 
@@ -1061,9 +1059,6 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, evide
       >
         {/* Reply quote */}
         <ReplyQuote preview={replyToPreview} messageId={replyToId} onScrollTo={onScrollToMessage} />
-
-        {/* 检索来源：排在正文之前 —— 先看到「查了什么」，再读角色怎么答 */}
-        {!isUser && <EvidenceRail evidence={evidence} />}
 
         {!isUser && retracted ? (
           <span className="chat-bubble-text">
