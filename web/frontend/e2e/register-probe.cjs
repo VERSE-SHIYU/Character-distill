@@ -81,7 +81,7 @@ async function dumpLoginCss(page) {
 ;(async () => {
   for (const vp of [{ width: 390, height: 844 }, { width: 1280, height: 900 }]) {
     const { width: w, height: h } = vp
-    const { browser, page, errors } = await openApp({ width: w, height: h })
+    const { browser, page } = await openApp({ width: w, height: h })
     const data = await probeRegister(page)
     console.log(`\n═══ ${w}×${h} ═══\n` + JSON.stringify(data, null, 2))
     if (w === 390) {

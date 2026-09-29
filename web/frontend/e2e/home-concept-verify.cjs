@@ -1,7 +1,7 @@
 // HomePage 切片① 探针：hero 问候 + 统一区块头 + 统计条 + 无溢出 + 无报错
 // 用法: node e2e/home-concept-verify.cjs
 // mock: /api/history/list + /api/market/featured（保证最近对话/编辑推荐渲染）；其余走真实后端
-const { openApp, login, cs } = require('./helpers.cjs')
+const { openApp, login } = require('./helpers.cjs')
 
 const HISTORY_ITEM = {
   id: 's1', character_name: '沈若言', card_id: 'c1', text_id: 'txt-a', text_title: '长夜灯火',
@@ -13,7 +13,7 @@ const FEATURED_CARD = {
   card_json: JSON.stringify({ name: '沈若言', identity: '长夜书局的守夜人' }),
 }
 
-async function mount(page, w) {
+async function mount(page) {
   await page.route('**/api/history/list*', (r) => r.fulfill({ json: { items: [HISTORY_ITEM], total: 1, page: 1, page_size: 4 } }))
   await page.route('**/api/market/featured*', (r) => r.fulfill({ json: [FEATURED_CARD] }))
   await login(page)
@@ -78,7 +78,7 @@ async function probe(page) {
   for (const vp of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
     const { width: w, height: h } = vp
     const { browser, page, errors } = await openApp({ width: w, height: h })
-    await mount(page, w)
+    await mount(page)
     const d = await probe(page)
     console.log(`\n═══ ${w}×${h} ═══\n` + JSON.stringify(d, null, 2))
     const fail = []

@@ -3,12 +3,12 @@ import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
-import envGlobals from './eslint.globals.js'
+import envGlobals, { sourceFiles } from './eslint.globals.js'
 
 export default defineConfig([
   globalIgnores(['dist']),
   {
-    files: ['**/*.{js,jsx}'],
+    files: sourceFiles,
     extends: [
       js.configs.recommended,
       reactHooks.configs.flat.recommended,
