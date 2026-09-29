@@ -224,7 +224,7 @@
   - `tests/test_distill_task_api.py` 的 `_BODY`：上一句说话人「路人」不在名单里，按新规则会被丢，变成零候选；
   - `tests/test_identify_failure_channels.py` 的 `_RosterDistiller`：名单只有「角色」。
   - 改法：名单里要有上一句的说话人（enum 才有可选项），假模型按新 schema 返回 `{n, prev_speaker}`。**不要**为迁就夹具放宽校验。
-- 与蓝图一致：`docs/specs/distill-longbook-blueprint.md:445` 识别阶段的正则已把 `“` 与 `「` 都当作左引号，第 1 步把引号样式扩到 `「」` 与它同一口径。
+- 与蓝图一致：`docs/specs/distill-longbook-blueprint.md:450` 识别阶段的正则已把 `“` 与 `「` 都当作左引号，第 1 步把引号样式扩到 `「」` 与它同一口径。
 - 汇报口径：交付报告**不写本地全量的数字**，只报受影响文件与分支 CI（本线上次报了「本地全量 2134 passed」，按规则不需要）。
 - 审计结论以逐文件清单为准：未列出「看过、结论」的文件不算审过。
 
