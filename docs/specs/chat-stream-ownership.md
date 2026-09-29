@@ -162,3 +162,8 @@ $ git grep -n "selectCard(\|startChat(\|resumeSession(\|enterArchive(\|viewCard(
 | M13 返回原始 `cancel` | 组件取消走唯一入口 |
 
 M1–M6 照旧复跑。
+
+## 补充 F（2026-09-29 审计，执行方交付 `ac49b93f` / `b450dd3c` 后）
+1. **E 节的计数写错，按执行方实测更正**：在 `b38436b1` 上新测试是 **5 红**（`chatStreamFrames.test.js` 4 红 + `chatStreamSwitch.test.js`「回同一会话重载」1 红），不是「3 红」—— 我写 E 节时的基线跑在加「组件取消」用例之前；修后受影响 5 文件 **26** 条、`npm test` 全量 56 文件 **282** 条（不是 25 / 281）。
+2. **M1、M5、M6 的实测红源多于表中所列**，多出的都是 `chatStreamFrames.test.js` 里判同一行为的用例（M1、M5 多「组件取消走唯一入口」；M6 多「撤回通知的 done」「撤回通知开启语音」）。预期红源全部命中、属其子集，变异分辨力不受影响；表按实测读。
+3. 审计复核：`ac49b93f` 只改 `useAppStore.js` 与两个测试文件；B 节 1–4 逐条落位（两处 `settle` 清 `_chatStream`、两处语音按 cid、返回给组件的取消走唯一入口、`patchByCid` 收成一个）；`chatStreamFrames.test.js` 与参考实现逐字节相同；沙箱在分支上跑前端全量与 CI 口径 lint 全绿。
