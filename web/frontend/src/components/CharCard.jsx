@@ -15,7 +15,7 @@ import PageHeader from './PageHeader'
 import { User, Globe, Clipboard, Camera, Download, Lock } from './common/Icon'
 import { MessageSquare, Edit, Trash2, ArrowLeft } from './common/Icon'
 import { parseCardJson } from '../utils/card'
-import RoleSetupModal from './RoleSetupModal'
+import StartChatButton from './StartChatButton'
 import EditCardModal from './EditCardModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
@@ -623,14 +623,11 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 function CardDetail({ card, textId, goBack }) {
   const isMobile = useIsMobile()
   const canWrite = useCanWrite()
-  const startChat = useAppStore((s) => s.startChat)
-  const pushView = useAppStore((s) => s.pushView)
   const userRolesByCard = useAppStore((s) => s.userRolesByCard)
   const setUserRole = useAppStore((s) => s.setUserRole)
   const getUserRole = useAppStore((s) => s.getUserRole)
   const updateCard = useAppStore((s) => s.updateCard)
   const [showShareConfirm, setShowShareConfirm] = useState(false)
-  const [showRoleModal, setShowRoleModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [cropFile, setCropFile] = useState(null)
   const [shared, setShared] = useState(!!card.published_id)
@@ -714,18 +711,6 @@ function CardDetail({ card, textId, goBack }) {
   const handleCropCancel = useCallback(() => {
     setCropFile(null)
   }, [])
-
-  const handleRoleConfirm = (role) => {
-    setShowRoleModal(false)
-    pushView('chat')
-    startChat(card)
-  }
-
-  const handleRoleSkip = () => {
-    setShowRoleModal(false)
-    pushView('chat')
-    startChat(card)
-  }
 
   const handleSaveEdit = async (cardJson) => {
     await updateCard(card.id || card.card_id, cardJson)
@@ -933,23 +918,13 @@ function CardDetail({ card, textId, goBack }) {
             {shared ? <><Globe size={14} /> 已分享</> : <><Lock size={14} /> 分享到市场</>}
           </button>
         )}
-        <button
-          type="button"
+        <StartChatButton
+          card={card}
           className="btn-primary card-chat-btn"
-          onClick={() => setShowRoleModal(true)}
-        >
-          <MessageSquare size={14} /> 开始对话
-        </button>
+          icon={<MessageSquare size={14} />}
+          label="开始对话"
+        />
       </div>
-
-      <RoleSetupModal
-        isOpen={showRoleModal}
-        characterName={name}
-        characterId={card.id || card.card_id}
-        relationships={rels}
-        onConfirm={handleRoleConfirm}
-        onSkip={handleRoleSkip}
-      />
 
       <EditCardModal
         isOpen={showEditModal}

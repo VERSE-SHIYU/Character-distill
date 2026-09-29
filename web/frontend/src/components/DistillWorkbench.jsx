@@ -8,6 +8,7 @@ import useCanWrite from '../hooks/useCanWrite'
 import { parseCardJson } from '../utils/card'
 import Avatar from './common/Avatar'
 import ErrorBox from './common/ErrorBox'
+import StartChatButton from './StartChatButton'
 import { AlertTriangle, Check, Clock, CornerUpLeft, Download, Play, RefreshCw, Sparkles } from './common/Icon'
 
 // 5 步视觉状态机：非终态阶段由服务端 stage（内存细化）驱动，回落 status
@@ -307,11 +308,11 @@ function TaskDetail({ task, onBack }) {
     removeDistillTask(task.id)
     distillCharacter(task.textId, task.character)
   }
-  const tryChat = async () => {
+  // 工作台没进过角色页时卡片列表是空的，点「试聊当前版本」现取一次；取到后交给共用入口。
+  const resolveChatCard = async () => {
     const st = useAppStore.getState()
     if (task.textId) await st.loadCards(task.textId)
-    const card = useAppStore.getState().cards.find((c) => c.id === task.card_id)
-    if (card) st.startChat(card)
+    return useAppStore.getState().cards.find((c) => c.id === task.card_id)
   }
 
   return (
@@ -377,7 +378,7 @@ function TaskDetail({ task, onBack }) {
         {canWrite && actions.includes('retry') && task.textId && <button type="button" className="dw-cta-btn dw-cta-primary" onClick={restartTask}><RefreshCw size={15} /> 重新蒸馏</button>}
         {view?.canChat && (
           <>
-            <button type="button" className="dw-cta-btn dw-cta-primary" onClick={tryChat}><Sparkles size={15} /> 试聊当前版本</button>
+            <StartChatButton resolveCard={resolveChatCard} className="dw-cta-btn dw-cta-primary" icon={<Sparkles size={15} />} label="试聊当前版本" />
             <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={() => exportCard({ id: task.card_id, card_json: null, name: task.character })}><Download size={15} /> 导出卡片</button>
           </>
         )}
@@ -389,7 +390,6 @@ function TaskDetail({ task, onBack }) {
 
 function CardDetail({ card, onBack }) {
   const canWrite = useCanWrite()
-  const startChat = useAppStore((s) => s.startChat)
   const viewCard = useAppStore((s) => s.viewCard)
   const pushView = useAppStore((s) => s.pushView)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
@@ -438,7 +438,7 @@ function CardDetail({ card, onBack }) {
       )}
 
       <div className="dw-cta">
-        <button type="button" className="dw-cta-btn dw-cta-primary" onClick={() => startChat(card)}><Sparkles size={15} /> 试聊</button>
+        <StartChatButton card={card} className="dw-cta-btn dw-cta-primary" icon={<Sparkles size={15} />} label="试聊" />
         <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={() => exportCard(card)}><Download size={15} /> 导出</button>
         {canWrite && <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={editCard}>编辑</button>}
         {canWrite && card.text_id && <button type="button" className="dw-cta-btn dw-cta-ghost" onClick={redistill}><RefreshCw size={15} /> 重新蒸馏</button>}

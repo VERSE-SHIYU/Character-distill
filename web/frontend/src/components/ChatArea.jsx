@@ -127,8 +127,6 @@ function ChatView() {
   const isRecording = useAppStore((s) => s.isRecording)
   const recordingDuration = useAppStore((s) => s.recordingDuration)
   const resetChat = useAppStore((s) => s.resetChat)
-  const setUserRole = useAppStore((s) => s.setUserRole)
-  const setSessionUserRole = useAppStore((s) => s.setSessionUserRole)
   const sendMessageStream = useAppStore((s) => s.sendMessageStream)
   const sessionId = useAppStore((s) => s.sessionId)
   const revokeMessage = useAppStore((s) => s.revokeMessage)
@@ -632,46 +630,10 @@ function ChatView() {
       )}
       </div>
 
-      {/* User role bar */}
+      {/* User role bar —— 只读：身份在进聊天前的身份弹窗里定，进来后不再改 */}
       <div className="user-role-bar">
         <span className="user-role-label">我扮演：</span>
-        {messages.length > 1 ? (
-          <span className="user-role-locked">{userRole || '未设定'}</span>
-        ) : (
-          <>
-            <input
-              type="text"
-              className="user-role-input"
-              placeholder="输入你的角色名，如：江澄"
-              value={userRole}
-              onChange={(e) => {
-                setSessionUserRole(e.target.value)
-                setUserRole(cardId, e.target.value)
-              }}
-              onBlur={() => {
-                setSessionUserRole(userRole)
-                setUserRole(cardId, userRole)
-              }}
-            />
-            {cardData?.identity?.relationships && (
-              <div className="user-role-presets">
-                {Object.keys(cardData.identity.relationships).slice(0, 4).map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    className={`user-role-preset-btn${userRole === name ? ' active' : ''}`}
-                    onClick={() => {
-                      setSessionUserRole(name)
-                      setUserRole(cardId, name)
-                    }}
-                  >
-                    {name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </>
-        )}
+        <span className="user-role-locked">{userRole || '未设定'}</span>
       </div>
 
       {/* Source text context */}
