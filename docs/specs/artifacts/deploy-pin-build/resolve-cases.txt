@@ -1,0 +1,22 @@
+被测脚本指纹（deploy.yml 现抽，表达式替换后；占位符固定为 <SHA>）:
+step.sh sha256 = ced3cb6795420bb51b1e8754f88f4ebbb969498fb9f52b2d9474626c02a1cc1f
+
+### 用例1 真实 main、completed + success（be4ad239，run 36531737760）
+exit=0  GITHUB_OUTPUT=mode=latest|run_id=36531737760|
+---
+### 用例2 真实 main、completed + failure（f92b074f，run 36290945704）
+::error::commit f92b074f4d31143ee4e53163f767e6163cc2370a 的 build 未成功（conclusion=failure），不可部署
+exit=1  GITHUB_OUTPUT=mode=latest|
+---
+### 用例3 真实 该 commit 在 main 上无 build 记录（全 0 sha）
+::error::commit 0000000000000000000000000000000000000000 没有 main 的 build 记录；部署只认 main 上的 build，不回落旧版本
+exit=1  GITHUB_OUTPUT=mode=latest|
+---
+### 用例4 合成 status=in_progress（假 gh 注入，真实态不可复现）
+::error::commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef 的 build 尚未完成（status=in_progress），等它跑完再部署
+exit=1  GITHUB_OUTPUT=mode=latest|
+---
+### 用例5 真实 功能分支 HEAD（7a61db4b，曾有分支 run 但非 main）
+::error::commit 7a61db4b86b3dab3222c57237ce0c05a77162043 没有 main 的 build 记录；部署只认 main 上的 build，不回落旧版本
+exit=1  GITHUB_OUTPUT=mode=latest|
+---

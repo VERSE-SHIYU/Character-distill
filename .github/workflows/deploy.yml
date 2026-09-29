@@ -29,12 +29,12 @@ on:
           - sg-only
           - both
       image_sha:
-        description: 'Rollback SHA tag (leave empty = deploy latest build)'
+        description: 'Rollback SHA tag (leave empty = build of the current ref commit)'
         required: false
         default: ''
         type: string
       build_run_id:
-        description: 'Build workflow run ID (leave empty = latest successful build)'
+        description: '留空 = 部署本次 ref 对应 commit 的 build'
         required: false
         default: ''
         type: string
@@ -84,10 +84,32 @@ jobs:
             echo "mode=pinned" >> $GITHUB_OUTPUT
             echo "run_id=${{ github.event.inputs.build_run_id }}" >> $GITHUB_OUTPUT
           else
+            # 默认模式：只认**main 上本次 ref 这个 commit 自己**的 build。
+            # 取「main 上最近一次成功」会在 build 未完成/失败时静默部署上一版旧代码
+            #（旧查询只筛 status=success，拿不到就往前找，找不到才报错）。
+            # 这里一律按 commit 精确取，三种异常各自报错退出，宁可部署失败也不上错版本。
+            #
+            # --branch main 不能省：只有 main 的 build 才产出镜像 —— build.yml 的 build
+            # job 带 `if: github.ref == 'refs/heads/main'`，digest-info 产物由它上传。
+            # 少了这个过滤，在功能分支上 dispatch 会命中该分支自己那次 build run（它没有
+            # digest-info），于是错误推迟到「下载产物」那一步才炸，文案也说不到点子上。
             echo "mode=latest" >> $GITHUB_OUTPUT
-            RUN_ID=$(gh run list --workflow build.yml --branch main --status success --repo ${{ github.repository }} --limit 1 --json databaseId --jq '.[0].databaseId')
+            TARGET_SHA="${{ github.sha }}"
+            RUN_JSON=$(gh run list --workflow build.yml --branch main --commit "${TARGET_SHA}" \
+              --repo ${{ github.repository }} --limit 1 --json databaseId,status,conclusion)
+            RUN_ID=$(echo "${RUN_JSON}" | jq -r '.[0].databaseId // empty')
+            RUN_STATUS=$(echo "${RUN_JSON}" | jq -r '.[0].status // empty')
+            RUN_CONCLUSION=$(echo "${RUN_JSON}" | jq -r '.[0].conclusion // empty')
             if [ -z "${RUN_ID}" ]; then
-              echo "::error::No successful build.yml run found on main branch"
+              echo "::error::commit ${TARGET_SHA} 没有 main 的 build 记录；部署只认 main 上的 build，不回落旧版本"
+              exit 1
+            fi
+            if [ "${RUN_STATUS}" != "completed" ]; then
+              echo "::error::commit ${TARGET_SHA} 的 build 尚未完成（status=${RUN_STATUS}），等它跑完再部署"
+              exit 1
+            fi
+            if [ "${RUN_CONCLUSION}" != "success" ]; then
+              echo "::error::commit ${TARGET_SHA} 的 build 未成功（conclusion=${RUN_CONCLUSION}），不可部署"
               exit 1
             fi
             echo "run_id=${RUN_ID}" >> $GITHUB_OUTPUT
