@@ -84,19 +84,24 @@ jobs:
             echo "mode=pinned" >> $GITHUB_OUTPUT
             echo "run_id=${{ github.event.inputs.build_run_id }}" >> $GITHUB_OUTPUT
           else
-            # 默认模式：只认**本次 ref 这个 commit 自己**的 build。
+            # 默认模式：只认**main 上本次 ref 这个 commit 自己**的 build。
             # 取「main 上最近一次成功」会在 build 未完成/失败时静默部署上一版旧代码
             #（旧查询只筛 status=success，拿不到就往前找，找不到才报错）。
             # 这里一律按 commit 精确取，三种异常各自报错退出，宁可部署失败也不上错版本。
+            #
+            # --branch main 不能省：只有 main 的 build 才产出镜像 —— build.yml 的 build
+            # job 带 `if: github.ref == 'refs/heads/main'`，digest-info 产物由它上传。
+            # 少了这个过滤，在功能分支上 dispatch 会命中该分支自己那次 build run（它没有
+            # digest-info），于是错误推迟到「下载产物」那一步才炸，文案也说不到点子上。
             echo "mode=latest" >> $GITHUB_OUTPUT
             TARGET_SHA="${{ github.sha }}"
-            RUN_JSON=$(gh run list --workflow build.yml --commit "${TARGET_SHA}" \
+            RUN_JSON=$(gh run list --workflow build.yml --branch main --commit "${TARGET_SHA}" \
               --repo ${{ github.repository }} --limit 1 --json databaseId,status,conclusion)
             RUN_ID=$(echo "${RUN_JSON}" | jq -r '.[0].databaseId // empty')
             RUN_STATUS=$(echo "${RUN_JSON}" | jq -r '.[0].status // empty')
             RUN_CONCLUSION=$(echo "${RUN_JSON}" | jq -r '.[0].conclusion // empty')
             if [ -z "${RUN_ID}" ]; then
-              echo "::error::commit ${TARGET_SHA} 没有 build.yml 记录；部署只认目标 commit 自己的 build，不回落旧版本"
+              echo "::error::commit ${TARGET_SHA} 没有 main 的 build 记录；部署只认 main 上的 build，不回落旧版本"
               exit 1
             fi
             if [ "${RUN_STATUS}" != "completed" ]; then
