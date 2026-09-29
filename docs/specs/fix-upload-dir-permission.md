@@ -118,3 +118,11 @@ config.example.yaml:33,36      path: data/character_sim.db / cache_dir: data/voi
 
 - 报告开头先列本段改动的文件清单，并贴 S0-2、S0-4 的两台服务器原始输出。
 - 新发现：属于本段改动面的直接修；只有会撞车或需拍板时才停下报告，不自行记账。
+
+## 补充（审计发现当场记录在此）
+
+- 2026-09-29 执行端 S0：C5 坐标漂移，`docker-compose.prod.yml` 镜像表达式在基线 `dd9f673` 实为第 78 行（spec 写 76）。
+- 2026-09-29 执行端 S0-2：两台服务器均为 Compose `2.40.3+ds1-0ubuntu1~24.04.1`，`pre_start` 被 `config` 拒绝（`additional properties 'pre_start' not allowed`），与本版方案一致。
+- 2026-09-29 执行端 S0-4：深圳 `/app/data/uploads` 为 `root:root`，是 `find ! -user 1000` 唯一命中；新加坡全部为 appuser。深圳 19 个条目 / 3ms，新加坡 95 个 / 4ms，远低于 30s 上限。
+- 2026-09-29 执行端验证：Windows bind mount 不执行 POSIX 写权限，`*_write` 格在 Windows 本地没有分辨力，须在 Linux（WSL2 原生路径或 CI）复跑后才算数。
+- 2026-09-29 审计要求补做：用两台服务器的 Compose 2.40.3 对分支里的 `docker-compose.prod.yml` 执行 `config -q`（临时文件、不 up）；`docker-compose.local.yml` 的 `data-perms` 用 `build: .` 可能与 app 重复构建，须改为复用 app 的镜像定义。
