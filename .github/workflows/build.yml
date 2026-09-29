@@ -307,6 +307,13 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
+      # scope 必须两个 build 各设一个：`type=gha` 的 scope 缺省都是 `buildkit`，共用它时
+      # 「每个 build 会覆盖上一个 build 的缓存，只留下最后一个」—— 后跑的 nginx 覆盖 app 的，
+      # app 因此每次 CACHED=0，那两层 101MB（apt build-essential）与 174.6MB（pip install）
+      # 每次重建、哈希随之变，每 build 跨境重传约 276MB 到阿里云，撞 10 分钟超时。
+      # 依据：https://docs.docker.com/build/cache/backends/gha/#scope
+      # gha 缓存有容量上限，被淘汰时偶发一次全量重传属**预期**，由两个阿里云推送步的
+      # continue-on-error 与部署侧的 GHCR 回落兜住 —— 不为此加大超时、不改推送方式。
       - name: Build and push app image
         id: build_app
         uses: docker/build-push-action@v7
@@ -316,8 +323,8 @@ jobs:
           tags: |
             ${{ env.APP_IMAGE }}:latest
             ${{ env.APP_IMAGE }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app
 
       # 光有 continue-on-error 只接了「失败」，接不住「挂住」：挂死不算失败，这一步会一直
       # 占着直到 build job 撞 360 分钟上限，把整条 build 一起拖住（2026-09-21 实发：卡在
@@ -347,8 +354,8 @@ jobs:
           tags: |
             ${{ env.NGINX_IMAGE }}:latest
             ${{ env.NGINX_IMAGE }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=nginx
+          cache-to: type=gha,mode=max,scope=nginx
 
       # 同上一步：取值 = 最近 20 次成功 build 中本步耗时的 max×3 向上取整，数据见引入本行的 commit message。
       - name: Push nginx image to Aliyun CR
