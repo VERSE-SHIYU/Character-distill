@@ -19,6 +19,7 @@ Skip: export SKIP_PG_TESTS=1 to skip all PostgresStore tests（显式退出，�
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import os
@@ -1996,6 +1997,110 @@ class TestPgUserApiConfigMissingUser:
         """
         await store.update_user_api_config(
             f"usr_nope_{uuid.uuid4().hex[:6]}", "", "", "", "", "")
+
+
+# ── 管理端举报列表分组（web/routers/admin.py:441 / :485）─────────────────────
+
+@_pg
+class TestAdminReportGrouping:
+    """`get_comment_reports_grouped` / `get_card_reports_grouped` 的真 PG 用例。
+
+    这两个方法此前在 PG 上**没有任何用例执行过**（`test_storage_scope_lock.py` 只登记
+    名字、不执行）。PG 不像 SQLite 允许裸列，SELECT 了 GROUP BY 里没有的列是硬报错，
+    于是「一读就 500」到线上才被发现。这组用例把那条约束变成机器强制的。
+
+    数据形状是刻意的：同一评论/卡片 2 条**同理由**举报，且物理插入顺序是「较晚 → 较早」。
+    理由相同才让 `report_count` 能分辨 `COUNT(*)` 与 `COUNT(DISTINCT r.reason)`；时间
+    倒序才让 `first_reported_at` 能分辨 `MIN` 与 `MAX`（正序时两者取同一行，变异存活）。
+    """
+
+    EARLY = dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc)
+    LATE = dt.datetime(2020, 1, 2, tzinfo=dt.timezone.utc)
+
+    async def _seed(self, store) -> tuple[str, str]:
+        """造一张卡 + 一条评论，两侧各挂 2 条同理由举报。返回 (card_id, comment_id)。"""
+        owner = f"usr_{uuid.uuid4().hex[:8]}"
+        reporters = (f"usr_{uuid.uuid4().hex[:8]}", f"usr_{uuid.uuid4().hex[:8]}")
+        await store.create_user(owner, f"owner_{uuid.uuid4().hex[:8]}", "h")
+        for i, rid in enumerate(reporters):
+            await store.create_user(rid, f"reporter{i}_{uuid.uuid4().hex[:8]}", "h")
+
+        text = f"txt_{uuid.uuid4().hex[:8]}"
+        card = f"card_{uuid.uuid4().hex[:8]}"
+        await store.save_text(text, "src.txt", "body", user_id=owner)
+        await store.save_card(card, text, "Alice", json.dumps({"name": "Alice"}), user_id=owner)
+        comment = (await store.add_comment(card, owner, "alice", "mean comment"))["id"]
+
+        for rid in reporters:
+            await store.add_comment_report(comment, card, rid, "spam")
+            await store.add_card_report(card, rid, "spam")
+
+        # `add_*_report` 用 CURRENT_TIMESTAMP，两行会落在同一瞬间 —— 直接改写创建时间，
+        # 且让先插入的那条时间**更晚**。
+        async with await store._connect() as conn:
+            for table, key, col in (
+                ("card_comment_reports", "comment_id", comment),
+                ("card_reports", "card_id", card),
+            ):
+                await conn.execute(
+                    f"UPDATE {table} SET created_at = $1 WHERE {key} = $2 AND reporter_id = $3",
+                    self.LATE, col, reporters[0],
+                )
+                await conn.execute(
+                    f"UPDATE {table} SET created_at = $1 WHERE {key} = $2 AND reporter_id = $3",
+                    self.EARLY, col, reporters[1],
+                )
+        return card, comment
+
+    async def test_comment_reports_grouped_shape(self, store):
+        await self._seed(store)
+        rows = await store.get_comment_reports_grouped()
+        assert len(rows) == 1
+        assert set(rows[0]) == {
+            "comment_id", "card_id", "comment_content", "comment_author_id",
+            "comment_author_name", "report_count", "reasons", "first_reported_at",
+        }
+        assert rows[0]["comment_content"] == "mean comment"
+        assert rows[0]["comment_author_name"] == "alice"
+
+    async def test_comment_reports_grouped_counts_duplicates(self, store):
+        await self._seed(store)
+        rows = await store.get_comment_reports_grouped()
+        assert rows[0]["report_count"] == 2
+        assert rows[0]["reasons"] == "spam | spam"
+
+    async def test_comment_reports_grouped_first_reported_is_min(self, store):
+        await self._seed(store)
+        rows = await store.get_comment_reports_grouped()
+        assert rows[0]["first_reported_at"] == self.EARLY.isoformat()
+
+    async def test_comment_reports_grouped_empty(self, store):
+        assert await store.get_comment_reports_grouped() == []
+
+    async def test_card_reports_grouped_shape(self, store):
+        await self._seed(store)
+        rows = await store.get_card_reports_grouped()
+        assert len(rows) == 1
+        assert set(rows[0]) == {
+            "card_id", "card_name", "card_author_name",
+            "report_count", "reasons", "first_reported_at",
+        }
+        assert rows[0]["card_name"] == "Alice"
+        assert rows[0]["card_author_name"].startswith("owner_")
+
+    async def test_card_reports_grouped_counts_duplicates(self, store):
+        await self._seed(store)
+        rows = await store.get_card_reports_grouped()
+        assert rows[0]["report_count"] == 2
+        assert rows[0]["reasons"] == "spam | spam"
+
+    async def test_card_reports_grouped_first_reported_is_min(self, store):
+        await self._seed(store)
+        rows = await store.get_card_reports_grouped()
+        assert rows[0]["first_reported_at"] == self.EARLY.isoformat()
+
+    async def test_card_reports_grouped_empty(self, store):
+        assert await store.get_card_reports_grouped() == []
 
 
 # ── 元断言：skip 不得成为静默通道（缺陷 21 同型）──────────────────────────────
