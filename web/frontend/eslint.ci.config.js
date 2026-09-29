@@ -2,12 +2,12 @@ import js from '@eslint/js'
 import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 import { defineConfig, globalIgnores } from 'eslint/config'
-import envGlobals from './eslint.globals.js'
+import envGlobals, { sourceFiles } from './eslint.globals.js'
 
 export default defineConfig([
   globalIgnores(['dist', '**/*.test.mjs']),
   {
-    files: ['**/*.{js,jsx}'],
+    files: sourceFiles,
     extends: [js.configs.recommended],
     languageOptions: {
       globals: { ...globals.browser },
