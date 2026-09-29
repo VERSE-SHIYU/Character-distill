@@ -985,6 +985,12 @@ async def report_comment(
     reason = (body.get("reason") or "").strip()
     if not reason:
         raise HTTPException(400, "请填写举报原因")
+    # 评论不存在、或存在但不属于路径里的这张卡 → 同判 404（403/400 会让人靠状态码枚举出
+    # comment_id 是否真实存在）。归属比对通过后 card_id 必然等于 comment["card_id"]，
+    # 故下面照旧传路径里的 card_id。
+    comment = await storage.get_comment_unscoped(comment_id)
+    if not comment or comment["card_id"] != card_id:
+        raise HTTPException(404, "评论不存在")
     ok = await storage.add_comment_report(comment_id, card_id, user["id"], reason)
     if not ok:
         raise HTTPException(500, "举报提交失败")
