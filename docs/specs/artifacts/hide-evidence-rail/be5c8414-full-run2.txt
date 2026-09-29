@@ -1,0 +1,31 @@
+
+> frontend@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.9 E:/Study/ANU/ai coding/Character-distill/.claude/worktrees/hide-evidence-rail/web/frontend
+
+ ❯ src/components/__tests__/HistoryPanelFilter.test.jsx (2 tests | 1 failed) 7124ms
+     × 选某文本后请求带 text_id，选「全部文本」后不带 5545ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/components/__tests__/HistoryPanelFilter.test.jsx > HistoryPanel 筛选接线 > 选某文本后请求带 text_id，选「全部文本」后不带
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/components/__tests__/HistoryPanelFilter.test.jsx:51:3
+     49|
+     50| describe('HistoryPanel 筛选接线', () => {
+     51|   it('选某文本后请求带 text_id，选「全部文本」后不带', async () => {
+       |   ^
+     52|     mockState.texts = [{ id: 7, filename: '文本A.txt' }]
+     53|     render(<HistoryPanel />)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 53 passed (54)
+      Tests  1 failed | 276 passed (277)
+   Start at  16:02:26
+   Duration  60.26s (transform 47.99s, setup 64.23s, import 117.70s, tests 84.13s, environment 472.31s)
+

@@ -136,3 +136,24 @@ C9 逐类复用检查（在 `web/frontend` 内排除 `node_modules` 与 `global.
 5. **`ChatAreaNoEvidence.test.jsx` 不 mock `ChatBubble`**：现有 `ChatAreaMemoryError.test.jsx` 把
    `ChatBubble` mock 成 `null`，若照抄则整条消息都不渲染 → 「没有 rail」会**空过**。本测试改为
    渲染真实 `ChatBubble`（它只把 children 原样渲染），并额外断言「消息正文真的在」。
+6. **本机全量套件有既有的负载性超时 —— 与本次改动无关，另立议题（不属本 spec 范围）**。
+   实施期间步骤 3、步骤 4 的全量跑各出现一次超时，故做了对照实验。
+
+   **基线 `be5c8414`（未改动）整套跑 3 次 → 3 次全红，且每次红的文件不同：**
+
+   | 基线 run | 红文件 | 性质 |
+   |---|---|---|
+   | 1 | `GroupErrorKeepsPending`、`GroupRetrySendsPendingKeys` | `Test timed out in 5000ms` |
+   | 2 | `HistoryPanelFilter` | `Test timed out in 5000ms` |
+   | 3 | `GroupRetrySendsPendingKeys`、`HistoryPanelFilter` | `Test timed out in 5000ms` |
+
+   原始日志：`docs/specs/artifacts/hide-evidence-rail/be5c8414-full-run{1,2,3}.txt`。
+
+   **单跑对照（在各自 commit 上）**：
+   - `bebee7c7`（步骤 3）跑 `HistoryPanelFilter` × 3 → 3/3 绿（4.02s / 4.26s / 3.97s）
+   - `e726ef41`（步骤 4）跑 `AdminPanelRoleSelect` × 3 → 3/3 绿（5.97s / 7.11s / 9.06s）
+
+   **与 evidence 无关**：`rg -ni evidence` 在两个文件内零命中；二者只 import vitest / RTL / 各自的组件。
+
+   → 超时是既有的环境抖动（负载下 5000ms 默认超时不够），**非本次改动引入**，判据是「基线也红」。
+   **另立议题**：整套用例的默认超时 / prerender 成本需单独处理，不塞进本 spec。

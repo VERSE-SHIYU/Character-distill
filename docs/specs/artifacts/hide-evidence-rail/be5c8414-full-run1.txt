@@ -1,0 +1,46 @@
+
+> frontend@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.9 E:/Study/ANU/ai coding/Character-distill/.claude/worktrees/hide-evidence-rail/web/frontend
+
+ ❯ src/components/__tests__/GroupRetrySendsPendingKeys.test.jsx (1 test | 1 failed) 5064ms
+     × 点「重试」→ 请求体里是该群那条未保存消息的 key 5057ms
+ ❯ src/components/__tests__/GroupErrorKeepsPending.test.jsx (1 test | 1 failed) 5332ms
+     × 先收到 pending 的用户帧，再收到错误帧 → 仍是「未保存」，不是「发送失败」 5326ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/components/__tests__/GroupErrorKeepsPending.test.jsx > 群聊错误帧不把排队中的消息判成发送失败 > 先收到 pending 的用户帧，再收到错误帧 → 仍是「未保存」，不是「发送失败」
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/components/__tests__/GroupErrorKeepsPending.test.jsx:146:3
+    144|
+    145| describe('群聊错误帧不把排队中的消息判成发送失败', () => {
+    146|   it('先收到 pending 的用户帧，再收到错误帧 → 仍是「未保存」，不是「发送失败」', async () => {
+       |   ^
+    147|     const { container } = render(<GroupChatPage />)
+    148|     const [, , , , onError, , onEvent] = await enterAndSend(container)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/components/__tests__/GroupRetrySendsPendingKeys.test.jsx > 群聊重试时带上 pending 的 key > 点「重试」→ 请求体里是该群那条未保存消息的 key
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/components/__tests__/GroupRetrySendsPendingKeys.test.jsx:145:3
+    143|
+    144| describe('群聊重试时带上 pending 的 key', () => {
+    145|   it('点「重试」→ 请求体里是该群那条未保存消息的 key', async () => {
+       |   ^
+    146|     const { container } = render(<GroupChatPage />)
+    147|     const [, , , , , , onEvent] = await enterAndSend(container)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 52 passed (54)
+      Tests  2 failed | 275 passed (277)
+   Start at  16:01:10
+   Duration  71.23s (transform 69.30s, setup 72.47s, import 151.52s, tests 102.99s, environment 558.75s)
+
