@@ -12,7 +12,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import adapters.llm_adapter as M
-from adapters.llm_adapter import UpstreamFailure
+from adapters.llm_adapter import IncompleteResponseError, UpstreamFailure
 from core.concurrency import AdaptiveGate
 from core.distiller import IDENTIFY_JUDGE_PROMPT, DistillError, Distiller, _map_failure_message
 from core.request_context import LLM_CALLER, Caller, current_user_id
@@ -463,6 +463,8 @@ class TestAsyncChatClientParam:
 KEY_TEXT = "API Key 无效或无权限，请到设置页检查"
 BALANCE_TEXT = "账户余额不足，请充值后重试"
 RATE_TEXT = "请求过于频繁，请稍后再试"
+# 适配层给「未登记状态码 / 裸传输层故障」的通用文案（`_GENERIC_USER_ERROR`）。
+UNAVAILABLE_TEXT = "服务暂时不可用，请稍后重试"
 # 出口自己的兜底（非适配层文案）；判定阶段传的是它自己那一句。
 GENERIC_TEXT = "部分片段处理失败，请重试"
 JUDGE_FALLBACK_TEXT = "全书角色分组判定未能取得一致结论，请重试"
@@ -638,7 +640,7 @@ class TestUpstreamReasonOnScreen:
         (KEY_TEXT, KEY_TEXT),          # 401 / 403 在适配层表里共用同一条
         (BALANCE_TEXT, BALANCE_TEXT),  # 402
         (RATE_TEXT, RATE_TEXT),        # 429
-        ("", GENERIC_TEXT),            # 未登记状态码（如 500）→ user_message 为空
+        ("", UNAVAILABLE_TEXT),        # 未登记状态码（如 500）→ 适配层落通用文案
     ])
     def test_the_exit_carries_the_adapters_wording(self, user_message, expected):
         exc = UpstreamFailure("upstream failed", user_message=user_message)
@@ -652,6 +654,15 @@ class TestUpstreamReasonOnScreen:
     def test_plain_text_429_without_an_upstream_failure_is_not_limiting(self):
         """纯文本 "429"、没有 `UpstreamFailure` → 兜底，不按限流说（不再兼容纯文本）。"""
         exc = RuntimeError("rate limited (429) after 5 attempts")
+        assert _map_failure_message("蒸馏失败", [(0, exc)]) == f"蒸馏失败：{GENERIC_TEXT}"
+
+    def test_truncation_as_last_failure_falls_back(self):
+        """最后一个失败是**截断**（同一条骨架上的另一种已知失败）→ 兜底，不冒充上游原因。
+
+        出口只认边界出口给的上游 ``kind``：截断的 kind 是 ``incomplete:<finish_reason>``，
+        去掉 kind 判断就会把「回复未完成」当成上游原因上屏。
+        """
+        exc = IncompleteResponseError("length", "identify chunk 0", "半截正文")
         assert _map_failure_message("蒸馏失败", [(0, exc)]) == f"蒸馏失败：{GENERIC_TEXT}"
 
     def test_no_failure_object_falls_back(self):
