@@ -985,11 +985,13 @@ async def report_comment(
     reason = (body.get("reason") or "").strip()
     if not reason:
         raise HTTPException(400, "请填写举报原因")
-    # 评论不存在、或存在但不属于路径里的这张卡 → 同判 404（403/400 会让人靠状态码枚举出
-    # comment_id 是否真实存在）。归属比对通过后 card_id 必然等于 comment["card_id"]，
-    # 故下面照旧传路径里的 card_id。
-    comment = await storage.get_comment_unscoped(comment_id)
-    if not comment or comment["card_id"] != card_id:
+    # 可见性复用 list_comments 的同一条规则（get_comments_owned）：公开卡评论任何人可读、
+    # 私卡评论仅卡主 —— 规则只在 storage 里定义这一处，举报不另起一套。按 card_id 取**全部**
+    # 评论是有意为之：举报低频且已限速（30/minute），为「按 id 查一条」再造一条可见性路径
+    # 只会让规则分叉。取可见集合看命中，同时也天然覆盖「评论不属于该卡」。
+    # 不存在 / 看不得 / 不属于本卡 三情形同判 404，免得靠状态码枚举出 comment_id 是否真实存在。
+    visible = await storage.get_comments_owned(card_id, user["id"])
+    if not any(c["id"] == comment_id for c in visible):
         raise HTTPException(404, "评论不存在")
     ok = await storage.add_comment_report(comment_id, card_id, user["id"], reason)
     if not ok:
