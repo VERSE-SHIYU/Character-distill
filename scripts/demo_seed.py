@@ -5,8 +5,10 @@
 
   export（本地，只读）
     python scripts/demo_seed.py export --text-id <id> --cards 宝玉,刘姥姥 --out bundle.json
+    python scripts/demo_seed.py export --text-id <id> --cards 宝玉,刘姥姥 --title 红楼梦
     读原文与元数据、名单（含 characters_version）、指定几张卡的 card_json，打成一个 JSON
-    包，附条数与 sha256。
+    包，附条数与 sha256。`--title` 覆盖包里的书名（库里常是「XX 验收副本」这种名字），
+    不传就照取库里的。
 
   import（在目标节点的 app 容器内跑，默认只试运行）
     python scripts/demo_seed.py import --bundle bundle.json              # 只看将写入什么
@@ -74,8 +76,14 @@ def _card_equal(a: str, b: str) -> bool:
 
 # ── export ──────────────────────────────────────────────────────────────────
 
-async def build_bundle(storage, text_id: str, card_names: list[str]) -> dict:
-    """本地只读：把一本的原文、名单、指定几张卡打成一个包。"""
+async def build_bundle(storage, text_id: str, card_names: list[str],
+                       *, title: str | None = None) -> dict:
+    """本地只读：把一本的原文、名单、指定几张卡打成一个包。
+
+    `title` 传了就覆盖包里记的书名（库里的标题常是「XX 验收副本」这类，不该原样带到演示
+    账号里）。只改 `source.title` 这一处 —— 正文、名单、卡片一字不动，`sha256` 按覆盖后
+    的包重算，导入端照旧拿它核对完整性。
+    """
     text = await storage.get_text_unscoped(text_id)
     if not text:
         raise DemoSeedError(f"文本不存在：{text_id}")
@@ -101,6 +109,7 @@ async def build_bundle(storage, text_id: str, card_names: list[str]) -> dict:
             f"{text_id} 名下没有这些卡：{missing}（名下现有：{sorted(by_name)}）")
 
     content = text.get("content") or ""
+    bundle_title = (text.get("title") or "") if title is None else title
     bundle = {
         "schema": BUNDLE_SCHEMA,
         "identify_version": version,
@@ -108,7 +117,7 @@ async def build_bundle(storage, text_id: str, card_names: list[str]) -> dict:
             "text_id": text_id,
             "user_id": owner,
             "filename": text.get("filename") or "",
-            "title": text.get("title") or "",
+            "title": bundle_title,
             "description": text.get("description") or "",
             "text_type": text.get("text_type") or "story",
             "original_char_count": text.get("original_char_count"),
@@ -265,7 +274,8 @@ def _parse_names(raw: str) -> list[str]:
 
 
 async def _run_export(args) -> int:
-    bundle = await build_bundle(get_store(), args.text_id, _parse_names(args.cards))
+    bundle = await build_bundle(get_store(), args.text_id, _parse_names(args.cards),
+                                title=args.title)
     out = Path(args.out)
     out.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"out": str(out), "identify_version": bundle["identify_version"],
@@ -295,6 +305,8 @@ def main(argv=None) -> int:
     p_exp.add_argument("--text-id", required=True)
     p_exp.add_argument("--cards", required=True, help="逗号分隔的卡名，如 宝玉,刘姥姥")
     p_exp.add_argument("--out", default=DEFAULT_BUNDLE_NAME)
+    p_exp.add_argument("--title", default=None,
+                       help="覆盖包里的书名；不传则照取库里的")
 
     p_imp = sub.add_parser("import", help="在目标节点的 app 容器内跑；默认只试运行")
     p_imp.add_argument("--bundle", required=True)
