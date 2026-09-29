@@ -549,8 +549,8 @@ function UsersTab() {
                   </td>
                   <td>{displayName(u) || u.username}</td>
                   <td>
-                    <span className={`admin-status${u.node_region === 'peer' ? '' : ''}`} style={{ fontSize: 12 }}>
-                      {u.node_region === 'peer' ? '对端' : '本地'}
+                    <span className="admin-status" style={{ fontSize: 12 }}>
+                      {isPeerRow(u) ? '对端' : '本地'}
                     </span>
                   </td>
                   <td>
