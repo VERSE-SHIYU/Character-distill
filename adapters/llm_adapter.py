@@ -29,14 +29,41 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _status_code(exc: Exception) -> int | None:
+    """异常 → HTTP 状态码；拿不到返回 None（超时 / 连接失败 / 我们自己的 bug）。
+
+    **唯一取码处**：`_classify_retry` 的 429 判定与 `_upstream_user_message` 的上屏文案
+    共用它。原先两处各自还兜了一句 `"429" in str(exc)` 子串匹配 —— 报错文本里恰好出现
+    "429" 就会被当成限流（状态码 402 而正文含 429 的例子见
+    `tests/test_llm_adapter_retry.py::test_status_402_with_429_text_not_rate_limited`），已删。
+    """
+    code = getattr(exc, "status_code", None)
+    if isinstance(code, int) and not isinstance(code, bool):
+        return code
+    # openai.RateLimitError 在部分版本取不到 status_code，按类名兜底（原实现即有）
+    if type(exc).__name__ == "RateLimitError" and "openai" in type(exc).__module__:
+        return 429
+    return None
+
+
+# 可重试状态码。口径来自两个权威来源（一致）：
+#   * openai==3.13.0 `openai/_base_client.py:815-857` `_should_retry`：408/409/429/≥500 重试
+#   * DeepSeek 官方错误码页：400/401/402/422 先修请求，429 放慢节奏，500/503 稍等后重试
+_RETRYABLE_STATUS = frozenset({408, 409, 429})
+
+
+def _is_deterministic_failure(exc: Exception) -> bool:
+    """确定性失败 = 有状态码、且该状态码不在「可重试」集合里、且 < 500 → 重试无意义。
+
+    无状态码的异常（超时、连接失败）**不是**确定性失败，仍按可重试处理（行为不变）。
+    """
+    code = _status_code(exc)
+    return code is not None and code < 500 and code not in _RETRYABLE_STATUS
+
+
 def _classify_retry(exc: Exception) -> tuple[bool, float | None]:
     """返回 (是否为429限流, Retry-After秒数或None)。"""
-    is_429 = False
-    # openai.RateLimitError may not be importable everywhere, check by name
-    if type(exc).__name__ == "RateLimitError" and "openai" in type(exc).__module__:
-        is_429 = True
-    else:
-        is_429 = getattr(exc, "status_code", None) == 429 or "429" in str(exc)
+    is_429 = _status_code(exc) == 429
 
     retry_after = None
     if is_429:
@@ -487,15 +514,12 @@ def _upstream_user_message(exc: Exception) -> str:
     传输层失败先判：它没有 status_code，落进状态码表只会得到 ""（通用文案），而这类失败
     的处置是「重发一次」而不是「去设置页检查 key」。文案与 ``_GENERIC_USER_ERROR``（"服务
     暂时不可用…"）刻意不同，措辞更指向动作，也便于据文案分辨「有没有被认成传输层」。
-    其余识别口径与 ``_classify_retry`` 的 429 判定一致（先看 ``status_code``，其次报错文本
-    里的 429）—— 免得同一次失败在「算不算限流」和「该说什么」两处各判出一个答案。
+    状态码取自 ``_status_code``（与 ``_classify_retry`` 的 429 判定同一处定义）—— 免得同
+    一次失败在「算不算限流」和「该说什么」两处各判出一个答案。
     """
     if isinstance(exc, _TRANSPORT_ERRORS):
         return "模型服务暂时不可用，请稍后重试"
-    code = getattr(exc, "status_code", None)
-    if code is None and "429" in str(exc):
-        code = 429
-    return _UPSTREAM_USER_MESSAGES.get(code, "")
+    return _UPSTREAM_USER_MESSAGES.get(_status_code(exc), "")
 
 
 class IncompleteResponseError(RuntimeError):
