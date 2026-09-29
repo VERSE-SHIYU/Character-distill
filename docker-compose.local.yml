@@ -11,6 +11,13 @@
 # 注意：这份文件不要提交 git！
 # ============================================================
 
+# app 镜像表达式只写一份：data-perms 与 app 用同一个镜像，不复制第二份。
+# 本地现场构建，故 `build` 只挂在 app 上、data-perms 引用同一镜像名 —— 两个服务
+# 各写一份 `build: .` 会让 Compose 把同一构建上下文建出两个镜像（实测：两个 tag、
+# 两次构建）。首次冷构建时 data-perms 会对这个本地名做一次拉取尝试并失败（exit 仍为 0，
+# 随后正常构建），镜像建好后再 up 不再出现。
+x-app-image: &app-image character-distill-app:local
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -87,9 +94,9 @@ services:
   # 一次性服务：把 ./data（bind mount）里属主不是 appuser(uid 1000) 的条目改回去。
   # 与 docker-compose.prod.yml 的同一段同义；本地 ./data 一样是 bind mount，
   # 一样会被 root 属主的 uploads/ 卡住（实测 Windows 的 bind mount 上 chown 返回 0，
-  # 故不会挡住本地启动）。本地现场构建，与 app 同一个构建上下文。
+  # 故不会挡住本地启动）。与 app 复用同一镜像名（`build` 只在 app 上，见文件头锚点）。
   data-perms:
-    build: .
+    image: *app-image
     # 以 root 执行 chown；app 本身仍以 appuser 运行
     user: root
     volumes:
@@ -109,6 +116,7 @@ services:
 
   app:
     build: .
+    image: *app-image
     ports:
       - "7861:7860"
     volumes:
