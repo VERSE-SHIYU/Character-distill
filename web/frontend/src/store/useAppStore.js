@@ -1520,19 +1520,6 @@ const useAppStore = create((set, get) => {
       async (payload) => settle(payload, undefined),
       (err, payload) => settle(payload, err),
       undefined,
-      // evidence 帧先于 token 流到达（后端在首个 token 前发），此刻末条仍是本轮 char 占位。
-      // 认 type 不认字段存在性：未知 type 一律忽略（后端将来加事件不该让前端出意外）。
-      (payload) => {
-        if (payload.type !== 'evidence') return
-        if (get().sessionId !== streamSessionId) return
-        set((s) => {
-          const msgs = [...s.messages]
-          const last = msgs[msgs.length - 1]
-          if (!last || last.role !== 'char') return {}
-          msgs[msgs.length - 1] = { ...last, evidence: payload.evidence ?? null }
-          return { messages: msgs }
-        })
-      },
     )
 
     set({ _chatStreamCancel: cancel })
@@ -1686,7 +1673,6 @@ const useAppStore = create((set, get) => {
         id: m.id,
         timestamp: m.created_at,
         retracted: m.retracted || false,
-        evidence: m.evidence ?? null,
         // 打字机标记认后端那个 `reunion` 标记，不认 id：重逢问候没落库时它还没有 id。
         ...(m.reunion ? { _reunionTyping: true } : {}),
       }), m.save))
