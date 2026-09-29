@@ -316,13 +316,15 @@ class TestMarketOwnership:
 
 
 class TestReportCommentValidation:
-    """举报评论：路径里的 card_id 必须就是这条评论所属的卡。
+    """举报评论：只能举报举报人看得到的评论。
 
-    修复前只校验 reason，然后直接 `add_comment_report(comment_id, card_id, ...)`。两条
-    错路：评论不存在 → 外键失败成 500；评论存在但路径 card_id 是**另一张真实卡** → 200
-    且把错的 card_id 写进举报表（举报一旦落库就带着错的卡，管理端按卡审阅会看错）。
+    可见性复用 list_comments 的同一条规则（`get_comments_owned`）：公开卡评论任何人可读、
+    私卡评论仅卡主（卡默认 private）。修复前只校验 reason，然后直接
+    `add_comment_report(comment_id, card_id, ...)`：评论不存在 → 外键失败成 500；评论存在
+    但路径 card_id 是**另一张真实卡** → 200 且把错的 card_id 写进举报表（举报一旦落库就带着
+    错的卡，管理端按卡审阅会看错）；PR #62 的中间态又用无属主过滤的读取放行了私卡评论。
 
-    两条都用 404 收口（与同文件删除路由同码同文案），且都不得落库。
+    错路都用 404 收口（与同文件删除路由同码同文案），且都不得落库。
     """
 
     def _rows(self, store):
@@ -334,6 +336,7 @@ class TestReportCommentValidation:
 
     def test_report_comment_writes_exactly_one_row(self, store, owner):
         cid = _card(store, owner)
+        _run_async(store.update_card_visibility(cid, "public"))
         comment = _run_async(store.add_comment(cid, "third_party", "第三方", "评论内容"))
         client = self._reporter(store)
 
@@ -363,6 +366,17 @@ class TestReportCommentValidation:
         client = self._reporter(store)
 
         r = client.post(f"/api/market/{card_b}/comments/{comment['id']}/report",
+                        json={"reason": "垃圾广告"})
+        assert r.status_code == 404 and r.status_code != 403
+        assert self._rows(store) == []
+
+    def test_report_comment_on_private_card_404_writes_nothing(self, store, owner):
+        """私卡（默认）上的评论，第三方既看不到也就举报不了 → 404，且不落库。"""
+        cid = _card(store, owner)
+        comment = _run_async(store.add_comment(cid, "third_party", "第三方", "评论内容"))
+        client = self._reporter(store)
+
+        r = client.post(f"/api/market/{cid}/comments/{comment['id']}/report",
                         json={"reason": "垃圾广告"})
         assert r.status_code == 404 and r.status_code != 403
         assert self._rows(store) == []
