@@ -172,6 +172,35 @@ def test_a_catchphrase_differing_only_by_a_variant_character_is_not_reported():
     assert acc.catchphrase_misses([VARIANT_QUOTE], VARIANT_SOURCE) == []
 
 
+# ── 繁转简：原文繁体、卡上引文简体（docs/specs/quote-script-fold.md）────────────
+#
+# 验收与产品共用 `core/quotes.normalize` 这一处繁转简：卡上简体的真引文不该被报成编造
+# （否则验收会去报一个产品已经修好的行为）。
+
+TRAD_SOURCE = (
+    "黛玉道：「不曾讀，只上了一年學，些須認得幾個字。」\n"
+    "寶玉又道：「妹妹尊名是那兩個字？」\n"
+)
+TRAD_QUOTE_SIMPLIFIED = "不曾读，只上了一年学，些须认得几个字"
+
+
+def test_a_simplified_quote_of_a_traditional_source_is_not_reported():
+    """原文繁体、卡上引文简体：`quote_misses` 返回空。
+
+    变异：去掉 `t2s` → 该引文被判编造，返回非空，断言红。
+    """
+    card = {"key_memories": [f"黛玉自陈：「{TRAD_QUOTE_SIMPLIFIED}」（第三回）。"]}
+    assert acc.quote_misses(card, TRAD_SOURCE) == []
+
+
+def test_a_simplified_catchphrase_of_a_traditional_source_is_not_reported():
+    """口癖同理：卡上简体、原文繁体不该被报 miss。
+
+    变异：去掉 `t2s` → 口癖报 miss，断言红。
+    """
+    assert acc.catchphrase_misses([TRAD_QUOTE_SIMPLIFIED], TRAD_SOURCE) == []
+
+
 def test_the_card_checks_stop_the_run():
     """四条判据要真的挂在 `over_limit` 上，不是只从 `print_distill` 打出来。
 
