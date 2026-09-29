@@ -52,6 +52,9 @@ cleanup() {
     [ -f "$d/docker-compose.yml" ] || continue
     compose "$d" down -v --remove-orphans >/dev/null 2>&1 || true
   done
+  # 失败路径下钩子没跑，文件还是 root 属主，宿主用户删不掉 —— 先用容器改回本用户再删。
+  docker run --rm -u 0:0 -v "$(NATIVE "$WORK"):/w" "$VERIFY_IMAGE" \
+    sh -c "chown -R $(id -u):$(id -g) /w" >/dev/null 2>&1 || true
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -141,15 +144,21 @@ owner_of() {  # $1 = 宿主机目录
   docker run --rm -u 0:0 -v "$(NATIVE "$1"):/d" "$VERIFY_IMAGE" sh -c 'stat -c %u:%g /d'
 }
 
-# 前置状态都在宿主机侧造：Windows 上宿主机建的文件在容器里就是 0:0（实测）。
-prep_all_root() { mkdir -p "$1/data/uploads"; : > "$1/data/uploads/keep.txt"; }
+# 前置状态：结构在宿主机侧建出，属主**显式**在容器内 chown 成 0:0。
+# 不能靠「宿主机建的文件在容器里就是 0:0」—— 那只是 Windows bind mount 的实测行为；
+# Linux 上宿主机建的文件属主是宿主 uid（容器内即 1000），场景 a/b 的前置根本造不出来。
+prep_all_root() {
+  mkdir -p "$1/data/uploads"; : > "$1/data/uploads/keep.txt"
+  docker run --rm -u 0:0 -v "$(NATIVE "$1/data"):/d" "$VERIFY_IMAGE" \
+    sh -c 'chown 0:0 /d /d/uploads /d/uploads/keep.txt'
+}
 prep_mixed() {
   prep_all_root "$1"
   docker run --rm -u 0:0 -v "$(NATIVE "$1/data"):/d" "$VERIFY_IMAGE" sh -c 'chown 1000:1000 /d'
 }
 prep_all_1000() {
   prep_all_root "$1"
-  docker run --rm -u 0:0 -v "$(NATIVE "$1/data"):/d" "$VERIFY_IMAGE" sh -c 'chown 1000:1000 /d /d/uploads'
+  docker run --rm -u 0:0 -v "$(NATIVE "$1/data"):/d" "$VERIFY_IMAGE" sh -c 'chown -R 1000:1000 /d'
 }
 
 dp_started_at() {  # data-perms 容器最近一次启动时刻 —— 用来判「钩子是否重跑」
