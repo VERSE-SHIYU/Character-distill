@@ -63,17 +63,22 @@ vi.mock('../common/ImageCropModal', () => ({ default: () => null }))
 vi.mock('../common/ConfirmModal', () => ({ default: () => null }))
 
 const CARD = { id: 'card1', name: '角色甲', card_json: '{"name":"角色甲"}', text_id: 't1' }
+// 已完成的蒸馏任务（status=done → TERMINAL_VIEW.done.canChat=true，任务详情才出「试聊当前版本」）
+const DONE_TASK = {
+  id: 'task1', textId: 't1', card_id: 'card1', character: '角色甲',
+  status: 'done', done: true, progress_pct: 100,
+}
 
 // 有存档：startChat 发完 /api/history/list 就弹存档列表并返回（这正是「试聊」与
 // 「开始对话」要共用的那段）。没有存档才会去建会话，那条路是 startChat 自己的事，不在本次改动面。
-const net = ({ history = 1 } = {}) => {
+const net = ({ history = 1, byText = [CARD] } = {}) => {
   vi.mocked(fetchWithTimeout).mockImplementation((url) => {
     const u = String(url)
     const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) })
     if (u.startsWith('/api/history/list')) {
       return json(history > 0 ? { total: history, items: [{ id: 'a1', title: '旧会话' }] } : { total: 0, items: [] })
     }
-    if (u.startsWith('/api/distill/cards/by-text/')) return json([CARD])
+    if (u.startsWith('/api/distill/cards/by-text/')) return json(byText)
     if (u === '/api/text/list') return json([{ id: 't1', filename: 'a.md' }])
     return json({})
   })
@@ -108,11 +113,25 @@ const renderWorkbenchCardDetail = async () => {
   return r
 }
 
-// 身份弹窗两步：填角色名 → 确认并开始对话 → 进入对话
-const confirmIdentity = (role = '魏无羡') => {
+// 任务详情：桌面上默认选中第一个任务；store.cards 故意留空 —— 卡必须靠 loadCards 现取，
+// 否则「找不到 card_id」那条测试会因为 store 里本来就有卡而假绿。
+const renderWorkbenchTaskDetail = async () => {
+  useAppStore.setState({ distillTasks: [DONE_TASK], cards: [] })
+  const r = render(<DistillWorkbench />)
+  await screen.findByRole('button', { name: '试聊当前版本' })
+  return r
+}
+
+// 身份弹窗两步：填角色名 → 确认并开始对话 → 进入对话。
+// 「确认并开始对话」在角色名为空时是 disabled —— 名字填进去后要等重渲染把它解锁再点，
+// 否则重页面（蒸馏任务详情）里那一次点击会打在还 disabled 的按钮上、静默失效。
+const confirmIdentity = async (role = '魏无羡') => {
   fireEvent.change(document.querySelector('#role-setup-input'), { target: { value: role } })
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: '确认并开始对话' })).toBeEnabled(),
+  )
   fireEvent.click(screen.getByRole('button', { name: '确认并开始对话' }))
-  fireEvent.click(screen.getByRole('button', { name: '进入对话' }))
+  fireEvent.click(await screen.findByRole('button', { name: '进入对话' }))
 }
 
 describe('试聊 / 开始对话 共用同一个 StartChatButton', () => {
@@ -136,7 +155,7 @@ describe('试聊 / 开始对话 共用同一个 StartChatButton', () => {
     fireEvent.click(screen.getByRole('button', { name: '开始对话' }))
     expect(document.querySelector('#role-setup-input')).toBeInTheDocument()
 
-    confirmIdentity()
+    await confirmIdentity()
 
     await waitFor(() => expect(useAppStore.getState().currentView).toBe('chat'))
     expect(useAppStore.getState().archiveModalOpen).toBe(true)
@@ -149,10 +168,45 @@ describe('试聊 / 开始对话 共用同一个 StartChatButton', () => {
     fireEvent.click(screen.getByRole('button', { name: '试聊' }))
     expect(document.querySelector('#role-setup-input')).toBeInTheDocument()
 
-    confirmIdentity()
+    await confirmIdentity()
 
     await waitFor(() => expect(useAppStore.getState().currentView).toBe('chat'))
     expect(useAppStore.getState().archiveModalOpen).toBe(true)
     expect(useAppStore.getState().pendingCard?.id).toBe('card1')
+  }, SLOW)
+
+  it('TaskDetail：点「试聊当前版本」→ loadCards 现取到卡 → 身份弹窗 → 确认 → 同样的链', async () => {
+    await renderWorkbenchTaskDetail()
+    // 卡一开始不在 store 里，必须先 loadCards 才找得到
+    expect(useAppStore.getState().cards).toEqual([])
+
+    const loadCardsSpy = vi.spyOn(useAppStore.getState(), 'loadCards')
+    fireEvent.click(screen.getByRole('button', { name: '试聊当前版本' }))
+
+    await waitFor(() => expect(loadCardsSpy).toHaveBeenCalledWith('t1'))
+    // 弹窗在 loadCards 的 await 之后才开，先在 act 里把它挂载副作用跑完，
+    // 否则紧接着的 change 会被挂载时那次 setRole('') 覆盖掉。
+    await screen.findByRole('button', { name: '确认并开始对话' })
+    expect(document.querySelector('#role-setup-input')).toBeInTheDocument()
+
+    await confirmIdentity()
+
+    await waitFor(() => expect(useAppStore.getState().currentView).toBe('chat'))
+    expect(useAppStore.getState().archiveModalOpen).toBe(true)
+    // startChat 收到的是 loadCards 找出来的那张卡（不是任务里的占位）
+    expect(useAppStore.getState().pendingCard?.id).toBe('card1')
+  }, SLOW)
+
+  it('TaskDetail：card_id 在 cards 里找不到 → 不弹身份弹窗、不进聊天', async () => {
+    net({ byText: [] }) // loadCards 回来是空列表
+    await renderWorkbenchTaskDetail()
+
+    fireEvent.click(screen.getByRole('button', { name: '试聊当前版本' }))
+
+    // 等异步 resolveCard 跑完（确实发过这次取卡请求），再断言什么都没发生
+    await waitFor(() => expect(vi.mocked(fetchWithTimeout)).toHaveBeenCalledWith('/api/distill/cards/by-text/t1'))
+    expect(document.querySelector('#role-setup-input')).toBeNull()
+    expect(useAppStore.getState().currentView).not.toBe('chat')
+    expect(useAppStore.getState().archiveModalOpen).toBe(false)
   }, SLOW)
 })
