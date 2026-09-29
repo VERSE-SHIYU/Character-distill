@@ -289,10 +289,11 @@ def test_exhausted_upstream_failure_carries_user_message(code, expected, monkeyp
 def test_with_tools_400_no_retry_preserved():
     llm = _make_llm()
     resp = SimpleNamespace(status_code=400, headers={}, request=SimpleNamespace(url="http://x"))
-    # 其他 400：原样抛 BadRequestError，不重试
+    # 其他 400：确定性失败（D1/B1）→ 立即 UpstreamFailure，不重试。
+    # 旧实现是这里 `except BadRequestError: raise` 特判「不重试」—— 已并入 on_failure 的统一判定。
     fake = _SyncClient(_storm(BadRequestError("invalid request param", response=resp, body={})))
     llm._client = fake
-    with pytest.raises(BadRequestError):
+    with pytest.raises(M.UpstreamFailure):
         llm.chat_with_tools("sys", [{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
     assert fake.chat.completions.calls == 1
     # 400 + tool/function 关键词 → ToolsNotSupportedError，不重试
