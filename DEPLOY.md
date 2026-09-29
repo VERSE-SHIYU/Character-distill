@@ -175,10 +175,8 @@ chmod 600 /etc/ssl/private/privkey.pem
 ## 5. 启动
 
 ```bash
-# 5.1 初始化持久化目录权限（必做，否则 app 容器内 appuser(uid 1000) 无权写入导致崩溃重启）
-# data/ 是 bind mount，镜像内的 chown 不生效，必须在宿主机赋权给 uid 1000
-mkdir -p data/uploads data/voice_cache data/chroma_db
-sudo chown -R 1000:1000 data/
+# 5.1 目录权限：由 compose 的 data-perms 一次性服务自动处理，无需手动 chown
+#      （data/ 及子目录若不存在，会由 docker / app 自行创建）
 
 # 5.2 启动
 docker compose -f docker-compose.prod.yml up -d --build
@@ -188,10 +186,13 @@ docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs -f app
 ```
 
-> **为什么要 5.1**：app 容器以非 root 的 `appuser`(uid 1000) 运行（安全要求）。
-> `./data` 是 bind mount，容器内看到的是宿主机目录的权限。若宿主机 `data/` 归 root，
-> appuser 无法创建/写入 `uploads` 等子目录，app 会反复 `Restarting (1)`。
-> 此步骤把宿主机 data 目录归属改为 uid 1000，与容器内 appuser 对齐。
+> **为什么不再手动 chown**：app 容器以非 root 的 `appuser`(uid 1000) 运行（安全要求）。
+> `./data` 是 bind mount，容器内看到的就是宿主机目录的权限，**镜像构建期的 chown 对它不生效**。
+> 若宿主机 `data/uploads` 归 root，appuser 无权在其中建文件，上传接口报
+> `PermissionError [Errno 13]`（app 自己也会因写不进而反复 `Restarting`）。
+> 这段对齐现由 `docker-compose.prod.yml` 的 `data-perms` 一次性服务在 app 启动前完成
+> （照抄 postgres 官方 entrypoint 的写法：只改属主不对的条目，不做 `chown -R` 全量改写），
+> 两台机器同一套编排，不必各机器手工执行一次。
 > （nginx 的 `waf.log` 已在 `nginx/Dockerfile` 中 `touch` 创建，无需手动处理。）
 
 首次启动时 app 会自动执行 `storage/migrations_pg/` 下所有 `.sql` 文件建表/加列（幂等，可重复运行）。
