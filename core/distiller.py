@@ -21,7 +21,12 @@ from pydantic import ValidationError
 
 from openai import AsyncOpenAI
 
-from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_facing_error
+from adapters.llm_adapter import (
+    LLMAdapter,
+    incomplete_response_info,
+    llm_error_payload,
+    user_facing_error,
+)
 from core.card_quotes import retract_unverified
 from core.card_relationships import dedupe_relationship_targets
 from core.chat_preprocessor import ChatPreprocessor
@@ -391,6 +396,36 @@ def _map_failure_exceeds_tolerance(failed: int, total: int) -> bool:
     就是第三处。阈值与判据一并收在这里。
     """
     return failed / total > _MAP_FAILURE_RATIO
+
+
+def _map_failure_message(
+    prefix: str,
+    failures: list[tuple[int, Exception]],
+    fallback: str = "部分片段处理失败，请重试",
+) -> str:
+    """整批失败时的上屏文案 —— 识别 / 判定 / 同步 Map / 流式 Map 四处裁决的**唯一**出口。
+
+    四处原先各自拼文案，其中三处还用 ``"429" in str(exc)`` 自判限流：报错文本里偶然出现
+    "429" 就当限流（适配层已删掉同款子串匹配，见 `adapters/llm_adapter._status_code`）。
+    而真实原因早就由适配层算好，到了这里被丢掉 —— 余额不足 / key 无效都降级成
+    「部分片段处理失败」。本函数只做搬运，不再自己判断上游。
+
+    判别走适配层的边界出口 `llm_error_payload`、认它的 ``kind``，**不 import 异常类**：
+    边界锁（`tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage`）
+    禁 core/web/storage 出现 `llm_error_types()` 里的类名 —— 同族还有截断
+    （``incomplete:<finish_reason>``）与调用点拒绝（``call_refused``），只认 ``"upstream"``。
+    未登记状态码由适配层在 payload 里落通用文案（``_GENERIC_USER_ERROR``），core 不另议。
+
+    ``failures`` 由 ``_run_map_concurrent`` 按**完成先后**追加：取最后一个。账户级失败
+    （401/402/403）每片一样，取哪个都对；混合失败时取完成最晚的那个，仍是真实原因之一。
+    最后一个不是上游失败（截断 / 调用点拒绝 / 纯本地异常 / 解析失败，`llm_error_payload`
+    给 None）→ 本阶段的兜底文案，不上屏原文。
+    """
+    if failures:
+        payload = llm_error_payload(failures[-1][1])
+        if payload is not None and payload["kind"] == "upstream":
+            return f"{prefix}：{payload['error']}"
+    return f"{prefix}：{fallback}"
 
 
 _T = TypeVar("_T")
@@ -1292,13 +1327,8 @@ class Distiller:
         failed = len(failures) + parse_failed
         if failed:
             last_error = str(failures[-1][1]) if failures else "分片结果无法解析为角色数组"
-            if "429" in last_error:
-                raise DistillError(
-                    "识别失败：上游接口限流，请稍后重试",
-                    f"API 429；{failed}/{total} 个分片识别失败",
-                )
             raise DistillError(
-                "识别失败：部分片段处理失败，请重试",
+                _map_failure_message("识别失败", failures),
                 f"{failed}/{total} 个分片识别失败；最后错误：{last_error}",
             )
 
@@ -1373,7 +1403,11 @@ class Distiller:
             parsed.append(item)
         if len(parsed) < self.IDENTIFY_JUDGE_QUORUM:
             raise DistillError(
-                "识别失败：全书角色分组判定未能取得一致结论，请重试",
+                # 执行器失败带上屏文案时才说上游原因；纯「样本不一致」落本阶段自己的文案。
+                _map_failure_message(
+                    "识别失败", failures,
+                    fallback="全书角色分组判定未能取得一致结论，请重试",
+                ),
                 f"判定合法样本 {len(parsed)}/{self.IDENTIFY_JUDGE_SAMPLES} 份"
                 f"（执行器失败 {len(failures)} 次），不足 {self.IDENTIFY_JUDGE_QUORUM} 份",
             )
@@ -2146,14 +2180,8 @@ class Distiller:
         total_chunks = len(relevant)
         failed = len(map_failures)
         if _map_failure_exceeds_tolerance(failed, total_chunks):
-            err_text = str(map_failures[-1][1])
-            if "rate limited (429)" in err_text or "429" in err_text:
-                raise DistillError(
-                    "蒸馏失败：上游接口限流，请稍后重试",
-                    f"API 429；{failed}/{total_chunks} 个分片失败",
-                )
             raise DistillError(
-                "蒸馏失败：部分片段处理失败，请重试",
+                _map_failure_message("蒸馏失败", map_failures),
                 f"{failed}/{total_chunks} 个分片失败；最后错误：{map_failures[-1][1]}",
             )
         if failed > 0:
@@ -2393,16 +2421,11 @@ class Distiller:
         total_chunks = len(relevant)
         failed = len(map_failures)
         if _map_failure_exceeds_tolerance(failed, total_chunks):
-            err_text = str(map_failures[-1][1])
-            if "rate limited (429)" in err_text or "429" in err_text:
-                logger.error("Aborting stream: API 429; %s/%s chunks failed", failed, total_chunks)
-                yield {"error": "蒸馏失败：上游接口限流，请稍后重试"}
-            else:
-                logger.error(
-                    "Aborting stream: %s/%s map chunks failed; last error: %s",
-                    failed, total_chunks, map_failures[-1][1],
-                )
-                yield {"error": "蒸馏失败：部分片段处理失败，请重试"}
+            logger.error(
+                "Aborting stream: %s/%s map chunks failed; last error: %s",
+                failed, total_chunks, map_failures[-1][1],
+            )
+            yield {"error": _map_failure_message("蒸馏失败", map_failures)}
             return
         if failed > 0:
             logger.warning("%s/%s map chunks failed (within tolerance), continuing", failed, total_chunks)

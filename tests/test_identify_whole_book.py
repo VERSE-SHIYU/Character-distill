@@ -29,7 +29,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from adapters.llm_adapter import IncompleteResponseError, _extract_content
+from adapters.llm_adapter import IncompleteResponseError, UpstreamFailure, _extract_content
 from core.distiller import (
     _IDENTIFY_CACHE,
     IDENTIFY_JUDGE_PROMPT,
@@ -570,11 +570,16 @@ class TestChunkFailurePolicy:
         assert _judge_calls(llm) == []
 
     def test_429_gets_its_own_message(self):
-        """429 专用文案：限流要与「片段处理失败」分开 —— 用户该等，不是该改内容。"""
+        """429 专用文案：限流要与「片段处理失败」分开 —— 用户该等，不是该改内容。
+
+        替身走**真** `UpstreamFailure`（旧版是纯文本 `RuntimeError("API 429 rate limited")`，
+        锁的是早已删掉的子串自判）。文案沿用适配层登记表那一句，不另立措辞。
+        """
         async def async_chat(system, messages, max_tokens=None, **kwargs):
             if system == IDENTIFY_JUDGE_PROMPT:
                 return (JUDGE_NONE, dict(_USAGE))
-            raise RuntimeError("API 429 rate limited")
+            raise UpstreamFailure("rate limited (429) after 5 attempts",
+                                  user_message="请求过于频繁，请稍后再试")
 
         llm = _make_llm(async_chat=async_chat)
         d = _make_distiller(llm)
@@ -582,7 +587,7 @@ class TestChunkFailurePolicy:
         with pytest.raises(DistillError) as excinfo:
             d.identify_characters(self.CHUNKED)
 
-        assert "限流" in excinfo.value.user_message
+        assert excinfo.value.user_message == "识别失败：请求过于频繁，请稍后再试"
         assert "429" in str(excinfo.value)
 
 
