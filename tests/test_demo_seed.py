@@ -15,10 +15,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -31,6 +33,7 @@ from scripts.demo_seed import (  # noqa: E402
     _write_roster,
     build_bundle,
     bundle_sha256,
+    main as seed_main,
     run_import,
 )
 from storage.postgres_store import PostgresStore  # noqa: E402
@@ -200,3 +203,36 @@ class TestDemoSeed:
                              soft_delete_text_ids=[first["text"]["id"]])
         live = await store.get_text_owned(first["text"]["id"], target["id"])
         assert live is not None and not live["deleted_at"]
+
+    def test_export_title_flag_overrides_the_bundled_title(self, tmp_path):
+        """`--title` 覆盖包里的书名（不传则照取库里的）；指纹按覆盖后的包重算。
+
+        演示账号里那本书的库内标题是验收副本的名字，不该原样带进去 —— 但正文、
+        名单、卡片一个字都不能因此变。
+
+        同步用例：`main()` 内部自己 `asyncio.run`，从事件循环里调它会直接 RuntimeError。
+        """
+        async def _seed():
+            st = PostgresStore(os.environ["DATABASE_URL"])
+            await st._ensure_initialized()
+            try:
+                return await _seed_source(st, text="辛在院里站着。" * 20)
+            finally:
+                await st.close()          # 建、用、关都在同一个 loop 里，别让连接池跨 loop
+
+        src = asyncio.run(_seed())                 # 库里 title = "红楼梦"
+
+        def _export(out: Path, *extra: str) -> dict:
+            rc = seed_main(["export", "--text-id", src["text_id"],
+                            "--cards", ",".join(CARD_NAMES), "--out", str(out), *extra])
+            assert rc == 0
+            return json.loads(out.read_text(encoding="utf-8"))
+
+        plain = _export(tmp_path / "plain.json")
+        named = _export(tmp_path / "named.json", "--title", "石头记")
+
+        assert plain["source"]["title"] == "红楼梦"     # 不传：照旧取库里的
+        assert named["source"]["title"] == "石头记"     # 传了：以参数为准
+        assert named["sha256"] != plain["sha256"]       # 指纹随覆盖后的包重算
+        assert named["text"] == plain["text"]           # 只动书名，正文一字节没改
+        assert [c["name"] for c in named["cards"]] == list(CARD_NAMES)
