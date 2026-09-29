@@ -78,8 +78,8 @@ const BASE = 'http://localhost:5173'
     // 8. Check where we ended up
     const afterUrl = page.url()
     console.log('URL after back:', afterUrl)
-    // 页面里没有可读的 zustand 全局句柄（__ZUSTAND__ / __ZUSTAND_DEVTOOLS__ 都不存在），恒为 unknown
-    const afterView = 'unknown'
+    // 本脚本跑 Vite dev（localhost:5173），App.jsx 在 DEV 下把 store 挂到 window.__appStore
+    const afterView = await page.evaluate(() => window.__appStore.getState().currentView)
     console.log('View after back:', afterView)
 
     // Check page content

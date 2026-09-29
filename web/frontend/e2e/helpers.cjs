@@ -59,7 +59,7 @@ async function pushView(page, view) {
 async function goToView(page, view, { viaHome = false, authorUserId, delay = 80 } = {}) {
   await page.evaluate(({ v, viaHome, authorUserId, delay }) => new Promise((resolve) => {
     const st = window.__appStore.getState()
-    if (viaHome) { try { st.setView('home') } catch { /* store 尚未就绪时忽略，下面用 setTimeout 再取一次 */ } }
+    if (viaHome) { try { st.setView('home') } catch { /* setView 末尾的 localStorage.setItem 可能抛（配额/隐私模式）；视图状态已在其前 set 完成，忽略不影响导航 */ } }
     setTimeout(() => {
       const st2 = window.__appStore.getState()
       if (authorUserId) st2.setAuthorUserId(authorUserId)
