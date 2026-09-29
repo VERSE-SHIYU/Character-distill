@@ -84,6 +84,29 @@ services:
     networks:
       - prod
 
+  # 一次性服务：把 ./data（bind mount）里属主不是 appuser(uid 1000) 的条目改回去。
+  # 与 docker-compose.prod.yml 的同一段同义；本地 ./data 一样是 bind mount，
+  # 一样会被 root 属主的 uploads/ 卡住（实测 Windows 的 bind mount 上 chown 返回 0，
+  # 故不会挡住本地启动）。本地现场构建，与 app 同一个构建上下文。
+  data-perms:
+    build: .
+    # 以 root 执行 chown；app 本身仍以 appuser 运行
+    user: root
+    volumes:
+      - ./data:/app/data
+    # 无 ENTRYPOINT，command 即替换镜像的 CMD；跑完退出，不驻留
+    command: ["find", "/app/data", "!", "-user", "1000", "-exec", "chown", "1000:1000", "{}", "+"]
+    restart: "no"
+    mem_limit: 128m
+    mem_reservation: 64m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - prod
+
   app:
     build: .
     ports:
@@ -105,6 +128,9 @@ services:
       - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-}
       - MEM0_LLM_BASE_URL=${MEM0_LLM_BASE_URL:-}
     depends_on:
+      # 属主先修好再起 app，否则 appuser 往 uploads/ 写会 [Errno 13]
+      data-perms:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     oom_score_adj: 300
