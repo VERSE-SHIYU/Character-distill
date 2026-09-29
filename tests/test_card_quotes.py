@@ -139,3 +139,42 @@ def test_the_source_is_normalized_exactly_once(monkeypatch):
     assert retracted == [], "45 条都是真引文，不该有撤回"
     assert seen, "计数探针没接上任何一处 normalize 绑定"
     assert sum(1 for s in seen if s == SOURCE) == 1
+
+
+# ── 异体字：原文「著」、卡上「着」（docs/specs/quote-variant-fold.md）──────────
+#
+# 并字写在 `core.quotes.normalize` 内，产品这一侧取的就是它 —— 不是异体字的差异不该算
+# 差异（真实案例：宝玉卡 `values[3]` 的引号曾被误撤回；口癖则是整条被删）。
+
+VARIANT_SOURCE = "宝玉道：“活著，咱们一处活著，不活著，咱们一处化灰化烟。”\n"
+VARIANT_QUOTE = "活着，咱们一处活着，不活着，咱们一处化灰化烟"
+
+
+def test_a_quote_differing_only_by_a_variant_character_keeps_its_quotes():
+    """卡上引文只有「著/着」之差：引号保留，撤回清单为空。
+
+    变异：删掉并字表 → 引号被去掉，两条断言红。
+    """
+    card = CharacterCard.model_validate({
+        "name": "宝玉",
+        "values": [f"生死相托的痴情：对紫鹃说“{VARIANT_QUOTE}”（第五十七回）。"],
+    })
+    new, retracted = retract_unverified(card, VARIANT_SOURCE)
+
+    assert retracted == []
+    assert new.values == card.values, "引号保留"
+
+
+def test_a_catchphrase_differing_only_by_a_variant_character_is_kept():
+    """口癖同理：卡上「着」、原文「著」不该整条删。
+
+    变异：删掉并字表 → 口癖被删、撤回清单非空，两条断言红。
+    """
+    card = CharacterCard.model_validate({
+        "name": "宝玉",
+        "speaking_style": {"catchphrases": [VARIANT_QUOTE]},
+    })
+    new, retracted = retract_unverified(card, VARIANT_SOURCE)
+
+    assert retracted == []
+    assert new.speaking_style.catchphrases == [VARIANT_QUOTE]
