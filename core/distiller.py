@@ -23,8 +23,8 @@ from openai import AsyncOpenAI
 
 from adapters.llm_adapter import (
     LLMAdapter,
-    UpstreamFailure,
     incomplete_response_info,
+    llm_error_payload,
     user_facing_error,
 )
 from core.card_quotes import retract_unverified
@@ -407,18 +407,24 @@ def _map_failure_message(
 
     四处原先各自拼文案，其中三处还用 ``"429" in str(exc)`` 自判限流：报错文本里偶然出现
     "429" 就当限流（适配层已删掉同款子串匹配，见 `adapters/llm_adapter._status_code`）。
-    而真实原因早就由适配层算好放在 ``UpstreamFailure.user_message`` 里，到了这里被丢掉 ——
-    余额不足 / key 无效都降级成「部分片段处理失败」。本函数只做搬运，不再自己判断上游。
+    而真实原因早就由适配层算好，到了这里被丢掉 —— 余额不足 / key 无效都降级成
+    「部分片段处理失败」。本函数只做搬运，不再自己判断上游。
+
+    判别走适配层的边界出口 `llm_error_payload`、认它的 ``kind``，**不 import 异常类**：
+    边界锁（`tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage`）
+    禁 core/web/storage 出现 `llm_error_types()` 里的类名 —— 同族还有截断
+    （``incomplete:<finish_reason>``）与调用点拒绝（``call_refused``），只认 ``"upstream"``。
+    未登记状态码由适配层在 payload 里落通用文案（``_GENERIC_USER_ERROR``），core 不另议。
 
     ``failures`` 由 ``_run_map_concurrent`` 按**完成先后**追加：取最后一个。账户级失败
     （401/402/403）每片一样，取哪个都对；混合失败时取完成最晚的那个，仍是真实原因之一。
-    最后一个不是 ``UpstreamFailure``、或 ``user_message`` 为空（未登记状态码，如 500）→
-    兜底文案，不上屏上游原文。
+    最后一个不是上游失败（截断 / 调用点拒绝 / 纯本地异常 / 解析失败，`llm_error_payload`
+    给 None）→ 本阶段的兜底文案，不上屏原文。
     """
     if failures:
-        last = failures[-1][1]
-        if isinstance(last, UpstreamFailure) and last.user_message:
-            return f"{prefix}：{last.user_message}"
+        payload = llm_error_payload(failures[-1][1])
+        if payload is not None and payload["kind"] == "upstream":
+            return f"{prefix}：{payload['error']}"
     return f"{prefix}：{fallback}"
 
 
