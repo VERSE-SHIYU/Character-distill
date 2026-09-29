@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# 本机演练用的 jq 替身：只实现被测脚本用到的那一类表达式 `.[0].<key> // empty`。
+# 语义对齐真 jq：null / false 都落成「不打印」，于是调用方 $(...) 拿到空串。
+# 为什么需要它：开发机（Windows）没有 jq，而 runner 上有，且 deploy.yml 早就依赖它
+#（解析 digest-info.json 那几行）。这里只替换解释器，不动被测脚本正文。
+filt=""
+for a in "$@"; do
+  case "$a" in
+    -*) ;;
+    *) [ -z "$filt" ] && filt="$a" ;;
+  esac
+done
+exec python -c '
+import json, re, sys
+filt = sys.argv[1]
+m = re.match(r"^\.\[0\]\.([A-Za-z_]\w*)\s*//\s*empty$", filt)
+if not m:
+    sys.stderr.write("shim jq: unsupported filter: %s\n" % filt)
+    sys.exit(3)
+data = json.load(sys.stdin)
+v = None
+if isinstance(data, list) and data:
+    v = data[0].get(m.group(1))
+if v is None or v is False:
+    pass
+else:
+    print(v)
+' "$filt"
