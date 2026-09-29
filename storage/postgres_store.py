@@ -3948,7 +3948,7 @@ class PostgresStore(StorageBase):
                        LEFT JOIN cards c ON c.id = r.card_id
                        LEFT JOIN users u ON u.id = c.user_id
                        WHERE r.status = $1
-                       GROUP BY r.card_id
+                       GROUP BY r.card_id, c.id, u.id
                        ORDER BY report_count DESC, first_reported_at ASC""",
                     status,
                 )
