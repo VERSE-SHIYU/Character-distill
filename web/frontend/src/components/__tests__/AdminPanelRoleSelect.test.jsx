@@ -9,7 +9,8 @@ import { adminAPI } from '../../api/client'
 
 const ROW = { id: 'u2', username: 'bob', role: 'user', node_region: 'local', is_disabled: false }
 const SELF = { id: 'admin1', username: 'me', role: 'admin', node_region: 'local', is_disabled: false }
-const PEER = { id: 'p1', username: 'peer', role: 'user', node_region: 'peer', is_disabled: false }
+// 对端下发的是隐私政策第 (5) 条的字段白名单，不含 role —— 夹具照实不写 role。
+const PEER = { id: 'p1', username: 'peer', node_region: 'peer', is_disabled: false }
 
 const { mockState } = vi.hoisted(() => ({
   mockState: { authUser: { id: 'admin1', role: 'admin' }, popView: () => {} },
@@ -73,7 +74,7 @@ describe('AdminPanel 角色下拉接线', () => {
     expect(rows[0].querySelector('[role="combobox"]')).toBeNull()
     expect(rows[0].textContent).toContain('管理员')
     expect(rows[2].querySelector('[role="combobox"]')).toBeNull()
-    expect(rows[2].textContent).toContain('用户')
+    expect(rows[2].textContent).toContain('—')
     expect(rows[1].querySelector('[role="combobox"]')).not.toBeNull()
   })
 })

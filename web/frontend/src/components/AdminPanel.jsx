@@ -42,6 +42,13 @@ const ROLE_KEYS = ['admin', 'user', 'guest']
 const roleLabel = (role) => ROLE_LABELS[role] || role || ''
 const ROLE_OPTIONS = ROLE_KEYS.map((r) => ({ value: r, label: roleLabel(r) }))
 
+// 「是不是对端行」全页只此一处判据：本页写接口（禁用/启用、角色、重置密码、邮箱、删除、
+// 批量删除）都只按本库 user_id 打，而 offerPass 在两端整号复制、id 相同 —— 放开对端行
+// 等于操作本节点同 id 的账号。行的身份是 (节点, id)：同 id 可以同时出现在两端，
+// 所以 React key 不能是裸 id。
+const isPeerRow = (u) => u.node_region === 'peer'
+const rowKey = (u) => `${isPeerRow(u) ? 'peer' : 'local'}:${u.id}`
+
 /* ── SVG 圆环进度条 ── */
 function CircularProgress({ percent, size = 72, strokeWidth = 5 }) {
   const r = (size - strokeWidth) / 2
@@ -442,7 +449,6 @@ function UsersTab() {
   }
 
   const toggleSelectAll = () => {
-    const selectable = users.filter((u) => u.id !== authUser?.id && !isAdmin(u))
     if (selectable.length === 0) return
     const allSelected = selectable.every((u) => selectedUsers.has(u.id))
     if (allSelected) {
@@ -474,6 +480,10 @@ function UsersTab() {
     if (!iso) return '-'
     return formatChatTime(iso)
   }
+
+  // 能被勾选 / 被批量删除的只有本节点、非自己、非管理员的账号。对端行不在内 —— 批量删除
+  // 也是本节点接口，勾上它删的是同 id 的本地账号。全选与表头勾选状态共用这一份。
+  const selectable = users.filter((u) => u.id !== authUser?.id && !isAdmin(u) && !isPeerRow(u))
 
   return (
     <div className="admin-card">
@@ -514,8 +524,7 @@ function UsersTab() {
               <tr>
                 <th style={{ width: 36 }}>
                   <input type="checkbox" onChange={toggleSelectAll}
-                    checked={users.filter((u) => u.id !== authUser?.id && !isAdmin(u)).length > 0 &&
-                      users.filter((u) => u.id !== authUser?.id && !isAdmin(u)).every((u) => selectedUsers.has(u.id))}
+                    checked={selectable.length > 0 && selectable.every((u) => selectedUsers.has(u.id))}
                   />
                 </th>
                 <th style={{ minWidth: 120 }}>用户名</th>
@@ -530,9 +539,9 @@ function UsersTab() {
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id}>
+                <tr key={rowKey(u)}>
                   <td>
-                    {u.id === authUser?.id ? null : isAdmin(u) ? (
+                    {u.id === authUser?.id || isPeerRow(u) ? null : isAdmin(u) ? (
                       <input type="checkbox" disabled title="不能选择管理员账号" style={{ opacity: 0.35, cursor: 'not-allowed' }} />
                     ) : (
                       <input type="checkbox" checked={selectedUsers.has(u.id)} onChange={() => toggleSelectUser(u.id)} />
@@ -540,13 +549,16 @@ function UsersTab() {
                   </td>
                   <td>{displayName(u) || u.username}</td>
                   <td>
-                    <span className={`admin-status${u.node_region === 'peer' ? '' : ''}`} style={{ fontSize: 12 }}>
-                      {u.node_region === 'peer' ? '对端' : '本地'}
+                    <span className="admin-status" style={{ fontSize: 12 }}>
+                      {isPeerRow(u) ? '对端' : '本地'}
                     </span>
                   </td>
                   <td>
-                    {/* 对端节点的用户不归本节点管：PATCH 打过去只会 404，故只展示不提供修改。 */}
-                    {u.id === authUser?.id || u.node_region === 'peer' ? (
+                    {/* 对端行不归本节点管（PATCH 打过去只会 404），且对端下发的那份不含 role
+                        （隐私政策第 (5) 条白名单）—— 显示「—」，不拿空值去猜。 */}
+                    {isPeerRow(u) ? (
+                      <span>—</span>
+                    ) : u.id === authUser?.id ? (
                       <span>{roleLabel(u.role)}</span>
                     ) : (
                       <Select
@@ -572,41 +584,44 @@ function UsersTab() {
                   <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{u.last_active_at ? formatChatTime(u.last_active_at) : '-'}</td>
                   <td>{fmtDate(u.created_at)}</td>
                   <td className="admin-actions-cell">
-                    <button
-                      className="btn-ghost-sm"
-                      onClick={() => { setDetailTarget(u); setDetailLoading(true); setDetailError(''); adminAPI.getUserDetail(u.id).then(d => { setDetailData(d); setDetailLoading(false) }).catch(e => { setDetailError(e.message); setDetailLoading(false) }) }}
-                    >
-                      详情
-                    </button>
-                    <button
-                      className="btn-ghost-sm"
-                      onClick={() => toggleDisable(u)}
-                      disabled={u.node_region === 'peer'}
-                    >
-                      {u.is_disabled ? '启用' : '禁用'}
-                    </button>
-                    {u.node_region !== 'peer' && (
-                      <button
-                        className="btn-ghost-sm"
-                        onClick={() => { setEmailTarget(u); setNewEmail(''); setEmailError(''); setEmailOk('') }}
-                      >
-                        邮箱
-                      </button>
-                    )}
-                    <button
-                      className="btn-ghost-sm"
-                      onClick={() => { setResetTarget(u); setNewPassword(''); setResetError(''); setResetOk('') }}
-                    >
-                      重置密码
-                    </button>
-                    {u.id !== authUser?.id && (
-                      <button
-                        className="btn-ghost-danger btn-sm"
-                        onClick={() => { setDeleteTarget(u); setConfirmName(''); setDeleteError('') }}
-                        title="删除用户"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                    {isPeerRow(u) ? (
+                      <span>请在对端节点操作</span>
+                    ) : (
+                      <>
+                        <button
+                          className="btn-ghost-sm"
+                          onClick={() => { setDetailTarget(u); setDetailLoading(true); setDetailError(''); adminAPI.getUserDetail(u.id).then(d => { setDetailData(d); setDetailLoading(false) }).catch(e => { setDetailError(e.message); setDetailLoading(false) }) }}
+                        >
+                          详情
+                        </button>
+                        <button
+                          className="btn-ghost-sm"
+                          onClick={() => toggleDisable(u)}
+                        >
+                          {u.is_disabled ? '启用' : '禁用'}
+                        </button>
+                        <button
+                          className="btn-ghost-sm"
+                          onClick={() => { setEmailTarget(u); setNewEmail(''); setEmailError(''); setEmailOk('') }}
+                        >
+                          邮箱
+                        </button>
+                        <button
+                          className="btn-ghost-sm"
+                          onClick={() => { setResetTarget(u); setNewPassword(''); setResetError(''); setResetOk('') }}
+                        >
+                          重置密码
+                        </button>
+                        {u.id !== authUser?.id && (
+                          <button
+                            className="btn-ghost-danger btn-sm"
+                            onClick={() => { setDeleteTarget(u); setConfirmName(''); setDeleteError('') }}
+                            title="删除用户"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </>
                     )}
                   </td>
                 </tr>
