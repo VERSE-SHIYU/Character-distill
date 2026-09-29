@@ -15,6 +15,7 @@
 """
 import ast
 import asyncio
+import logging
 import pathlib
 import time
 from types import SimpleNamespace
@@ -28,6 +29,7 @@ from openai import Timeout as _OpenAITimeout
 
 import adapters.llm_adapter as M
 from adapters.llm_adapter import LLMAdapter, ToolsNotSupportedError, user_facing_error
+from core.concurrency import AdaptiveGate
 
 
 class _Msg:
@@ -502,6 +504,153 @@ def test_chat_stream_still_times_out_on_silence(fake_sse, monkeypatch):
         f"聊天流的静默必须仍是读超时（不然放宽就没作用在长输出这一侧）："
         f"{[type(e).__name__ for e in cause_chain(ei.value)]}"
     )
+
+
+# ── spec docs/specs/fix-upstream-nonretryable.md：确定性失败不重试 + 日志按 key 来源 ──
+#
+# 判定口径来自 openai==3.13.0 `openai/_base_client.py::_should_retry`（408/409/429/≥500
+# 才重试）与 DeepSeek 官方错误码页（400/401/402/422 先修请求，429 放慢节奏，500/503
+# 稍后重试）—— 两个权威来源一致。五条通道（chat / async_chat / _stream / with_tools
+# 决策 / with_tools 生成）共用 `_RetryBudget.on_failure` 这一个汇合点，B1 落在那里。
+
+
+def _status_error_text(code: int, text: str) -> Exception:
+    """带 `status_code` 的假异常，报错正文由调用方给 —— 用来验「子串匹配已删」。"""
+    return type("_StatusError", (RuntimeError,), {"status_code": code})(text)
+
+
+def _patch_no_async_sleep(monkeypatch) -> list:
+    """把 `adapters.llm_adapter` 里的 `asyncio.sleep` 换成本地记账（async 那条路不真等）。"""
+    slept: list = []
+
+    async def _fake(_s):
+        slept.append(_s)
+
+    monkeypatch.setattr(M, "asyncio", SimpleNamespace(sleep=_fake))
+    return slept
+
+
+def _drive_channel(channel: str, llm: LLMAdapter):
+    """五条通道各按自己的公开入口驱动一次（全部走 `_RetryBudget.on_failure`）。"""
+    msgs = [{"role": "user", "content": "hi"}]
+    if channel == "chat":
+        return llm.chat("sys", msgs)
+    if channel == "async_chat":
+        return asyncio.run(llm.async_chat("sys", msgs))
+    if channel == "stream":
+        return list(llm.chat_stream("sys", msgs))
+    if channel == "with_tools_decision":
+        return llm.chat_with_tools("sys", msgs, tools=[{"type": "function"}])
+    if channel == "with_tools_gen":
+        # 跳过 `_strict_client()` 的真 OpenAI 构造（本文件 autouse 把 OpenAI 换成了假构造）
+        llm._beta_client = llm._client
+        return llm.select_by_schema(
+            "sys", msgs, {"name": "pick", "parameters": {"type": "object", "properties": {}}})
+    raise AssertionError(f"unknown channel {channel}")
+
+
+_CHANNELS = ["chat", "async_chat", "stream", "with_tools_decision", "with_tools_gen"]
+
+
+@pytest.mark.parametrize("channel", _CHANNELS)
+def test_deterministic_status_no_retry(channel, monkeypatch):
+    """402 等确定性失败（D1/B1）：五条通道都只发 1 次请求、0 次退避，立即 UpstreamFailure。
+
+    变异：把判定改回「一律重试」→ 本条红（calls 变 3 或 2）。
+    """
+    clock = _FakeClock()
+    monkeypatch.setattr(M, "time", SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep))
+    slept = _patch_no_async_sleep(monkeypatch)
+    llm = _make_llm()
+    fake = (_AsyncClient(_storm(_status_error(402))) if channel == "async_chat"
+            else _SyncClient(_storm(_status_error(402))))
+    llm._client = fake
+    llm._async_client = fake
+
+    with pytest.raises(M.UpstreamFailure) as ei:
+        _drive_channel(channel, llm)
+
+    assert fake.chat.completions.calls == 1, f"{channel}：确定性失败被重试了"
+    assert clock.slept == [], f"{channel}：确定性失败不该同步退避"
+    assert slept == [], f"{channel}：确定性失败不该异步退避"
+    assert "rate limited (429)" not in str(ei.value), f"{channel}：402 被误判成限流"
+    assert user_facing_error(ei.value) == "账户余额不足，请充值后重试"
+
+
+def test_deterministic_log_level_by_key_source(caplog):
+    """B6/D2：用户自带 key 的确定性失败记 warning（不进运维告警），全局 key 仍是 error。
+
+    变异：两级对调 → 本条红。模板共用（同一条 `%s` 占位串），GlitchTip 才能同模板归并。
+    """
+    for is_user_key, expected in ((True, logging.WARNING), (False, logging.ERROR)):
+        llm = LLMAdapter(api_key="sk-test-fake", is_user_key=is_user_key)
+        llm._client = _SyncClient(_storm(_status_error(402)))
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(M.UpstreamFailure):
+                llm.chat("sys", [{"role": "user", "content": "hi"}])
+        levels = [r.levelno for r in caplog.records if "attempts failed" in r.getMessage()]
+        assert levels == [expected], (
+            f"is_user_key={is_user_key}：期望 "
+            f"{logging.getLevelName(expected)}，实得 {[logging.getLevelName(x) for x in levels]}")
+
+
+def test_status_402_with_429_text_not_rate_limited(monkeypatch):
+    """状态码 402 而正文含 "429" → 不当限流、闸不下调。
+
+    变异：恢复 `"429" in str(exc)` 子串匹配 → 本条红（闸被下调 / 判成 rate limited）。
+    """
+    exc = _status_error_text(402, "balance exhausted (upstream said 429)")
+    assert M._classify_retry(exc) == (False, None), "正文里的 429 不该触发限流判定"
+    assert M._is_deterministic_failure(exc) is True
+
+    slept = _patch_no_async_sleep(monkeypatch)
+    llm = _make_llm()
+    fake = _AsyncClient(_storm(exc))
+    llm._async_client = fake
+    gate, results = _run_gated(llm, cap=20, n=20)
+
+    assert all(isinstance(r, M.UpstreamFailure) for r in results)
+    assert fake.chat.completions.calls == 20
+    assert slept == []
+    assert gate.ceiling == 20, "402 正文含 429 却触发了闸下调 —— 子串匹配又回来了"
+    assert all("rate limited (429)" not in str(r) for r in results)
+
+
+def _run_gated(llm: LLMAdapter, cap: int, n: int) -> tuple[AdaptiveGate, list]:
+    """*n* 路并发走 `async_chat(gate=…)`，返回 (闸, 结果列表)；闸建在 loop 内。"""
+    async def _run():
+        gate = AdaptiveGate(cap)
+        results = await asyncio.gather(*[
+            llm.async_chat("sys", [{"role": "user", "content": "hi"}], gate=gate)
+            for _ in range(n)], return_exceptions=True)
+        return gate, list(results)
+    return asyncio.run(_run())
+
+
+def test_async_chat_402_batch_no_retry_ratio(monkeypatch):
+    """60 路并发 + 闸，假上游全回 402 → 上游恰被调 60 次、0 次 sleep、闸上限不变。
+
+    复刻线上比例（60 路并发 / 242 片）：现状每片 3 次请求 + 退避白等；改后每片 1 次、
+    0 退避。变异：B1 之后仍调 `gate.on_rate_limited` → 闸上限掉下 60，本条红。
+    """
+    slept = _patch_no_async_sleep(monkeypatch)
+    llm = _make_llm()
+    fake = _AsyncClient(_storm(_status_error(402)))
+    llm._async_client = fake
+    gate, results = _run_gated(llm, cap=60, n=60)
+
+    assert all(isinstance(r, M.UpstreamFailure) for r in results)
+    assert fake.chat.completions.calls == 60, "确定性失败不该有第二次尝试（3×242 → 726 次）"
+    assert slept == [], "确定性失败不该退避"
+    assert gate.ceiling == 60, "402 不是限流，不该下调闸"
+
+    # 对照：同一结构下真 429 风暴仍触发闸下调（B7 只对确定性失败生效）
+    llm2 = _make_llm()
+    llm2._async_client = _AsyncClient(_storm(_RateLimitError429("0")))
+    gate2, results2 = _run_gated(llm2, cap=20, n=20)
+    assert all(isinstance(r, RuntimeError) for r in results2)
+    assert gate2.ceiling < 20, "真 429 必须仍下调闸 —— 否则 B7 把闸关掉了"
 
 
 def test_long_output_widens_read_timeout_only():
