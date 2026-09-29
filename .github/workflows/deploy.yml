@@ -29,12 +29,12 @@ on:
           - sg-only
           - both
       image_sha:
-        description: 'Rollback SHA tag (leave empty = deploy latest build)'
+        description: 'Rollback SHA tag (leave empty = build of the current ref commit)'
         required: false
         default: ''
         type: string
       build_run_id:
-        description: 'Build workflow run ID (leave empty = latest successful build)'
+        description: '留空 = 部署本次 ref 对应 commit 的 build'
         required: false
         default: ''
         type: string
