@@ -2,8 +2,9 @@
 # Deploy — 仅 workflow_dispatch：解析 digest → 灰度部署 SZ/SG
 #
 # 绝不包含 build 逻辑。镜像由 build.yml（push 触发）构建。
-# digest 从最近的 build.yml 成功运行的 artifact 获取，
-# 确保两节点拉到完全相同的 sha256 镜像。
+# 默认模式下 digest 取自「本次 ref 这个 commit 在 main 上自己的 build.yml 运行」的 artifact。
+# 该 build 不存在 / 未完成 / 未成功时直接报错退出，不回落旧版本。
+# 两节点拉到完全相同的 sha256 镜像。
 #
 # 回滚：填 image_sha（已有 tag），绕过 digest 直接按 tag 拉取。
 # 显式 pin：填 build_run_id，锁定到某次 CI 构建的 digest。
