@@ -126,3 +126,5 @@ config.example.yaml:33,36      path: data/character_sim.db / cache_dir: data/voi
 - 2026-09-29 执行端 S0-4：深圳 `/app/data/uploads` 为 `root:root`，是 `find ! -user 1000` 唯一命中；新加坡全部为 appuser。深圳 19 个条目 / 3ms，新加坡 95 个 / 4ms，远低于 30s 上限。
 - 2026-09-29 执行端验证：Windows bind mount 不执行 POSIX 写权限，`*_write` 格在 Windows 本地没有分辨力，须在 Linux（WSL2 原生路径或 CI）复跑后才算数。
 - 2026-09-29 审计要求补做：用两台服务器的 Compose 2.40.3 对分支里的 `docker-compose.prod.yml` 执行 `config -q`（临时文件、不 up）；`docker-compose.local.yml` 的 `data-perms` 用 `build: .` 可能与 app 重复构建，须改为复用 app 的镜像定义。
+- 2026-09-29 审计（分支 `8b0b23fe`，6 个文件逐个看过）通过。部署路径核对：`deploy.yml` 只 pull app 镜像，`data-perms` 经同一锚点复用它，不产生额外拉取；回滚路径的 `up -d` 会让 `data-perms` 幂等重跑。
+- 2026-09-29 审计发现（不改，记录）：`docs/credentials-rotation.md` 的 `up -d --no-deps app` 会跳过 `data-perms`。属主修复是持久的，已部署过的机器无影响；只有在**全新机器**上第一次就用 `--no-deps` 起 app 时才会漏跑，新机器按 `DEPLOY.md` 第 5 步走即可。
