@@ -176,3 +176,114 @@ $ grep -n -E "failures\[|map_failures\[|failures\)|len\((map_)?failures\)" core/
 
 - 2026-09-29 第 1 版自审：漏了判定阶段（`:1340`/`:1373`）这第 4 个调用点——当时只按 "429" 子串扫，没按「`_run_map_with_client` 的全部调用者」扫。第 2 版改为按调用者全量扫描（见②）。
 - 2026-09-29 预跑中发现：变异脚本若不清 `__pycache__`，同尺寸改动（如调换两个同长单词）会被过期字节码掩盖，出现假绿 / 假红。执行端复跑变异时每次都要清。
+
+### 2026-09-29 执行端 CI 红：C6 结论有误、C7 漏扫 `tests/`（均已修，改为走边界出口）
+
+PR #64 分支 CI 两条红，都在本 spec 声明的改动面内，根因是 spec 自身写错。
+
+**C6「加 `UpstreamFailure` 不产生新的层间依赖」—— 错。** 仓内早有一条边界锁
+`tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage`：AST 扫
+core/web/storage 源码，凡出现 `llm_error_types()`（`adapters/llm_adapter.py:591`，元组为
+`(IncompleteResponseError, LLMCallRefused, UpstreamFailure)`）里的**类名**（`ImportFrom` 别名 /
+`ast.Name` / `ast.Attribute`）即红。CI 原文：
+
+```
+assert ['core/distiller.py:24: UpstreamFailure', 'core/distiller.py:420: UpstreamFailure'] == []
+```
+
+改法（不开白名单、不新增适配层 API、不用 `getattr` 鸭子类型）：走适配层**已有**的边界出口
+`adapters/llm_adapter.py:564 llm_error_payload` —— 它把 `UpstreamFailure` 翻成
+`{"code":"upstream","error": user_message or _GENERIC_USER_ERROR,"kind":"upstream"}`，说明里
+已写明「供 core/web 用、**无需 import 异常类**」，`web/routers/chat.py:45`、`auth.py:725` 已在用。
+出口改为：
+
+```python
+payload = llm_error_payload(failures[-1][1])
+if payload is not None and payload["kind"] == "upstream":
+    return f"{prefix}：{payload['error']}"
+```
+
+**裁定（未登记状态码）**：`user_message` 为空（未登记状态码如 500、裸传输层故障）时，由适配层在
+payload 里落 `_GENERIC_USER_ERROR`（`adapters/llm_adapter.py:601`「服务暂时不可用，请稍后重试」），
+统一上屏这一句 —— core 不再自己兜底，也不另立措辞。**这是「服务暂时不可用」唯一上屏的场合**：它是
+适配层给上游失败用的通用文案，与出口自己的阶段兜底（「部分片段处理失败，请重试」）不是同一句。
+
+**同族失败的副作用（白拿）**：`kind` 只有 `"upstream"` 才算上游原因；`incomplete:<finish_reason>`
+（截断）与 `call_refused`（调用点拒绝）自动落本阶段兜底，不另设分支。原先「最后一个失败不是
+`UpstreamFailure`」的判别，由 `llm_error_payload` 给 `None` 覆盖。
+
+**C7 漏了第 4 个文件。** C7 是手写清单；②的全量扫描那一行是 `grep … | grep -v "^./tests/"`，
+**明确把 `tests/` 排除了**，于是漏了
+`tests/test_identify_whole_book.py::TestChunkFailurePolicy::test_429_gets_its_own_message`
+（替身是纯文本 `RuntimeError("API 429 rate limited")`，锁的正是要删掉的子串自判）。CI 原文：
+
+```
+AssertionError: assert '限流' in '识别失败：部分片段处理失败，请重试'
+```
+
+已按同一口径改写：替身改抛真 `UpstreamFailure("rate limited (429) after 5 attempts",
+user_message="请求过于频繁，请稍后再试")`，断言改为 `user_message == "识别失败：请求过于频繁，请稍后再试"`，
+`str()` 仍带 429 原文（ops_detail 侧口径不变）。
+
+### 执行端全量扫描原始输出（分支头 `e8860665`，已排除 `__pycache__`）
+
+```
+$ grep -rn '"429" in\|429" in \|rate limited (429)" in' core web storage
+core/distiller.py:408:    （docstring 里提到旧写法，非代码）
+$ grep -n "_map_failure_message(" core/distiller.py
+401: def   1331: 识别   1407: 判定   2184: 同步 Map   2428: 流式 Map
+$ grep -rn "UpstreamFailure" core web storage
+core/distiller.py:26（import）、:420（isinstance）、:410/:415（docstring）  ← C6 违约，已删
+$ grep -rln "上游接口限流\|部分片段处理失败\|API 429 rate limited" tests
+tests/test_distiller_routing.py / tests/test_identify_whole_book.py（锁旧行为，已改）
+tests/test_domain_exception_exit.py / tests/test_identify_failure_channels.py /
+tests/test_error_user_facing.py（直接构造 DistillError 的通道测试，不经过被改代码，不改）
+```
+
+### 对账（变异）—— 执行端在最终状态实跑：基线 20 passed，8 行逐行单独施加、各自还原，零存活
+
+每个变异只施加一次、跑完即还原；每次先清 `__pycache__`（同尺寸改动会命中过期字节码）。
+空 `SURVIVORS: none`。
+
+| 变异 | 必须红的用例 | 实跑 |
+|---|---|---|
+| 去掉 `kind` 判断 | `test_truncation_as_last_failure_falls_back` | KILLED（1 红） |
+| 改用 `user_facing_error(failures[-1][1])` | `test_plain_text_429_without_an_upstream_failure_is_not_limiting`、`test_truncation_as_last_failure_falls_back` | KILLED（2 红） |
+| 取 `failures[0]` | `test_mixed_failures_take_the_last` | KILLED（1 红） |
+| 加回 `UpstreamFailure` import | `test_no_exception_class_leaks_into_core_web_storage` | KILLED（1 红） |
+| `:1331` 识别调用点写死兜底 | `test_identify_402_shows_balance`、`test_429_gets_its_own_message` | KILLED（2 红） |
+| `:1407` 判定调用点写死兜底 | `test_judge_402_shows_balance` | KILLED（1 红） |
+| `:2184` 同步 Map 调用点写死兜底 | `test_sync_429_bail`、`test_sync_402_bail_shows_balance` | KILLED（2 红） |
+| `:2428` 流式 Map 调用点写死兜底 | `test_stream_429_bail`、`test_stream_402_bail_shows_balance` | KILLED（2 红） |
+
+失败原文（每个变异实际红的用例，与上表逐行一致，无多余红）：
+
+```
+M1_drop_kind_check: KILLED
+    FAILED test_truncation_as_last_failure_falls_back
+M2_use_user_facing_error: KILLED
+    FAILED test_plain_text_429_without_an_upstream_failure_is_not_limiting
+    FAILED test_truncation_as_last_failure_falls_back
+M3_take_first: KILLED
+    FAILED test_mixed_failures_take_the_last
+M4_reimport_class: KILLED
+    FAILED test_no_exception_class_leaks_into_core_web_storage
+M5_identify_hardcoded: KILLED
+    FAILED test_identify_402_shows_balance
+    FAILED test_429_gets_its_own_message
+M6_judge_hardcoded: KILLED
+    FAILED test_judge_402_shows_balance
+M7_sync_hardcoded: KILLED
+    FAILED test_sync_429_bail
+    FAILED test_sync_402_bail_shows_balance
+M8_stream_hardcoded: KILLED
+    FAILED test_stream_429_bail
+    FAILED test_stream_402_bail_shows_balance
+SURVIVORS: none
+```
+
+判据：零存活即合并门槛达成；任一存活即不合并。全部命中、无多余红，说明每条判据都有分辨力且互不重叠。
+
+**经验（写给下一条线）**：②那份「全量扫描」用了 `grep -v "^./tests/"`，把 `tests/` 整个排掉了 ——
+于是「链条上还有谁锁着旧行为」这一问只覆盖了生产代码。全量扫描若要支撑「改动面之外无人锁旧行为」
+这类结论，必须连 `tests/` 一起扫（或明确声明「测试侧未扫」，由 C7 之类的手写清单兜底并标注其来源）。
