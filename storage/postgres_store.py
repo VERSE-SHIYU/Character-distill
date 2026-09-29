@@ -3865,7 +3865,9 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    """SELECT r.comment_id, r.card_id,
+                    # 按 card_comments 主键分组：PG 允许 PK 推出同表其余列（comments 自带
+                    # card_id，不取 r.card_id —— 调用方传入的那份可能与评论自身不等）。
+                    """SELECT c.id AS comment_id, c.card_id,
                               c.content AS comment_content,
                               c.user_id AS comment_author_id,
                               c.username AS comment_author_name,
@@ -3875,7 +3877,7 @@ class PostgresStore(StorageBase):
                        FROM card_comment_reports r
                        JOIN card_comments c ON c.id = r.comment_id
                        WHERE r.status = $1
-                       GROUP BY r.comment_id, c.content, c.user_id, c.username
+                       GROUP BY c.id
                        ORDER BY report_count DESC, first_reported_at ASC""",
                     status,
                 )
