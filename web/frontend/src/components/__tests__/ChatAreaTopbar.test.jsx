@@ -148,3 +148,24 @@ describe('ChatArea 顶栏 dm-header 结构', () => {
     expect(container.querySelectorAll('.dm-peer-tag').length).toBe(0)
   })
 })
+
+// 身份在进聊天前的身份弹窗里就定了，进来后不再改：角色条是只读文本。
+describe('ChatArea 角色条只读', () => {
+  it('「我扮演」没有 input，也没有预设按钮', () => {
+    mutate({ sessionUserRole: '' })
+    const { container } = render(<ChatArea />)
+    const bar = container.querySelector('.user-role-bar')
+    expect(bar).toBeInTheDocument()
+    expect(bar.querySelector('input')).toBeNull()
+    expect(bar.querySelector('.user-role-presets')).toBeNull()
+    expect(bar.querySelector('.user-role-locked')).toHaveTextContent('未设定')
+  })
+
+  it('有身份时只读显示该身份', () => {
+    mutate({ sessionUserRole: '魏无羡' })
+    const { container } = render(<ChatArea />)
+    const bar = container.querySelector('.user-role-bar')
+    expect(bar.querySelector('input')).toBeNull()
+    expect(bar.querySelector('.user-role-locked')).toHaveTextContent('魏无羡')
+  })
+})
