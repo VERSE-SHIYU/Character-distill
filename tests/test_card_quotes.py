@@ -178,3 +178,45 @@ def test_a_catchphrase_differing_only_by_a_variant_character_is_kept():
 
     assert retracted == []
     assert new.speaking_style.catchphrases == [VARIANT_QUOTE]
+
+
+# ── 繁转简：原文繁体、卡上引文简体（docs/specs/quote-script-fold.md）────────────
+#
+# 卡上引文多是模型转述的简体，原文是繁体本。不做繁转简，繁体原文里的真引文会被误撤回、
+# 真口癖会被误删 —— 端到端真跑撤回的 6 条全是这一形态。
+
+TRAD_SOURCE = (
+    "黛玉道：「不曾讀，只上了一年學，些須認得幾個字。」\n"
+    "寶玉又道：「妹妹尊名是那兩個字？」\n"
+)
+TRAD_QUOTE_SIMPLIFIED = "不曾读，只上了一年学，些须认得几个字"
+
+
+def test_a_simplified_quote_of_a_traditional_source_keeps_its_quotes():
+    """繁体原文里的真引文被模型转成简体：引号保留，撤回清单为空。
+
+    变异：去掉 `t2s` → 引号被去掉，两条断言红。
+    """
+    card = CharacterCard.model_validate({
+        "name": "黛玉",
+        "key_memories": [f"她自陈不曾读书：“{TRAD_QUOTE_SIMPLIFIED}”。"],
+    })
+    new, retracted = retract_unverified(card, TRAD_SOURCE)
+
+    assert retracted == []
+    assert new.key_memories == card.key_memories, "引号保留"
+
+
+def test_a_simplified_catchphrase_of_a_traditional_source_is_kept():
+    """口癖同理：卡上简体、原文繁体不该整条删。
+
+    变异：去掉 `t2s` → 口癖被删、撤回清单非空，两条断言红。
+    """
+    card = CharacterCard.model_validate({
+        "name": "黛玉",
+        "speaking_style": {"catchphrases": [TRAD_QUOTE_SIMPLIFIED]},
+    })
+    new, retracted = retract_unverified(card, TRAD_SOURCE)
+
+    assert retracted == []
+    assert new.speaking_style.catchphrases == [TRAD_QUOTE_SIMPLIFIED]

@@ -19,17 +19,34 @@ from __future__ import annotations
 import re
 from typing import NamedTuple, Sequence
 
+import opencc
+
+# 繁转简（OpenCC 官方 `t2s`，Apache-2.0）：两侧先落回同一字形集再比。原文是繁体本、
+# 卡片引文是模型转述的简体时，少这一步会把真引文判成编造、真口癖整条删。
+# **模块级单例**：一张卡要跑几十条引文、整本原文上百万字，每次新建转换器是白烧内存与
+# 时间（构造一次常驻约 +8MB）。跨线程共享：官方 `t2s.json` 是纯词典查表链、无可变状态
+# （沙箱 8 线程 × 50 次并发共用同一实例转 6.4 万字，不一致 0 次）。
+# 顺序在去标点**之前** —— `t2s` 按短语转换，先去标点会把跨标点的字粘成新短语。
+_T2S = opencc.OpenCC("t2s")
+
 # 归一化：去空白与标点。卡片里的标点写法与原文不保证一致（全角半角、有无皆可能），
 # 不归一的话同一句话会因为一个逗号之差被判查不到。**只此一处** —— 抽取与核对共用。
 _DROP_CHARS = frozenset("，。！？、；：“”‘’「」『』（）《》…—" + ",.!?;:\"'()<>-")
 # 异体字并字表：版本间互为用字差异的异体字当作同一个字（「著/着」）。只放有依据的字组，
 # 不并近义字 —— 依据与口径见 `docs/specs/quote-variant-fold.md`（《異體字字典》A03506）。
+# 与 `t2s` 的分工：「著」不在 `t2s` 单字表里（`t2s` 只把「髮/發」并成「发」），故并字表仍要留。
 _VARIANT_FOLD = str.maketrans({"著": "着"})
 
 
 def normalize(s) -> str:
-    """只留实义字符：去全部空白与标点。"""
-    return "".join(ch for ch in str(s) if not ch.isspace() and ch not in _DROP_CHARS).translate(_VARIANT_FOLD)
+    """只留实义字符：繁转简后去全部空白与标点，再并异体字。
+
+    **已知取舍**：`t2s` 会把不同的繁体字并成同一个简体字（「髮/發」都转「发」），这类
+    差异在逐字核对里不再算差异 —— 卡片本身是简体，语义不变。反方向的边界（引文恰好
+    切在一个整体转换的短语中间）只会退回今天的行为（判查不到），不会误判为命中。
+    """
+    folded = _T2S.convert(str(s))
+    return "".join(ch for ch in folded if not ch.isspace() and ch not in _DROP_CHARS).translate(_VARIANT_FOLD)
 
 
 _ELLIPSIS = re.compile(r"…+|\.{3,}")

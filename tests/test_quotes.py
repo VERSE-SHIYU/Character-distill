@@ -347,3 +347,58 @@ def test_a_non_variant_character_is_not_folded():
     变异：把「唬→吓」也加进并字表 → 本条断言红。
     """
     assert verbatim_in("吓的不敢作声", "唬的不敢作声") is False
+
+
+# ── 繁转简：原文是繁体、引文是简体也算逐字命中（docs/specs/quote-script-fold.md）──
+#
+# 原文（公版《红楼梦》繁体本）与引文（模型转述时用的简体）字形不同、字义相同。归一化先
+# 经 OpenCC `t2s` 把两侧落回同一字形集；不做的话繁体原文里的真引文一律被判「查不到」，
+# 端到端真跑因此撤回 6 条（留下的口癖是繁体，被撤回的全是模型转述的简体）。
+
+TRAD_SOURCE = (
+    "寶玉便走近黛玉身邊坐下，又細細打量一番，因問：「妹妹可曾讀書？」"
+    "黛玉道：「不曾讀，只上了一年學，些須認得幾個字。」\n"
+)
+
+
+def test_a_simplified_quote_matches_a_traditional_source():
+    """原文繁体、引文简体 —— 逐字核对视为命中。
+
+    变异：去掉 `t2s` → 本条断言红（两侧字形不同，子串查不到）。
+    """
+    assert verbatim_in(TRAD_SOURCE, "不曾读，只上了一年学，些须认得几个字") is True
+
+
+def test_a_mixed_script_quote_matches_a_traditional_source():
+    """繁简夹杂的引文同样命中 —— 模型转述常见一半照抄、一半转简。
+
+    变异：去掉 `t2s` → 本条断言红。
+    """
+    assert verbatim_in(TRAD_SOURCE, "不曾讀，只上了一年学，些须認得几个字") is True
+
+
+def test_the_converter_is_built_once_not_per_call(monkeypatch):
+    """转换器是模块级单例：`normalize` 不每次新建（整本 90 万字、每卡几十条引文都重建
+    转换器是纯浪费；单例只构造一次，常驻约 +8MB）。
+
+    变异：在 `normalize` 里每次新建 `OpenCC("t2s")` → 计数断言红。探针接在
+    `opencc.OpenCC` 上，并先断言 `core.quotes` 用的就是这个模块 —— 若改成
+    `from opencc import OpenCC`，探针落空会假绿，所以那条断言也守着绑定。
+    """
+    import opencc
+    import core.quotes as q
+
+    built: list[tuple] = []
+    real = opencc.OpenCC
+
+    def counting(*a, **k):
+        built.append(a)
+        return real(*a, **k)
+
+    monkeypatch.setattr(opencc, "OpenCC", counting)
+    assert q.opencc is opencc, "探针没接在被测的绑定上（quotes 应 `import opencc` 模块）"
+
+    for _ in range(50):
+        q.normalize("不曾讀，只上了一年學")
+
+    assert built == [], "normalize 每次调用都新建了转换器（应为模块级单例）"

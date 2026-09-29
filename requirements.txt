@@ -186,6 +186,8 @@ openai==3.13.0
     # via
     #   -r requirements.in
     #   mem0ai
+opencc==1.4.2
+    # via -r requirements.in
 opentelemetry-api==1.41.1
     # via
     #   -r requirements.in
