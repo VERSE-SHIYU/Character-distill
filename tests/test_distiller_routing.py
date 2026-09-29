@@ -4,6 +4,7 @@ import asyncio
 import json
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
@@ -11,8 +12,9 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import adapters.llm_adapter as M
+from adapters.llm_adapter import UpstreamFailure
 from core.concurrency import AdaptiveGate
-from core.distiller import DistillError, Distiller
+from core.distiller import IDENTIFY_JUDGE_PROMPT, DistillError, Distiller, _map_failure_message
 from core.request_context import LLM_CALLER, Caller, current_user_id
 from core.schema import FORMAT_GROUPS
 
@@ -455,50 +457,91 @@ class TestAsyncChatClientParam:
         assert default_client.chat.completions.create.await_count == 1
 
 
+# 上游文案的权威来源 = `adapters/llm_adapter._UPSTREAM_USER_MESSAGES`（401/403 共用
+# 同一条）。按本仓惯例**手抄字面量**，不从源码 import —— import 就自证自明，变异杀不掉
+# （同 `test_identify_failure_channels` 的 EMPTY_ROSTER_TEXT / PARSE_FAIL_TEXT 口径）。
+KEY_TEXT = "API Key 无效或无权限，请到设置页检查"
+BALANCE_TEXT = "账户余额不足，请充值后重试"
+RATE_TEXT = "请求过于频繁，请稍后再试"
+# 出口自己的兜底（非适配层文案）；判定阶段传的是它自己那一句。
+GENERIC_TEXT = "部分片段处理失败，请重试"
+JUDGE_FALLBACK_TEXT = "全书角色分组判定未能取得一致结论，请重试"
+
+
+def _map_distiller(mock_llm) -> Distiller:
+    """Map 阶段失败用例共用的蒸馏器：真实形状的 async client + 强制走分片。
+
+    真实的 `LLMAdapter._make_async_client()` 返回 AsyncOpenAI，它的 close() 是**协程**；
+    裸 MagicMock 的属性是同步方法，`await client.close()` 会 TypeError。桩要和真实接口
+    一致，否则用例考的是 mock 的瑕疵、不是被考的路径。
+    """
+    async def _close() -> None:
+        return None
+
+    client = MagicMock()
+    client.close = _close
+    mock_llm._make_async_client = MagicMock(return_value=client)
+
+    d = Distiller(llm=mock_llm, config_path=None)
+    d._longctx_threshold = 0  # Force Map-Reduce chunked path
+    d._chunk_size = 3000
+    return d
+
+
+def _upstream_failing_async(exc: Exception, fail_after: int = 1):
+    """async_chat 替身：前 `fail_after` 次成功，之后每次都抛 `exc`。"""
+    call_count = [0]
+
+    async def fake(system, messages, max_tokens=None, **kwargs):
+        call_count[0] += 1
+        if call_count[0] > fail_after:
+            raise exc
+        return ("分析结果", {"prompt_tokens": 10, "completion_tokens": 5})
+
+    return fake
+
+
+def _identify_body() -> str:
+    """多分片正文：三段各自超过 chunk_size，各带 uuid 避开识别缓存（按文本指纹缓存）。"""
+    tag = uuid.uuid4().hex
+    return "\n\n".join("角色甲道：" + "话" * 400 + tag for _ in range(3))
+
+
+def _identify_ok_judge_async(judge_reply):
+    """逐片识别回合法名单；判定样本回 `judge_reply`（异常对象即抛出，字符串即原样返回）。
+
+    识别与判定共用 `_run_map_with_client` 同一条骨架，靠系统提示词分流。
+    """
+    async def fake(system, messages, max_tokens=None, **kwargs):
+        if system == IDENTIFY_JUDGE_PROMPT:
+            if isinstance(judge_reply, Exception):
+                raise judge_reply
+            return (judge_reply, {"prompt_tokens": 1, "completion_tokens": 1})
+        return (json.dumps([{"name": "角色"}], ensure_ascii=False),
+                {"prompt_tokens": 1, "completion_tokens": 1})
+
+    return fake
+
+
 class TestMapPhaseFailureHandling:
     """>50% Map chunk failures → early bail with clear error message."""
 
     # ── helpers ──────────────────────────────────────────────────────────
 
     def _make_429_failing_async(self, fail_after: int = 1):
-        """Return async_chat that succeeds for first `fail_after` calls, then raises 429."""
-        call_count = [0]
-
-        async def fake(system, messages, max_tokens=None, **kwargs):
-            call_count[0] += 1
-            if call_count[0] > fail_after:
-                raise RuntimeError("rate limited (429) after 5 attempts: req-abc123")
-            return ("分析结果", {"prompt_tokens": 10, "completion_tokens": 5})
-
-        return fake
+        """限流重试耗尽 —— 真 `UpstreamFailure`，文案由适配层登记表给（不再用纯文本 "429"）。"""
+        return _upstream_failing_async(
+            UpstreamFailure("rate limited (429) after 5 attempts: req-abc123",
+                            user_message=RATE_TEXT),
+            fail_after,
+        )
 
     def _make_generic_failing_async(self, fail_after: int = 1):
-        """Return async_chat that succeeds first, then raises generic error."""
-        call_count = [0]
-
-        async def fake(system, messages, max_tokens=None, **kwargs):
-            call_count[0] += 1
-            if call_count[0] > fail_after:
-                raise RuntimeError("connection timeout")
-            return ("分析结果", {"prompt_tokens": 10, "completion_tokens": 5})
-
-        return fake
+        """非上游的本地异常（超时等）—— 出口据「不是 UpstreamFailure」落兜底。"""
+        return _upstream_failing_async(RuntimeError("connection timeout"), fail_after)
 
     def _make_distiller(self, mock_llm) -> Distiller:
-        # 真实的 `LLMAdapter._make_async_client()` 返回 AsyncOpenAI，它的 close() 是**协程**；
-        # 裸 MagicMock 的属性是同步方法，`await client.close()` 会 TypeError。桩要和真实接口
-        # 一致，否则用例考的是 mock 的瑕疵、不是被考的路径。
-        async def _close() -> None:
-            return None
-
-        client = MagicMock()
-        client.close = _close
-        mock_llm._make_async_client = MagicMock(return_value=client)
-
-        d = Distiller(llm=mock_llm, config_path=None)
-        d._longctx_threshold = 0  # Force Map-Reduce chunked path
-        d._chunk_size = 3000
-        return d
+        return _map_distiller(mock_llm)
 
     # With chunk_size=3000, "AB" * 5000 = 10000 chars → 4 chunks (range(0,10000,3000))
 
@@ -508,7 +551,7 @@ class TestMapPhaseFailureHandling:
         """>50% fail with 429 → DistillError；上屏说限流，运维口径（429 / 分片数）只进日志。
 
         缺陷 17：这两条断言的方向是相反的——上屏**不能**有 429 / 分片，``str()`` **必须**有，
-        否则就是把「分了口径」做成了「删了信息」。
+        否则就是把「分了口径」做成了「删了信息」。文案本身只在适配层定义一处。
         """
         mock_llm = MagicMock()
         mock_llm.last_usage = None
@@ -519,7 +562,7 @@ class TestMapPhaseFailureHandling:
         with pytest.raises(DistillError) as excinfo:
             d.distill_incremental("AB" * 5000, "AB")
 
-        assert "限流" in excinfo.value.user_message
+        assert excinfo.value.user_message == f"蒸馏失败：{RATE_TEXT}"
         assert "429" not in excinfo.value.user_message
         assert "个分片" not in excinfo.value.user_message
         assert "429" in str(excinfo.value)
@@ -554,7 +597,7 @@ class TestMapPhaseFailureHandling:
 
         errors = [r for r in results if isinstance(r, dict) and "error" in r]
         assert len(errors) == 1
-        assert "限流" in errors[0]["error"]
+        assert errors[0]["error"] == f"蒸馏失败：{RATE_TEXT}"
         assert "429" not in errors[0]["error"]
         assert "个分片" not in errors[0]["error"]
 
@@ -576,6 +619,130 @@ class TestMapPhaseFailureHandling:
         assert "个分片" not in errors[0]["error"]
         assert "重试" in errors[0]["error"]
 
+
+class TestUpstreamReasonOnScreen:
+    """整批失败时上屏**上游真实原因** —— 出口纯函数 + 四条通道。
+
+    缺陷形态：识别 / 判定 / 同步 Map / 流式 Map 四处各自拼上屏文案，其中三处用
+    ``"429" in str(exc)`` 自判限流（报错文本里偶然出现 "429" 就当限流），判定阶段更是
+    完全不看失败原因。真实原因早由适配层算好放在 ``UpstreamFailure.user_message`` 里，
+    到了 core 被丢掉 —— 余额不足 / key 无效一律降级成「部分片段处理失败」。
+
+    期望文案按本仓惯例**手抄字面量**（出处见文件上方那几个常量），断言一律用 ``==``：
+    运维口径（分片数 / 报错原文 / request_id）一个字都不许上屏。
+    """
+
+    # ── 出口纯函数（`_map_failure_message`）───────────────────────────────
+
+    @pytest.mark.parametrize("user_message,expected", [
+        (KEY_TEXT, KEY_TEXT),          # 401 / 403 在适配层表里共用同一条
+        (BALANCE_TEXT, BALANCE_TEXT),  # 402
+        (RATE_TEXT, RATE_TEXT),        # 429
+        ("", GENERIC_TEXT),            # 未登记状态码（如 500）→ user_message 为空
+    ])
+    def test_the_exit_carries_the_adapters_wording(self, user_message, expected):
+        exc = UpstreamFailure("upstream failed", user_message=user_message)
+        assert _map_failure_message("蒸馏失败", [(0, exc)]) == f"蒸馏失败：{expected}"
+
+    def test_status_code_only_no_text_matching(self):
+        """报错原文里出现 "429" 不改判 —— 402 仍是余额不足（旧实现按子串自判）。"""
+        exc = UpstreamFailure("rate limited (429): req-abc123", user_message=BALANCE_TEXT)
+        assert _map_failure_message("蒸馏失败", [(0, exc)]) == f"蒸馏失败：{BALANCE_TEXT}"
+
+    def test_plain_text_429_without_an_upstream_failure_is_not_limiting(self):
+        """纯文本 "429"、没有 `UpstreamFailure` → 兜底，不按限流说（不再兼容纯文本）。"""
+        exc = RuntimeError("rate limited (429) after 5 attempts")
+        assert _map_failure_message("蒸馏失败", [(0, exc)]) == f"蒸馏失败：{GENERIC_TEXT}"
+
+    def test_no_failure_object_falls_back(self):
+        """零个失败对象（识别阶段只有解析失败）→ 兜底。"""
+        assert _map_failure_message("识别失败", []) == f"识别失败：{GENERIC_TEXT}"
+
+    def test_mixed_failures_take_the_last(self):
+        """混合失败取**完成最晚**那片 —— 锁「取最后一个」这一规则本身。"""
+        seq = [(0, UpstreamFailure("429", user_message=RATE_TEXT)),
+               (1, UpstreamFailure("402", user_message=BALANCE_TEXT))]
+        assert _map_failure_message("蒸馏失败", seq) == f"蒸馏失败：{BALANCE_TEXT}"
+
+    # ── 识别 / 判定通道 ──────────────────────────────────────────────────
+
+    def _identify_distiller(self, mock_llm) -> Distiller:
+        d = _map_distiller(mock_llm)
+        d._chunk_size = 200      # 正文切成多片，走 `_identify_over_chunks`
+        return d
+
+    def test_identify_402_shows_balance(self):
+        """逐片识别全失败 → 上屏「识别失败：账户余额不足…」，不是通用文案。"""
+        mock_llm = MagicMock()
+        mock_llm.last_usage = None
+        mock_llm.async_chat = _upstream_failing_async(
+            UpstreamFailure("402 payment required: req-abc123", user_message=BALANCE_TEXT))
+        d = self._identify_distiller(mock_llm)
+
+        with pytest.raises(DistillError) as excinfo:
+            d.identify_characters(_identify_body())
+
+        assert excinfo.value.user_message == f"识别失败：{BALANCE_TEXT}"
+        assert "个分片" not in excinfo.value.user_message
+
+    def test_judge_402_shows_balance(self):
+        """逐片成功、判定样本全失败 → 上屏同一句上游原因（判定不再自己编文案）。"""
+        mock_llm = MagicMock()
+        mock_llm.last_usage = None
+        mock_llm.async_chat = _identify_ok_judge_async(
+            UpstreamFailure("402 payment required: req-abc123", user_message=BALANCE_TEXT))
+        d = self._identify_distiller(mock_llm)
+
+        with pytest.raises(DistillError) as excinfo:
+            d.identify_characters(_identify_body())
+
+        assert excinfo.value.user_message == f"识别失败：{BALANCE_TEXT}"
+
+    def test_judge_disagreement_keeps_own_message(self):
+        """执行器一次没失败、只是样本都不合法 → 落判定阶段自己的文案，不带上游原因。
+
+        这是兜底参数唯一的守门用例（`fallback=` 只在判定这一处传非默认值）。
+        """
+        mock_llm = MagicMock()
+        mock_llm.last_usage = None
+        mock_llm.async_chat = _identify_ok_judge_async("这不是 JSON")
+        d = self._identify_distiller(mock_llm)
+
+        with pytest.raises(DistillError) as excinfo:
+            d.identify_characters(_identify_body())
+
+        assert excinfo.value.user_message == f"识别失败：{JUDGE_FALLBACK_TEXT}"
+
+    # ── 同步 / 流式 Map 通道 ─────────────────────────────────────────────
+
+    def _map_failing(self, exc: Exception) -> Distiller:
+        mock_llm = MagicMock()
+        mock_llm.last_usage = None
+        mock_llm.async_chat = _upstream_failing_async(exc)
+        return _map_distiller(mock_llm)
+
+    def test_sync_402_bail_shows_balance(self):
+        """>50% 分片 402 → 同步 Map 上屏「蒸馏失败：账户余额不足…」。"""
+        d = self._map_failing(
+            UpstreamFailure("402 payment required: req-abc123", user_message=BALANCE_TEXT))
+
+        with pytest.raises(DistillError) as excinfo:
+            d.distill_incremental("AB" * 5000, "AB")
+
+        assert excinfo.value.user_message == f"蒸馏失败：{BALANCE_TEXT}"
+        assert "个分片" not in excinfo.value.user_message
+
+    def test_stream_402_bail_shows_balance(self):
+        """>50% 分片 402 → 流式 Map 的错误帧是同一句。"""
+        d = self._map_failing(
+            UpstreamFailure("402 payment required: req-abc123", user_message=BALANCE_TEXT))
+
+        results = list(d.distill_incremental_stream("AB" * 5000, "AB"))
+
+        errors = [r for r in results if isinstance(r, dict) and "error" in r]
+        assert len(errors) == 1
+        assert errors[0]["error"] == f"蒸馏失败：{BALANCE_TEXT}"
+        assert "个分片" not in errors[0]["error"]
 
 
 class TestFormatFieldGroups:
