@@ -29,14 +29,41 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _status_code(exc: Exception) -> int | None:
+    """异常 → HTTP 状态码；拿不到返回 None（超时 / 连接失败 / 我们自己的 bug）。
+
+    **唯一取码处**：`_classify_retry` 的 429 判定与 `_upstream_user_message` 的上屏文案
+    共用它。原先两处各自还兜了一句 `"429" in str(exc)` 子串匹配 —— 报错文本里恰好出现
+    "429" 就会被当成限流（状态码 402 而正文含 429 的例子见
+    `tests/test_llm_adapter_retry.py::test_status_402_with_429_text_not_rate_limited`），已删。
+    """
+    code = getattr(exc, "status_code", None)
+    if isinstance(code, int) and not isinstance(code, bool):
+        return code
+    # openai.RateLimitError 在部分版本取不到 status_code，按类名兜底（原实现即有）
+    if type(exc).__name__ == "RateLimitError" and "openai" in type(exc).__module__:
+        return 429
+    return None
+
+
+# 可重试状态码。口径来自两个权威来源（一致）：
+#   * openai==3.13.0 `openai/_base_client.py:815-857` `_should_retry`：408/409/429/≥500 重试
+#   * DeepSeek 官方错误码页：400/401/402/422 先修请求，429 放慢节奏，500/503 稍等后重试
+_RETRYABLE_STATUS = frozenset({408, 409, 429})
+
+
+def _is_deterministic_failure(exc: Exception) -> bool:
+    """确定性失败 = 有状态码、且该状态码不在「可重试」集合里、且 < 500 → 重试无意义。
+
+    无状态码的异常（超时、连接失败）**不是**确定性失败，仍按可重试处理（行为不变）。
+    """
+    code = _status_code(exc)
+    return code is not None and code < 500 and code not in _RETRYABLE_STATUS
+
+
 def _classify_retry(exc: Exception) -> tuple[bool, float | None]:
     """返回 (是否为429限流, Retry-After秒数或None)。"""
-    is_429 = False
-    # openai.RateLimitError may not be importable everywhere, check by name
-    if type(exc).__name__ == "RateLimitError" and "openai" in type(exc).__module__:
-        is_429 = True
-    else:
-        is_429 = getattr(exc, "status_code", None) == 429 or "429" in str(exc)
+    is_429 = _status_code(exc) == 429
 
     retry_after = None
     if is_429:
@@ -136,7 +163,7 @@ class _RetryBudget:
     本类是唯一重试裁决点：
       on_failure()       判分类(429/其他)、累计、判耗尽、把退避 clamp 到 max_wait=剩余−(margin+min)
                          （保下一次 attempt 有有效窗）、预计算下一次超时 _next_to，返回下次退避
-                         秒数或抛 RuntimeError；
+                         秒数或抛 RuntimeError；确定性失败（非可重试状态码）跳过退避直接判耗尽；
       attempt_timeout()  每次 create 前取单次超时 = min(ceiling, 剩余−margin)。有 _next_to（上次
                          on_failure 预计算）先消费它；否则按当下剩余推。剩余 < margin+min 撑不起
                          一次有效 attempt → 直接抛，不发出会假失败的死亡窗 create。
@@ -145,7 +172,7 @@ class _RetryBudget:
 
     def __init__(self, *, attempts: int, deadline_s: float, ceiling_s: float, backoff_mult_s: float,
                  log_prefix: str = "LLMAdapter", err_prefix: str = "LLM API",
-                 rate_limit_attempts: int | None = None) -> None:
+                 rate_limit_attempts: int | None = None, is_user_key: bool = False) -> None:
         self._attempts = attempts
         self._ceiling = ceiling_s
         self._rate_limit_attempts = _RATE_LIMIT_ATTEMPTS if rate_limit_attempts is None else rate_limit_attempts
@@ -153,6 +180,8 @@ class _RetryBudget:
         self._backoff_mult = backoff_mult_s
         self._tag = f"[{log_prefix}] "
         self._err = err_prefix
+        # 耗尽后的日志级别按 key 来源分：用户 key → warning（不上运维告警），全局 key → error。
+        self._is_user_key = is_user_key
         self._non429 = 0
         self._rate_limited = 0
         self._total = 0
@@ -209,6 +238,10 @@ class _RetryBudget:
         else:
             self._rate_limited += 1
             cap_hit = self._rate_limited >= self._rate_limit_attempts
+        # B1：确定性失败（有状态码且不在可重试集合 —— 400/401/402/403/422）重试无意义，
+        # 立即判耗尽：不 sleep、不进闸下调（B7 由 `_classify_retry` 只认真 429 保证）。
+        # 线上证据：402 在批量 Map 上按非 429 上限重试 3 次、退避被 _total 放大约 45s+，每片重复。
+        deterministic = _is_deterministic_failure(exc)
         if is_429:
             wait = retry_after if retry_after is not None \
                 else min(2 ** (self._total - 1) * 2, 30.0) + random.uniform(0, 2)
@@ -220,7 +253,7 @@ class _RetryBudget:
         # timeout 时间，仅靠 remaining 判据会在窗口边沿永远 ≥ window 触发不了 → 空转到次数上限；
         # 此守卫把「边界 attempt 失败」定为终态，确定性停在最后一次有效窗（D1b 紧界回归不闪断）。
         last_was_boundary = self._last_to is not None and self._last_to <= _ATTEMPT_MIN_S + 1e-9
-        if last_was_boundary or remaining < _ATTEMPT_WINDOW_S:
+        if deterministic or last_was_boundary or remaining < _ATTEMPT_WINDOW_S:
             cap_hit = True
         else:
             max_wait = remaining - _ATTEMPT_WINDOW_S  # 睡满 max_wait 后仍留 margin+min 的有效窗
@@ -233,15 +266,17 @@ class _RetryBudget:
             # 只是换抛出类型/带上屏文案：f-string 与现在逐字相同，core 侧既有的
             # "failed after N attempts" / "rate limited (429)" 判据继续命中。
             user_message = _upstream_user_message(exc)
+            # 所有 LLM 失败的必经点：耗尽后必须落到 logger（print 只进容器 stdout，
+            # GlitchTip 与告警都看不见）。模板用 %s 占位，GlitchTip 才按同一模板归并。
+            # 级别按 key 来源分（B6）：用户自带 key 的失败不上运维告警，全局 key 的才要。
+            log = logger.warning if self._is_user_key else logger.error
             if is_429:
-                # 所有 LLM 失败的必经点：耗尽后必须落到 logger（print 只进容器 stdout，
-                # GlitchTip 与告警都看不见）。模板用 %s 占位，GlitchTip 才按同一模板归并。
-                logger.error("%sRate limited (429), all %s attempts exhausted", self._tag, self._total)
+                log("%sRate limited (429), all %s attempts exhausted", self._tag, self._total)
                 raise UpstreamFailure(
                     f"{self._err} rate limited (429) after {self._total} attempts: {exc}",
                     user_message=user_message)
-            logger.error("%sAll %s attempts failed: %s: %s",
-                         self._tag, self._total, type(exc).__name__, exc)
+            log("%sAll %s attempts failed: %s: %s",
+                self._tag, self._total, type(exc).__name__, exc)
             raise UpstreamFailure(
                 f"{self._err} failed after {self._total} attempts: {exc}",
                 user_message=user_message)
@@ -487,15 +522,12 @@ def _upstream_user_message(exc: Exception) -> str:
     传输层失败先判：它没有 status_code，落进状态码表只会得到 ""（通用文案），而这类失败
     的处置是「重发一次」而不是「去设置页检查 key」。文案与 ``_GENERIC_USER_ERROR``（"服务
     暂时不可用…"）刻意不同，措辞更指向动作，也便于据文案分辨「有没有被认成传输层」。
-    其余识别口径与 ``_classify_retry`` 的 429 判定一致（先看 ``status_code``，其次报错文本
-    里的 429）—— 免得同一次失败在「算不算限流」和「该说什么」两处各判出一个答案。
+    状态码取自 ``_status_code``（与 ``_classify_retry`` 的 429 判定同一处定义）—— 免得同
+    一次失败在「算不算限流」和「该说什么」两处各判出一个答案。
     """
     if isinstance(exc, _TRANSPORT_ERRORS):
         return "模型服务暂时不可用，请稍后重试"
-    code = getattr(exc, "status_code", None)
-    if code is None and "429" in str(exc):
-        code = 429
-    return _UPSTREAM_USER_MESSAGES.get(code, "")
+    return _UPSTREAM_USER_MESSAGES.get(_status_code(exc), "")
 
 
 class IncompleteResponseError(RuntimeError):
@@ -726,6 +758,7 @@ class LLMAdapter:
         max_tokens: int | None = None,
         presence_penalty: float | None = None,
         top_p: float | None = None,
+        is_user_key: bool = False,
     ) -> None:
         root = Path(__file__).resolve().parent.parent
         load_dotenv(root / ".env")
@@ -741,6 +774,11 @@ class LLMAdapter:
         # 而「不设」是一个有意义的值（不发这个字段 = 用 API 默认）。故只有调用方显式给了
         # 才进请求体 —— 见下面四处 create 的条件展开。
         self._top_p = top_p
+        # key 来源（判据是「谁给的 key」，不是「值相不相同」）：True = 用户自带 key。
+        # 只影响重试耗尽后的**日志级别** —— 用户 key 的失败不该进运维告警（error 级），
+        # 全局 key 的失败才需要（余额耗尽会静默）。调用方 web/deps.py 构造时按解析出口
+        # 的 Source 给值；本层不认识 Source 枚举（adapters 不 import web，L13）。
+        self._is_user_key = is_user_key
         self._dialect = _detect_dialect(self._base_url, self._model)
         self.last_usage: dict | None = None
         # 该账号上一轮学到的并发上限（WP14 A3）。放在 adapter 上而不是 map_concurrency
@@ -802,6 +840,14 @@ class LLMAdapter:
         """
         check_outbound_guard(self._base_url)
 
+    def _new_budget(self, **kwargs: Any) -> _RetryBudget:
+        """构造本实例的一次调用预算 —— **唯一**注入点。
+
+        `is_user_key` 是实例属性（解析出口给的事实），五条通道各写一遍就会漏一处、漏的那条
+        静默按 error 记日志。其余参数仍由调用点按通道给（预算常量各不相同）。
+        """
+        return _RetryBudget(is_user_key=self._is_user_key, **kwargs)
+
     def preflight(self) -> None:
         """与 ``_before_call()`` **同一实现**，公开给解析出口（§2.8）用。
 
@@ -844,9 +890,9 @@ class LLMAdapter:
         self._before_call()
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
-        budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
-                              ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
-                              err_prefix="LLM API")
+        budget = self._new_budget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
+                                  ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
+                                  err_prefix="LLM API")
         self.last_usage = None  # 切断上一轮污染：本轮无 usage 时不能冒充真实值
         while True:
             timeout = budget.attempt_timeout()
@@ -901,9 +947,9 @@ class LLMAdapter:
         _c = client or self._async_client
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
-        budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=deadline_s,
-                              ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
-                              log_prefix="LLMAdapter async", err_prefix="Async LLM")
+        budget = self._new_budget(attempts=_GEN_ATTEMPTS, deadline_s=deadline_s,
+                                  ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
+                                  log_prefix="LLMAdapter async", err_prefix="Async LLM")
         while True:
             queue_t0 = time.monotonic()
             # 闸只包**这一次** create（连同它之前的等名额与超时计算）。退避睡眠落在
@@ -987,9 +1033,9 @@ class LLMAdapter:
         # 在此用同一 _RetryBudget 做有界补偿（≤_STREAM_ATTEMPTS / ≤_STREAM_DEADLINE_S /
         # 退避 1s），429 也走 _classify_retry 的 Retry-After——不再是手写第四份循环。
         # 流一旦吐出 chunk 即不可安全重放，故只包 create() 返回前；续流中断仍直接上抛。
-        budget = _RetryBudget(attempts=_STREAM_ATTEMPTS, deadline_s=_STREAM_DEADLINE_S,
-                              ceiling_s=_STREAM_ATTEMPT_S, backoff_mult_s=_STREAM_BACKOFF_S,
-                              log_prefix="LLMAdapter chat_stream")
+        budget = self._new_budget(attempts=_STREAM_ATTEMPTS, deadline_s=_STREAM_DEADLINE_S,
+                                  ceiling_s=_STREAM_ATTEMPT_S, backoff_mult_s=_STREAM_BACKOFF_S,
+                                  log_prefix="LLMAdapter chat_stream")
         while True:
             timeout: float | Timeout = budget.attempt_timeout()
             if read_s is not None:
@@ -1138,16 +1184,19 @@ class LLMAdapter:
                 return msg if extract is None else extract(msg)
             except IncompleteResponseError:
                 raise  # 截断：确定性失败，不烧重试预算（同 ToolsNotSupportedError 形状）
-            except BadRequestError as exc:
-                err_text = " ".join(
-                    filter(None, [exc.message, str(exc), str(getattr(exc, "body", "") or "")])
-                ).lower()
-                if "tool" in err_text or "function" in err_text:
-                    raise ToolsNotSupportedError(
-                        f"Provider does not support tools/function-calling: {exc}"
-                    ) from exc
-                raise  # 其他 400：不重试，原样抛出
             except Exception as exc:
+                # 400 不再单独一条 except：`on_failure` 的确定性失败判定（B1）已覆盖它 ——
+                # 立即判耗尽、不 sleep、抛 `UpstreamFailure`（旧代码此处对非 tool 的 400 是
+                # 原样 `raise`，两者对调用方等价：都进同一处宽 except 降级）。留下的只有
+                # 「400 + 文本点名 tool/function → 更具体的 ToolsNotSupportedError」这一条裁决。
+                if isinstance(exc, BadRequestError):
+                    err_text = " ".join(
+                        filter(None, [exc.message, str(exc), str(getattr(exc, "body", "") or "")])
+                    ).lower()
+                    if "tool" in err_text or "function" in err_text:
+                        raise ToolsNotSupportedError(
+                            f"Provider does not support tools/function-calling: {exc}"
+                        ) from exc
                 time.sleep(budget.on_failure(exc))
 
     @T.spanned("llm.chat_with_tools", op="chat", finalize=_infer_finalize)
@@ -1172,10 +1221,10 @@ class LLMAdapter:
             tools=tools,
             tool_choice=None,
             max_tokens=max_tokens if max_tokens is not None else self._max_tokens,
-            budget=_RetryBudget(attempts=_DECISION_ATTEMPTS, deadline_s=_DECISION_DEADLINE_S,
-                                ceiling_s=_DECISION_ATTEMPT_S, backoff_mult_s=_DECISION_BACKOFF_S,
-                                log_prefix="LLMAdapter chat_with_tools",
-                                err_prefix="chat_with_tools"),
+            budget=self._new_budget(attempts=_DECISION_ATTEMPTS, deadline_s=_DECISION_DEADLINE_S,
+                                    ceiling_s=_DECISION_ATTEMPT_S, backoff_mult_s=_DECISION_BACKOFF_S,
+                                    log_prefix="LLMAdapter chat_with_tools",
+                                    err_prefix="chat_with_tools"),
             client=self._client,
             where="chat_with_tools",
         )
@@ -1224,10 +1273,10 @@ class LLMAdapter:
             tools=[{"type": "function", "function": fn}],
             tool_choice={"type": "function", "function": {"name": fn["name"]}},
             max_tokens=max_tokens if max_tokens is not None else self._max_tokens,
-            budget=_RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
-                                ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
-                                log_prefix="LLMAdapter select_by_schema",
-                                err_prefix="select_by_schema"),
+            budget=self._new_budget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
+                                    ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
+                                    log_prefix="LLMAdapter select_by_schema",
+                                    err_prefix="select_by_schema"),
             client=client,
             where="select_by_schema",
             extract=lambda msg: _tool_arguments(msg, where="select_by_schema"),

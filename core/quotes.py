@@ -22,11 +22,14 @@ from typing import NamedTuple, Sequence
 # 归一化：去空白与标点。卡片里的标点写法与原文不保证一致（全角半角、有无皆可能），
 # 不归一的话同一句话会因为一个逗号之差被判查不到。**只此一处** —— 抽取与核对共用。
 _DROP_CHARS = frozenset("，。！？、；：“”‘’「」『』（）《》…—" + ",.!?;:\"'()<>-")
+# 异体字并字表：版本间互为用字差异的异体字当作同一个字（「著/着」）。只放有依据的字组，
+# 不并近义字 —— 依据与口径见 `docs/specs/quote-variant-fold.md`（《異體字字典》A03506）。
+_VARIANT_FOLD = str.maketrans({"著": "着"})
 
 
 def normalize(s) -> str:
     """只留实义字符：去全部空白与标点。"""
-    return "".join(ch for ch in str(s) if not ch.isspace() and ch not in _DROP_CHARS)
+    return "".join(ch for ch in str(s) if not ch.isspace() and ch not in _DROP_CHARS).translate(_VARIANT_FOLD)
 
 
 _ELLIPSIS = re.compile(r"…+|\.{3,}")

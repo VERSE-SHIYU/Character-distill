@@ -19,7 +19,7 @@ const { openApp, login, pushView } = require('./helpers.cjs')
     let n
     while ((n = walker.nextNode())) {
       const t = n.nodeValue
-      if (t && /[✕✎♡📖🤝🛡✓]/.test(t)) hits.push(t.trim().slice(0, 40))
+      if (t && /[✕✎♡📖🤝🛡✓]/u.test(t)) hits.push(t.trim().slice(0, 40))
     }
     return hits
   })
@@ -44,11 +44,6 @@ const { openApp, login, pushView } = require('./helpers.cjs')
       if (/\bfont-size:\s*11px/.test(s)) n++
     }
     return n
-  })
-
-  // 图标系统：确认新增图标真的打进 bundle（远端 .js 源码级，无需触发 UI）
-  const svgInBundle = await page.evaluate(() => {
-    return window.__E2E // placeholder
   })
 
   console.log(JSON.stringify({ tabCursor, homeSymbols, perView, fontSize11, errors }, null, 2))

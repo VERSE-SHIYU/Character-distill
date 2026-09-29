@@ -85,6 +85,11 @@ def _make_user_llm(config: dict[str, Any]) -> LLMAdapter:
         api_key=config["api_key"],
         base_url=config.get("base_url", "https://api.deepseek.com"),
         model=config.get("model") or default_model(),
+        # 解析出口把 Source 折成这个布尔再进适配层：用户自带 key 的失败不该进运维告警
+        # （error 级），只记 warning。此处**只可能是用户 key**（resolve_llm 判过非空），
+        # 全局那一路走 `_make_global_llm`，保持默认 False。适配层不认识 Source 枚举
+        # （adapters 不 import web，L13）。
+        is_user_key=True,
     )
 
 

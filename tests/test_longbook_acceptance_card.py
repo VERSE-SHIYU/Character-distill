@@ -147,6 +147,31 @@ def _stats(card) -> dict:
     return {"mode": "distill", "elapsed_s": 10.0, "stages": {}, "final": "done", "card": card}
 
 
+# ── 异体字：原文「著」、卡上「着」（docs/specs/quote-variant-fold.md）──────────
+#
+# 验收与产品共用 `core/quotes.normalize` 这一处并字：卡上「着」不该被验收报成编造。
+
+VARIANT_SOURCE = "宝玉道：「活著，咱们一处活著，不活著，咱们一处化灰化烟。」\n"
+VARIANT_QUOTE = "活着，咱们一处活着，不活着，咱们一处化灰化烟"
+
+
+def test_a_quote_differing_only_by_a_variant_character_is_not_reported():
+    """卡上引文只有「著/着」之差：`quote_misses` 返回空。
+
+    变异：删掉并字表 → 该引文被判编造，返回非空，断言红。
+    """
+    card = {"values": [f"生死相托的痴情：对紫鹃说「{VARIANT_QUOTE}」（第五十七回）。"]}
+    assert acc.quote_misses(card, VARIANT_SOURCE) == []
+
+
+def test_a_catchphrase_differing_only_by_a_variant_character_is_not_reported():
+    """口癖同理：卡上「着」、原文「著」不该整条报 miss。
+
+    变异：删掉并字表 → 口癖报 miss，断言红。
+    """
+    assert acc.catchphrase_misses([VARIANT_QUOTE], VARIANT_SOURCE) == []
+
+
 def test_the_card_checks_stop_the_run():
     """四条判据要真的挂在 `over_limit` 上，不是只从 `print_distill` 打出来。
 

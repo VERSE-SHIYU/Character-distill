@@ -78,16 +78,8 @@ const BASE = 'http://localhost:5173'
     // 8. Check where we ended up
     const afterUrl = page.url()
     console.log('URL after back:', afterUrl)
-    const afterView = await page.evaluate(() => {
-      // Try to read zustand store state
-      try {
-        // Access zustand store from __ZUSTAND_DEVTOOLS__ or window
-        const store = window.__ZUSTAND__ || window.__ZUSTAND_DEVTOOLS__
-        return 'unknown'
-      } catch {
-        return 'cannot access'
-      }
-    })
+    // 本脚本跑 Vite dev（localhost:5173），App.jsx 在 DEV 下把 store 挂到 window.__appStore
+    const afterView = await page.evaluate(() => window.__appStore.getState().currentView)
     console.log('View after back:', afterView)
 
     // Check page content
