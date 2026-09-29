@@ -78,16 +78,8 @@ const BASE = 'http://localhost:5173'
     // 8. Check where we ended up
     const afterUrl = page.url()
     console.log('URL after back:', afterUrl)
-    const afterView = await page.evaluate(() => {
-      // Try to read zustand store state
-      try {
-        // Access zustand store from __ZUSTAND_DEVTOOLS__ or window
-        const store = window.__ZUSTAND__ || window.__ZUSTAND_DEVTOOLS__
-        return 'unknown'
-      } catch {
-        return 'cannot access'
-      }
-    })
+    // 页面里没有可读的 zustand 全局句柄（__ZUSTAND__ / __ZUSTAND_DEVTOOLS__ 都不存在），恒为 unknown
+    const afterView = 'unknown'
     console.log('View after back:', afterView)
 
     // Check page content

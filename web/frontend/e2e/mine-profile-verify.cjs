@@ -1,7 +1,7 @@
 // 切片⑤ 探针：MinePage 个人中心（hero 光晕 + display 名字 + @id mono 行 + stat 卡片网格 + 编辑图标→ProfilePage）
 // + ProfilePage 个人资料（卡片语言 + 统计栏 + 3 格 + 密码表单展开）+ 宋体开关联动 + 无溢出
 // 用法: node e2e/mine-profile-verify.cjs
-const { openApp, login, goToView, cs } = require('./helpers.cjs')
+const { openApp, login, goToView } = require('./helpers.cjs')
 
 const MAIN_AUTHOR = {
   author: { id: 'u-testadmin', username: 'testadmin', nickname: '', bio: '资深测试员' },

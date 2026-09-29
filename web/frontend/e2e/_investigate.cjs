@@ -4,7 +4,7 @@ const { openApp, login } = require('./helpers.cjs')
   let userId = null
   page.on('response', async (r) => {
     if (r.url().includes('/api/auth/login') && r.request().method() === 'POST') {
-      try { const j = await r.json(); userId = j.user?.id || j.id } catch {}
+      try { const j = await r.json(); userId = j.user?.id || j.id } catch { /* 非 JSON 响应，忽略 */ }
     }
   })
   await login(page, { settleMs: 3000 })
@@ -17,7 +17,7 @@ const { openApp, login } = require('./helpers.cjs')
     const out = []
     for (const c of cards) {
       let cj = c.card_json
-      if (typeof cj === 'string') { try { cj = JSON.parse(cj) } catch {} }
+      if (typeof cj === 'string') { try { cj = JSON.parse(cj) } catch { /* 解析失败则保留原始字符串 */ } }
       const objFields = []
       const walk = (o, path) => {
         if (!o || typeof o !== 'object' || Array.isArray(o)) return

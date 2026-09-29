@@ -59,7 +59,7 @@ async function pushView(page, view) {
 async function goToView(page, view, { viaHome = false, authorUserId, delay = 80 } = {}) {
   await page.evaluate(({ v, viaHome, authorUserId, delay }) => new Promise((resolve) => {
     const st = window.__appStore.getState()
-    if (viaHome) { try { st.setView('home') } catch {} }
+    if (viaHome) { try { st.setView('home') } catch { /* store 尚未就绪时忽略，下面用 setTimeout 再取一次 */ } }
     setTimeout(() => {
       const st2 = window.__appStore.getState()
       if (authorUserId) st2.setAuthorUserId(authorUserId)
