@@ -63,6 +63,18 @@ const useAppStore = create((set, get) => {
   // 结构性竞态防护：写会话/角色态数据的 async action 用 protect 包装，越界写自动丢弃。
   // guard 只存在 scoped 里，action 永不手写 `if (get().sessionId !== ...) return`。
   const protect = (fn) => scoped(fn, set, get)
+
+  // 回复流（`sendMessageStream` / `_sendRevokeNotice`）共用的落字段方式：只改 `cid` 对应的
+  // 那条气泡，不在当前列表里（会话换了 / 重载了）就一个字符不改。两条流各写一份的话，
+  // 收尾帧那几段（user id / summary / retracted / 语音下标）很容易只改一处、漏另一处。
+  const patchByCid = (cid, fn) => set((s) => {
+    const idx = s.messages.findIndex((m) => m._cid === cid)
+    if (idx === -1) return {}
+    const msgs = [...s.messages]
+    msgs[idx] = fn(msgs[idx])
+    return { messages: msgs }
+  })
+
   return {
   // ---- Auth ----
 
@@ -1469,15 +1481,6 @@ const useAppStore = create((set, get) => {
 
     let fullReply = ''
 
-    // 流只写自己那条气泡：按 `cid` 找，不在当前列表里（会话换了 / 重载了）就一个字符不改。
-    const patchChar = (fn) => set((s) => {
-      const idx = s.messages.findIndex((m) => m._cid === cid)
-      if (idx === -1) return {}
-      const msgs = [...s.messages]
-      msgs[idx] = fn(msgs[idx])
-      return { messages: msgs }
-    })
-
     // done 与 error 两种帧的**唯一**收尾函数。`err` 有值 = 错误帧：它不带 user_msg_id /
     // summary / retracted 这些只有成功一轮才有的字段，只走两帧共用的那一段（补写报告 +
     // 解锁）。两帧分开写的话，error 那条路会漏掉 `applyFlushReport`。
@@ -1512,15 +1515,17 @@ const useAppStore = create((set, get) => {
           msgs[idx] = { ...msgs[idx], retracted: true }
         }
         // 两种帧都走到这里：本轮补写成功的消息据此填回真 id、翻成「已保存」
-        const next = { messages: applyFlushReport(msgs, payload), sending: false }
+        const next = { messages: applyFlushReport(msgs, payload), sending: false, _chatStream: null }
         if (err) next.error = err.message
         return next
       })
       if (err) return
 
       if (voiceEnabled && fullReply) {
-        const { messages: currentMsgs } = get()
-        get()._synthesizeVoiceReply(fullReply, currentMsgs.length - 1)
+        // 合成的是**自己那条**气泡：按 `cid` 找下标，不按 `length - 1` —— 回复途中列表末尾
+        // 可能被插进别的消息，按末尾算会把语音挂到别人头上。
+        const idx = get().messages.findIndex((m) => m._cid === cid)
+        if (idx !== -1) get()._synthesizeVoiceReply(fullReply, idx)
       }
 
       get().fetchAffinity()
@@ -1535,7 +1540,7 @@ const useAppStore = create((set, get) => {
       (token) => {
         if (get()._chatStream?.cid !== cid) return
         fullReply += token
-        patchChar((m) => ({ ...m, content: (m.content || '') + token }))
+        patchByCid(cid, (m) => ({ ...m, content: (m.content || '') + token }))
       },
       // done 帧与 error 帧走**同一个**收尾函数：两种帧由后端同一个出口构造，都带本轮
       // 的 `flushed` / `dropped`。分开两处处理时 error 那条路漏了 `applyFlushReport`，
@@ -1546,7 +1551,13 @@ const useAppStore = create((set, get) => {
     )
 
     set({ _chatStream: { cid, cancel } })
-    return cancel
+    // 交给组件的是「仍是当前流才放下」的包装，不是裸 `cancel`：ChatArea 在「重置对话 / 撤回」
+    // 前直接调它（`ChatArea.jsx:827/:843`），裸 cancel 会绕过 `_cancelChatStream`，abort 后
+    // 迟到的收尾帧仍被认作当前流，写出一条假的「请求超时」。
+    return () => {
+      if (get()._chatStream?.cid !== cid) return
+      get()._cancelChatStream()
+    }
   },
 
   // 后端「重试」入口：把这条会话里没落库的消息按原顺序再写一遍。
@@ -1624,13 +1635,14 @@ const useAppStore = create((set, get) => {
             { ...msgs[idx], id: payload.char_msg_id ?? msgs[idx].id }, payload.char_save,
           )
         }
-        const next = { messages: applyFlushReport(msgs, payload), sending: false }
+        const next = { messages: applyFlushReport(msgs, payload), sending: false, _chatStream: null }
         if (err) next.error = err.message
         return next
       })
       if (err) return
       if (voiceEnabled && fullReply) {
-        get()._synthesizeVoiceReply(fullReply, get().messages.length - 1)
+        const idx = get().messages.findIndex((m) => m._cid === cid)
+        if (idx !== -1) get()._synthesizeVoiceReply(fullReply, idx)
       }
     }
 
@@ -1640,20 +1652,17 @@ const useAppStore = create((set, get) => {
       (token) => {
         if (get()._chatStream?.cid !== cid) return
         fullReply += token
-        set((s) => {
-          const idx = s.messages.findIndex((m) => m._cid === cid)
-          if (idx === -1) return {}
-          const msgs = [...s.messages]
-          msgs[idx] = { ...msgs[idx], content: (msgs[idx].content || '') + token }
-          return { messages: msgs }
-        })
+        patchByCid(cid, (m) => ({ ...m, content: (m.content || '') + token }))
       },
       (payload) => settle(payload, undefined),
       (err, payload) => settle(payload, err),
     )
 
     set({ _chatStream: { cid, cancel } })
-    return cancel
+    return () => {
+      if (get()._chatStream?.cid !== cid) return
+      get()._cancelChatStream()
+    }
   },
 
   resetChat: protect(async (setScoped, get) => {

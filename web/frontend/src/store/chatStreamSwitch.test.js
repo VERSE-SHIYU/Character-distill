@@ -205,6 +205,27 @@ describe('回复在途时切走再回来', () => {
     expect(useAppStore.getState().sending, '发送中没解锁').toBe(false)
   })
 
+  it('回复已经跑完后，再从首页「继续对话」回到同一会话：照常从服务器重载', async () => {
+    const a = startStream('你好')
+    a.emitToken('在的')
+    a.emitDone({ char_msg_id: 7 })
+    await flush()
+    expect(useAppStore.getState().sending).toBe(false)
+
+    h.setPostImpl(async () => ({
+      session: { id: 's1', card_id: 'c1', character_name: '甲', text_id: 't1' },
+      messages: [
+        { role: 'user', content: '你好', id: 11, created_at: 'x' },
+        { role: 'char', content: '在的', id: 7, created_at: 'x' },
+      ],
+    }))
+    await useAppStore.getState().resumeSession('s1')
+    await flush()
+
+    expect(h.postCalls.length, '流已结束，同一个会话不该再被短路，要从服务器重载').toBe(1)
+    expect(useAppStore.getState().messages.length).toBe(2)
+  })
+
   it('回复途中列表末尾多了别的消息：token 仍只写进自己的气泡', async () => {
     const a = startStream('你好')
     const cid = lastCid()
