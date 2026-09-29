@@ -653,6 +653,40 @@ def test_async_chat_402_batch_no_retry_ratio(monkeypatch):
     assert gate2.ceiling < 20, "真 429 必须仍下调闸 —— 否则 B7 把闸关掉了"
 
 
+@pytest.mark.parametrize("code, expected", [
+    (400, True), (401, True), (402, True), (403, True), (404, True), (422, True),
+    (408, False), (409, False), (429, False), (500, False), (502, False), (503, False),
+])
+def test_is_deterministic_failure_status_table(code, expected):
+    """判定表：确定性失败 = 有状态码 且 <500 且 不在可重试集（408/409/429）。
+
+    口径 = openai==3.13.0 `_should_retry` + DeepSeek 官方错误码页。变异：
+    从 `_RETRYABLE_STATUS` 去掉 408/409 → 这两行红；去掉 `code < 500` → 500/502/503 三行红。
+    """
+    assert M._is_deterministic_failure(_status_error(code)) is expected
+
+
+def test_transient_503_still_retries_then_succeeds(monkeypatch):
+    """503（可重试）仍退避一次后重试，第二次成功正常返回 —— 确定性判定没误伤瞬时故障。"""
+    clock = _FakeClock()
+    monkeypatch.setattr(M, "time", SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep))
+    llm = _make_llm()
+    calls = {"n": 0}
+
+    def behavior():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _status_error(503)
+        return _Resp("ok")
+
+    fake = _SyncClient(behavior)
+    llm._client = fake
+
+    assert llm.chat("sys", [{"role": "user", "content": "hi"}]) == "ok"
+    assert fake.chat.completions.calls == 2, "503 应该被重试"
+    assert len(clock.slept) == 1 and clock.slept[0] > 0, "503 重试前必须先退避"
+
+
 def test_long_output_widens_read_timeout_only():
     """S1 变异②：放宽只作用于 read；connect / write / pool 仍取本次 attempt 的 ceiling。
 
