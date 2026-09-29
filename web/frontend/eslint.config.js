@@ -3,6 +3,7 @@ import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
+import envGlobals from './eslint.globals.js'
 
 export default defineConfig([
   globalIgnores(['dist']),
@@ -18,10 +19,5 @@ export default defineConfig([
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
-  {
-    files: ['**/*.test.{js,mjs}'],
-    languageOptions: {
-      globals: { ...globals.node, ...globals.es2021 },
-    },
-  },
+  ...envGlobals,
 ])

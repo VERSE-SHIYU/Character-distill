@@ -260,7 +260,7 @@ jobs:
       - name: Frontend lint (no-undef gate)
         run: |
           npm ci
-          npx eslint src -c eslint.ci.config.js --quiet
+          npx eslint . -c eslint.ci.config.js --quiet
         working-directory: web/frontend
 
       # 单测进这道门：前端上报那条链（配置为空 / 有 DSN / 抛错后 fallback 与上报）只有
