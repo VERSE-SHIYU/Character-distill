@@ -840,6 +840,14 @@ class LLMAdapter:
         """
         check_outbound_guard(self._base_url)
 
+    def _new_budget(self, **kwargs: Any) -> _RetryBudget:
+        """构造本实例的一次调用预算 —— **唯一**注入点。
+
+        `is_user_key` 是实例属性（解析出口给的事实），五条通道各写一遍就会漏一处、漏的那条
+        静默按 error 记日志。其余参数仍由调用点按通道给（预算常量各不相同）。
+        """
+        return _RetryBudget(is_user_key=self._is_user_key, **kwargs)
+
     def preflight(self) -> None:
         """与 ``_before_call()`` **同一实现**，公开给解析出口（§2.8）用。
 
@@ -882,9 +890,9 @@ class LLMAdapter:
         self._before_call()
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
-        budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
-                              ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
-                              err_prefix="LLM API", is_user_key=self._is_user_key)
+        budget = self._new_budget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
+                                  ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
+                                  err_prefix="LLM API")
         self.last_usage = None  # 切断上一轮污染：本轮无 usage 时不能冒充真实值
         while True:
             timeout = budget.attempt_timeout()
@@ -939,10 +947,9 @@ class LLMAdapter:
         _c = client or self._async_client
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
-        budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=deadline_s,
-                              ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
-                              log_prefix="LLMAdapter async", err_prefix="Async LLM",
-                              is_user_key=self._is_user_key)
+        budget = self._new_budget(attempts=_GEN_ATTEMPTS, deadline_s=deadline_s,
+                                  ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
+                                  log_prefix="LLMAdapter async", err_prefix="Async LLM")
         while True:
             queue_t0 = time.monotonic()
             # 闸只包**这一次** create（连同它之前的等名额与超时计算）。退避睡眠落在
@@ -1026,9 +1033,9 @@ class LLMAdapter:
         # 在此用同一 _RetryBudget 做有界补偿（≤_STREAM_ATTEMPTS / ≤_STREAM_DEADLINE_S /
         # 退避 1s），429 也走 _classify_retry 的 Retry-After——不再是手写第四份循环。
         # 流一旦吐出 chunk 即不可安全重放，故只包 create() 返回前；续流中断仍直接上抛。
-        budget = _RetryBudget(attempts=_STREAM_ATTEMPTS, deadline_s=_STREAM_DEADLINE_S,
-                              ceiling_s=_STREAM_ATTEMPT_S, backoff_mult_s=_STREAM_BACKOFF_S,
-                              log_prefix="LLMAdapter chat_stream", is_user_key=self._is_user_key)
+        budget = self._new_budget(attempts=_STREAM_ATTEMPTS, deadline_s=_STREAM_DEADLINE_S,
+                                  ceiling_s=_STREAM_ATTEMPT_S, backoff_mult_s=_STREAM_BACKOFF_S,
+                                  log_prefix="LLMAdapter chat_stream")
         while True:
             timeout: float | Timeout = budget.attempt_timeout()
             if read_s is not None:
@@ -1214,10 +1221,10 @@ class LLMAdapter:
             tools=tools,
             tool_choice=None,
             max_tokens=max_tokens if max_tokens is not None else self._max_tokens,
-            budget=_RetryBudget(attempts=_DECISION_ATTEMPTS, deadline_s=_DECISION_DEADLINE_S,
-                                ceiling_s=_DECISION_ATTEMPT_S, backoff_mult_s=_DECISION_BACKOFF_S,
-                                log_prefix="LLMAdapter chat_with_tools",
-                                err_prefix="chat_with_tools", is_user_key=self._is_user_key),
+            budget=self._new_budget(attempts=_DECISION_ATTEMPTS, deadline_s=_DECISION_DEADLINE_S,
+                                    ceiling_s=_DECISION_ATTEMPT_S, backoff_mult_s=_DECISION_BACKOFF_S,
+                                    log_prefix="LLMAdapter chat_with_tools",
+                                    err_prefix="chat_with_tools"),
             client=self._client,
             where="chat_with_tools",
         )
@@ -1266,10 +1273,10 @@ class LLMAdapter:
             tools=[{"type": "function", "function": fn}],
             tool_choice={"type": "function", "function": {"name": fn["name"]}},
             max_tokens=max_tokens if max_tokens is not None else self._max_tokens,
-            budget=_RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
-                                ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
-                                log_prefix="LLMAdapter select_by_schema",
-                                err_prefix="select_by_schema", is_user_key=self._is_user_key),
+            budget=self._new_budget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
+                                    ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
+                                    log_prefix="LLMAdapter select_by_schema",
+                                    err_prefix="select_by_schema"),
             client=client,
             where="select_by_schema",
             extract=lambda msg: _tool_arguments(msg, where="select_by_schema"),
