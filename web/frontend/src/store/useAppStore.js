@@ -63,6 +63,18 @@ const useAppStore = create((set, get) => {
   // 结构性竞态防护：写会话/角色态数据的 async action 用 protect 包装，越界写自动丢弃。
   // guard 只存在 scoped 里，action 永不手写 `if (get().sessionId !== ...) return`。
   const protect = (fn) => scoped(fn, set, get)
+
+  // 回复流（`sendMessageStream` / `_sendRevokeNotice`）共用的落字段方式：只改 `cid` 对应的
+  // 那条气泡，不在当前列表里（会话换了 / 重载了）就一个字符不改。两条流各写一份的话，
+  // 收尾帧那几段（user id / summary / retracted / 语音下标）很容易只改一处、漏另一处。
+  const patchByCid = (cid, fn) => set((s) => {
+    const idx = s.messages.findIndex((m) => m._cid === cid)
+    if (idx === -1) return {}
+    const msgs = [...s.messages]
+    msgs[idx] = fn(msgs[idx])
+    return { messages: msgs }
+  })
+
   return {
   // ---- Auth ----
 
@@ -761,7 +773,7 @@ const useAppStore = create((set, get) => {
   },
 
   selectText: (textId) => {
-    get()._chatStreamCancel?.()
+    get()._cancelChatStream()
     const text = get().texts.find((t) => t.id === textId)
     set({
       currentTextId: textId,
@@ -1094,7 +1106,7 @@ const useAppStore = create((set, get) => {
   },
 
   viewCard: (card) => {
-    get()._chatStreamCancel?.()
+    get()._cancelChatStream()
     set({
       currentCard: card,
       sessionId: null,
@@ -1103,7 +1115,20 @@ const useAppStore = create((set, get) => {
 
   // AbortController for in-flight start_session requests
   _chatAbort: null,
-  _chatStreamCancel: null,  // cancel fn for in-flight SSE stream
+  // 在途回复流：`{ cid, cancel }`。cid 是它要写的那条角色气泡。流只改自己这条气泡、
+  // 只按自己的归属解锁「发送中」—— 判据不是 sessionId：切会话时 sessionId 先换掉，
+  // 收尾帧若按 sessionId 认领就会早退，「发送中」永远停在 true，输入框 `disabled` 卡死。
+  _chatStream: null,
+
+  // 放下在途流 —— **唯一**入口。先同步交出所有权（清 `_chatStream`、解锁 `sending`）再
+  // abort：abort 引发的收尾帧是异步到的（`api/client.js` 的 AbortError 分支），先 abort
+  // 再清的话，迟到的回调会撞上刚接手的新流（或新会话）并把它误解锁 / 改错气泡。
+  _cancelChatStream: () => {
+    const stream = get()._chatStream
+    if (!stream) return
+    set({ _chatStream: null, sending: false })
+    stream.cancel()
+  },
 
   // Archive list modal (multi-save slot selection)
   archiveModalOpen: false,
@@ -1129,7 +1154,7 @@ const useAppStore = create((set, get) => {
 
     // Cancel previous in-flight request + stream
     if (state._chatAbort) state._chatAbort.abort()
-    get()._chatStreamCancel?.()
+    get()._cancelChatStream()
 
     const abort = new AbortController()
 
@@ -1187,7 +1212,7 @@ const useAppStore = create((set, get) => {
 
     // Cancel previous in-flight request + stream
     if (state._chatAbort) state._chatAbort.abort()
-    get()._chatStreamCancel?.()
+    get()._cancelChatStream()
 
     const data = parseCardJson(card)
     const cardId = card.id || card.card_id
@@ -1448,9 +1473,10 @@ const useAppStore = create((set, get) => {
       return () => {}
     }
 
-    const streamSessionId = sessionId  // lock stream to this session
+    get()._cancelChatStream()   // 一条会话里只留一条在途流：上一条先放下
     const userMsg = withCid({ role: 'user', content: message, reply_to_id, reply_to_preview })
     const charMsg = withCid({ role: 'char', content: '' })
+    const cid = charMsg._cid
     set({ messages: [...messages, userMsg, charMsg], sending: true, error: null })
 
     let fullReply = ''
@@ -1458,41 +1484,48 @@ const useAppStore = create((set, get) => {
     // done 与 error 两种帧的**唯一**收尾函数。`err` 有值 = 错误帧：它不带 user_msg_id /
     // summary / retracted 这些只有成功一轮才有的字段，只走两帧共用的那一段（补写报告 +
     // 解锁）。两帧分开写的话，error 那条路会漏掉 `applyFlushReport`。
+    //
+    // 归属判据是「我还是不是当前那条流」：不是（已被放下 / 已被新流顶替）就什么都不做 ——
+    // 迟到的帧既不解锁别的流，也不改别的会话。
     const settle = (payload, err) => {
-      if (get().sessionId !== streamSessionId) return
+      if (get()._chatStream?.cid !== cid) return
       if (err) console.error('[store] stream failed:', err)
       set((s) => {
         const msgs = [...s.messages]
-        if (!err && msgs.length >= 2) {
+        const idx = msgs.findIndex((m) => m._cid === cid)
+        if (!err && idx >= 1 && msgs[idx - 1].role === 'user') {
           // 没落库时后端给的 msg_id 是 null，这里不再拿它当「有没有这段」的门闩 ——
           // 要不要标「未保存」只由 user_save/char_save 说了算。
-          const prevUser = msgs[msgs.length - 2]
-          msgs[msgs.length - 2] = withSaveResult(
+          const prevUser = msgs[idx - 1]
+          msgs[idx - 1] = withSaveResult(
             { ...prevUser, id: payload.user_msg_id ?? prevUser.id, timestamp: payload.user_created_at },
             payload.user_save,
           )
-          const prevChar = msgs[msgs.length - 1]
-          msgs[msgs.length - 1] = withSaveResult(
-            { ...prevChar, id: payload.char_msg_id ?? prevChar.id, timestamp: payload.char_created_at },
+        }
+        if (!err && idx !== -1) {
+          msgs[idx] = withSaveResult(
+            { ...msgs[idx], id: payload.char_msg_id ?? msgs[idx].id, timestamp: payload.char_created_at },
             payload.char_save,
           )
         }
-        if (!err && payload.summary) {
-          msgs.splice(msgs.length - 2, 0, withCid({ role: 'summary', content: payload.summary }))
+        if (!err && payload.summary && idx >= 1) {
+          msgs.splice(idx - 1, 0, withCid({ role: 'summary', content: payload.summary }))
         }
-        if (!err && payload.retracted) {
-          msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], retracted: true }
+        if (!err && payload.retracted && idx !== -1) {
+          msgs[idx] = { ...msgs[idx], retracted: true }
         }
         // 两种帧都走到这里：本轮补写成功的消息据此填回真 id、翻成「已保存」
-        const next = { messages: applyFlushReport(msgs, payload), sending: false }
+        const next = { messages: applyFlushReport(msgs, payload), sending: false, _chatStream: null }
         if (err) next.error = err.message
         return next
       })
       if (err) return
 
       if (voiceEnabled && fullReply) {
-        const { messages: currentMsgs } = get()
-        get()._synthesizeVoiceReply(fullReply, currentMsgs.length - 1)
+        // 合成的是**自己那条**气泡：按 `cid` 找下标，不按 `length - 1` —— 回复途中列表末尾
+        // 可能被插进别的消息，按末尾算会把语音挂到别人头上。
+        const idx = get().messages.findIndex((m) => m._cid === cid)
+        if (idx !== -1) get()._synthesizeVoiceReply(fullReply, idx)
       }
 
       get().fetchAffinity()
@@ -1505,14 +1538,9 @@ const useAppStore = create((set, get) => {
       '/api/chat/send',
       body,
       (token) => {
-        if (get().sessionId !== streamSessionId) return
+        if (get()._chatStream?.cid !== cid) return
         fullReply += token
-        set((s) => {
-          const msgs = [...s.messages]
-          const last = msgs[msgs.length - 1]
-          msgs[msgs.length - 1] = { ...last, content: (last?.content || '') + token }
-          return { messages: msgs }
-        })
+        patchByCid(cid, (m) => ({ ...m, content: (m.content || '') + token }))
       },
       // done 帧与 error 帧走**同一个**收尾函数：两种帧由后端同一个出口构造，都带本轮
       // 的 `flushed` / `dropped`。分开两处处理时 error 那条路漏了 `applyFlushReport`，
@@ -1522,8 +1550,14 @@ const useAppStore = create((set, get) => {
       undefined,
     )
 
-    set({ _chatStreamCancel: cancel })
-    return cancel
+    set({ _chatStream: { cid, cancel } })
+    // 交给组件的是「仍是当前流才放下」的包装，不是裸 `cancel`：ChatArea 在「重置对话 / 撤回」
+    // 前直接调它（`ChatArea.jsx:827/:843`），裸 cancel 会绕过 `_cancelChatStream`，abort 后
+    // 迟到的收尾帧仍被认作当前流，写出一条假的「请求超时」。
+    return () => {
+      if (get()._chatStream?.cid !== cid) return
+      get()._cancelChatStream()
+    }
   },
 
   // 后端「重试」入口：把这条会话里没落库的消息按原顺序再写一遍。
@@ -1580,33 +1614,35 @@ const useAppStore = create((set, get) => {
     const { sessionId, voiceEnabled } = get()
     if (!sessionId) return () => {}
 
-    const streamSessionId = sessionId  // lock stream to this session
+    get()._cancelChatStream()   // 与 `sendMessageStream` 同一条规矩：只留一条在途流
     const hiddenMsg = '[系统提示：对方刚刚撤回了一条消息]'
     const charMsg = withCid({ role: 'char', content: '' })
+    const cid = charMsg._cid
     set((s) => ({ messages: [...s.messages, charMsg], sending: true }))
 
     let fullReply = ''
 
-    // 与 `sendMessageStream` 同一条规矩：done 与 error 帧共用一个收尾函数，
-    // 本轮补写报告两种帧都带（撤回通知这一轮同样会把队里积压的消息顺路补上）。
+    // 与 `sendMessageStream` 同一条规矩：done 与 error 帧共用一个收尾函数，按自己的归属
+    // 解锁；本轮补写报告两种帧都带（撤回通知这一轮同样会把队里积压的消息顺路补上）。
     const settle = (payload, err) => {
-      if (get().sessionId !== streamSessionId) return
+      if (get()._chatStream?.cid !== cid) return
       if (err) console.error('[store] revoke notice failed:', err)
       set((s) => {
         const msgs = [...s.messages]
-        if (!err) {
-          const prev = msgs[msgs.length - 1]
-          msgs[msgs.length - 1] = withSaveResult(
-            { ...prev, id: payload.char_msg_id ?? prev?.id }, payload.char_save,
+        const idx = msgs.findIndex((m) => m._cid === cid)
+        if (!err && idx !== -1) {
+          msgs[idx] = withSaveResult(
+            { ...msgs[idx], id: payload.char_msg_id ?? msgs[idx].id }, payload.char_save,
           )
         }
-        const next = { messages: applyFlushReport(msgs, payload), sending: false }
+        const next = { messages: applyFlushReport(msgs, payload), sending: false, _chatStream: null }
         if (err) next.error = err.message
         return next
       })
       if (err) return
       if (voiceEnabled && fullReply) {
-        get()._synthesizeVoiceReply(fullReply, get().messages.length - 1)
+        const idx = get().messages.findIndex((m) => m._cid === cid)
+        if (idx !== -1) get()._synthesizeVoiceReply(fullReply, idx)
       }
     }
 
@@ -1614,21 +1650,19 @@ const useAppStore = create((set, get) => {
       '/api/chat/send',
       { session_id: sessionId, message: hiddenMsg, stream: true, hidden: true, user_role: get().sessionUserRole },
       (token) => {
-        if (get().sessionId !== streamSessionId) return
+        if (get()._chatStream?.cid !== cid) return
         fullReply += token
-        set((s) => {
-          const msgs = [...s.messages]
-          const last = msgs[msgs.length - 1]
-          msgs[msgs.length - 1] = { ...last, content: (last?.content || '') + token }
-          return { messages: msgs }
-        })
+        patchByCid(cid, (m) => ({ ...m, content: (m.content || '') + token }))
       },
       (payload) => settle(payload, undefined),
       (err, payload) => settle(payload, err),
     )
 
-    set({ _chatStreamCancel: cancel })
-    return cancel
+    set({ _chatStream: { cid, cancel } })
+    return () => {
+      if (get()._chatStream?.cid !== cid) return
+      get()._cancelChatStream()
+    }
   },
 
   resetChat: protect(async (setScoped, get) => {
@@ -1663,6 +1697,14 @@ const useAppStore = create((set, get) => {
   },
 
   resumeSession: async (sessionId) => {
+    // 回到正在生成回复的**同一个**会话：只切回聊天页，不重载。重载会用服务器那份历史
+    // （回复还没落库）替换列表，后台的流接着把字拼进用户自己那条消息里。
+    // 与 selectCard / startChat 的「同卡复用」同一做法。
+    if (get()._chatStream && get().sessionId === sessionId) {
+      set({ currentView: 'chat', resumeLoading: false })
+      return
+    }
+    get()._cancelChatStream()   // 换到别的会话前放下在途流（原来漏了）
     set({ resumeLoading: true })
     try {
       const data = await postJSON(`/api/history/${sessionId}/resume`, { voice_mode: get().voiceEnabled })
