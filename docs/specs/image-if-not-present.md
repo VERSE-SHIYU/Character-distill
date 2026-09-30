@@ -61,7 +61,7 @@ diff --git a/.github/workflows/deploy.yml b/.github/workflows/deploy.yml
 index d1da817..cd9cde8 100644
 --- a/.github/workflows/deploy.yml
 +++ b/.github/workflows/deploy.yml
-@@ -241,8 +241,29 @@ jobs:
+[hunk -241,8 +241,29] jobs:
              # GHCR 拉 app 实测 21s～1233s，由整体 command_timeout 兜底（预算见 command_timeout 处）。
              # 失败原因不再丢进 /dev/null —— 回落时打一行 exit code，挂住与「tag 不存在」分得清。
              ALIYUN_PULL_TIMEOUT=120
@@ -95,7 +95,7 @@ diff --git a/tests/test_deploy_image_pulls.py b/tests/test_deploy_image_pulls.py
 index 5b3c180..b0bd189 100644
 --- a/tests/test_deploy_image_pulls.py
 +++ b/tests/test_deploy_image_pulls.py
-@@ -6,7 +6,8 @@
+[hunk -6,7 +6,8]
    - build.yml 不再登录 / 推送阿里云；
    - deploy.yml 的 app / nginx（含回滚）只从 GHCR 拉，postgres / fail2ban 仍阿里云优先
      （Docker Hub 从 SZ 拉会超时，这两个是同区镜像，拉取正常）；
@@ -105,7 +105,7 @@ index 5b3c180..b0bd189 100644
  
  行为用例按比例复刻：阿里云超时取 1s、替身挂 30s，断言 10s 内回落。
  """
-@@ -76,6 +77,7 @@ def test_third_party_images_stay_aliyun_first():
+[hunk -76,6 +77,7] def test_third_party_images_stay_aliyun_first():
  # ── deploy.yml：pull_image 行为 ───────────────────────────────────────────────
  
  _FUNC_RE = re.compile(r"^ {12}pull_image\(\) \{\n.*?^ {12}\}\n", re.M | re.S)
@@ -113,7 +113,7 @@ index 5b3c180..b0bd189 100644
  _ALIYUN = "reg.example/verse-shiyu"
  _GHCR = "ghcr.io/verse-shiyu"
  
-@@ -83,6 +85,12 @@ _GHCR = "ghcr.io/verse-shiyu"
+[hunk -83,6 +85,12] _GHCR = "ghcr.io/verse-shiyu"
  _DOCKER_STUB = textwrap.dedent("""\
      #!/usr/bin/env bash
      if [ "$1" = "tag" ]; then exit 0; fi
@@ -126,7 +126,7 @@ index 5b3c180..b0bd189 100644
      ref="$2"
      echo "$ref" >> "$STUB_LOG"
      case "$ref" in
-@@ -98,12 +106,15 @@ _DOCKER_STUB = textwrap.dedent("""\
+[hunk -98,12 +106,15] _DOCKER_STUB = textwrap.dedent("""\
  
  
  def _pull_image_src() -> str:
@@ -145,7 +145,7 @@ index 5b3c180..b0bd189 100644
      stub = tmp_path / "docker"
      stub.write_text(_DOCKER_STUB, encoding="utf-8")
      stub.chmod(0o755)
-@@ -114,12 +125,13 @@ def _run(tmp_path: Path, aliyun: str, ghcr: str, first_arg: str | None = None):
+[hunk -114,12 +125,13] def _run(tmp_path: Path, aliyun: str, ghcr: str, first_arg: str | None = None):
          f'ALIYUN_REPO_PREFIX="{_ALIYUN}"',
          "ALIYUN_PULL_TIMEOUT=1",
          _pull_image_src(),
@@ -161,7 +161,7 @@ index 5b3c180..b0bd189 100644
      t0 = time.monotonic()
      proc = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=20)
      calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
-@@ -166,6 +178,49 @@ def test_both_registries_fail_returns_nonzero(tmp_path):
+[hunk -166,6 +178,49] def test_both_registries_fail_returns_nonzero(tmp_path):
      assert "RESULT=fail" in proc.stdout
  
  
@@ -347,4 +347,8 @@ print("存活变异:",alive)
 ```
 
 ## 补充
-（空）
+- 2026-09-30 实施记录（一处偏离原文，仅本文档）：本文档「改动原文」一节里 7 个 hunk 头被改成
+  `[hunk -a,b +c,d] <原上下文>` 形式，其余逐字未动；补丁 `.patch`、提交与仓库里的代码都是原文。
+  原因：`tests/test_ledger_substitution_markers.py` 判「栖息地」而不是形状 —— 未被替换的替换标记
+  在台账里必须为 0、在台账外必须落在 JSON 字符串值里，嵌入的 diff 正文两者都不是，因此该锁把
+  本文档判成「判不了性质的新栖息地」。该锁的失败信息给的处置就是「两者都不是，别用这个形状」。
