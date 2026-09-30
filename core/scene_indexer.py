@@ -59,9 +59,10 @@ class SceneIndexer:
     ) -> int:
         """切分场景并写入 RAG，返回场景数量。**幂等**：正文没变即复用已建好的集合。
 
-        注意：此方法会替换 rag.collection 引用，将检索从 chunk 模式
-        升级为 scene 模式。这是设计意图——蒸馏完成后，对话阶段应使用
-        场景级检索以获得更好的上下文连贯性。
+        注意：此方法会把 ``rag.collection`` 改指到新建 / 复用的场景集合。传进来的
+        ``rag`` 必须是调用方**私有**的引擎（`IndexingService._scene_index_job` 里那一个）
+        —— 不许是某个会话正在用的引擎。会话各自经 `IndexingService.get_rag_for_session`
+        拿 `SessionRag`，按 `scenes_{card_id}` → `text_{text_id}` 装载。
 
         幂等的由来：本方法有**两处**调度者（蒸馏落卡、打开卡片时的
         `/start_session`），两者之间隔着人操作时间（分钟到天），

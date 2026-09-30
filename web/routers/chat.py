@@ -164,14 +164,20 @@ async def _ensure_session(
     card_rec = await storage.get_card_owned(card_id, user_id)
     if not card_rec:
         raise HTTPException(404, "Card not found")
-    text_rec = await storage.get_text_owned(card_rec["text_id"], user_id)
-    if not text_rec:
-        raise HTTPException(404, "Text not found")
+    # 独立卡片（没有原文）：不读原文、不检索 —— 与新建独立卡片会话同一口径
+    # （`routers/distill.py::start_session` 的独立卡片分支）。
+    text_id = card_rec.get("text_id") or ""
+    if text_id:
+        text_rec = await storage.get_text_owned(text_id, user_id)
+        if not text_rec:
+            raise HTTPException(404, "Text not found")
 
     card = CharacterCard.model_validate_json(card_rec["card_json"])
 
-    existing_cards = await storage.list_cards(card_rec["text_id"], user_id)
-    all_characters = await text_manager._build_all_characters(card_rec["text_id"], existing_cards, user_id)
+    all_characters: list[dict[str, Any]] = []
+    if text_id:
+        existing_cards = await storage.list_cards(text_id, user_id)
+        all_characters = await text_manager._build_all_characters(text_id, existing_cards, user_id)
 
     try:
         user_cfg = await storage.get_user_api_config(user_id) or {}
@@ -186,9 +192,8 @@ async def _ensure_session(
     emb = resolve_embedding(user_cfg)
 
     rag = text_manager._indexing_service.get_rag_for_session(
-        card_rec["text_id"], text_rec["content"],
-        all_characters=all_characters, embedding_key=emb.key, embedding_region=emb.region,
-    )
+        text_id, card_id=card_id, embedding_key=emb.key, embedding_region=emb.region,
+    ) if text_id else None
     memory = await asyncio.to_thread(text_manager.memory_for, user_id, emb.key, emb.region)
     # 原会话 id 直接进构造：引擎一出生就在原 id 名下，不再「新 id 造好再搬过来」。
     await asyncio.to_thread(
@@ -249,7 +254,9 @@ class ChatRequest(BaseModel):
     affinity_enabled: bool = True
     reply_to_id: int | None = None
     reply_to_preview: str = ""
-    agent_mode: bool = False
+    # 默认走工具编排（场景 / 记忆 / 联网三个检索工具）。不带这个字段的调用方
+    # 与前端默认一致；要旧的「无条件注入」路径须显式传 false。
+    agent_mode: bool = True
 
 
 class RevokeRequest(BaseModel):
