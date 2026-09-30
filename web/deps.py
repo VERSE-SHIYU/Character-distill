@@ -231,9 +231,8 @@ async def _rag_for_engine(
     service = get_indexing_service()
     if service is None:
         return engine.rag
-    return await asyncio.to_thread(
-        service.get_rag_for_session, text_id, text_rec.get("content", ""),
-        all_characters=getattr(engine, "_all_characters", None),
+    return service.get_rag_for_session(
+        text_id, card_id=engine.card_id,
         embedding_key=embedding_key, embedding_region=embedding_region,
     )
 

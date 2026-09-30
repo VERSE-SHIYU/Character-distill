@@ -153,7 +153,8 @@ def test_T4a_rag_for_session_without_embedding_key_is_none(no_rag_engine):
     import core.indexing_service as IS
 
     svc = IS.IndexingService(storage=None, rag_config={"top_k": 3})
-    assert svc.get_rag_for_session("txt_x", "正文", embedding_key="", embedding_region="cn") is None
+    assert svc.get_rag_for_session(
+        "txt_x", card_id="card_x", embedding_key="", embedding_region="cn") is None
     assert no_rag_engine.built == [], "没有 embedding key 却去构造了 RAGEngine"
 
 
@@ -371,7 +372,7 @@ def test_T9_saving_new_keys_reaches_the_live_session(mem_factory, monkeypatch):
     seen: list[str] = []
 
     class _Svc:
-        def get_rag_for_session(self, text_id, content, *, all_characters=None,
+        def get_rag_for_session(self, text_id, *, card_id,
                                 embedding_key="", embedding_region="cn"):
             seen.append(embedding_key)
             return ("rag-for", embedding_key)

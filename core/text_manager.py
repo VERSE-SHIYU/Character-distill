@@ -544,7 +544,8 @@ class TextManager:
             memory = await asyncio.to_thread(self.memory_for, user_id, embedding_key, embedding_region)
             session_id = await asyncio.to_thread(
                 self._create_session, card,
-                all_characters=all_characters, rag=None,
+                all_characters=all_characters,
+                rag=self._session_rag(text_id, card_id, embedding_key, embedding_region),
                 card_id=card_id, user_id=user_id,
                 memory=memory,
             )
@@ -610,7 +611,8 @@ class TextManager:
         memory = await asyncio.to_thread(self.memory_for, user_id, embedding_key, embedding_region)
         session_id = await asyncio.to_thread(
             self._create_session, card,
-            all_characters=all_chars, rag=None,
+            all_characters=all_chars,
+            rag=self._session_rag(text_id, actual_card_id, embedding_key, embedding_region),
             card_id=actual_card_id, user_id=user_id,
             memory=memory,
         )
@@ -630,6 +632,17 @@ class TextManager:
         return result
 
     # ---- Internal helpers ----
+
+    def _session_rag(
+        self, text_id: str, card_id: str, embedding_key: str, embedding_region: str,
+    ) -> Any:
+        """本会话自己的检索；没有索引服务（纯卡面装配）时为 None。"""
+        if not self._indexing_service:
+            return None
+        return self._indexing_service.get_rag_for_session(
+            text_id, card_id=card_id,
+            embedding_key=embedding_key, embedding_region=embedding_region,
+        )
 
     async def _build_all_characters(self, text_id: str, existing_cards: list[dict], user_id: str) -> list[dict[str, Any]]:
         """Build all_characters list with aliases merged from cached identify results.
