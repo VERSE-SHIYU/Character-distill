@@ -61,7 +61,11 @@ import subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 # 形状本身不是判据（见 docstring），这里只是**要排查的东西**：把候选捞出来，再由栖息地定性质。
-MARKER = re.compile(r"@@[^@\n]{0,40}@@")
+#
+# 只认「`@@` 夹一段大写标签」—— 与 docstring 声明的形状一致。原写法 `[^@\n]` 放行任意字符，
+# 于是 unified diff 的块头（`@@ -1,7 +1,9 @@`）也被捞进来，入库的 .patch 文件在干净树上恒红。
+# 块头是 diff 格式的领域用法（同 `<sha>` / `${VAR}`），不是等着被替换的空。
+MARKER = re.compile(r"@@[A-Z][A-Z0-9_]{0,39}@@")
 
 # 台账的**结构**签名：一条**条目行** —— 标题行（`**N. …**`）后跟状态注记。
 #
