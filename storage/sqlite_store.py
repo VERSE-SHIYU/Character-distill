@@ -151,6 +151,7 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     # 新**表**也要孪生的理由：列集锁比的是**表集合**（只在一侧的表会被 `_column_drift`
     # 报成漂移），README 那段只写了「加列」，锁的判据比它宽 —— 以锁为准。
     "096_comment_likes.sql",
+    "097_inter_node_nonces.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -3013,6 +3014,21 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get all users failed: {exc}")
+            raise
+
+    async def claim_inter_node_nonce(self, nonce: str, *, keep_seconds: int) -> bool:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "DELETE FROM inter_node_nonces WHERE created_at < datetime('now', ?)",
+                    (f"-{int(keep_seconds)} seconds",),
+                )
+                cursor = await conn.execute(
+                    "INSERT OR IGNORE INTO inter_node_nonces (nonce) VALUES (?)", (nonce,))
+                await conn.commit()
+            return cursor.rowcount == 1
+        except Exception as exc:
+            print(f"[SQLiteStore] Claim inter-node nonce failed: {exc}")
             raise
 
     async def get_all_users_admin_fields(self) -> list[dict]:

@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import os
 import threading
@@ -13,6 +12,7 @@ from adapters.llm_adapter import (  # 出站门（缺陷 73）：与 LLM 出站�
     OutboundRefused,
     check_outbound_guard,
 )
+from core.fingerprint import key_fingerprint
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 logger = logging.getLogger(__name__)
@@ -84,18 +84,6 @@ def _is_retryable_embed(exc: Exception) -> bool:
     if "openai" in mod:
         return name in ("APIConnectionError", "APITimeoutError")
     return name in ("TimeoutError", "ConnectionError")
-
-
-def key_fingerprint(key: str) -> str:
-    """凭据的不可逆指纹（SHA-256 前 16 位十六进制）：既能当缓存身份，也能进日志。
-
-    缓存身份与日志是同一件事的两面 —— 身份要用整个 key 才区分得开，日志又不能让 key
-    露面，于是只留这个指纹。空串是「没配 key」的显式语义，原样返回，调用方的身份表示
-    不变（`f"{text_id}:"`）。
-    """
-    if not key:
-        return ""
-    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
 
 # ── Factory cache: region:key_fingerprint → DashScopeEmbedding singleton ──

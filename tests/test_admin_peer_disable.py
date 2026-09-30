@@ -41,7 +41,7 @@ def _uid(prefix: str) -> str:
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
     monkeypatch.setenv("INTER_NODE_SECRET", "test-inter-node-secret-0123456789abcdef")
-    monkeypatch.setenv("PEER_NODE_URL", "http://peer-node")
+    monkeypatch.setenv("PEER_NODE_URL", "https://peer-node")
 
 
 @pytest.fixture
@@ -77,7 +77,7 @@ def _route_peer_to(monkeypatch, transport: httpx.AsyncBaseTransport) -> None:
     monkeypatch.setattr(
         peer_client, "_client",
         lambda timeout: httpx.AsyncClient(transport=transport, timeout=timeout,
-                                          base_url="http://peer-node"),
+                                          base_url="https://peer-node"),
     )
 
 

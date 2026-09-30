@@ -189,6 +189,8 @@ async def _peer_set_disabled(user_id: str, admin: dict, disabled: bool) -> dict:
         resp = await peer_client.post_to_peer(PEER_SET_DISABLED_PATH, payload)
     except peer_client.PeerNotConfigured:
         raise HTTPException(503, "未配置对端节点")
+    except peer_client.PeerNotSecure:
+        raise HTTPException(503, "对端节点地址不是 https，已拒绝发送")
     except httpx.HTTPError as exc:
         logger.error("peer set_disabled failed: request_id=%s subject=%s: %r",
                      request_id, user_id, exc, exc_info=True)

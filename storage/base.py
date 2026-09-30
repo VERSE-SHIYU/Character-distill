@@ -552,6 +552,13 @@ class StorageBase(ABC):
         """List all users (admin)."""
 
     @abstractmethod
+    async def claim_inter_node_nonce(self, nonce: str, *, keep_seconds: int) -> bool:
+        """登记一个节点间请求的 nonce。首次出现返回 True；已登记过（= 重放）返回 False。
+
+        同一次调用顺带删掉早于 `keep_seconds` 的旧行 —— 签名窗口外的 nonce 对防重放已无用。
+        """
+
+    @abstractmethod
     async def get_all_users_admin_fields(self) -> list[dict]:
         """List all users with only admin-safe fields (no secrets, for cross-border export)."""
 

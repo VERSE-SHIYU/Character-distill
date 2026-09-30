@@ -1,37 +1,46 @@
 """Cross-border DM + card forwarding: shared functions + background resync loop.
 
-All HMAC-signed peer forwarding goes through forward_dm_to_peer() or
-forward_card_to_peer() so the payload-construction and signing logic has a
-single source of truth per domain.
+每类载荷各有一个 `forward_*_to_peer`，只负责「载荷长什么样、失败怎么记」；
+地址、签名、https 校验与超时全在 `peer_client.post_to_peer` 一处（原先这里 6 份手抄）。
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
+import peer_client
 from core.nonfatal import nonfatal
 from storage.base import StorageBase
 
 logger = logging.getLogger(__name__)
 
 
-async def forward_dm_to_peer(msg: dict, storage: StorageBase) -> bool:
-    """Forward one DM to the peer node via HMAC-signed HTTP POST.
+async def _forward(path: str, payload: dict, *, what: str, level: int) -> bool:
+    """发一条，返回对端是否确认（HTTP 200）。失败按 `level` 记一条，带状态码或异常。
 
-    Builds an explicit string-typed payload (no datetime/dict surprises),
-    signs it with inter-node HMAC, POSTs to the peer's receive endpoint.
-
-    Returns True if the peer acknowledged (HTTP 200), False otherwise.
-    The caller is responsible for updating cross_border_synced on success.
+    `what` 是调用方给的定位信息（id 之类），**不许放凭据**（邀请码本身就是凭据）。
+    未配置对端（单节点部署）静默返回 False —— 那不是失败。
     """
-    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
-    if not peer_url:
+    try:
+        resp = await peer_client.post_to_peer(path, payload)
+    except peer_client.PeerNotConfigured:
         return False
+    except Exception as exc:
+        logger.log(level, "Peer forward failed: %s path=%s error=%r", what, path, exc,
+                   exc_info=True)
+        return False
+    if resp.status_code != 200:
+        logger.log(level, "Peer forward rejected: %s path=%s status=%s", what, path,
+                   resp.status_code)
+        return False
+    return True
 
-    from inter_node_auth import create_auth_header
 
+async def forward_dm_to_peer(msg: dict, storage: StorageBase) -> bool:
+    """Forward one DM to the peer. Caller marks it synced on True; resync retries on False."""
+    if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
+        return False
     payload = {
         "id": msg["id"],
         "sender_id": msg["sender_id"],
@@ -39,38 +48,14 @@ async def forward_dm_to_peer(msg: dict, storage: StorageBase) -> bool:
         "content": msg["content"],
         "created_at": str(msg["created_at"]),
     }
-    headers = create_auth_header(payload)
-
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                f"{peer_url}/api/inter-node/dm/receive",
-                json=payload,
-                headers=headers,
-            )
-        return resp.status_code == 200
-    except Exception as exc:
-        logger.warning(
-            "DM forward failed: msg_id=%s error=%r", msg.get("id"), exc, exc_info=True,
-        )
-        return False
+    return await _forward("/api/inter-node/dm/receive", payload,
+                          what=f"dm msg_id={msg.get('id')}", level=logging.WARNING)
 
 
 async def forward_card_to_peer(card: dict, storage: StorageBase) -> bool:
-    """Forward one public card to the peer node via HMAC-signed HTTP POST.
-
-    Builds an explicit string-typed payload and POSTs to the peer's
-    card receive endpoint.  Separate from forward_dm_to_peer because
-    the payload fields and endpoint path are different.
-    """
-    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
-    if not peer_url:
+    """Forward one public card to the peer. Resync retries on False."""
+    if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
         return False
-
-    from inter_node_auth import create_auth_header
-
     # origin_region = sender's home_region
     origin_region = ""
     try:
@@ -96,23 +81,8 @@ async def forward_card_to_peer(card: dict, storage: StorageBase) -> bool:
         "market_tags": card.get("market_tags", ""),
         "created_at": str(card.get("created_at", "")),
     }
-    headers = create_auth_header(payload)
-
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                f"{peer_url}/api/inter-node/card/receive",
-                json=payload,
-                headers=headers,
-            )
-        return resp.status_code == 200
-    except Exception as exc:
-        logger.warning(
-            "Card forward failed: card_id=%s error=%r", card.get("id"), exc, exc_info=True,
-        )
-        return False
+    return await _forward("/api/inter-node/card/receive", payload,
+                          what=f"card card_id={card.get('id')}", level=logging.WARNING)
 
 
 _ENDPOINT_MAP: dict[str, str] = {
@@ -125,134 +95,46 @@ _ENDPOINT_MAP: dict[str, str] = {
 async def forward_delete_to_peer(op_type: str, target_id: str, payload: str, storage: StorageBase) -> bool:
     """Forward a delete/retract/purge intent to the peer node.
 
-    The op_type determines the endpoint:
-      card_delete → /api/inter-node/card/delete
-      dm_retract  → /api/inter-node/dm/retract
-      user_purge  → /api/inter-node/user/purge
-
-    Returns True if the peer acknowledged (HTTP 200), False otherwise.
-    The caller (resync loop) is responsible for removing the outbox row.
-
-    Every failure path prints op_type / target_id plus the status code or the
-    exception — a bare False is indistinguishable from "there was nothing to
-    send", so the row would sit in the outbox with nothing to debug from.
+    The op_type determines the endpoint (see `_ENDPOINT_MAP`). Returns True if the
+    peer acknowledged (HTTP 200); the resync loop removes the outbox row on True.
+    Every failure path logs op_type / target_id plus the status code or the exception.
     """
-    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
-    if not peer_url:
+    if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
         return False
-
     endpoint = _ENDPOINT_MAP.get(op_type)
     if not endpoint:
         logger.error("Unknown delete op_type: %s", op_type)
         return False
-
-    from inter_node_auth import create_auth_header
-
-    body = {
-        "op_type": op_type,
-        "target_id": target_id,
-        "payload": payload,
-    }
-    headers = create_auth_header(body)
-
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                f"{peer_url}{endpoint}",
-                json=body,
-                headers=headers,
-            )
-        if resp.status_code != 200:
-            logger.error(
-                "Delete forward rejected: op_type=%s target_id=%s status=%s",
-                op_type, target_id, resp.status_code,
-            )
-            return False
-        return True
-    except Exception as exc:
-        logger.error(
-            "Delete forward failed: op_type=%s target_id=%s error=%r",
-            op_type, target_id, exc, exc_info=True,
-        )
-        return False
+    body = {"op_type": op_type, "target_id": target_id, "payload": payload}
+    return await _forward(endpoint, body, what=f"op_type={op_type} target_id={target_id}",
+                          level=logging.ERROR)
 
 
 async def forward_invite_code_to_peer(record: dict) -> bool:
-    """Forward a newly created invite code to the peer node.
-
-    Builds a string-typed payload, signs with HMAC, POSTs to the peer's
-    invite-code receive endpoint.  Best-effort: returns False on failure,
-    caller is not expected to retry.
-    """
-    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
-    if not peer_url:
+    """Forward a newly created invite code. Best-effort, **no retry**."""
+    if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
         return False
-
-    from inter_node_auth import create_auth_header
-
     payload = {
         "code": str(record.get("code", "")),
         "created_by": str(record.get("created_by", "")),
     }
-    headers = create_auth_header(payload)
-
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                f"{peer_url}/api/inter-node/invite-code/receive",
-                json=payload,
-                headers=headers,
-            )
-        return resp.status_code == 200
-    except Exception as exc:
-        # 不记 code 本身（邀请码是凭据），用 created_by 定位是哪一次
-        logger.error(
-            "Invite-code forward failed (no retry): created_by=%s error=%r",
-            record.get("created_by"), exc, exc_info=True,
-        )
-        return False
+    # 不记 code 本身（邀请码是凭据），用 created_by 定位是哪一次
+    return await _forward("/api/inter-node/invite-code/receive", payload,
+                          what=f"invite-code (no retry) created_by={record.get('created_by')}",
+                          level=logging.ERROR)
 
 
 async def forward_invite_code_delete_to_peer(code: str) -> bool:
-    """Forward an invite-code delete to the peer node.
-
-    Best-effort: returns False on failure, caller is not expected to retry.
-    """
-    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
-    if not peer_url:
+    """Forward an invite-code delete. Best-effort, **no retry**."""
+    if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
         return False
-
-    from inter_node_auth import create_auth_header
-
-    payload = {"code": code}
-    headers = create_auth_header(payload)
-
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                f"{peer_url}/api/inter-node/invite-code/delete",
-                json=payload,
-                headers=headers,
-            )
-        return resp.status_code == 200
-    except Exception as exc:
-        # 不记 code 本身（邀请码是凭据）：这条也无重试，对端会一直留着这个码
-        logger.error(
-            "Invite-code delete forward failed (no retry): error=%r", exc, exc_info=True,
-        )
-        return False
+    # 不记 code 本身（邀请码是凭据）：这条也无重试，对端会一直留着这个码
+    return await _forward("/api/inter-node/invite-code/delete", {"code": code},
+                          what="invite-code delete (no retry)", level=logging.ERROR)
 
 
 async def forward_user_profile_to_peer(user_id: str, username: str, home_region: str, avatar_data: str = "") -> bool:
-    """Forward a user profile to the peer node (lightweight stub sync).
-
-    Best-effort: returns False on failure.  Caller is not expected to retry.
+    """Forward a user profile to the peer node (lightweight stub sync). Best-effort, no retry.
 
     A previous version of this docstring said the profile would be synced when
     the first DM exchange happens.  That is not true: the peer's
@@ -260,36 +142,16 @@ async def forward_user_profile_to_peer(user_id: str, username: str, home_region:
     user row.  So once this forward fails, the peer stays without the profile
     until some other explicit forward succeeds.
     """
-    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
-    if not peer_url:
+    if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
         return False
-
-    from inter_node_auth import create_auth_header
-
     payload = {
         "id": user_id,
         "username": username,
         "home_region": home_region,
         "avatar_data": avatar_data,
     }
-    headers = create_auth_header(payload)
-
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                f"{peer_url}/api/inter-node/user/sync",
-                json=payload,
-                headers=headers,
-            )
-        return resp.status_code == 200
-    except Exception as exc:
-        logger.error(
-            "User-profile forward failed (no retry): user_id=%s error=%r",
-            user_id, exc, exc_info=True,
-        )
-        return False
+    return await _forward("/api/inter-node/user/sync", payload,
+                          what=f"user-profile (no retry) user_id={user_id}", level=logging.ERROR)
 
 
 async def _resync_once(storage: StorageBase) -> None:
@@ -301,8 +163,7 @@ async def _resync_once(storage: StorageBase) -> None:
 
     Silent no-op when PEER_NODE_URL is unset (single-node deployment).
     """
-    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
-    if not peer_url:
+    if not peer_client.peer_url():
         return
 
     # ── DM resync ──

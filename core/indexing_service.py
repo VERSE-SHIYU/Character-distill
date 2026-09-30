@@ -11,7 +11,7 @@ import logging
 import asyncio
 from typing import Any
 
-from core.embeddings import key_fingerprint
+from core.fingerprint import key_fingerprint
 from core.rag import CollectionUnusableError, RAGEngine
 from core.scene_indexer import SceneIndexer
 

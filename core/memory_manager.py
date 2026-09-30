@@ -295,7 +295,8 @@ class MemoryManager:
                 "LLM key" if llm is None else "embedding key",
             )
             return None
-        from core.embeddings import Mem0BridgeEmbedder, key_fingerprint
+        from core.embeddings import Mem0BridgeEmbedder
+        from core.fingerprint import key_fingerprint
 
         cache_key = (
             f"{user_id}:{llm.credential_fingerprint()}:"

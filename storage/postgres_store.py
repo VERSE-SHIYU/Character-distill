@@ -2393,6 +2393,25 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get all users failed: {exc}")
             raise
 
+    async def claim_inter_node_nonce(self, nonce: str, *, keep_seconds: int) -> bool:
+        try:
+            async with await self._connect() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        "DELETE FROM inter_node_nonces "
+                        "WHERE created_at < CURRENT_TIMESTAMP - make_interval(secs => $1)",
+                        keep_seconds,
+                    )
+                    row = await conn.fetchrow(
+                        "INSERT INTO inter_node_nonces (nonce) VALUES ($1) "
+                        "ON CONFLICT (nonce) DO NOTHING RETURNING nonce",
+                        nonce,
+                    )
+            return row is not None
+        except Exception as exc:
+            print(f"[PostgresStore] Claim inter-node nonce failed: {exc}")
+            raise
+
     async def get_all_users_admin_fields(self) -> list[dict]:
         """List all users with admin-safe fields only (for cross-border export).
 

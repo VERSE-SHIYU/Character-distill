@@ -56,6 +56,8 @@ websockets>=12.0
 mem0ai>=2.0.0
 PyJWT>=2.8.0
 cryptography>=42.0.0
+# 节点间请求签名（RFC 9421 HTTP Message Signatures）。选型见 docs/specs/inter-node-v2.md。
+http-message-signatures>=2.0.1
 pwdlib[argon2]>=0.2.0
 python-multipart>=0.0.9
 resend>=2.30.1,<3.0.0

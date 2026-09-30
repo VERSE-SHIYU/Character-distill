@@ -7,6 +7,7 @@ network calls are made.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -29,9 +30,33 @@ def _ensure_no_env_leak(monkeypatch):
     monkeypatch.setenv("INTER_NODE_SECRET", "test-inter-node-secret-0123456789abcdef")
 
 
-class MockResponse:
-    def __init__(self, status_code: int):
-        self.status_code = status_code
+def _peer(monkeypatch, *, status=200, error=None):
+    """把 `peer_client` 的出站请求改走 httpx 自带的 MockTransport，返回收到的请求列表。
+
+    发送出口只有 `peer_client.post_to_peer` 一处（其下 `_client` 是唯一建客户端处），
+    所以打桩打在这里，不去 patch 全局 `httpx.AsyncClient`。
+    """
+    import httpx
+
+    import peer_client
+
+    seen: list[httpx.Request] = []
+
+    def _handler(request):
+        seen.append(request)
+        if error is not None:
+            raise error
+        return httpx.Response(status)
+
+    monkeypatch.setattr(
+        peer_client, "_client",
+        lambda timeout: httpx.AsyncClient(transport=httpx.MockTransport(_handler), timeout=timeout),
+    )
+    return seen
+
+
+def _json(request) -> dict:
+    return json.loads(request.content)
 
 
 @pytest.mark.parametrize("status_code,expected_marked", [
@@ -43,7 +68,8 @@ async def test_forward_dm_to_peer(monkeypatch, status_code, expected_marked):
     """forward_dm_to_peer returns True only on 200, and caller marks synced."""
     from cross_border_sync import forward_dm_to_peer
 
-    monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
+    monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
+    seen = _peer(monkeypatch, status=status_code)
 
     msg = {
         "id": "test123",
@@ -52,36 +78,20 @@ async def test_forward_dm_to_peer(monkeypatch, status_code, expected_marked):
         "content": "hello",
         "created_at": "2026-06-26 08:00:00",
     }
-
-    storage = MagicMock()
-    storage.mark_message_synced = AsyncMock()
-
-    mock_post = AsyncMock(return_value=MockResponse(status_code))
-    mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    mock_client.post = mock_post
-
-    with patch("httpx.AsyncClient", return_value=mock_client):
-        ok = await forward_dm_to_peer(msg, storage)
+    ok = await forward_dm_to_peer(msg, MagicMock())
 
     assert ok is expected_marked
-
-    # Verify POST was called with correct URL and JSON
-    mock_post.assert_awaited_once()
-    call_kwargs = mock_post.call_args[1]
-    assert "api/inter-node/dm/receive" in str(mock_post.call_args[0][0])
-    assert call_kwargs["json"] == msg
-    assert "Authorization" in call_kwargs["headers"]
-    assert call_kwargs["headers"]["Authorization"].startswith("HMAC-SHA256")
+    assert len(seen) == 1
+    assert seen[0].url.path == "/api/inter-node/dm/receive"
+    assert _json(seen[0]) == msg
+    assert seen[0].headers["Authorization"].startswith("HMAC-SHA256")
 
 
 async def test_forward_dm_to_peer_no_peer_url():
     """No PEER_NODE_URL => no-op, returns False."""
     from cross_border_sync import forward_dm_to_peer
 
-    storage = MagicMock()
-    ok = await forward_dm_to_peer({"id": "x"}, storage)
+    ok = await forward_dm_to_peer({"id": "x"}, MagicMock())
     assert ok is False
 
 
@@ -90,16 +100,18 @@ async def test_forward_dm_to_peer_empty_peer_url(monkeypatch):
     from cross_border_sync import forward_dm_to_peer
 
     monkeypatch.setenv("PEER_NODE_URL", "")
-    storage = MagicMock()
-    ok = await forward_dm_to_peer({"id": "x"}, storage)
+    ok = await forward_dm_to_peer({"id": "x"}, MagicMock())
     assert ok is False
 
 
 async def test_forward_dm_to_peer_connection_error(monkeypatch):
     """Connection error => returns False (message not lost)."""
+    import httpx
+
     from cross_border_sync import forward_dm_to_peer
 
-    monkeypatch.setenv("PEER_NODE_URL", "http://unreachable.invalid:7860")
+    monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
+    _peer(monkeypatch, error=httpx.ConnectError("down"))
     msg = {
         "id": "err123",
         "sender_id": "user_a",
@@ -107,8 +119,7 @@ async def test_forward_dm_to_peer_connection_error(monkeypatch):
         "content": "hello",
         "created_at": "2026-06-26 08:00:00",
     }
-    storage = MagicMock()
-    ok = await forward_dm_to_peer(msg, storage)
+    ok = await forward_dm_to_peer(msg, MagicMock())
     assert ok is False
 
 
@@ -136,42 +147,33 @@ async def test_forward_card_to_peer(monkeypatch, status_code, expected_marked):
     """forward_card_to_peer returns True only on 200."""
     from cross_border_sync import forward_card_to_peer
 
-    monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
+    monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
+    seen = _peer(monkeypatch, status=status_code)
 
     storage = MagicMock()
     storage.get_user_by_id = AsyncMock(return_value={"home_region": "sg"})
-    mock_post = AsyncMock(return_value=MockResponse(status_code))
-    mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    mock_client.post = mock_post
-
-    with patch("httpx.AsyncClient", return_value=mock_client):
-        ok = await forward_card_to_peer(CARD_FIXTURE, storage)
+    ok = await forward_card_to_peer(CARD_FIXTURE, storage)
 
     assert ok is expected_marked
-
-    mock_post.assert_awaited_once()
-    call_kwargs = mock_post.call_args[1]
-    assert "api/inter-node/card/receive" in str(mock_post.call_args[0][0])
+    assert len(seen) == 1
+    assert seen[0].url.path == "/api/inter-node/card/receive"
+    body = _json(seen[0])
     # Payload must have all expected fields; text_id removed, origin_region added
-    assert call_kwargs["json"]["id"] == CARD_FIXTURE["id"]
-    assert call_kwargs["json"]["user_id"] == CARD_FIXTURE["user_id"]
-    assert call_kwargs["json"]["origin_region"] == "sg"
-    assert call_kwargs["json"]["name"] == CARD_FIXTURE["name"]
-    assert call_kwargs["json"]["card_json"] == CARD_FIXTURE["card_json"]
-    assert call_kwargs["json"]["visibility"] == CARD_FIXTURE["visibility"]
-    assert "text_id" not in call_kwargs["json"]
-    assert "Authorization" in call_kwargs["headers"]
-    assert call_kwargs["headers"]["Authorization"].startswith("HMAC-SHA256")
+    assert body["id"] == CARD_FIXTURE["id"]
+    assert body["user_id"] == CARD_FIXTURE["user_id"]
+    assert body["origin_region"] == "sg"
+    assert body["name"] == CARD_FIXTURE["name"]
+    assert body["card_json"] == CARD_FIXTURE["card_json"]
+    assert body["visibility"] == CARD_FIXTURE["visibility"]
+    assert "text_id" not in body
+    assert seen[0].headers["Authorization"].startswith("HMAC-SHA256")
 
 
 async def test_forward_card_to_peer_no_peer_url():
     """No PEER_NODE_URL => no-op, returns False."""
     from cross_border_sync import forward_card_to_peer
 
-    storage = MagicMock()
-    ok = await forward_card_to_peer(CARD_FIXTURE, storage)
+    ok = await forward_card_to_peer(CARD_FIXTURE, MagicMock())
     assert ok is False
 
 
@@ -180,34 +182,25 @@ async def test_forward_card_to_peer_empty_peer_url(monkeypatch):
     from cross_border_sync import forward_card_to_peer
 
     monkeypatch.setenv("PEER_NODE_URL", "")
-    storage = MagicMock()
-    ok = await forward_card_to_peer(CARD_FIXTURE, storage)
+    ok = await forward_card_to_peer(CARD_FIXTURE, MagicMock())
     assert ok is False
 
 
 async def test_forward_card_to_peer_connection_error(monkeypatch):
     """Connection error => returns False (card not lost)."""
+    import httpx
+
     from cross_border_sync import forward_card_to_peer
 
-    monkeypatch.setenv("PEER_NODE_URL", "http://unreachable.invalid:7860")
+    monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
+    _peer(monkeypatch, error=httpx.ConnectError("down"))
     storage = MagicMock()
+    storage.get_user_by_id = AsyncMock(return_value=None)
     ok = await forward_card_to_peer(CARD_FIXTURE, storage)
     assert ok is False
 
 
 # ── forward_delete_to_peer tests ────────────────────────────────────────
-
-def _mock_httpx(monkeypatch, response=None, error=None):
-    """Patch httpx.AsyncClient: return `response`, or raise `error` on post()."""
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    mock_post = AsyncMock(side_effect=error) if error else AsyncMock(return_value=response)
-    mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    mock_client.post = mock_post
-    return patch("httpx.AsyncClient", return_value=mock_client)
-
 
 async def test_forward_delete_to_peer_logs_status_on_non_200(monkeypatch, caplog):
     """对端回非 200 时，日志里必须留下 op_type / target_id / 状态码。
@@ -220,11 +213,11 @@ async def test_forward_delete_to_peer_logs_status_on_non_200(monkeypatch, caplog
     """
     from cross_border_sync import forward_delete_to_peer
 
-    monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
+    monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
     caplog.set_level(logging.ERROR)
+    _peer(monkeypatch, status=503)
 
-    with _mock_httpx(monkeypatch, response=MockResponse(503)):
-        ok = await forward_delete_to_peer("card_delete", "card-xyz", "", MagicMock())
+    ok = await forward_delete_to_peer("card_delete", "card-xyz", "", MagicMock())
 
     assert ok is False
     out = "\n".join(r.getMessage() for r in caplog.records)
@@ -237,11 +230,11 @@ async def test_forward_delete_to_peer_logs_exception(monkeypatch, caplog):
     """连不上对端时，同样要留下 op_type / target_id（异常本身另附）。"""
     from cross_border_sync import forward_delete_to_peer
 
-    monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
+    monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
     caplog.set_level(logging.ERROR)
+    _peer(monkeypatch, error=RuntimeError("boom-unreachable"))
 
-    with _mock_httpx(monkeypatch, error=RuntimeError("boom-unreachable")):
-        ok = await forward_delete_to_peer("user_purge", "usr-abc", "", MagicMock())
+    ok = await forward_delete_to_peer("user_purge", "usr-abc", "", MagicMock())
 
     assert ok is False
     out = "\n".join(r.getMessage() for r in caplog.records)
