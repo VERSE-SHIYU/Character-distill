@@ -110,10 +110,13 @@ class _StubLLM:
 def _no_ambient_state(monkeypatch, store):
     """钉死三条 ambient 依赖，让用例结果只取决于被测代码，不取决于测试机。
 
-    1. `deps.get_llm`：`deps.get_user_llm` 在用户没配 key 时 fallback 到 `get_llm()`
-       （读 .env / config.yaml）。有 key 的机器上这道门开着、用例能走到属主判定；没 key
-       的机器 `get_user_llm` 返 None，`create_group` 先被 503「请先在设置页配置 API Key」
-       拦下 —— 断言就是巧合过的（本仓曾因此在本机绿、在无 key 机器红）。
+    1. `deps._resolve_user_llm`（解析出口本体 —— 路由按名导入了 `get_user_llm`，换它打不到
+       那些绑定，而 `get_user_llm` 自己在调用时才查本体）：钉成「这个用户配了自己的 key」
+       （返回 `_StubLLM`）。解析出口
+       不回落全局（`docs/specs/user-own-keys.md`），不钉的话夹具里的用户都没 key，
+       `create_group` 等先被 503「请先在设置页配置 API Key」拦下，到不了属主判定。
+       `deps.get_llm` 也钉住：发布审核仍用平台 key（`routers/market.py` 直接调它），
+       不钉就会读本机 .env / config.yaml —— 结果随测试机而变。
     2. `deps.get_memory_manager`：`create_group` 是**内联** `from deps import
        get_memory_manager`，不走 `Depends`，故 `dependency_overrides` 管不到它 —— 不钉住
        就会构造真 MemoryManager（chroma → fastembed → onnxruntime），本机直接打
@@ -130,7 +133,12 @@ def _no_ambient_state(monkeypatch, store):
     实际用的那份 —— 这个坑实测踩过一次，症状是「patch 了、也绿了，门其实还开着」。
     """
     import deps
+
+    async def _user_llm(*_a, **_kw):
+        return _StubLLM()
+
     monkeypatch.setattr(deps, "get_llm", _StubLLM)
+    monkeypatch.setattr(deps, "_resolve_user_llm", _user_llm)
     monkeypatch.setattr(deps, "get_memory_manager", lambda: _MemMgr())
     monkeypatch.setattr(deps, "_storage", store)
 
@@ -707,9 +715,8 @@ class TestOneToOneSessionOwnership:
 def no_api_key(monkeypatch):
     """把解析出口钉成「没配 key」：`deps.get_user_llm` 返 None。
 
-    不能只靠「本机没设 key」：autouse 的 `_no_ambient_state` 已把 `deps.get_llm` 钉成
-    `_StubLLM`，而 `get_user_llm` 在用户没配 key 时正是**回落到 `get_llm()`** —— 于是默认
-    返回非 None，503 门根本不开。钉解析出口，才是 S0 ⑤ 探针里那个「没配 key」的状态。
+    autouse 的 `_no_ambient_state` 默认把解析出口本体钉成「已配 key」，本夹具
+    在它之后把同一处改钉成 None —— 这才是 S0 ⑤ 探针里那个「没配 key」的状态。
     """
     import deps
 

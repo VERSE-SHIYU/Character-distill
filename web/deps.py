@@ -93,8 +93,17 @@ def _make_user_llm(config: dict[str, Any]) -> LLMAdapter:
     )
 
 
+def _no_global_llm() -> None:
+    """面向用户的解析出口没有全局兜底：交给 `resolve_llm` 的 `get_global` 恒为 None。"""
+    return None
+
+
 async def _resolve_user_llm(user_id: str, storage: StorageBase | None = None) -> LLMAdapter | None:
-    """解析出口**本体**：这一次给 *user_id* 用的 LLMAdapter（没配 key 时回落全局）。
+    """解析出口**本体**：这一次给 *user_id* 用的 LLMAdapter —— **只认用户自己的 key**。
+
+    用户没配 key 返回 None，**不回落全局**（口径见 `docs/specs/user-own-keys.md` §2）：
+    面向用户的模型调用由用户自付，全局 key 只剩平台自己的事（发布审核
+    `routers/market.py` 直接取 `get_llm()`，不经本出口）。调用点对 None 一律 503。
 
     **选谁**是策略，在 `web/llm_resolution.resolve_llm`；本函数只做三件它不做的事：
     读配置、按来源缓存、返回。**不判放行** —— `preflight()` 在 `get_user_llm` 那一层。
@@ -103,8 +112,8 @@ async def _resolve_user_llm(user_id: str, storage: StorageBase | None = None) ->
     「这次出站放不放行」是**另一码事**（判定用当前的 IP 与 base_url，与用户刚存进去的
     配置无关）。保存路径跟着 `get_user_llm` 走，就会因为一个当下被拒的理由而整笔不写库。
 
-    **只缓存 USER 结果**（§2.8）：回落与不可用都是「**当下**的事实」—— 管理员补上全局
-    key、或用户刚存好自己的配置，下个请求就该生效；缓存住它们会把这件事实冻到进程重启。
+    **只缓存 USER 结果**（§2.8）：「不可用」是「**当下**的事实」—— 用户刚存好自己的
+    配置，下个请求就该生效；缓存住它会把这件事实冻到进程重启。
     """
     if storage is None:
         storage = get_storage()
@@ -113,7 +122,7 @@ async def _resolve_user_llm(user_id: str, storage: StorageBase | None = None) ->
         return cached
 
     config = await storage.get_user_api_config(user_id)
-    resolved = resolve_llm(config, build_user=_make_user_llm, get_global=get_llm)
+    resolved = resolve_llm(config, build_user=_make_user_llm, get_global=_no_global_llm)
     if resolved.source is Source.USER:
         # 先入缓存：用户实例本身没有变坏 —— 换个放行的 IP 再来，该命中的还是这条缓存。
         _user_llm_cache[user_id] = resolved.llm
@@ -169,7 +178,7 @@ async def refresh_user_llm(user_id: str, storage: StorageBase | None = None) -> 
     存完设置后由 `update_api_config` 调 —— 不踢会话、不重建 RAG，只让**下一轮**出站
     走新连接（在飞的那一轮归旧连接，见 `ChatEngine.set_llm`）。
 
-    解析结果 `None`（自己没配 key、全局兜底也没有）时记一笔日志、返回 0：这是「这次没得
+    解析结果 `None`（用户自己没配 key）时记一笔日志、返回 0：这是「这次没得
     换」，不是失败。
 
     **单进程前提**：`_sessions` / `_group_sessions` 是本进程的内存表（`web/server.py` 的
