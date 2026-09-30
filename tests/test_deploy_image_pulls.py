@@ -6,7 +6,8 @@
   - build.yml 不再登录 / 推送阿里云；
   - deploy.yml 的 app / nginx（含回滚）只从 GHCR 拉，postgres / fail2ban 仍阿里云优先
     （Docker Hub 从 SZ 拉会超时，这两个是同区镜像，拉取正常）；
-  - pull_image 的 $1（阿里云引用）为空即跳过阿里云；非空时保留 120s 单次超时与失败原因。
+  - pull_image 的 $1（阿里云引用）为空即跳过阿里云；非空时保留 120s 单次超时与失败原因；
+  - 本地已有同一镜像（有 digest 时须 digest 一致）就不拉（IfNotPresent），本地没有才拉。
 
 行为用例按比例复刻：阿里云超时取 1s、替身挂 30s，断言 10s 内回落。
 """
@@ -76,6 +77,7 @@ def test_third_party_images_stay_aliyun_first():
 # ── deploy.yml：pull_image 行为 ───────────────────────────────────────────────
 
 _FUNC_RE = re.compile(r"^ {12}pull_image\(\) \{\n.*?^ {12}\}\n", re.M | re.S)
+_HAVE_RE = re.compile(r"^ {12}have_image\(\) \{\n.*?^ {12}\}\n", re.M | re.S)
 _ALIYUN = "reg.example/verse-shiyu"
 _GHCR = "ghcr.io/verse-shiyu"
 
@@ -83,6 +85,12 @@ _GHCR = "ghcr.io/verse-shiyu"
 _DOCKER_STUB = textwrap.dedent("""\
     #!/usr/bin/env bash
     if [ "$1" = "tag" ]; then exit 0; fi
+    if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
+      ref="${@: -1}"
+      case " $STUB_LOCAL " in *" $ref "*) ;; *) exit 1 ;; esac
+      if [ "$3" = "--format" ]; then echo "$STUB_REPODIGESTS"; fi
+      exit 0
+    fi
     ref="$2"
     echo "$ref" >> "$STUB_LOG"
     case "$ref" in
@@ -98,12 +106,15 @@ _DOCKER_STUB = textwrap.dedent("""\
 
 
 def _pull_image_src() -> str:
-    funcs = _FUNC_RE.findall(_DEPLOY.read_text(encoding="utf-8"))
+    text = _DEPLOY.read_text(encoding="utf-8")
+    funcs, haves = _FUNC_RE.findall(text), _HAVE_RE.findall(text)
     assert len(funcs) == 1, f"deploy.yml 里 pull_image() 应恰好 1 个，实际 {len(funcs)}"
-    return textwrap.dedent(funcs[0])
+    assert len(haves) == 1, f"deploy.yml 里 have_image() 应恰好 1 个，实际 {len(haves)}"
+    return textwrap.dedent(haves[0]) + textwrap.dedent(funcs[0])
 
 
-def _run(tmp_path: Path, aliyun: str, ghcr: str, first_arg: str | None = None):
+def _run(tmp_path: Path, aliyun: str, ghcr: str, first_arg: str | None = None,
+         digest: str = "sha256:d", local: str = "", repodigests: str = ""):
     stub = tmp_path / "docker"
     stub.write_text(_DOCKER_STUB, encoding="utf-8")
     stub.chmod(0o755)
@@ -114,12 +125,13 @@ def _run(tmp_path: Path, aliyun: str, ghcr: str, first_arg: str | None = None):
         f'ALIYUN_REPO_PREFIX="{_ALIYUN}"',
         "ALIYUN_PULL_TIMEOUT=1",
         _pull_image_src(),
-        f'pull_image "{first}" "{_GHCR}/character-distill-app" "sha256:d" "abc"'
+        f'pull_image "{first}" "{_GHCR}/character-distill-app" "{digest}" "abc"'
         ' || { echo "RESULT=fail"; exit 0; }',
         'echo "RESULT=$PULLED_REGISTRY"',
     ])
     env = {**os.environ, "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
-           "STUB_ALIYUN": aliyun, "STUB_GHCR": ghcr, "STUB_LOG": str(log)}
+           "STUB_ALIYUN": aliyun, "STUB_GHCR": ghcr, "STUB_LOG": str(log),
+           "STUB_LOCAL": local, "STUB_REPODIGESTS": repodigests}
     t0 = time.monotonic()
     proc = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=20)
     calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
@@ -164,6 +176,49 @@ def test_aliyun_ok_stays_on_aliyun_without_notice(tmp_path):
 def test_both_registries_fail_returns_nonzero(tmp_path):
     proc, _, _ = _run(tmp_path, aliyun="fail", ghcr="fail")
     assert "RESULT=fail" in proc.stdout
+
+
+_LOCAL_APP = f"{_GHCR}/character-distill-app:abc"
+_LOCAL_PG = f"{_ALIYUN}/postgres:16-alpine"
+_SAME = f"{_GHCR}/character-distill-app@sha256:d"
+
+
+@needs_posix
+def test_local_third_party_image_skips_pull(tmp_path):
+    """postgres / fail2ban：本地已有阿里云那份 → 不连任何仓库（仓库挂了也照常部署）。"""
+    proc, _, calls = _run(tmp_path, aliyun="hang", ghcr="fail", first_arg=_LOCAL_PG, digest="", local=_LOCAL_PG)
+    assert calls == [], calls
+    assert f"RESULT={_ALIYUN}" in proc.stdout and f"本地已有 {_LOCAL_PG}，跳过拉取" in proc.stdout
+
+
+@needs_posix
+def test_local_own_image_with_same_digest_skips_pull(tmp_path):
+    """app / nginx 重部署同一 commit：本地 :tag 的 digest 与目标一致 → 不拉。"""
+    proc, _, calls = _run(tmp_path, aliyun="fail", ghcr="hang", first_arg="", local=_LOCAL_APP, repodigests=_SAME)
+    assert calls == [], calls
+    assert f"RESULT={_GHCR}" in proc.stdout and f"本地已有 {_LOCAL_APP}，跳过拉取" in proc.stdout
+
+
+@needs_posix
+def test_local_rollback_image_skips_pull(tmp_path):
+    """回滚形态（无 digest，:PREV_SHA）：清理逻辑本就保留上一版 → 不拉。"""
+    proc, _, calls = _run(tmp_path, aliyun="fail", ghcr="hang", first_arg="", digest="", local=_LOCAL_APP)
+    assert calls == [], calls
+    assert f"RESULT={_GHCR}" in proc.stdout
+
+
+@needs_posix
+def test_local_image_with_other_digest_is_pulled(tmp_path):
+    """本地同名 tag 但 digest 不同 → 不认本地，照常按 digest 拉（两节点仍是同一 sha256）。"""
+    proc, _, calls = _run(tmp_path, aliyun="fail", ghcr="ok", first_arg="", local=_LOCAL_APP,
+                          repodigests=f"{_GHCR}/character-distill-app@sha256:OTHER")
+    assert calls == [_SAME], calls
+    assert "跳过拉取" not in proc.stdout
+
+
+def test_no_call_site_uses_latest():
+    """「本地有就不拉」只对固定版本成立；:latest 必须每次拉（Compose 同规则）。调用方不得传 latest。"""
+    assert all(c[3] != "latest" for c in _calls()), _calls()
 
 
 # ── deploy.yml：规模 ──────────────────────────────────────────────────────────
