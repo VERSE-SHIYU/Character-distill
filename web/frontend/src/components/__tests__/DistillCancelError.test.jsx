@@ -6,6 +6,7 @@ import TextPanel from '../TextPanel'
 import useAppStore from '../../store/useAppStore'
 import { fetchWithTimeout } from '../../api/client'
 import { fetchAllCards } from '../../api/cards'
+import { flushTurns } from '../../test/flushTurns'
 
 // 106 的两个落点是逐字重复的两份代码（任务条 / 工作台）。两份都要被守 ——
 // 只测一份，另一份以后再次把 DELETE 吞掉也不会红。
@@ -81,12 +82,22 @@ beforeEach(() => {
   })
 })
 
+// 文本列表只应答第一次，之后的请求一律挂起：自触发循环（116 的病灶）会停在第 2 次请求上，
+// 用例据此判红；不这样做，循环不让出事件循环，整个 worker 被拖死，变异判不出来。
+const answerTextListOnce = () => {
+  const inner = vi.mocked(fetchWithTimeout).getMockImplementation()
+  let answered = false
+  vi.mocked(fetchWithTimeout).mockImplementation((url, opts) => {
+    if (url !== '/api/text/list') return inner(url, opts)
+    if (answered) return new Promise(() => {})
+    answered = true
+    return inner(url, opts)
+  })
+}
+
 const textListCalls = () =>
   vi.mocked(fetchWithTimeout).mock.calls.filter(([url]) => url === '/api/text/list').length
 
-// 旧代码在空列表下会 loadTexts → set 新数组 → effect 再跑，无限循环。
-// 给它足够的时间跑几轮，再数请求次数。
-const settleMs = (ms) => new Promise((r) => setTimeout(r, ms))
 
 describe('106：取消失败不能假装成功', () => {
   describe('蒸馏任务条', () => {
@@ -139,20 +150,22 @@ describe('106：取消失败不能假装成功', () => {
 describe('116：文本列表为空时不再自触发', () => {
   it('蒸馏工作台：/api/text/list 只拉一次', async () => {
     deleteOk()
+    answerTextListOnce()
     render(<DistillWorkbench />)
     await waitFor(() => expect(document.querySelector('.dw-cta')).toBeInTheDocument())
 
-    await settleMs(80)
+    await flushTurns()
     expect(textListCalls()).toBe(1)
   })
 
   it('创作页角色管理：/api/text/list 只拉一次', async () => {
     deleteOk()
+    answerTextListOnce()
     const { container } = render(<TextPanel />)
     fireEvent.click([...container.querySelectorAll('.creation-tab')].find((b) => b.textContent === '角色管理'))
     await waitFor(() => expect(container.querySelector('.creation-tab')).toBeInTheDocument())
 
-    await settleMs(80)
+    await flushTurns()
     expect(textListCalls()).toBe(1)
   })
 
