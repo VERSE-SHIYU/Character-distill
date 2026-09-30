@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 _repo = Path(__file__).resolve().parent.parent
 if str(_repo) not in sys.path:
     sys.path.insert(0, str(_repo))
@@ -298,51 +300,48 @@ def test_index_delete_failure_propagates():
 
 # ── 调用路径回归：维度不符集合 → 三条 load_existing 调用路径都降级、都绝不 index() ──
 
-def test_caller_indexing_service_degrades_no_index(caplog):
-    """indexing_service（单卡 chat 主路径）：CollectionUnusableError → 特定 WARN + None 降级 + index 不触发。
+def test_caller_indexing_service_degrades_no_index():
+    """indexing_service（单卡 chat 主路径）：CollectionUnusableError → 抛给本轮检索 + index 不触发。
 
-    守卫必须在宽 except 之前：维度不符是确定性不可用，要和瞬时 build 故障分开记日志、
-    也不落进任何可能触发 index() 的兜底（此处 _get_or_build_rag 顺序执行 index()，
-    异常上抛即天然跳过；具体捕获只为区分日志与语义）。
-
-    断言走 `caplog` 而不是 stdout（spec-119）：这条要求的意义正是「面板上看得见」，
-    而容器 stdout 到不了面板。
+    会话拿到的是 `SessionRag`，装载推迟到检索那一刻。维度不符是确定性不可用：本轮检索
+    必须**失败可见**（异常上抛，由 `ContextEngine._retrieve_via` 记 WARN、状态记 failed），
+    且绝不落进任何会触发 index() 的兜底 —— 会话路径只装载、从不建集合。
     """
     from core.indexing_service import IndexingService
 
     svc = IndexingService(storage=MagicMock(), rag_config={"embedding_key": "k"})
-    caplog.set_level(logging.WARNING)
     with patch("core.indexing_service.RAGEngine") as cls:
         inst = MagicMock()
         inst.load_existing.side_effect = CollectionUnusableError(
             "dim 384 != 1024", stored_dim=384, expected_dim=1024)
         cls.return_value = inst
-        got = svc.get_rag_for_session("t_unusable", "正文内容", embedding_key="k")
-        assert got is None, "维度不符集合必须降级返回 None（不静默空、不重建）"
+        view = svc.get_rag_for_session(
+            "t_unusable", card_id="c1", embedding_key="k", embedding_region="cn")
+        with pytest.raises(CollectionUnusableError):
+            view.query_with_emotion_ex("问题")
         inst.index.assert_not_called()
-    log = "\n".join(r.getMessage() for r in caplog.records)
-    assert "维度不符不可用" in log and "不自动重建" in log, \
-        f"维度不符必须有专属可见 WARN（区分于瞬时故障）：{log!r}"
-    assert "RAG build failed" not in log, f"维度不符不应误报成 build 失败：{log!r}"
-    print("  [PASS] indexing_service 路径：None 降级、index 未调用、维度不符专属 WARN")
+    print("  [PASS] indexing_service 路径：维度不符上抛给本轮检索、index 未调用")
 
 
-def test_caller_indexing_service_generic_error_still_degrades(caplog):
-    """indexing_service：非维度普通故障仍走宽 except 降级 None（专属守卫不误伤，也不 500）。"""
+def test_caller_indexing_service_generic_error_still_degrades():
+    """indexing_service：非维度普通故障同样上抛给本轮检索（不 500、不重建），下一轮重读。"""
     from core.indexing_service import IndexingService
 
     svc = IndexingService(storage=MagicMock(), rag_config={"embedding_key": "k"})
-    caplog.set_level(logging.WARNING)
     with patch("core.indexing_service.RAGEngine") as cls:
         inst = MagicMock()
         inst.load_existing.side_effect = RuntimeError("embed API 瞬断")
         cls.return_value = inst
-        got = svc.get_rag_for_session("t_transient", "正文内容", embedding_key="k")
-        assert got is None, "瞬时 build 故障也必须降级 None，不能 500"
+        view = svc.get_rag_for_session(
+            "t_transient", card_id="c1", embedding_key="k", embedding_region="cn")
+        with pytest.raises(RuntimeError):
+            view.query_with_emotion_ex("问题")
         inst.index.assert_not_called()
-    log = "\n".join(r.getMessage() for r in caplog.records)
-    assert "RAG build failed (degraded)" in log, f"瞬时故障走原宽 except 日志：{log!r}"
-    print("  [PASS] indexing_service 路径：非维度异常仍走 generic 降级日志（守卫未误伤）")
+        # 下一轮检索重新装载，不会卡在上一次的故障里
+        inst.load_existing.side_effect = None
+        inst.load_existing.return_value = False
+        assert view.query_with_emotion_ex("问题") == []
+    print("  [PASS] indexing_service 路径：普通故障上抛本轮、下一轮重读")
 
 
 def test_caller_mcp_degrades_no_index():
@@ -466,15 +465,16 @@ def main() -> int:
         test_index_succeeds_when_collection_absent,
         test_index_delete_failure_propagates,
         test_caller_mcp_degrades_no_index,
+        test_caller_indexing_service_degrades_no_index,
+        test_caller_indexing_service_generic_error_still_degrades,
     ]
     print("=== RAG UNUSABLE-COLLECTION REGRESSION ===\n")
     for t in tests:
         t()
-        # 另三条（test_caller_indexing_service_* ×2、test_caller_group_rebuild_*）断言的是
-        # **logging** 记录，靠 pytest 的 `caplog` fixture 拿（spec-119：落点从 print 改成模块
-        # logger）—— 手跑这条入口没有 fixture，故只列在此处、不静默少跑：
-    print("  [SKIP] test_caller_indexing_service_degrades_no_index / "
-          "..._generic_error_still_degrades / ..._group_rebuild_degrades_no_index："
+        # 另一条（test_caller_group_rebuild_*）断言的是 **logging** 记录，靠 pytest 的
+        # `caplog` fixture 拿（spec-119：落点从 print 改成模块 logger）—— 手跑这条入口没有
+        # fixture，故只列在此处、不静默少跑：
+    print("  [SKIP] test_caller_group_rebuild_degrades_no_index："
           "只在 pytest 下跑（用 caplog 断言日志）")
     print("\n=== ALL %d TESTS PASSED ===" % len(tests))
     print("load_existing: dimension-blindness fixed (mismatch raises, never silent-True)")

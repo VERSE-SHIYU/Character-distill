@@ -184,8 +184,8 @@ class MemoryManager:
     直接 `RuntimeError: ... already accessed by another instance`），而每个用户的 key 不同。
     故只开**一个** `QdrantClient`，每个用户一个 `Memory`，经 mem0 官方参数
     `vector_store.config.client` 共用它（mem0 2.0.20 `configs/vector_stores/qdrant.py:13`）。
-    视图按「用户 + LLM 凭据指纹 + embedding key 指纹」缓存，与 RAG 的
-    `IndexingService._get_or_build_rag` 同一写法 —— 用户换了 key，下次取到的就是新视图。
+    视图按「用户 + LLM 凭据指纹 + embedding key 指纹」缓存 —— 用户换了 key，下次取到的就是
+    新视图（与 `core/embeddings.py::create_safe_embedding_fn` 的嵌入函数缓存同一写法）。
 
     `base()` 是不属于任何用户的底层视图：只做查看 / 删除（这两类 mem0 不调模型）。
     它的 embedder / LLM 是一碰就炸的替身，保证它绝不会替谁出站。

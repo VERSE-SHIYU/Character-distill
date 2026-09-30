@@ -74,14 +74,23 @@ class _FakeRAGEngine:
     """RAGEngine 替身：`load_existing` 恒真 → 不建索引、不出网、不碰 chroma。
 
     真 chroma 在 Windows 上读写会 segfault，且 embedding 出网 —— 这里只替掉边界，
-    链路（`_ensure_session` → `get_rag_for_session` → `_get_or_build_rag`）是生产代码。
+    链路（`_ensure_session` → `get_rag_for_session` → `SessionRag` → `_load_session_rag`）
+    是生产代码。
     """
 
     def __init__(self, config):
         self.collection = None
+        self.collection_name = None
 
     def load_existing(self, name) -> bool:
+        self.collection_name = name
         return True
+
+    def index(self, *_a, collection_name=None, **_kw) -> None:
+        self.collection_name = collection_name
+
+    def query_with_emotion_ex(self, *_a, **_kw):
+        return []
 
 
 class _MemMgr:
@@ -249,7 +258,7 @@ async def _async_echo():
 
 # ── 日志面：取 RAG 时 key 不进 stdout / 日志（缺陷 72）─────────────────────────
 #
-# 落库扫描守不住日志，而取 RAG 的每次 HIT / MISS 都把完整 key 打给 stdout，
+# 落库扫描守不住日志，而取 RAG 曾在每次 HIT / MISS 都把完整 key 打给 stdout，
 # 容器里就是 docker logs（缺陷的实际形态）。故 stdout 与日志记录一并收进来扫。
 
 _KEY_WINDOW = 8  # 旧身份只取 key 前 8 位（sk- 之后仅 5 个随机字符），8 位窗口即已辨识
@@ -260,8 +269,11 @@ def test_indexing_service_never_logs_the_embedding_key(capsys, caplog):
     svc = IndexingService(storage=MagicMock(), rag_config={})
     with caplog.at_level(logging.DEBUG), \
             patch("core.indexing_service.RAGEngine", _FakeRAGEngine):
-        svc._get_or_build_rag("text_abc", "正文", embedding_key=secret)
-        svc._get_or_build_rag("text_abc", "正文", embedding_key=secret)  # HIT 那条
+        # 后台建集合那条出口，与会话检索（第一次检索时才装载）那条出口，都扫。
+        svc._build_text_collection("text_abc", "正文", None,
+                                   embedding_key=secret, embedding_region="cn", rebuild=True)
+        svc.get_rag_for_session("text_abc", card_id="c_abc", embedding_key=secret,
+                                embedding_region="cn").query_with_emotion_ex("q")
 
     _assert_no_credential_in_text(_captured(capsys, caplog), {"embedding_key": secret})
 
