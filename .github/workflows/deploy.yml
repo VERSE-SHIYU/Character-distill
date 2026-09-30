@@ -232,11 +232,22 @@ jobs:
             # $1=阿里云引用(repo:tag) $2=回落仓库$3=回落 digest(可空) $4=回落 tag
             # digest 落地的镜像本地没有 tag，而 compose 的 image: 只能是 repo:tag，
             # 故补一个 $4 的 tag（SG 那条路一直是这么做的）。
+            #
+            # 阿里云那支加单次超时：请求挂住时 docker pull 自己不超时（2026-09-24 实发：SZ 步骤
+            # 静默卡满 30 分钟 command_timeout）。120s = 同区正常拉取（实测 42s）的约 3 倍。GHCR
+            # 两支不加：SZ 从 GHCR 的正常拉取实测最长 1233s，由整体 command_timeout 兜底。
+            # 失败原因不再丢进 /dev/null —— 回落时打一行 exit code，挂住与「tag 不存在」分得清。
+            ALIYUN_PULL_TIMEOUT=120
             pull_image() {
               PULLED_REGISTRY=""
-              if docker pull "$1" 2>/dev/null; then
+              local rc=0
+              timeout "${ALIYUN_PULL_TIMEOUT}" docker pull "$1" || rc=$?
+              if [ "$rc" -eq 0 ]; then
                 PULLED_REGISTRY="${ALIYUN_REPO_PREFIX}"
-              elif [ -n "$3" ] && docker pull "$2@$3"; then
+                return 0
+              fi
+              echo "阿里云拉取未成功（exit=${rc}，124 表示超过 ${ALIYUN_PULL_TIMEOUT}s）：$1 → 回落 $2"
+              if [ -n "$3" ] && docker pull "$2@$3"; then
                 docker tag "$2@$3" "$2:$4"
                 PULLED_REGISTRY="${2%/*}"
               elif docker pull "$2:$4"; then
