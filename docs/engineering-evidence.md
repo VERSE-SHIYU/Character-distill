@@ -186,12 +186,10 @@
 > 「当时实测，原始产物未入库」。**只保留**有 tracked 兜底的「12 → 19」
 > （`docs/384-dim-stale-collections.md`）。
 >
-> **与其余 `⚠️ 待核` 的区别**：§七（「六条」计数
-> 标签）这几条的 `⚠️ 待核` **保持不动**——它们在 tracked 仓库里同样无支撑，
-> 但**至少在 gitignored 的 `.claude/sessions/` 里有据可查**，性质是「一手材料没入库」，补入库
-> 即可转正。本节被删的两组里，**重建成本数字**同属这一类（产物在 gitignored 的 `run_*.jsonl`）；
-> 只有**影响面总数**更彻底——连 gitignored 记录都没有，且产数脚本从未入库。
-> （§一 TTFT 10.4s 与 span 分解、§九 judge 两条已于 2026-09-30 补入库产物转正，不再属本条。）
+> **与其余 `⚠️ 待核` 的区别**：本节被删的两组里，**重建成本数字**属「一手材料没入库」类——
+> 在 tracked 仓库里同样无支撑，但**至少在 gitignored 的 `.claude/sessions/` 里有据可查**，补入库
+> 即可转正；只有**影响面总数**更彻底——连 gitignored 记录都没有，且产数脚本从未入库。
+> （§一 TTFT 10.4s 与 span 分解、§七 验收断言的计数口径、§九 judge 两条均已于 2026-09-30 补入库产物转正，不再属本条。）
 
 ---
 
@@ -229,7 +227,7 @@
 |---|---|
 | **问题** | 蒸馏 MapReduce 的 map 中间结果只在内存，任务状态是内存 dict。进程崩溃 → 结果全丢、从零重跑（用户自带 key，白付已消耗的调用）、前端轮询到不存在的 `task_id`。 |
 | **设计要点（比"实现了续跑"值钱）** | ① **DB 为唯一真相源**，内存只作写缓存；启动 reconcile 把孤儿 `running` 置 `interrupted`——否则"没有内存记录"与"任务不存在"不可区分。<br>② **两级校验防错位复用**：任务级比对切分参数与全文指纹（不符整批作废，不进分片门）；分片级三重门（行存在 + 形状合法 + 分片原文 sha256 匹配）。没有指纹这道，用户改稿或调 `chunk_size` 会**静默复用错位分片，产出看似正常实则错乱的角色卡**——比重烧钱严重得多且不可见。<br>③ **reduce 整体重跑不分批**：分批只省最后一两次调用，却引入"部分 reduce 如何合并"的一致性问题。权衡写进注释，标明不是遗漏。<br>④ **手动触发不自动续跑**：开机自动续跑会把所有 interrupted 任务同时推给刚恢复的上游。<br>⑤ **按用户并发闸**：进程内同步预留位挡 TOCTOU（DB 查+插隔着 `await` 会交错，单靠 DB 复核挡不住）+ 带时效窗的 DB 复核挡跨重启幽灵行。天花板写进注释：多 worker 时必须升级为部分唯一索引。 |
-| **量化** | 续跑命中片 **零 LLM 调用**；六条验收断言 + 两条防"空过"对照（正向：门全过时分片行真被读成候选）。<br>**注意**：分流阈值 15 万 token（≈25 万字符）以下走长上下文单次路径，**断点续跑只在分片路径生效**。 |
+| **量化** | 续跑命中片 **零 LLM 调用**；8 个验收用例（`tests/test_distill_resume.py`，明细见下方数字核对）；另有正向对照 `TestCacheKeyCoversTheRequest::test_same_model_and_prompt_still_reuses`：键的组成不变时仍全命中、零 Map 调用，防同类两条缓存键门测试空过。<br>**注意**：分流阈值 15 万 token（≈25 万字符）以下走长上下文单次路径，**断点续跑只在分片路径生效**。 |
 | **来源** | `✅ 代码核实` `19ed51f` `43b621f` `59472f6` `fe0ec16` `e5bb4c6` `101ec3f` `afd11a3` `de9d1f4` `fa7e95d` |
 
 **数字核对**
@@ -239,15 +237,13 @@
 | DB 为唯一真相源 + 启动 reconcile 置 `interrupted` | `storage/base.py` `mark_interrupted_distills`（boot reconcile）/ `find_resumable_distill`（续跑发现；WP8 起由此前的 `find_interrupted_distill` 改名并放宽状态条件） | ✅ 代码核实 |
 | 分片级 sha256 指纹门（防错位复用） | `core/distiller.py` `text_fingerprint`（任务级与分片级共用，避免两份漂移）+ `_resume_hit`（三重门；WP8 起第 3 道比的是 `chunk_cache_key` 渲染请求指纹，不再是原文哈希） | ✅ 代码核实 |
 | 续跑命中片**零 LLM 调用** | `tests/test_distill_resume.py::TestResumeSavesCalls::test_full_hit_zero_map_calls`（tracked） | ✅ |
-| 六条验收断言 + 两条防"空过"对照 | 断言落在 `tests/test_distill_resume.py`（tracked：`TestResumeHitDoors` 三条 + `TestResumeSavesCalls` / `TestResumeIdempotent` / `TestSecondGateRerunsBadChunk` / `TestFailedChunkNotCheckpointed` / `TestMainPathUnchanged` 各一条，共 **8 个用例**）；「六条」这个**计数标签**出自 `.claude/sessions/2026-09-10-distill-dbtruth-closeout.md`（**gitignored**） | ✅（用例）/ ⚠️ 待核（"六条"的计数口径） |
+| 8 个验收用例 | `tests/test_distill_resume.py`：`TestResumeHitDoors` 三条 + `TestResumeSavesCalls` / `TestResumeIdempotent` / `TestSecondGateRerunsBadChunk` / `TestFailedChunkNotCheckpointed` / `TestMainPathUnchanged` 各一条 | ✅ |
 | 分流阈值 15 万 token ≈ 25 万字符 | `config.yaml` `longctx_threshold: 150000`；25 万字符 = 150000 / 0.6，与 `_estimate_tokens = int(len*0.6)` 同口径。**该值来源 `config.yaml` 不在仓库**（`git ls-files` 零命中）—— 运行期实测，`ev:config-yaml-values` | ✅ 运行期 |
 | 分片残留矩阵（8 条删除路径 × `distill_tasks`/`distill_chunks`，sqlite 与 PG 逐格相同） | `ev:distill-orphan-matrix`（脚本 `tests/perf/distill_orphan_matrix.py`，无 LLM、确定性） | ✅ |
 | 「删卡保留断点」的注释理由在主流路径上**不成立** | `ev:distill-resume-reachability`：`find_interrupted_distill` 只匹配 `interrupted`，删卡后常见的 `running`/`done`/`error` 三个状态**都命不中**（整批重跑），断点留着是纯占空间。**本断言只对 WP8 之前成立** —— 2026-09-25 起可复用状态放宽为 `interrupted` + `error`（`find_resumable_distill`），证据已重跑入库 | ✅ |
 | 非空半截落库即被第二道门复用（二次续跑不再重算分片） | `ev:incomplete-v5`（同为修复前形态，见 §四） | ✅ |
 | 「兜底接线未被任何用例覆盖」的变异实验 | `ev:a2-wiring-mutation` —— 运行期观测，原始记载在未入库的会话文件里，清单已按 `runtime-measured` 标 | ✅ 运行期 |
 | commits（10 个） | `git log` 逐个存在 | ✅ |
-
-> 「六条」与 tracked 测试文件的 8 个用例对不上，是因为**验收是人工六步、测试是落地后的等价覆盖**（会话档 L205 明说「已用单测覆盖其逻辑等价」）。数字本身没错，错的是把它读成"六条断言在测试里"。
 
 ---
 
