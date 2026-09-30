@@ -68,16 +68,16 @@
 - **低于阈值 → 长上下文单次调用**：直接 `_distill_longcontext_stream`，全文喂一次。**不分片、不写 `distill_chunks`**，中途崩了整本重来（docstring 自述）
 - **达到阈值 → MapReduce 分片**：走 `effective_chunk_size` + `_split_chunks`
 - 同一分流的非流式版本在 `distill_incremental`
-- `_estimate_tokens` = `int(len(text) * 0.6)`（`core/distiller.py`）。阈值：未入库的 `config.yaml` 写 `150000`，但**生产与缺省走代码默认 `900000`**（2026-09-27 由 150000 改；`config.example.yaml` 无此键，回退时就是这个默认）→ **约 150 万字符以下的文本全部走整本单次调用**。红楼梦 866149 字符 ≈ 52 万 token、652990 字符的长篇 ≈ 39 万，都在阈内，整本喂一次
+- `_estimate_tokens` = `int(len(text) * 0.6)`（`core/distiller.py`）。阈值：**生产与缺省走代码默认 `900000`**（2026-09-27 由 150000 改；`config.example.yaml` 无此键，回退时就是这个默认）→ **约 150 万字符以下的文本全部走整本单次调用**。红楼梦 866149 字符 ≈ 52 万 token、652990 字符的长篇 ≈ 39 万，都在阈内，整本喂一次
 
 **结论**：断点续跑（`distill_chunks` 落库 + 三重门复用）**只在分片路径生效**；短文本从来不进这条路，也就永远不产生分片检查点。
 
 ### 二、模型与参数现值
 
-config.yaml 现值（现读，非转述；本 worktree 自 2026-09-27 把它改名 `config.yaml.bak`，生产容器本就没有这个文件 → 回退读 `config.example.yaml`）：
+config.yaml 现值（现读自主仓 `config.yaml`；生产容器没有这个文件 → 回退读 `config.example.yaml`）：
 
 - `distill.chunk_size: 5000`（`config.example.yaml` 同）
-- `distill.longctx_threshold: 150000`（**只在这份 `config.yaml` 里有**；`config.example.yaml` 无此键 → 走代码默认 **900000**，2026-09-27 由 150000 改）
+- `distill.longctx_threshold: 900000`（本地 `config.yaml` 已删除此键，2026-09-30 起本地与生产同走代码默认；`config.example.yaml` 无此键，2026-09-27 由 150000 改）
 - `llm.max_tokens: 4096`（`config.example.yaml` 同）
 - `llm.model: deepseek-v4-pro`（`config.example.yaml` 已改 **`deepseek-flash`**，2026-09-27）
 - `llm.temperature: 0.7`
@@ -87,7 +87,7 @@ config.yaml 现值（现读，非转述；本 worktree 自 2026-09-27 把它改�
 
 **模型规格（2026-09-27 核实）**：`deepseek-flash`（V4.1-Flash）上下文 1M token / 最大输出 384K —— 出自官方 Models & Pricing 页 <https://api-docs.deepseek.com/quick_start/pricing>（该页前端渲染，`WebFetch` 取不到表格，按官方公告与页面口径核）。生产默认模型同日由 `deepseek-v4-pro` 改为 `deepseek-flash`：V4.1-Flash 于 2026-09-10 发布。换默认模型的依据是官方新闻页的多方测试结论（V4.1-Flash 在效果、成本、速度、总耗时上领先 V4-Pro）与 V4-Pro 逐步下线的计划 —— 该页曾宣布自 2026-09-14 04:00 UTC（北京时间 12:00）起把 `deepseek-v4-pro` 的请求全部路由到 V4.1-Flash、按 Flash 单价计费（<https://api-docs.deepseek.com/news/news260910>），但更新日志 2026-09-10 条随后改为「应用户需求，9 月 14 日之后继续提供 V4 Pro API，计费方式不变」（<https://api-docs.deepseek.com/updates>）：**那条路由计划是否落地以实际调用为准，别照抄**。**思考模式**：Flash 官方默认**开启**（`thinking.type` 默认 `enabled`）；本仓关思考的 payload 是 `{"thinking": {"type": "disabled"}}`（`adapters/llm_adapter.py` 方言表），对 Flash 同样生效 —— 方言按 `base_url` 优先、`model` 兜底匹配子串 `"deepseek"`，生产的 `https://api.deepseek.com` 与模型名两条都命中（<https://api-docs.deepseek.com/guides/thinking_mode>）。
 
-**chunk_size 的来历**：**待验证·无记载**（证据：`ev:chunk-size-provenance`）。「实测对比 3000/4500/6000/12000 四档、以卡片质量对标整本喂、12000 太慢 3000 太碎」——`git log -S 4500` / `-S 12000` 有命中，但逐处核对后**无一处把这两个数当 chunk_size**（命中的是本节自述行、`core/distiller.py` 的 `max_profile_len` 下限、`web/frontend/e2e/avatar-fallback-verify.cjs` 的 `settleMs`）；`docs/` 与 `.claude/sessions/` 亦无记录。可查到的只有：3000 起于 2026-05-19（commit `5aee0609`），代码默认 3000（`distill_cfg.get("chunk_size", 3000)`），现值 5000 与 `longctx_threshold: 150000`（均出自**未入库**的 `config.yaml`，见缺陷 14 的 `ev:config-yaml-values`），classic 地板 6000（`effective_chunk_size`）。结论：**暂定值，无统一标准**。扫描口径与逐处核对写在清单条目的 `notes` 里。
+**chunk_size 的来历**：**待验证·无记载**（证据：`ev:chunk-size-provenance`）。「实测对比 3000/4500/6000/12000 四档、以卡片质量对标整本喂、12000 太慢 3000 太碎」——`git log -S 4500` / `-S 12000` 有命中，但逐处核对后**无一处把这两个数当 chunk_size**（命中的是本节自述行、`core/distiller.py` 的 `max_profile_len` 下限、`web/frontend/e2e/avatar-fallback-verify.cjs` 的 `settleMs`）；`docs/` 与 `.claude/sessions/` 亦无记录。可查到的只有：3000 起于 2026-05-19（commit `5aee0609`），代码默认 3000（`distill_cfg.get("chunk_size", 3000)`），chunk_size 现值 5000 出自 `config.example.yaml`；longctx_threshold 见本节一（代码默认），classic 地板 6000（`effective_chunk_size`）。结论：**暂定值，无统一标准**。扫描口径与逐处核对写在清单条目的 `notes` 里。
 
 **max_tokens 的来历**（数值轨迹有据，「为什么最终是 4096」无量化依据）：
 

@@ -227,7 +227,7 @@
 |---|---|
 | **问题** | 蒸馏 MapReduce 的 map 中间结果只在内存，任务状态是内存 dict。进程崩溃 → 结果全丢、从零重跑（用户自带 key，白付已消耗的调用）、前端轮询到不存在的 `task_id`。 |
 | **设计要点（比"实现了续跑"值钱）** | ① **DB 为唯一真相源**，内存只作写缓存；启动 reconcile 把孤儿 `running` 置 `interrupted`——否则"没有内存记录"与"任务不存在"不可区分。<br>② **两级校验防错位复用**：任务级比对切分参数与全文指纹（不符整批作废，不进分片门）；分片级三重门（行存在 + 形状合法 + 分片原文 sha256 匹配）。没有指纹这道，用户改稿或调 `chunk_size` 会**静默复用错位分片，产出看似正常实则错乱的角色卡**——比重烧钱严重得多且不可见。<br>③ **reduce 整体重跑不分批**：分批只省最后一两次调用，却引入"部分 reduce 如何合并"的一致性问题。权衡写进注释，标明不是遗漏。<br>④ **手动触发不自动续跑**：开机自动续跑会把所有 interrupted 任务同时推给刚恢复的上游。<br>⑤ **按用户并发闸**：进程内同步预留位挡 TOCTOU（DB 查+插隔着 `await` 会交错，单靠 DB 复核挡不住）+ 带时效窗的 DB 复核挡跨重启幽灵行。天花板写进注释：多 worker 时必须升级为部分唯一索引。 |
-| **量化** | 续跑命中片 **零 LLM 调用**；8 个验收用例（`tests/test_distill_resume.py`，明细见下方数字核对）；另有正向对照 `TestCacheKeyCoversTheRequest::test_same_model_and_prompt_still_reuses`：键的组成不变时仍全命中、零 Map 调用，防同类两条缓存键门测试空过。<br>**注意**：分流阈值 15 万 token（≈25 万字符）以下走长上下文单次路径，**断点续跑只在分片路径生效**。 |
+| **量化** | 续跑命中片 **零 LLM 调用**；8 个验收用例（`tests/test_distill_resume.py`，明细见下方数字核对）；另有正向对照 `TestCacheKeyCoversTheRequest::test_same_model_and_prompt_still_reuses`：键的组成不变时仍全命中、零 Map 调用，防同类两条缓存键门测试空过。<br>**注意**：分流阈值以下整本一次读完（阈值见下方数字核对），**断点续跑只在分片路径生效**；选一次读完的依据见 `docs/specs/distill-longbook-blueprint.md`「一次读完路径」。 |
 | **来源** | `✅ 代码核实` `19ed51f` `43b621f` `59472f6` `fe0ec16` `e5bb4c6` `101ec3f` `afd11a3` `de9d1f4` `fa7e95d` |
 
 **数字核对**
@@ -238,7 +238,7 @@
 | 分片级 sha256 指纹门（防错位复用） | `core/distiller.py` `text_fingerprint`（任务级与分片级共用，避免两份漂移）+ `_resume_hit`（三重门；WP8 起第 3 道比的是 `chunk_cache_key` 渲染请求指纹，不再是原文哈希） | ✅ 代码核实 |
 | 续跑命中片**零 LLM 调用** | `tests/test_distill_resume.py::TestResumeSavesCalls::test_full_hit_zero_map_calls`（tracked） | ✅ |
 | 8 个验收用例 | `tests/test_distill_resume.py`：`TestResumeHitDoors` 三条 + `TestResumeSavesCalls` / `TestResumeIdempotent` / `TestSecondGateRerunsBadChunk` / `TestFailedChunkNotCheckpointed` / `TestMainPathUnchanged` 各一条 | ✅ |
-| 分流阈值 15 万 token ≈ 25 万字符 | `config.yaml` `longctx_threshold: 150000`；25 万字符 = 150000 / 0.6，与 `_estimate_tokens = int(len*0.6)` 同口径。**该值来源 `config.yaml` 不在仓库**（`git ls-files` 零命中）—— 运行期实测，`ev:config-yaml-values` | ✅ 运行期 |
+| 分流阈值 90 万 token ≈ 150 万字符 | `core/distiller.py` `Distiller.__init__` 默认 `longctx_threshold = 900000`（2026-09-27 由 150000 改，commit `51754ef`）；`config.example.yaml` 无此键 → 生产与缺省都走这个默认。150 万字符 = 900000 / 0.6，与 `_estimate_tokens = int(len*0.6)` 同口径。钉默认值的测试：`tests/test_distiller_routing.py::TestRouting::test_a_book_at_hongloumeng_scale_takes_one_pass_at_the_default_threshold` | ✅ 代码核实 |
 | 分片残留矩阵（8 条删除路径 × `distill_tasks`/`distill_chunks`，sqlite 与 PG 逐格相同） | `ev:distill-orphan-matrix`（脚本 `tests/perf/distill_orphan_matrix.py`，无 LLM、确定性） | ✅ |
 | 「删卡保留断点」的注释理由在主流路径上**不成立** | `ev:distill-resume-reachability`：`find_interrupted_distill` 只匹配 `interrupted`，删卡后常见的 `running`/`done`/`error` 三个状态**都命不中**（整批重跑），断点留着是纯占空间。**本断言只对 WP8 之前成立** —— 2026-09-25 起可复用状态放宽为 `interrupted` + `error`（`find_resumable_distill`），证据已重跑入库 | ✅ |
 | 非空半截落库即被第二道门复用（二次续跑不再重算分片） | `ev:incomplete-v5`（同为修复前形态，见 §四） | ✅ |

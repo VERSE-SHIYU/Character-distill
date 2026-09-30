@@ -26,19 +26,6 @@
     "redacted_fields": []
   },
   {
-    "id": "config-yaml-values",
-    "claim": "运行配置的两个值：`distill.chunk_size = 5000`、`distill.longctx_threshold = 150000`（≈25 万字符，与 `_estimate_tokens = int(len*0.6)` 同口径）；二者的来源 `config.yaml` **不在仓库**",
-    "status": "runtime-measured",
-    "artifact": null,
-    "script": null,
-    "script_role": null,
-    "reproduce": null,
-    "env": "运行环境的 config.yaml（未入库，被 .gitignore 覆盖，随部署环境可变）；仓库内可核的是代码默认值",
-    "measured_at": "2026-09-12",
-    "code_sha": "e389fdc",
-    "redacted_fields": []
-  },
-  {
     "id": "distill-orphan-matrix",
     "claim": "8 条删除路径删完后 distill_tasks / distill_chunks 残留矩阵（8 格）；sqlite 与 PG 逐格相同",
     "status": "verified",

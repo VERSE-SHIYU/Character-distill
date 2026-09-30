@@ -324,10 +324,10 @@ def cmd_drive_distill(_args) -> None:
     st = _state()
     app_base = st["app_base"]
     token = _login(app_base)
-    # distill_incremental_stream 路由：低于 longctx_threshold(150k tok≈190k 字)走单调用
-    # 长上下文流；≥ 阈值才进分块 Map(跨 ctx_thread async_chat) + Reduce。要看到 §3.2
-    # 跨线程分片树，合成文本必须 ≥ ~200k 字。
-    _print("upload synthetic ~320k prose to cross longctx threshold(150k tok) -> chunked map/reduce")
+    # distill_incremental_stream 路由：生产默认阈值下 32 万字走整本一次读完（阈值见
+    # AGENTS.md「蒸馏管线」一）。要看 §3.2 的跨线程分片树，先把本地配置
+    # `distill.longctx_threshold` 调低（同 tests/eval/injection/upload_extra.py:250）。
+    _print("upload synthetic ~320k prose; lower the local longctx_threshold to see the chunked map/reduce tree")
     content = _synthetic_prose(320_000)
     # 正文走 file（缺陷 40）：32 万汉字 ≈ 960KB，是 FormParser 1MB 上限的 92% ——
     # 从前塞进 `text` 字段时只差 9% 就会撞上限、报出库的英文文案。

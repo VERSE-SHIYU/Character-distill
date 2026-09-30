@@ -38,7 +38,7 @@
 | `llm.temperature` | 0.7 | `config.yaml`（生产默认） |
 | `distill.chunk_size` | 5000 | `config.yaml`（story 档） |
 | classic 档片长 | 6000 | `core/distiller.py`：classic 强制 `max(chunk_size, 6000)` |
-| `distill.longctx_threshold` | 150000 | `config.yaml`。**本组探针不走分流**（直接调 `Distiller._split_chunks` + map 提示词），故该值不进入测量，仅记上下文 |
+| `distill.longctx_threshold` | 150000 | `config.yaml`（当时本地 `config.yaml` 的值，非生产值）。**本组探针不走分流**（直接调 `Distiller._split_chunks` + map 提示词），故该值不进入测量，仅记上下文 |
 | `_GEN_ATTEMPT_S` / `_GEN_DEADLINE_S` | 抬到 120 / 240 | 脚本内模块常量改写（生产 45 / 60）。测的是「模型自然输出多长」，不是「60s 内能吐多少」；生产口径的 45s / 60s 两行是**按 `elapsed_s` 回算**的，不是探针真实超时 |
 
 ## 3. 怎么跑
