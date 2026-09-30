@@ -51,6 +51,10 @@ class _FakeCollection:
         self._query_result = query_result
         self._peek_error = peek_error
         self.docs: list[str] = []
+        self.metadata: dict = {}
+
+    def modify(self, metadata=None):
+        self.metadata = dict(metadata or {})  # 真件语义：整份覆盖
 
     def count(self) -> int:
         return self._count

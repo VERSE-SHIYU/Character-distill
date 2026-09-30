@@ -8,8 +8,9 @@ Two sides, kept apart on purpose:
 * **Sessions only load.** Each session gets its own `SessionRag`, which loads the
   first usable of `scenes_{card_id}` → `text_{text_id}` and keeps that result while
   the candidates' version stamps stay the same (validation-token caching, like an
-  HTTP ETag). A stamp is `(building here?, collection id, row count)`, read from
-  chroma's shared persistent store — so a collection rebuilt in the background, or
+  HTTP ETag). A stamp is `(building here?, collection id, build mark)`, read from
+  chroma's shared persistent store (constant-time metadata read; every build ends
+  with `core.rag.mark_built`) — so a collection rebuilt in the background, or
   by another process (e.g. `scripts/rebuild_384_collections.py`), is picked up on
   the next turn without anyone pushing it.
 
@@ -52,7 +53,7 @@ class _CollectionBuilds:
 
     互斥只管本进程（web 进程的后台作业；MCP 只读，见
     `mcp_server/server.py::_rag_for_text_id`）。别的进程改了集合，会话靠版本令牌里的
-    集合 id / 条数发现，不靠这里。
+    集合 id / 构建号发现，不靠这里。
     """
 
     def __init__(self) -> None:
@@ -93,7 +94,7 @@ class SessionRag:
     """一个会话自己的检索：只装载、不建。
 
     装载结果（可用的引擎 / 真没有 / 不可用的原因）连同候选集合的版本令牌一起记下；
-    每次检索前先比令牌（只读元数据），令牌没变就沿用，变了（有集合被重建 / 写入 /
+    每次检索前先比令牌（只读元数据），令牌没变就沿用，变了（有集合被重建 / 建完 /
     开始或结束构建，不论哪个进程做的）才重新装载。本会话的一次查询失败也会强制重读。
 
     对外只提供 `ContextEngine` 用到的 `query_with_emotion_ex`；
@@ -166,10 +167,10 @@ class IndexingService:
 
     @staticmethod
     def _candidates_stamp(rag: RAGEngine, text_id: str, card_id: str) -> tuple:
-        """会话候选集合此刻的版本令牌：每个候选 `(是否本进程正在建, (id, 条数) 或 None)`。(sync)
+        """会话候选集合此刻的版本令牌：每个候选 `(是否本进程正在建, (id, 构建号) 或 None)`。(sync)
 
-        只读 chroma 元数据（不嵌入、不 peek）。重建换 id、写入改条数、本进程构建开始 /
-        结束改第一项 —— 任一变化都让令牌对不上。
+        只读 chroma 集合元数据（常数时间，不数条数、不嵌入、不 peek）。重建换 id、建完换
+        构建号、本进程构建开始 / 结束改第一项 —— 任一变化都让令牌对不上。
         """
         return tuple(
             (_builds.is_building(name), rag.collection_stamp(name))

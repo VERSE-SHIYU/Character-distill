@@ -9,9 +9,9 @@ DashScope text-embedding-v4(1024)。此后（commit 4a971d1 起）load_existing 
 text_，且下一次场景预索引会按当前 embedder 重建它（`SceneIndexer.index_scenes`）——
 故 scenes_ 不在本脚本射程。rag_{uuid} 是一次性实例集合，无读取方。plan 会说明并跳过。
 
-**web 进程不用重启**：会话每轮检索前比对候选集合的版本令牌（集合 id / 条数，读的是
-共享的 chroma 持久化目录，见 `core/indexing_service.py::SessionRag`）。本脚本重建换了 id，
-已开的会话下一轮就会重新装载。
+**web 进程不用重启**：会话每轮检索前比对候选集合的版本令牌（集合 id / 构建号，读的是
+共享的 chroma 持久化目录，见 `core/indexing_service.py::SessionRag`）。本脚本重建换了 id、
+写完打上新的构建号（`core.rag.mark_built`），已开的会话下一轮就会重新装载。
 
 判定（plan / rebuild 同口径）：
   REBUILD      dim==384 且 texts 行存在 且 ≥1 张 live 卡引用
@@ -54,7 +54,7 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from core.embeddings import DashScopeEmbedding, get_embed_stats, reset_embed_stats  # noqa: E402
-from core.rag import RAGEngine  # noqa: E402
+from core.rag import RAGEngine, mark_built  # noqa: E402
 from core.request_context import system_llm_context  # noqa: E402
 from web.llm_resolution import EmbeddingResolution, resolve_embedding  # noqa: E402
 
@@ -344,6 +344,7 @@ def rebuild_one(db: Path, chroma_path: Path, cfg: dict, text_id: str,
         if metas is not None:
             add_kwargs["metadatas"] = metas
         col.add(**add_kwargs)
+        mark_built(col)  # 最后一步：已开着的 web 会话据此发现集合换了内容
     except Exception as exc:  # noqa: BLE001
         return {**rec, "ok": False, "status": "swap-failed",
                 "detail": str(exc)[:300], "secs": round(time.time() - t0, 1)}

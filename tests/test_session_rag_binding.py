@@ -70,6 +70,9 @@ class _Collection:
         self.docs.extend(documents or [])
         self.metas.extend(metadatas or [{} for _ in (documents or [])])
 
+    def modify(self, metadata=None):
+        self.metadata = dict(metadata or {})  # 真件语义：整份覆盖，不合并
+
     def count(self) -> int:
         return len(self.docs)
 
@@ -756,10 +759,12 @@ def test_x5_reindex_without_embedding_key_spends_no_identify_call(monkeypatch):
 # ── 版本令牌对真 chroma 成立：另一个进程重建集合，本进程读得到 ─────────────────────
 
 
-_CROSS_PROCESS_REBUILD = r'''
+_OTHER_PROCESS = r"""
 import sys
+sys.path.insert(0, sys.argv[2])
 import chromadb
 from chromadb.api.types import EmbeddingFunction
+from core.rag import mark_built
 
 class EF(EmbeddingFunction):
     def __init__(self):
@@ -771,42 +776,96 @@ class EF(EmbeddingFunction):
         return "test"
 
 client = chromadb.PersistentClient(path=sys.argv[1])
-client.delete_collection("text_t1")
-col = client.create_collection("text_t1", embedding_function=EF())
-col.add(ids=["a", "b"], embeddings=[[0.1, 0.2]] * 2, documents=["x", "y"])
-'''
+if sys.argv[3] == "rebuild":
+    client.delete_collection("text_t1")
+    col = client.create_collection("text_t1", embedding_function=EF())
+else:  # "append"：同一个集合追加写入，id 不变
+    col = client.get_collection("text_t1", embedding_function=EF())
+col.add(ids=[f"n{i}" for i in range(2)], embeddings=[[0.1, 0.2]] * 2, documents=["x", "y"])
+mark_built(col)
+"""
 
 
-def test_d1_stamp_sees_a_rebuild_done_by_another_process(tmp_path):
-    """`RAGEngine.collection_stamp` 的前提实测：别的进程先删后建再写入，本进程的令牌变了。"""
-    import subprocess
-    import sys
+class _RealEF:
+    """真 chroma 用的小嵌入函数（不出网）。"""
 
+    def __new__(cls):
+        from chromadb.api.types import EmbeddingFunction
+
+        class _EF(EmbeddingFunction):
+            def __init__(self):
+                pass
+
+            def __call__(self, input):
+                return [[0.1, 0.2] for _ in input]
+
+            @staticmethod
+            def name():
+                return "test"
+
+        return _EF()
+
+
+def _real_engine(path) -> RAGEngine:
     import chromadb
-    from chromadb.api.types import EmbeddingFunction
-
-    class _EF(EmbeddingFunction):
-        def __init__(self):
-            pass
-
-        def __call__(self, input):
-            return [[0.1, 0.2] for _ in input]
-
-        @staticmethod
-        def name():
-            return "test"
 
     eng = object.__new__(RAGEngine)
-    eng._client = chromadb.PersistentClient(path=str(tmp_path))
-    eng._embedding_function = _EF()
+    eng._client = chromadb.PersistentClient(path=str(path))
+    eng._embedding_function = _RealEF()
+    return eng
+
+
+def _in_other_process(path, mode: str) -> None:
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo = str(Path(__file__).resolve().parent.parent)
+    subprocess.run([sys.executable, "-c", _OTHER_PROCESS, str(path), repo, mode], check=True)
+
+
+@pytest.mark.parametrize("mode", ["rebuild", "append"])
+def test_d1_stamp_sees_a_build_done_by_another_process(tmp_path, mode):
+    """令牌前提实测：别的进程重建（换 id）或追加写入后打标记（换构建号），本进程都看得到。"""
+    from core.rag import mark_built
+
+    eng = _real_engine(tmp_path)
     col = eng._client.create_collection("text_t1", embedding_function=eng._embedding_function)
     col.add(ids=["a"], embeddings=[[0.1, 0.2]], documents=["x"])
+    mark_built(col)
     before = eng.collection_stamp("text_t1")
 
-    subprocess.run([sys.executable, "-c", _CROSS_PROCESS_REBUILD, str(tmp_path)], check=True)
+    _in_other_process(tmp_path, mode)
     after = eng.collection_stamp("text_t1")
 
     assert before is not None and after is not None
-    assert after != before, f"别的进程重建了集合，本进程的版本令牌没变：{before} → {after}"
-    assert after[1] == 2
+    assert after != before, f"别的进程{mode}了集合，本进程的版本令牌没变：{before} → {after}"
     assert eng.collection_stamp("text_missing") is None
+
+
+def test_d2_mark_built_keeps_the_existing_metadata(tmp_path):
+    """chroma 的 modify(metadata=...) 是整份覆盖：打标记不许冲掉场景集合的正文指纹。"""
+    from core.rag import BUILD_MARK_KEY, mark_built
+
+    eng = _real_engine(tmp_path)
+    col = eng._client.create_collection(
+        "scenes_c1", embedding_function=eng._embedding_function, metadata={"fp": "abc"})
+    mark_built(col)
+    first = eng._client.get_collection("scenes_c1").metadata
+    mark_built(col)
+    second = eng._client.get_collection("scenes_c1").metadata
+
+    assert first["fp"] == second["fp"] == "abc", f"打标记冲掉了原有元数据：{second}"
+    assert first[BUILD_MARK_KEY] and second[BUILD_MARK_KEY] != first[BUILD_MARK_KEY]
+
+
+def test_d3_every_build_ends_with_a_mark(monkeypatch):
+    """后台作业建的原文集合与场景集合，建完都带构建号 —— 否则别的进程里的会话发现不了。"""
+    from core.rag import BUILD_MARK_KEY
+
+    client = _Client()
+    _patch_engine(monkeypatch, client)
+    _run_jobs(lambda: _schedule(_svc(), "cA"))
+
+    for name in ("text_t1", "scenes_cA"):
+        assert (client.cols[name].metadata or {}).get(BUILD_MARK_KEY), f"{name} 建完没打标记"

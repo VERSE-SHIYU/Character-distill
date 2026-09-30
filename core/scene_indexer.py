@@ -10,7 +10,7 @@ import re
 
 from chromadb.errors import NotFoundError
 
-from core.rag import CollectionUnusableError, RAGEngine, characters_tag
+from core.rag import CollectionUnusableError, RAGEngine, characters_tag, mark_built
 
 # 简单情感关键词映射（可扩充）
 _EMOTION_KEYWORDS: dict[str, list[str]] = {
@@ -112,6 +112,7 @@ class SceneIndexer:
             })
 
         collection.add(documents=docs, ids=ids, metadatas=metas)
+        mark_built(collection)
         print(f"[embed-stats] Scene index scenes={len(docs)} collection={name}")
 
         rag.collection = collection

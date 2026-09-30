@@ -77,6 +77,9 @@ class _FakeCollection:
         self.docs.extend(documents or [])
         self.adds += 1
 
+    def modify(self, metadata=None):
+        self.metadata = dict(metadata or {})  # 真件语义：整份覆盖
+
     def count(self) -> int:
         return len(self.docs)
 
