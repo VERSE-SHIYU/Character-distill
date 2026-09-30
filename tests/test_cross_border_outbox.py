@@ -17,8 +17,9 @@ import httpx
 import pytest
 
 import peer_client
-from conftest import PG_ENV
+from conftest import PG_ENV, TEST_DATABASE_URL
 from storage.base import InviteCodeUnavailable
+from storage.postgres_store import PostgresStore
 
 pytestmark = PG_ENV.skipif("跨境发件箱用例")
 
@@ -301,3 +302,88 @@ async def test_changes_received_from_the_peer_are_not_echoed(store, monkeypatch,
         r = await c.send(req)
     assert r.status_code == 200, r.text
     assert await _rows(store) == [], "从对端收到的变更再入队就会回传给对端"
+
+
+# ── 8. 存量补发（PG 032）：上线前已有的用户资料 ─────────────────────────
+#
+# 发件箱是这次才落地的，上线前就存在的用户从没入过队，对端永远看不到。
+# 迁移只跑一次（账本），但**账本为空时全部迁移会重放**，故正文必须幂等。
+
+_BACKFILL = "032_outbox_backfill.sql"
+
+
+async def _seed_pre_backfill(store):
+    """造「存量」：本地用户 ×2（其中一人用掉一个码）、远端资料 ×1。
+
+    种子走 store 自己的写方法，它们顺带入队（注册会入队资料与「已使用」），所以末尾清一次
+    发件箱 —— 本组用例只量**迁移**放进去的东西。返回 `(u1, u2, remote_id)`。
+    """
+    u1, u2, remote = _uid("u"), _uid("u"), _uid("u")
+    code_local = _uid("c")
+    await store.create_user(u1, _uid("n"), "x", home_region="cn-shenzhen")
+    await store.create_invite_code(code_local, "admin1", propagate=False)
+    await store.create_user(u2, _uid("n"), "x", home_region="cn-shenzhen",
+                            invite_code=code_local)
+    await store.upsert_remote_user_profile(remote, _uid("n"), "sg-singapore")
+    async with await store._connect() as conn:
+        await conn.execute("DELETE FROM cross_border_outbox")
+    return u1, u2, remote
+
+
+async def _queue_existing_profile(store, user_id: str, *, avatar: str) -> None:
+    """直插一条待发资料 —— 模拟「注册 / 换头像时已经入队」的那一份。
+
+    直插而不是走 `update_user_avatar`：那条路会把 `users.avatar_data` 一起改掉，于是
+    「队里的新值」与「表里的旧快照」就没有差别，`DO NOTHING` 与 `DO UPDATE` 读数相同 ——
+    本组用例要验的正是这两者的差别。
+    """
+    async with await store._connect() as conn:
+        await conn.execute(
+            """INSERT INTO cross_border_outbox (op_type, target_id, payload)
+               VALUES ('user_profile', $1, $2)""",
+            user_id,
+            json.dumps({"id": user_id, "username": "queued", "home_region": "cn-shenzhen",
+                        "avatar_data": avatar}, ensure_ascii=False),
+        )
+
+
+async def _replay_backfill(store) -> None:
+    """把 032 从账本里划掉，再用**新实例**初始化 —— 只有这一份会重跑。
+
+    新实例是必需的：同一个 store 的 `_ensure_initialized` 会因 `_initialized` 短路，
+    迁移根本不再执行。
+    """
+    async with await store._connect() as conn:
+        await conn.execute("DELETE FROM schema_migrations WHERE filename = $1", _BACKFILL)
+    restarted = PostgresStore(TEST_DATABASE_URL)
+    try:
+        await restarted._ensure_initialized()
+    finally:
+        await restarted.close()
+
+
+async def test_backfill_queues_every_local_user_profile_once(store):
+    """存量补发：本机每个用户入队一条资料；对端同步来的资料一条都不发，队里已有的不覆盖。
+
+    判据取「人队条数 == 本机用户数」而不是「至少两个」：多出来的一定来自
+    `remote_user_profiles`（那是从对端收的资料，发回去就是回传），少一个就是漏发。
+    """
+    u1, u2, remote = await _seed_pre_backfill(store)
+    await _queue_existing_profile(store, u1, avatar="data:newer")
+
+    await _replay_backfill(store)
+
+    rows = {r["target_id"]: json.loads(r["payload"])
+            for r in await _rows(store, "user_profile")}
+    async with await store._connect() as conn:
+        local_users = await conn.fetchval("SELECT count(*) FROM users")
+    assert len(rows) == local_users, (
+        f"本机 {local_users} 个用户，队里却只有 {len(rows)} 条资料 —— 漏发或多发")
+    assert remote not in rows, f"对端同步来的资料被发回去了（回传）：{remote}"
+    assert rows[u2]["id"] == u2 and rows[u2]["home_region"] == "cn-shenzhen", rows[u2]
+    assert rows[u2]["avatar_data"] == "", rows[u2]
+    assert set(rows[u2]) == {"id", "username", "home_region", "avatar_data"}, (
+        f"资料带上了四个字段以外的东西（政策 3.2(1) 不含昵称、注册时间）：{rows[u2]}")
+    assert rows[u1]["avatar_data"] == "data:newer", (
+        f"补发拿 users 里的旧快照盖掉了队里更新的资料：{rows[u1]!r} —— "
+        "所以必须是 DO NOTHING 而不是 DO UPDATE")
