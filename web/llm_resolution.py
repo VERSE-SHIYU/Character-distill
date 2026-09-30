@@ -73,7 +73,7 @@ def resolve_llm(
         try:
             return Resolution(Source.USER, build_user(config), "")
         except Exception as exc:
-            reason = f"per-user LLM init failed, falling back to global: {exc}"
+            reason = f"per-user LLM init failed: {exc}"
     llm = get_global()
     if llm is None:
         return Resolution(Source.UNAVAILABLE, None, reason)

@@ -59,7 +59,7 @@ cd Character-distill
 cp .env.example .env
 # 编辑 .env，至少填入：
 #   JWT_SECRET=$(openssl rand -hex 32)
-#   DEEPSEEK_API_KEY=your_key
+#   DEEPSEEK_API_KEY=your_key   # 只用于发布审核；用户对话用各自在设置页填的 key
 #   ALLOWED_ORIGINS=https://yourdomain.cn
 
 # 启动（OpenResty + FastAPI + PostgreSQL + Fail2Ban + GoAccess）
@@ -79,7 +79,8 @@ pip install -r requirements.txt
 
 # 配置 API Key
 cp .env.example .env
-# 编辑 .env，填入 JWT_SECRET 和 DEEPSEEK_API_KEY
+# 编辑 .env，填入 JWT_SECRET 和 DEEPSEEK_API_KEY（后者只用于发布审核；对话 / 检索 / 长期记忆
+# 用每个用户在设置页填的自己的 key，没配就不提供）
 
 # 构建前端
 cd web/frontend
@@ -366,6 +367,7 @@ Fail2Ban 监听 OpenResty 日志，自动封禁高频攻击 IP
 向量检索 embedding 已统一改用**阿里云百炼 DashScope text-embedding-v4 API**（`core/embeddings.py` 为唯一入口），
 不再依赖本地 SentenceTransformer / PyTorch 模型，因此也不再需要 GPU、torch 依赖或历史上的 meta tensor 防御逻辑。
 每个用户在 Web 设置页填写自己的 `DASHSCOPE_API_KEY`（中国内地有免费额度），费用用户自担。
+检索与长期记忆只用用户自己的 key：没配百炼 key 就不检索；长期记忆要 LLM key 与百炼 key 两把都配才开启。
 
 ## API 接口
 

@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import logging
-import threading
 import time
 
 import pytest
 
 from core.memory_manager import (
-    MemoryManager,
+    MemoryView,
     _lookup_vad, _emotion_affinity, _emotion_match, _get_emotion_polarity,
     RERANK_ALPHA, RERANK_BETA, RERANK_GAMMA, RERANK_LAMBDA,
 )
@@ -131,15 +130,9 @@ class _FailingMem:
         raise RuntimeError("boom")
 
 
-def _bare_manager(mem) -> MemoryManager:
-    """绕开 __init__ 的构造需求，只装配 add/add_manual 用得到的字段。"""
-    mm = MemoryManager.__new__(MemoryManager)
-    mm._enabled = True
-    mm._search_top_k = 10
-    mm._context_window = 30
-    mm._mem = mem
-    mm._lock = threading.Lock()
-    return mm
+def _bare_manager(mem) -> MemoryView:
+    """绑定一个替身 mem0 的记忆视图（add/add_manual 的方法体就在视图上）。"""
+    return MemoryView(mem)
 
 
 class TestWriteFailureIsVisible:

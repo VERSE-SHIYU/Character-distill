@@ -12,6 +12,7 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+import hashlib
 import os
 
 import httpx2
@@ -831,6 +832,36 @@ class LLMAdapter:
     def base_url(self) -> str:
         """本实例实际在跟谁说话 —— 守卫从适配器**自身**读这个事实，不从调用方拿。"""
         return self._base_url
+
+    def credential_fingerprint(self) -> str:
+        """凭据 + 地址 + 模型的指纹（不可逆，可进缓存键与日志）—— 换了其中任一项就变。"""
+        raw = f"{self._api_key}|{self._base_url}|{self._model}".encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()[:16]
+
+    def derive(
+        self,
+        *,
+        base_url: str | None = None,
+        temperature: float | None = None,
+        presence_penalty: float | None = None,
+        top_p: float | None = None,
+    ) -> "LLMAdapter":
+        """同一份凭据 / 地址 / 模型 / key 来源，换一套采样参数的**新**实例。
+
+        给「同一个用户、另一种用途」用（长期记忆的提炼要 mem0 那套低温采样）：调用方手里
+        只有用户的适配器，凭据不出本类 —— 不必也不该去读私有字段再拼一个。
+
+        *base_url* 只给本地压测把请求导到 mock 用（`MEM0_LLM_BASE_URL`）；不给就沿用本实例的。
+        """
+        return LLMAdapter(
+            api_key=self._api_key,
+            base_url=base_url or self._base_url,
+            model=self._model,
+            temperature=temperature,
+            presence_penalty=presence_penalty,
+            top_p=top_p,
+            is_user_key=self._is_user_key,
+        )
 
     def _before_call(self) -> None:
         """出站前的唯一检查点：转调 ``check_outbound_guard``。

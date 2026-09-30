@@ -20,6 +20,15 @@ RUN apt-get update && \
 
 WORKDIR /app
 
+# stdout 不缓冲：pipe 到 docker logs 时 print 默认按 8KB 块缓冲，出问题时日志卡在缓冲里
+# 看不见（2026-09 两台生产的 Mem0 状态就是这样查不到的）。
+ENV PYTHONUNBUFFERED=1
+
+# 关 mem0 遥测：库默认把每次记忆读写的元数据（操作名、id 的 md5、机器信息）发往 mem0 官方的
+# PostHog（us.i.posthog.com）。数据只有 mem0 团队看得到，本项目用不上，境内节点还构成出境。
+# 开关只作用于遥测本身，记忆读写与向量化不读它。mem0 在 import 时读取，故放镜像 ENV。
+ENV MEM0_TELEMETRY=False
+
 # Python 依赖（先拷贝 requirements 利用 Docker 缓存）
 # 国内构建时: docker build --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ARG PIP_INDEX_URL=https://pypi.org/simple/

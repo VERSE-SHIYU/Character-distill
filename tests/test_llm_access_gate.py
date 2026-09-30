@@ -224,7 +224,7 @@ def _patch_store(monkeypatch, store) -> None:
         monkeypatch.setattr(gate, "get_storage", lambda: store)
 
 
-# ── L1 / L2：`/start` 的全局兜底，以及兜底实例的同一性 ────────────────────
+# ── L1 / L2：`/start` 不回落全局，以及解析实例的同一性 ────────────────────
 
 @pytest.fixture
 def store(tmp_path):
@@ -246,9 +246,8 @@ def seed_user(store):
     `.env` 恰好有 key**；干净检出与 CI（都不注入 `DEEPSEEK_API_KEY`）上是 None。
     也就是说「解析层拿到实例」这个前提会退化成环境凑巧，而不是用例构造出来的。
 
-    **不并进 `store` 夹具**：写配置要给用户一条 `api_key`，而 L1/L2 的前提恰恰相反
-    ——「无 key + 全局可用」，靠 `store.get_user_api_config` 读回空配置成立。夹具替
-    每条用例建配置，那两条就从「测全局回落」变成「测用户配置」了。
+    **不并进 `store` 夹具**：写配置要给用户一条 `api_key`，而 L1 的前提恰恰相反
+    ——「无 key + 全局可用 → 仍 503」，靠 `store.get_user_api_config` 读回空配置成立。
     """
     def _seed(uid: str, *, base_url: str = "https://api.deepseek.com",
               api_key: str = "k", model: str = "m") -> str:
@@ -297,16 +296,17 @@ def _carries(haystack: tuple, needle: object) -> bool:
     return any(x is needle for x in haystack)
 
 
-def test_l1_start_falls_back_to_global_instance(store, user_id, monkeypatch):
-    """无 key 的用户走全局兜底，且后台线程拿到的是**同一个**全局实例。
+def test_l1_start_refuses_without_own_key_even_if_global_available(store, user_id, monkeypatch):
+    """无 key 的用户**不**走全局兜底：`/start` 503，不起后台线程，全局实例一次都不碰。
 
-    三条前提都由本用例构造并断言（发请求之前）：用户没 key（全新 uid + 全新临时库）、
-    全局可用（monkeypatch）、**门未注册**。
+    口径（`docs/specs/user-own-keys.md` §2）：面向用户的模型调用只用用户自己的 key。本条
+    原先锁的是反方向（「无 key + 全局可用 → 200 且线程拿到全局实例」，C4 的裁定），
+    2026-09-30 翻转。
 
-    第三条为什么也要显式钉：这条锁测的是**解析回落**，门不是它的射程（L4/L9 测门）。
-    而守卫是进程级全局 —— 本文件里 L4/L6/L7/L9/L11 各装各的门，全靠各自 `_snapshot`
-    还原；「轮到本用例时恰好没装」因此是**文件内的执行顺序**给的，不是命题的一部分。
-    钉住它，这条的成败才只取决于被测代码（与 C3 返工给 L4 立的标准同一条）。
+    前提由本用例构造并断言：用户没 key（全新 uid + 全新临时库）、全局**可用**（毒实例，
+    被碰即炸）、门未注册（理由同 L4/L9：守卫是进程级全局，轮到本用例时装没装由文件内
+    执行顺序决定，不是命题的一部分）。全局可用这条是承重的：全局不可用时 503 本来就成立，
+    证不了「不回落」。
     """
     la = _adapter()
     fake_global = _poison(LLMAdapter(api_key="k"))
@@ -315,29 +315,29 @@ def test_l1_start_falls_back_to_global_instance(store, user_id, monkeypatch):
     tid = _seed_text(store, user_id)
 
     with _snapshot(la.get_call_guard, la.set_call_guard, None):
-        # ── 前提 ────────────────────────────────────────────────────────
         assert not asyncio.run(store.get_user_api_config(user_id)).get("api_key"), (
-            "前提破了：这个用户居然有 key —— 本用例要证的是**无 key 才走全局**")
-        assert asyncio.run(deps.get_user_llm(user_id, store)) is fake_global, (
-            "前提破了：解析出口既没拿到用户实例、也没回落到全局实例")
+            "前提破了：这个用户居然有 key —— 本用例要证的是**无 key 不回落全局**")
+        assert deps.get_llm() is fake_global, "前提破了：全局实例不可用，503 就证不了「不回落」"
+        assert asyncio.run(deps.get_user_llm(user_id, store)) is None, (
+            "解析出口回落到了全局实例 —— 面向用户的调用必须只用用户自己的 key")
 
         r = TestClient(_distill_app(store, user_id)).post(
             "/api/distill/start",
             json={"text_id": tid, "character_name": "甲", "force": False},
         )
 
-    assert r.status_code == 200, r.text
-    assert captured, "没起后台线程"
-    assert _carries(captured[0][1], fake_global), (
-        f"后台线程拿到的不是请求时解析出的全局实例：{captured[0][1]!r}")
+    assert r.status_code == 503, r.text
+    assert "API Key" in r.json().get("detail", ""), r.text
+    assert not captured, "无 key 却起了后台线程"
 
 
-def test_l2_background_thread_gets_the_resolved_instance(store, user_id, monkeypatch):
+def test_l2_background_thread_gets_the_resolved_instance(store, seed_user, monkeypatch):
     """后台线程拿到的是**请求线程解析出的那个对象**（`is`），签名里也不再有解析原料。
 
-    前提同上（无 key + 全局可用 + 门未注册），另加一条**同一性见证**：
-    `resolved[-1] is fake_global`。没有它，「线程拿到了 `get_user_llm` 的返回值」可以
-    被 None 满足而仍然通过 —— 而 None 意味着线程拿到的压根不是实例。
+    前提：用户配了自己的 key、门未注册；另加一条**同一性见证**：
+    `resolved[-1]` 是用户实例（非 None、且不是全局实例）。没有它，「线程拿到了
+    `get_user_llm` 的返回值」可以被 None 满足而仍然通过 —— 而 None 意味着线程拿到的压根
+    不是实例。全局实例装成毒实例：万一解析回落了，它被碰即炸。
     """
     from routers import distill as D
 
@@ -355,18 +355,20 @@ def test_l2_background_thread_gets_the_resolved_instance(store, user_id, monkeyp
         return llm
 
     monkeypatch.setattr(deps, "get_user_llm", _spy)
-    tid = _seed_text(store, user_id)
+    uid = seed_user(f"u_l2_{uuid.uuid4().hex[:8]}")
+    deps.clear_user_llm_cache(uid)
+    tid = _seed_text(store, uid)
 
     with _snapshot(la.get_call_guard, la.set_call_guard, None):
-        r = TestClient(_distill_app(store, user_id)).post(
+        r = TestClient(_distill_app(store, uid)).post(
             "/api/distill/start",
             json={"text_id": tid, "character_name": "甲", "force": False},
         )
 
     assert r.status_code == 200, r.text
     assert resolved, "`/start` 没有走唯一解析出口 `get_user_llm`"
-    assert resolved[-1] is fake_global, (
-        f"前提破了：解析出口没回落到全局实例（{resolved[-1]!r}）—— "
+    assert resolved[-1] is not None and resolved[-1] is not fake_global, (
+        f"前提破了：解析出口没拿到用户自己的实例（{resolved[-1]!r}）—— "
         "下面的同一性判定就成了一句恒真话")
     assert captured and _carries(captured[0][1], resolved[-1]), (
         "后台线程拿到的不是请求时解析出的那个实例")
@@ -570,8 +572,9 @@ def test_l5_resolve_llm_table():
 
 # ── L6：每个出站方法都先过守卫 ────────────────────────────────────────────
 
-#: 公开可调用成员里**不是出站**的三个：`model`/`base_url` 是只读事实，`aclose` 是收尾。
-_NON_CALL = {"model", "aclose", "base_url"}
+#: 公开可调用成员里**不是出站**的：`model`/`base_url` 是只读事实，`aclose` 是收尾，
+#: `credential_fingerprint` 只做哈希，`derive` 只造一个新实例（它自己的出站照样过守卫）。
+_NON_CALL = {"model", "aclose", "base_url", "credential_fingerprint", "derive"}
 
 _REFUSAL = "总拒绝：本用例注册的守卫"
 

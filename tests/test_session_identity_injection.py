@@ -92,6 +92,10 @@ class _MemMgr:
     def add(self, *_a, **_kw):
         return True
 
+    def for_user(self, **_kw):
+        """工厂接口：替身同时充当「用户视图」。"""
+        return self
+
 
 def _text_manager(store, sessions) -> TextManager:
     return TextManager(lambda: store, None, _StubLLM(), sessions,
@@ -127,7 +131,7 @@ def test_a_new_engine_is_born_with_its_session_id(store, user_id):
     sessions: dict = {}
     tm = _text_manager(store, sessions)
 
-    sid = tm._create_session(CharacterCard(name="测试角色"), user_id=user_id)
+    sid = tm._create_session(CharacterCard(name="测试角色"), user_id=user_id, memory=None)
 
     assert sid, "建会话没返回 id"
     engine = sessions[sid]["engine"]

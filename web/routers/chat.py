@@ -177,11 +177,10 @@ async def _ensure_session(
         user_cfg = await storage.get_user_api_config(user_id) or {}
     except Exception as exc:
         user_cfg = {}
-        # 读不到用户配置 → 下面 resolve_embedding({}) 会静默用全局 key。结果还能跑，
-        # 但「这个用户没用自己的 key」这件事得留痕，否则账单差异无从解释。
+        # 读不到用户配置 → 下面按「没配」处理：不检索、不回落全局。失败要留痕。
         logger.warning(
-            "Session resume: per-user api config unreadable, falling back to global "
-            "key (user_id=%s session_id=%s): %r",
+            "Session resume: per-user api config unreadable, treating as unconfigured "
+            "(user_id=%s session_id=%s): %r",
             user_id, session_id, exc, exc_info=True,
         )
     emb = resolve_embedding(user_cfg)
@@ -190,12 +189,14 @@ async def _ensure_session(
         card_rec["text_id"], text_rec["content"],
         all_characters=all_characters, embedding_key=emb.key, embedding_region=emb.region,
     )
+    memory = await asyncio.to_thread(text_manager.memory_for, user_id, emb.key, emb.region)
     # 原会话 id 直接进构造：引擎一出生就在原 id 名下，不再「新 id 造好再搬过来」。
     await asyncio.to_thread(
         text_manager._create_session, card,
         all_characters=all_characters, rag=rag,
         card_id=card_id, user_id=user_id,
         session_id=session_id,
+        memory=memory,
     )
 
     engine = sessions.get(session_id, {}).get("engine")

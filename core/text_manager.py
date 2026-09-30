@@ -85,6 +85,18 @@ class TextManager:
         """现取现用；绝不缓存（缓存就等于回到构造时捕获）。"""
         return self._get_storage()
 
+    def memory_for(self, user_id: str, embedding_key: str, embedding_region: str = "cn") -> Any:
+        """这个用户的长期记忆视图；没配齐自己的两把 key 时返回 None（引擎据此不提供记忆）。
+
+        LLM 用本实例手里那个 —— 它由 `deps.get_user_llm` 解析，只可能是用户自己的。
+        """
+        if self._memory_manager is None:
+            return None
+        return self._memory_manager.for_user(
+            user_id=user_id, llm=self._llm,
+            embedding_key=embedding_key, embedding_region=embedding_region,
+        )
+
     # ── Prompt-injection field guard (2.1/2.6) ─────────────
     # Runs on every freshly distilled card before persistence. Flagged leaves
     # are neutralized in place; a flag or a judge error is written to
@@ -529,10 +541,12 @@ class TextManager:
 
         try:
             all_characters = await self._build_all_characters(text_id, existing_cards, user_id)
+            memory = await asyncio.to_thread(self.memory_for, user_id, embedding_key, embedding_region)
             session_id = await asyncio.to_thread(
                 self._create_session, card,
                 all_characters=all_characters, rag=None,
                 card_id=card_id, user_id=user_id,
+                memory=memory,
             )
         except Exception as exc:
             print(f"[TextManager] Create session failed: {exc}")
@@ -593,10 +607,12 @@ class TextManager:
         existing_cards = await self._storage.list_cards(text_id, user_id)
         all_chars = await self._build_all_characters(text_id, existing_cards, user_id)
 
+        memory = await asyncio.to_thread(self.memory_for, user_id, embedding_key, embedding_region)
         session_id = await asyncio.to_thread(
             self._create_session, card,
             all_characters=all_chars, rag=None,
             card_id=actual_card_id, user_id=user_id,
+            memory=memory,
         )
         await self._storage.save_session(session_id, actual_card_id, "", "", user_id)
 
@@ -641,6 +657,7 @@ class TextManager:
         user_id: str = "",
         user_role: str = "",
         session_id: str | None = None,
+        memory: Any,
     ) -> str:
         """Build ChatEngine in memory; rag=None means no retrieval (pure card prompt). (sync)
 
@@ -656,6 +673,9 @@ class TextManager:
         原先本函数还有「嵌入凭据」与「所在区域」两个参数，函数体里从未引用过 ——
         它们正是那次错位的落脚点：没有这两格，调用点多出来的两个实参只会得到
         `TypeError`，不会有地方可落。**先问这个参数有没有人用，再问怎么传。**
+
+        `memory` **必填、无默认值**：该用户的记忆视图（`memory_for`），没配齐 key 时就是
+        None。给默认值的话，新加一个调用点忘了传也照样能跑 —— 只是那条路上静默没有记忆。
 
         `session_id` 给了就用（续接 / 恢复：把原 id 交给构造函数），不给就在**造引擎
         之前**生成 —— 引擎出生即知道自己在哪个会话，不再「先造后改名」。
@@ -675,7 +695,7 @@ class TextManager:
         engine = ChatEngine(
             self._llm, rag, card,
             all_characters=all_characters,
-            memory_manager=self._memory_manager,
+            memory_manager=memory,
             card_id=card_id,
             user_role=user_role,
             storage=self._storage,

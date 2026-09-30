@@ -76,7 +76,14 @@ class IndexingService:
         embedding_key: str = "",
         embedding_region: str = "",
     ) -> RAGEngine | None:
-        """Lazy-load RAG; 60s timeout, returns None on failure."""
+        """Lazy-load RAG; 60s timeout, returns None on failure.
+
+        没有 embedding key（用户没配自己的百炼 key）时直接返回 None：检索只用用户自己的
+        key，不回落全局，也不拿空 key 去试一次再靠失败降级。
+        """
+        if not embedding_key:
+            logger.info("RAG skipped: user has no embedding key (text_id=%s)", text_id)
+            return None
         try:
             return self._get_or_build_rag(
                 text_id, content, all_characters,
@@ -106,7 +113,13 @@ class IndexingService:
         embedding_key: str = "",
         embedding_region: str = "",
     ) -> None:
-        """Fire-and-forget scene index. Dedup: skips if same card already indexing."""
+        """Fire-and-forget scene index. Dedup: skips if same card already indexing.
+
+        没有 embedding key 时不调度（理由同 `get_rag_for_session`）。
+        """
+        if not embedding_key:
+            logger.info("Scene index skipped: user has no embedding key (card_id=%s)", card_id)
+            return
         dedup_key = f"scenes_{card_id}"
         if dedup_key in _scene_index_in_flight:
             return

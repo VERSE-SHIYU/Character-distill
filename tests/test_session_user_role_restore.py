@@ -108,6 +108,9 @@ def _stub_text_manager(sessions, engine) -> object:
         async def _build_all_characters(self, *_a, **_kw):
             return [{"name": "张三", "aliases": []}]
 
+        def memory_for(self, *_a, **_kw):
+            return None  # 长期记忆不在本用例射程
+
         def _create_session(self, *_a, **kw):
             sid = kw["session_id"]
             sessions[sid] = new_session_entry(engine, None, "")

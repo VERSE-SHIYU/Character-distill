@@ -90,6 +90,10 @@ class _FakeStorage:
         self.reads.append(user_id)
         return dict(self.config)
 
+    async def get_card_owned(self, card_id: str, user_id: str):
+        """刷新检索时要查卡找原文；本文件只测 LLM 那半，查不到 = 检索原样不动。"""
+        return None
+
 
 def _engine(llm: _StubLLM) -> ChatEngine:
     """最小可用引擎：`rag=None` 让检索降级成空块，`storage=None` 关掉落库那条下游。"""

@@ -25,7 +25,7 @@ from adapters.llm_adapter import LLMAdapter, default_model
 from core import scheduling
 from core.distiller import Distiller
 from core.indexing_service import IndexingService
-from core.memory_manager import MemoryManager
+from core.memory_manager import MemoryManager, MemoryView
 from core.text_manager import TextManager
 from storage import get_store
 from storage.base import StorageBase
@@ -93,8 +93,17 @@ def _make_user_llm(config: dict[str, Any]) -> LLMAdapter:
     )
 
 
+def _no_global_llm() -> None:
+    """面向用户的解析出口没有全局兜底：交给 `resolve_llm` 的 `get_global` 恒为 None。"""
+    return None
+
+
 async def _resolve_user_llm(user_id: str, storage: StorageBase | None = None) -> LLMAdapter | None:
-    """解析出口**本体**：这一次给 *user_id* 用的 LLMAdapter（没配 key 时回落全局）。
+    """解析出口**本体**：这一次给 *user_id* 用的 LLMAdapter —— **只认用户自己的 key**。
+
+    用户没配 key 返回 None，**不回落全局**（口径见 `docs/specs/user-own-keys.md` §2）：
+    面向用户的模型调用由用户自付，全局 key 只剩平台自己的事（发布审核
+    `routers/market.py` 直接取 `get_llm()`，不经本出口）。调用点对 None 一律 503。
 
     **选谁**是策略，在 `web/llm_resolution.resolve_llm`；本函数只做三件它不做的事：
     读配置、按来源缓存、返回。**不判放行** —— `preflight()` 在 `get_user_llm` 那一层。
@@ -103,8 +112,8 @@ async def _resolve_user_llm(user_id: str, storage: StorageBase | None = None) ->
     「这次出站放不放行」是**另一码事**（判定用当前的 IP 与 base_url，与用户刚存进去的
     配置无关）。保存路径跟着 `get_user_llm` 走，就会因为一个当下被拒的理由而整笔不写库。
 
-    **只缓存 USER 结果**（§2.8）：回落与不可用都是「**当下**的事实」—— 管理员补上全局
-    key、或用户刚存好自己的配置，下个请求就该生效；缓存住它们会把这件事实冻到进程重启。
+    **只缓存 USER 结果**（§2.8）：「不可用」是「**当下**的事实」—— 用户刚存好自己的
+    配置，下个请求就该生效；缓存住它会把这件事实冻到进程重启。
     """
     if storage is None:
         storage = get_storage()
@@ -113,7 +122,7 @@ async def _resolve_user_llm(user_id: str, storage: StorageBase | None = None) ->
         return cached
 
     config = await storage.get_user_api_config(user_id)
-    resolved = resolve_llm(config, build_user=_make_user_llm, get_global=get_llm)
+    resolved = resolve_llm(config, build_user=_make_user_llm, get_global=_no_global_llm)
     if resolved.source is Source.USER:
         # 先入缓存：用户实例本身没有变坏 —— 换个放行的 IP 再来，该命中的还是这条缓存。
         _user_llm_cache[user_id] = resolved.llm
@@ -164,18 +173,28 @@ def _live_engines(match: Callable[[str], bool]) -> list[Any]:
 
 
 async def refresh_user_llm(user_id: str, storage: StorageBase | None = None) -> int:
-    """把 *user_id* 活会话手里的连接换成按新配置解析出来的那一个；返回换掉的引擎数。
+    """把 *user_id* 活会话换到按新配置解析出来的那一套；返回换掉的引擎数。
 
-    存完设置后由 `update_api_config` 调 —— 不踢会话、不重建 RAG，只让**下一轮**出站
-    走新连接（在飞的那一轮归旧连接，见 `ChatEngine.set_llm`）。
+    存完设置后由 `update_api_config` 调 —— 不踢会话，只让**下一轮**用新的：
+    LLM（在飞的那一轮归旧连接，见 `ChatEngine.set_llm`）、长期记忆视图、检索引擎。
+    三样都只用用户自己的 key（`docs/specs/user-own-keys.md`）：用户刚补上百炼 key，
+    同一个会话下一轮就有记忆与检索，不必重开会话。
 
-    解析结果 `None`（自己没配 key、全局兜底也没有）时记一笔日志、返回 0：这是「这次没得
-    换」，不是失败。
+    LLM 先整批换（与改造前同一语义）；记忆 / 检索逐个引擎换，某个引擎的检索重建失败
+    只记一笔、不挡别的引擎，也不回滚已经换好的 LLM。
+
+    解析结果 `None`（用户自己没配 key）时记一笔日志、返回 0：这是「这次没得
+    换」，不是失败（没配 LLM key 的用户根本建不出会话）。
 
     **单进程前提**：`_sessions` / `_group_sessions` 是本进程的内存表（`web/server.py` 的
     `uvicorn.run` 不带 `workers`），故「活会话」就是这两张表。将来要多 worker，得改成
     「按配置版本号每轮重新解析」—— 跨进程换不了别人手里的实例。
     """
+    from core.nonfatal import nonfatal
+    from web.llm_resolution import resolve_embedding
+
+    if storage is None:
+        storage = get_storage()
     clear_user_llm_cache(user_id)
     llm = await _resolve_user_llm(user_id, storage)
     if llm is None:
@@ -184,7 +203,39 @@ async def refresh_user_llm(user_id: str, storage: StorageBase | None = None) -> 
     engines = _live_engines(lambda owner: owner == user_id)
     for engine in engines:
         engine.set_llm(llm)
+    if not engines:
+        return 0
+
+    emb = resolve_embedding(await storage.get_user_api_config(user_id) or {})
+    memory = await asyncio.to_thread(get_user_memory, user_id, llm, emb.key, emb.region)
+    for engine in engines:
+        engine.set_memory(memory)
+        async with nonfatal("deps", "refresh retrieval for a live session", level=logging.WARNING):
+            engine.set_rag(await _rag_for_engine(engine, user_id, storage, emb.key, emb.region))
     return len(engines)
+
+
+async def _rag_for_engine(
+    engine: Any, user_id: str, storage: StorageBase, embedding_key: str, embedding_region: str,
+) -> Any:
+    """按新 key 给活引擎取检索：卡没有原文（独立卡片）→ None；卡 / 原文读不到 → 原样不动。"""
+    card_rec = await storage.get_card_owned(engine.card_id, user_id)
+    if not card_rec:
+        return engine.rag
+    text_id = card_rec.get("text_id") or ""
+    if not text_id:
+        return None
+    text_rec = await storage.get_text_owned(text_id, user_id)
+    if not text_rec:
+        return engine.rag
+    service = get_indexing_service()
+    if service is None:
+        return engine.rag
+    return await asyncio.to_thread(
+        service.get_rag_for_session, text_id, text_rec.get("content", ""),
+        all_characters=getattr(engine, "_all_characters", None),
+        embedding_key=embedding_key, embedding_region=embedding_region,
+    )
 
 
 def get_memory_manager() -> MemoryManager | None:
@@ -193,6 +244,22 @@ def get_memory_manager() -> MemoryManager | None:
     if _memory_manager is None:
         _memory_manager = MemoryManager(_memory_config)
     return _memory_manager
+
+
+def get_user_memory(
+    user_id: str, llm: LLMAdapter | None, embedding_key: str, embedding_region: str = "cn",
+) -> MemoryView | None:
+    """*user_id* 的长期记忆视图；没配齐自己的 LLM key 与百炼 key 时返回 None。（同步，
+    首次会建 mem0 实例 —— async 调用方用 `asyncio.to_thread`。）
+
+    *llm* 必须是用户自己的适配器（`get_user_llm` / `_resolve_user_llm` 的结果）。
+    """
+    manager = get_memory_manager()
+    if manager is None:
+        return None
+    return manager.for_user(
+        user_id=user_id, llm=llm, embedding_key=embedding_key, embedding_region=embedding_region,
+    )
 
 
 def get_storage() -> StorageBase:
