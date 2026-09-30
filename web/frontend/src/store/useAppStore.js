@@ -515,7 +515,7 @@ const useAppStore = create((set, get) => {
   webSearchEnabled: false,
   setWebSearchEnabled: (val) => set({ webSearchEnabled: val }),
 
-  agentMode: false,
+  agentMode: true,
   setAgentMode: (val) => set({ agentMode: val }),
 
   // affinity: null 表达"无数据"（后端 204）。有真实数据时为 10 字段规范 dict。

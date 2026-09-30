@@ -413,7 +413,7 @@ def test_timeout_is_produced_only_in_tools_layer():
 
 
 def test_build_ex_exposes_traces_and_build_stays_a_thin_delegate():
-    """非 agent 路径（前端默认 agentMode=false、群聊恒走这条）也透出 items。
+    """非 agent 路径（用户关掉 agentMode、群聊恒走这条）也透出 items。
 
     ``build()`` 是 ``build_ex().prompt`` 的薄委托 —— 单一构造路径，不是第二条渲染分支。
     """
