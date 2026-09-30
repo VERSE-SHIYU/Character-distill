@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from core.trash_service import hard_delete, restore, soft_delete
 from deps import get_storage, get_user_llm, get_sessions, get_group_sessions
@@ -36,11 +36,31 @@ _group_last_reaction_id: dict[str, int] = {}
 
 class CreateGroupRequest(BaseModel):
     name: str = ""
-    card_ids: list[str]
+    # 形状约束交给 schema（不满足 → 422）；要查库才能判的成员规则见 `_check_group_members`。
+    card_ids: list[str] = Field(min_length=2)
     user_persona_type: str = "director"  # "character" | "stranger" | "director"
     user_persona_card_id: str = ""
     user_persona_name: str = ""
     user_persona_desc: str = ""
+
+
+def _check_group_members(card_recs: list[dict]) -> str:
+    """群聊成员规则（唯一一处）：只能是**同一本书**里的**不同角色**，至少 2 个；其余一律拒绝。
+
+    `card_recs` 是已按属主取到的卡片行。返回这本书的 `text_id`。
+    「不同角色」按卡片的角色名判：同一角色的多个版本只能选一张。
+    """
+    text_ids = {rec.get("text_id") or "" for rec in card_recs}
+    if "" in text_ids:
+        raise HTTPException(400, "独立角色卡不能加入群聊，请选同一本书里的角色")
+    if len(text_ids) != 1:
+        raise HTTPException(400, "群聊只能选同一本书里的角色")
+    names = [rec["name"] for rec in card_recs]
+    if len(set(names)) != len(names):
+        raise HTTPException(400, "同一个角色只能选一个版本")
+    if len(names) < 2:
+        raise HTTPException(400, "群聊至少需要同一本书里的 2 个角色")
+    return text_ids.pop()
 
 
 class RenameGroupRequest(BaseModel):
@@ -143,8 +163,8 @@ async def _rebuild_group_session(
             continue
 
         text_id = card_rec.get("text_id") or ""
-        # 独立卡片（没有原文）不读原文、不检索；有原文的，原文读不到就跳过这张卡。
-        if text_id and not await storage.get_text_owned(text_id, user_id):
+        # 群聊成员只能是有原文的卡（见 `_check_group_members`）；原文读不到就跳过这张卡。
+        if not text_id or not await storage.get_text_owned(text_id, user_id):
             continue
         rag = indexing_service.get_rag_for_session(
             text_id, card_id=card_id, embedding_key=emb.key, embedding_region=emb.region,
@@ -274,9 +294,6 @@ async def create_group(
     if per_user_llm is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
 
-    if not req.card_ids:
-        raise HTTPException(400, "请至少选择角色")
-
     # Validate persona (must do before AI count check — mode-dependent)
     persona_type = req.user_persona_type
     persona_card_id = req.user_persona_card_id
@@ -326,12 +343,19 @@ async def create_group(
     card_infos: list[dict] = []
     played_card_name = ""
 
+    card_recs: list[dict] = []
     for card_id in req.card_ids:
         card_rec = await storage.get_card_owned(card_id, user_id)
         # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
         if not card_rec:
             raise HTTPException(404, f"角色卡 {card_id} 不存在")
+        card_recs.append(card_rec)
+    text_id = _check_group_members(card_recs)
+    if not await storage.get_text_owned(text_id, user_id):
+        raise HTTPException(404, f"原文 {text_id} 不存在")
 
+    for card_rec in card_recs:
+        card_id = card_rec["id"]
         card = CharacterCard.model_validate_json(card_rec["card_json"])
 
         # Track played character name
@@ -341,10 +365,6 @@ async def create_group(
             card_infos.append({"card_id": card_id, "name": card.name, "played_by_user": True})
             continue
 
-        text_id = card_rec.get("text_id") or ""
-        # 独立卡片（没有原文）不读原文、不检索。
-        if text_id and not await storage.get_text_owned(text_id, user_id):
-            raise HTTPException(404, f"原文 {text_id} 不存在")
         rag = indexing_service.get_rag_for_session(
             text_id, card_id=card_id, embedding_key=emb.key, embedding_region=emb.region,
         ) if indexing_service else None
@@ -360,14 +380,6 @@ async def create_group(
         )
         engines[card_id] = engine
         card_infos.append({"card_id": card_id, "name": card.name})
-
-    # After removing played character, verify AI count by persona mode
-    if persona_type == "director":
-        if len(engines) < 2:
-            raise HTTPException(400, "导演模式需要至少2个AI角色")
-    else:
-        if len(engines) < 1:
-            raise HTTPException(400, "至少需要1个AI角色陪你对话")
 
     if persona_type == "character":
         persona_name = persona_name or played_card_name

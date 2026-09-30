@@ -317,8 +317,9 @@ def _flush(client: TestClient, sid: str) -> dict:
     return r.json()
 
 
-def _make_group(st, uid, n: int = 1) -> tuple[str, list[str]]:
-    """建 n 张同文本的卡再建群 —— 群聊要有引擎才发得出话，引擎要有卡。"""
+def _make_group(st, uid, n: int = 2) -> tuple[str, list[str]]:
+    """建 n 张同文本、不同角色的卡再建群 —— 群聊要有引擎才发得出话，引擎要有卡；
+    群聊成员规则要求同一本书里至少 2 个不同角色（`group._check_group_members`）。"""
     tid = f"txt_{uuid.uuid4().hex}"
     cards = []
     _run(st.save_text(tid, "src.txt", "content", user_id=uid))

@@ -27,6 +27,7 @@ import { parseCardJson } from '../utils/card'
 import { displayName } from '../utils/displayName'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
+import { blockedBySameCharacter } from '../utils/groupMembers'
 
 function parseCardIds(raw) {
   if (Array.isArray(raw)) return raw
@@ -1497,16 +1498,19 @@ export default function GroupChatPage() {
                   {(cardsByText[selectedTextId] || []).length === 0 && (
                     <p className="group-create-empty">该书暂无角色卡</p>
                   )}
-                  {(cardsByText[selectedTextId] || []).map((c) => {
+                  {(cardsByText[selectedTextId] || []).map((c, _i, bookCards) => {
                     const cardId = c.id || c.card_id
                     const selected = selectedCardIds.includes(cardId)
+                    const blocked = blockedBySameCharacter(c, selectedCardIds, bookCards)
                     let identity = ''
                     try { const cj = parseCardJson(c); identity = cj.identity || '' } catch {}
                     return (
                       <div
                         key={cardId}
-                        className={`group-create-card${selected ? ' selected' : ''}`}
-                        onClick={() => toggleCard(cardId)}
+                        className={`group-create-card${selected ? ' selected' : ''}${blocked ? ' disabled' : ''}`}
+                        onClick={blocked ? undefined : () => toggleCard(cardId)}
+                        aria-disabled={blocked || undefined}
+                        title={blocked ? '已选了这个角色的另一个版本' : undefined}
                       >
                         <Avatar name={c.name} size={36} src={cardAvatars[cardId]} />
                         <div className="group-create-card-info">

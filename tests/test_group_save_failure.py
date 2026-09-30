@@ -173,19 +173,12 @@ def _client(storage, user_id):
 
 
 def _make_owned_group(client, store, uid) -> tuple[str, str]:
-    """建一张卡再建群 —— 群聊要靠卡才能有引擎，引擎才有 LLM 可叫。"""
-    tid = f"txt_{uuid.uuid4().hex}"
-    cid = f"card_{uuid.uuid4().hex}"
-    _run_async(store.save_text(tid, "src.txt", "content", user_id=uid))
-    _run_async(store.save_card(cid, tid, "张三", '{"name": "张三"}', user_id=uid))
-    r = client.post("/api/group/create", json={
-        "card_ids": [cid],
-        "user_persona_type": "stranger",
-        "user_persona_name": "路人",
-    })
-    assert r.status_code == 200, (
-        f"建群这一步就失败了，后面的帧断言无从谈起：{r.status_code} {r.text[:200]}")
-    return r.json()["group_id"], cid
+    """建群并返回其中一个角色 —— 群聊要靠卡才能有引擎，引擎才有 LLM 可叫。
+
+    群聊成员规则要求同一本书里至少 2 个不同角色，故建两张卡；用例只对返回的那一个说话。
+    """
+    gid, cards = _make_two_card_group(client, store, uid)
+    return gid, cards[0]
 
 
 def _make_two_card_group(client, store, uid) -> tuple[str, list[str]]:

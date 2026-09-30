@@ -285,12 +285,17 @@ def group_client(store, user_id, monkeypatch):
 
 
 def _create_group(client, store, uid) -> tuple[str, str]:
+    """建一个合法的群：同一本书里两个不同角色（`group._check_group_members`）。"""
     tid = f"txt_{uuid.uuid4().hex}"
-    cid = f"card_{uuid.uuid4().hex}"
     _run(store.save_text(tid, "src.txt", "content", user_id=uid))
-    _run(store.save_card(cid, tid, "张三", _GROUP_CARD, user_id=uid))
+    cards = []
+    for name, card_json in (("张三", _GROUP_CARD), ("李四", '{"name": "李四"}')):
+        cid = f"card_{uuid.uuid4().hex}"
+        _run(store.save_card(cid, tid, name, card_json, user_id=uid))
+        cards.append(cid)
+    cid = cards[0]
     r = client.post("/api/group/create", json={
-        "card_ids": [cid], "user_persona_type": "stranger", "user_persona_name": "路人"})
+        "card_ids": cards, "user_persona_type": "stranger", "user_persona_name": "路人"})
     assert r.status_code == 200, (
         f"建群这一步就失败了，后面的断言无从谈起：{r.status_code} {r.text[:200]}")
     return r.json()["group_id"], cid

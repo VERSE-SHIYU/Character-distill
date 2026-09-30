@@ -13697,6 +13697,15 @@ label[for] {
   background: var(--accent-soft);
 }
 
+.group-create-card.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.group-create-card.disabled:hover {
+  background: none;
+}
+
 .group-create-card-check {
   margin-left: auto;
   color: var(--accent);
