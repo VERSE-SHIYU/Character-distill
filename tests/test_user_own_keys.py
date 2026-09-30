@@ -402,3 +402,12 @@ def test_T9_saving_new_keys_reaches_the_live_session(mem_factory, monkeypatch):
     finally:
         deps.get_sessions().pop("s_live", None)
         deps.clear_user_llm_cache(uid)
+
+
+def test_T5c_load_test_override_keeps_the_users_key(mem_factory, monkeypatch):
+    """`MEM0_LLM_BASE_URL`（本地压测接 mock）只换地址，key 仍是用户自己的。"""
+    monkeypatch.setenv("MEM0_LLM_BASE_URL", "http://127.0.0.1:9/v1")
+    view = mem_factory.for_user(user_id="P", llm=_user_llm("user-llm-P"), embedding_key="e")
+    extractor = view._mem.llm._adapter
+    assert extractor.base_url == "http://127.0.0.1:9/v1"
+    assert extractor._api_key == "user-llm-P"

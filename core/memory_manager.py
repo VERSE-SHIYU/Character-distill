@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import math
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -305,6 +306,8 @@ class MemoryManager:
             if view is not None:
                 return view
             extractor = llm.derive(
+                # 本地压测把提炼导到 mock（tests/perf/e2e_otel.py）；未设置沿用用户自己的地址。
+                base_url=os.environ.get("MEM0_LLM_BASE_URL") or None,
                 temperature=_EXTRACT_TEMPERATURE,
                 presence_penalty=_EXTRACT_PRESENCE_PENALTY,
                 top_p=_EXTRACT_TOP_P,

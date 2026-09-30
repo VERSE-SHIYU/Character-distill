@@ -841,6 +841,7 @@ class LLMAdapter:
     def derive(
         self,
         *,
+        base_url: str | None = None,
         temperature: float | None = None,
         presence_penalty: float | None = None,
         top_p: float | None = None,
@@ -849,10 +850,12 @@ class LLMAdapter:
 
         给「同一个用户、另一种用途」用（长期记忆的提炼要 mem0 那套低温采样）：调用方手里
         只有用户的适配器，凭据不出本类 —— 不必也不该去读私有字段再拼一个。
+
+        *base_url* 只给本地压测把请求导到 mock 用（`MEM0_LLM_BASE_URL`）；不给就沿用本实例的。
         """
         return LLMAdapter(
             api_key=self._api_key,
-            base_url=self._base_url,
+            base_url=base_url or self._base_url,
             model=self._model,
             temperature=temperature,
             presence_penalty=presence_penalty,

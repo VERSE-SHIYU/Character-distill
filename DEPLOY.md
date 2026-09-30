@@ -122,13 +122,13 @@ vim .env
 
 - `RESEND_FROM_EMAIL`：发件人邮箱，默认 `noreply@resend.dev`，有自有域名后替换。
 - `SESSION_IDLE_TTL_SECONDS`：会话空闲超时秒数，默认 3600（1 小时）。后台每 5 分钟清理一次过期会话（持有活跃锁的不清）。
-- `DASHSCOPE_API_KEY`：阿里云百炼 API Key。用户可在 Web 设置页自行填写，无需服务端统一配置。
+- **模型调用一律用用户自己的 key**：对话 LLM、检索（百炼 embedding）、长期记忆（提炼 LLM + 百炼 embedding）都只用用户在 Web 设置页填写的 key，**没配就不提供对应服务**（对话 503「请先在设置页配置 API Key」；长期记忆缺一把 key 就不记）。服务端的 `DEEPSEEK_API_KEY` 只用于平台自己的**发布审核**；服务端不需要、也不会用 `DASHSCOPE_API_KEY`。
 - `FFMPEG_PATH`：ffmpeg 路径，默认走系统 PATH（音视频音轨提取需要）。
 - `BLOCKLIST_PATH`：内容审核敏感词黑名单文件路径，不设用内置默认。
 - `CARD_GUARD_ENABLED`：蒸馏持久化注入判官（card_guard，逐字段 LLM 判定）开关，**默认关**。开启 = 每次蒸馏持久化前多一次 LLM 判定调用。判官 2026-09-08 实测（Step-3）对叙事化残留零检出、干净卡误伤 0/23 → 当前阈值下开启是纯成本无收益，故默认关。等判官按「载荷落入可执行配置字段 decision_style/speaking_style/values 且带优先级措辞」靶向改造后再设 `1` 开启（见 `core/moderation/card_guard.py` 顶部局限说明）。
 - 审核阈值 `TRUST_THRESHOLD` / `BLOCK_THRESHOLD` / `MAX_TOKEN_LENGTH` 及各级关键词列表，均可用环境变量覆盖内置默认（详见 `.env.example`）。
 - `OTEL_ENABLED`：OpenTelemetry 手工埋点开关，**默认关**（关时不 import sdk、不建 provider、装饰器原样返回，零开销）。开启 = 每次推理/蒸馏/RAG 建 span，用于本地压测归因（TTFT / token 间隔 / 跨线程 trace）。生产流量稀疏、可观测主要供压测，故默认关。配套：`OTEL_EXPORTER=memory`（进程内收集供断言/调试，不落盘）；`OTEL_CAPTURE_CONTENT=1` 才捕获对话内容（默认关 —— 完整 prompt/回复属 ICP 合规敏感，只经事件捕获、绝不落 span 属性）。依赖 pin 见 `requirements.txt` 的 `opentelemetry-api/sdk`。
-- `EMBEDDING_BASE_URL` / `MEM0_LLM_BASE_URL`：分别覆盖 DashScope embedding 与 Mem0 记忆抽取 LLM 的端点（②④ 本地压测接 mock）。未设置走各自 region/DeepSeek 默认，行为逐字节不变。
+- `EMBEDDING_BASE_URL` / `MEM0_LLM_BASE_URL`：分别覆盖 DashScope embedding 与 Mem0 记忆抽取 LLM 的端点（②④ 本地压测接 mock）。未设置走各自 region / 用户自己配的地址，行为逐字节不变；key 始终是用户自己的。
 
 > 两台机器的 `JWT_SECRET`、`FERNET_KEY` 可各自独立；数据库密码各自设置。
 

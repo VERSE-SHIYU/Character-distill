@@ -20,6 +20,10 @@ RUN apt-get update && \
 
 WORKDIR /app
 
+# stdout 不缓冲：pipe 到 docker logs 时 print 默认按 8KB 块缓冲，出问题时日志卡在缓冲里
+# 看不见（2026-09 两台生产的 Mem0 状态就是这样查不到的）。
+ENV PYTHONUNBUFFERED=1
+
 # Python 依赖（先拷贝 requirements 利用 Docker 缓存）
 # 国内构建时: docker build --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ARG PIP_INDEX_URL=https://pypi.org/simple/
