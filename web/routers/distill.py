@@ -1139,7 +1139,7 @@ async def distill_stream(
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
 
-        # Persist card + create session (RAG built in _create_session for chat use)
+        # Persist card + create session (the session gets its own retrieval in save_distilled_card)
         try:
             result = await text_manager.save_distilled_card(
                 req.text_id, card, user_id,
@@ -1186,14 +1186,18 @@ async def reindex_rag(
     text_id: str,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
-    sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
 ) -> dict[str, Any]:
-    """Rebuild RAG indices for all in-memory sessions with character metadata.
+    """Rebuild this text's RAG collection with character tags (background).
 
-    Reads the text from storage, takes the roster from
+    Reads the text from storage (owner-scoped), takes the roster from
     ``core.character_roster.resolve_characters`` (缓存命中就不发 LLM),
-    then rebuilds each session's RAG index to include character tags so that
-    ``character_name`` filtering works in subsequent chat queries.
+    then schedules a rebuild of ``text_{text_id}`` so that ``character_name``
+    filtering works in subsequent chat queries.
+
+    **不碰任何会话**：原先这里遍历内存里**所有用户**的会话、拿调用者的原文重建每个会话
+    的检索 —— 任何登录用户都能把自己的书灌进别人的会话。现在只重建调用者自己这本书的
+    集合；绑在原文集合上的会话下一次检索会自己重读（`SessionRag`）。
+    在后台建：整本嵌入要分钟级，不在请求里做。
     """
     user_id = user["id"]
     from deps import get_distiller, get_user_llm
@@ -1209,19 +1213,16 @@ async def reindex_rag(
     # 不设就地捕获（理由见 `_do_identify` 上方的块注释）：识别失败冒泡到统一出口。
     chars = await resolve_characters(storage, distiller, text_id, user_id, content)
 
-    count = 0
-    for sid, session in sessions.items():
-        engine = session.get("engine")
-        if engine is None:
-            continue
-        try:
-            engine.rag.index(content, all_characters=chars)
-            engine._all_characters = chars
-            count += 1
-        except Exception as exc:
-            logger.error("Reindex session %s failed: %s", sid, exc, exc_info=True)
+    emb = resolve_embedding(await storage.get_user_api_config(user_id) or {})
+    indexing_service = get_indexing_service()
+    if not emb.key or indexing_service is None:
+        raise HTTPException(400, "未配置向量检索 API Key，请在设置页填写阿里云百炼 API Key")
 
-    return {"reindexed_sessions": count, "characters_found": len(chars)}
+    indexing_service.schedule_text_reindex(
+        text_id, content, all_characters=chars,
+        embedding_key=emb.key, embedding_region=emb.region,
+    )
+    return {"scheduled": True, "characters_found": len(chars)}
 
 
 class UpdateCardRequest(BaseModel):
@@ -1373,14 +1374,18 @@ async def start_session(
         content = text_rec["content"]
         existing_cards = await storage.list_cards(req.text_id, user_id)
         all_characters = await text_manager._build_all_characters(req.text_id, existing_cards, user_id)
+        indexing_service = get_indexing_service()
+        rag = indexing_service.get_rag_for_session(
+            req.text_id, card_id=req.card_id,
+            embedding_key=emb.key, embedding_region=emb.region,
+        ) if indexing_service else None
         session_id = await asyncio.to_thread(
             text_manager._create_session, card,
-            all_characters=all_characters, rag=None,
+            all_characters=all_characters, rag=rag,
             card_id=req.card_id, user_id=user_id,
             user_role=req.user_role, memory=memory,
         )
         # Fire-and-forget scene index via isolated service
-        indexing_service = get_indexing_service()
         if indexing_service:
             indexing_service.schedule_scene_index(
                 req.text_id, req.card_id, content, card.name,
