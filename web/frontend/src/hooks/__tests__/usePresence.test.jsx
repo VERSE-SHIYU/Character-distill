@@ -61,7 +61,16 @@ describe('usePresence（SWR 封装）', () => {
 
   it('P6 refreshInterval 生效：定时重新查询', async () => {
     vi.mocked(fetchWithTimeout).mockResolvedValue(reply({ online: true, hidden: false, last_active_at: '' }))
-    hook({ id: 'u2' }, { refreshInterval: 40 })
-    await waitFor(() => expect(urls().length).toBeGreaterThanOrEqual(3), { timeout: 1000 })
+    vi.useFakeTimers()
+    try {
+      hook({ id: 'u2' }, { refreshInterval: 40 })
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      expect(urls().length).toBe(1)
+      await act(() => vi.advanceTimersByTimeAsync(40))
+      await act(() => vi.advanceTimersByTimeAsync(40))
+      expect(urls().length).toBe(3)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

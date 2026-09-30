@@ -3,6 +3,7 @@ import { render as rtlRender, waitFor } from '@testing-library/react'
 import { SWRConfig } from 'swr'
 import MinePage from '../MinePage'
 import { fetchWithTimeout } from '../../api/client'
+import { flushTurns } from '../../test/flushTurns'
 
 // 他人主页的在线状态必须是对方的，并尊重对方的隐藏设置（auth.py 返回 hidden）。
 
@@ -65,7 +66,7 @@ describe('MinePage 在线状态', () => {
     mutate({ currentView: 'author', authorUserId: 'u2' })
     const { container } = render(<MinePage />)
     await waitFor(() => expect(onlineUrls()).toContain('/api/auth/user/u2/online'))
-    await new Promise((r) => setTimeout(r, 30))
+    await flushTurns()
     expect(status(container)).toBeNull()
   })
 

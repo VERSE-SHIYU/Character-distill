@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { TEST_TIMEOUT_MS } from './src/test/timeouts.js'
 
 // ---- 本地后端有两条拓扑，前端代理跟着走（详见 README「后端两条路」）----
 //   原生：    uvicorn 直接跑，host 7860（README 方式二 / start_all.bat）
@@ -78,6 +79,7 @@ export default defineConfig(async ({ command }) => {
       environment: 'jsdom',
       globals: true,
       setupFiles: './src/test/setup.js',
+      testTimeout: TEST_TIMEOUT_MS,
       exclude: ['**/node_modules/**', '**/*.mjs', '**/e2e/**'],
     },
   }
