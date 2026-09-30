@@ -387,3 +387,34 @@ async def test_backfill_queues_every_local_user_profile_once(store):
     assert rows[u1]["avatar_data"] == "data:newer", (
         f"补发拿 users 里的旧快照盖掉了队里更新的资料：{rows[u1]!r} —— "
         "所以必须是 DO NOTHING 而不是 DO UPDATE")
+
+
+async def _locally_used_codes(store) -> list[str]:
+    """本机用掉的码（排除对端同步来的 `peer`）—— 迁移正文的判据，在这儿独立算一遍。"""
+    async with await store._connect() as conn:
+        rows = await conn.fetch(
+            "SELECT code FROM invite_codes WHERE used_by IS NOT NULL AND used_by <> 'peer'")
+    return sorted(r["code"] for r in rows)
+
+
+async def test_backfill_queues_only_codes_used_by_this_node(store):
+    """存量「已使用」：只入队本机用户用掉的码 —— `used_by = 'peer'` 的是对端同步来的。
+
+    再发回对端就是回传（对端那边早记着了，收到会当成新变更）。
+    """
+    _u1, _u2, _remote = await _seed_pre_backfill(store)
+    code_peer, code_unused = _uid("c"), _uid("c")
+    await store.create_invite_code(code_peer, "admin1", propagate=False)
+    await store.mark_invite_used_from_peer(code_peer)
+    await store.create_invite_code(code_unused, "admin1", propagate=False)
+
+    await _replay_backfill(store)
+
+    used = {r["target_id"]: json.loads(r["payload"])
+            for r in await _rows(store, "invite_used")}
+    assert sorted(used) == await _locally_used_codes(store), (
+        f"入队的「已使用」与本机实际用掉的码对不上：{sorted(used)}")
+    assert code_peer not in used, "对端同步过来的「已使用」被发回去了（回传）"
+    assert code_unused not in used, "没用过的码也被当成「已使用」发了出去"
+    assert all(p == {"code": c} for c, p in used.items()), (
+        f"「已使用」的 payload 只许有 code（政策 3.2(4)：不带使用者身份）：{used}")

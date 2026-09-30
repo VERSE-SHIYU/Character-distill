@@ -54,6 +54,12 @@ M = [
  ("O15 SQLite create_user 签名漂移", "storage/sqlite_store.py",
   "                          email: str = \"\", home_region: str = \"\", invite_code: str = \"\") -> dict:",
   "                          email: str = \"\", home_region: str = \"\", invite_code: str = \"x\") -> dict:", "B"),
+ ("O16 补发把对端标记的已用码也发回去", "storage/migrations_pg/032_outbox_backfill.sql",
+  "WHERE c.used_by IS NOT NULL AND c.used_by <> 'peer'",
+  "WHERE c.used_by IS NOT NULL", "B"),
+ ("O17 补发拿旧快照盖掉队里的新资料", "storage/migrations_pg/032_outbox_backfill.sql",
+  "FROM users u\nON CONFLICT (op_type, target_id) DO NOTHING;",
+  "FROM users u\nON CONFLICT (op_type, target_id) DO UPDATE SET payload = EXCLUDED.payload;", "B"),
 ]
 
 
@@ -79,7 +85,9 @@ for name, rel, old, new, kind in M:
     h = hashlib.sha256(src).hexdigest()
     t = src.decode()
     assert t.count(old) == 1, (name, t.count(old))
-    p.write_text(t.replace(old, new))
+    # 必须显式 utf-8：Windows 的 write_text 默认取 locale（gbk），撞上非 gbk 字符会
+    # 先截断文件再抛 UnicodeEncodeError，把源文件清成 0 字节（实测）。
+    p.write_text(t.replace(old, new), encoding="utf-8", newline="")
     try:
         reds, summ = run(kind)
     finally:
