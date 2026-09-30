@@ -444,7 +444,7 @@ async def register(
     # Best-effort sync profile to peer node
     try:
         from cross_border_sync import forward_user_profile_to_peer
-        await forward_user_profile_to_peer(user["id"], user.get("username", ""), node_region, user.get("avatar_data", ""))
+        await forward_user_profile_to_peer(user["id"], user.get("username", ""), home_region, user.get("avatar_data", ""))
     except Exception as exc:
         logger.error("Forward user profile to peer failed: %s", exc, exc_info=True)
 
