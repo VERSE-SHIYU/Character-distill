@@ -5,6 +5,8 @@ This simulates the worst case — embedding API misconfigured — and verifies:
 2. ChatEngine accepts rag=None without error
 3. ContextEngine._retrieve_scenes returns "" when rag is None
 4. schedule_scene_index degrades silently (prints log, does not raise)
+5. schedule_scene_index for one card never runs concurrently; calls that arrive
+   while it runs are merged into one follow-up run
 """
 
 import asyncio
@@ -89,19 +91,75 @@ async def test_schedule_scene_index_degraded():
     print("PASS (failure logged, dedup key released)")
 
 
+async def test_schedule_scene_index_dedup():
+    """同一张卡的场景预索引不并发：只建一个后台任务，跑着时再来的调度合并成一次后续运行。"""
+    print("4. schedule_scene_index dedup...", end=" ")
+
+    import threading
+    import time
+
+    import core.indexing_service as mod
+
+    svc = IndexingService({})
+    lock = threading.Lock()
+    state = {"running": 0, "max_running": 0, "runs": 0}
+
+    def slow_index(*_a, **_kw):
+        with lock:
+            state["running"] += 1
+            state["runs"] += 1
+            state["max_running"] = max(state["max_running"], state["running"])
+        time.sleep(0.2)
+        with lock:
+            state["running"] -= 1
+
+    tasks: list = []
+    real_create_task = asyncio.create_task
+
+    def counting_create_task(coro):
+        task = real_create_task(coro)
+        tasks.append(task)
+        return task
+
+    mock_rag = MagicMock()
+    mock_rag.load_existing.return_value = False
+    mock_rag.index.side_effect = slow_index
+
+    with patch("core.indexing_service.RAGEngine", return_value=mock_rag), \
+            patch("core.indexing_service.SceneIndexer"), \
+            patch.object(mod.asyncio, "create_task", counting_create_task):
+        try:
+            svc.schedule_scene_index("t1", "c1", "content", "name", embedding_key="sk-test")
+            # 同一时刻再来一次 —— 不该再起第二个任务
+            svc.schedule_scene_index("t1", "c1", "content", "name", embedding_key="sk-test")
+            await asyncio.sleep(0.1)
+            # 第一个还在跑时从另一条路又来一次 —— 与上一次合并成一次后续运行
+            svc.schedule_scene_index("t1", "c1", "content", "name", embedding_key="sk-test")
+            await asyncio.gather(*tasks)
+        finally:
+            mod._scene_index_in_flight.discard("scenes_c1")
+            mod._pending_jobs.pop("scenes_c1", None)
+
+    assert len(tasks) == 1, f"同一张卡起了 {len(tasks)} 个后台任务"
+    assert state["max_running"] == 1, f"同一张卡的作业并发跑了 {state['max_running']} 份"
+    assert state["runs"] == 2, f"期间的两次调度应合并成一次后续运行，实际共跑了 {state['runs']} 次"
+    print("PASS (one task, never concurrent, later calls merged into one rerun)")
+
+
 async def main():
     print("=== RAG ISOLATION VERIFICATION ===\n")
     try:
         await test_context_engine_rag_none()
         await test_create_session_rag_none()
         await test_schedule_scene_index_degraded()
+        await test_schedule_scene_index_dedup()
     except Exception as exc:
         print(f"\nFAIL: {exc}")
         import traceback
         traceback.print_exc()
         return 1
 
-    print("\n=== ALL 3 TESTS PASSED ===")
+    print("\n=== ALL 4 TESTS PASSED ===")
     print("Embedding failure → distillation still returns chat-ready card.")
     print("Isolation is REAL, not a patch.")
     return 0
