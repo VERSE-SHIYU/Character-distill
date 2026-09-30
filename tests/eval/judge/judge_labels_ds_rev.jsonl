@@ -1,0 +1,16 @@
+{"pair_id": "jp-001", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "A", "d2": "B", "d4": "A"}
+{"pair_id": "jp-002", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "tie", "d2": "A", "d4": "A"}
+{"pair_id": "jp-003", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "B", "d2": "B", "d4": "B"}
+{"pair_id": "jp-005", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "tie", "d2": "B", "d4": "B"}
+{"pair_id": "jp-006", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "B", "d2": "B", "d4": "B"}
+{"pair_id": "jp-007", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "B", "d2": "B", "d4": "B"}
+{"pair_id": "jp-008", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "A", "d2": "A", "d4": "A"}
+{"pair_id": "jp-009", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "tie", "d2": "B", "d4": "tie"}
+{"pair_id": "jp-011", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "B", "d2": "B", "d4": "B"}
+{"pair_id": "jp-013", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "B", "d2": "B", "d4": "B"}
+{"pair_id": "jp-014", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "B", "d2": "B", "d4": "B"}
+{"pair_id": "jp-015", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "tie", "d2": "B", "d4": "B"}
+{"pair_id": "jp-016", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "A", "d2": "A", "d4": "A"}
+{"pair_id": "jp-017", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "A", "d2": "A", "d4": "A"}
+{"pair_id": "jp-019", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "A", "d2": "A", "d4": "A"}
+{"pair_id": "jp-021", "provider": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "flip": true, "d1": "A", "d2": "A", "d4": "A"}

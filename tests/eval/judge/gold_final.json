@@ -1,0 +1,146 @@
+[
+ {
+  "pair_id": "jp-001",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "B",
+  "d2_style": "A",
+  "d3_knowledge": "tie",
+  "d4_emotion": "A"
+ },
+ {
+  "pair_id": "jp-002",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "tie",
+  "d2_style": "tie",
+  "d3_knowledge": "tie",
+  "d4_emotion": "tie"
+ },
+ {
+  "pair_id": "jp-003",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "B",
+  "d2_style": "B",
+  "d3_knowledge": "tie",
+  "d4_emotion": "tie"
+ },
+ {
+  "pair_id": "jp-005",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "A",
+  "d2_style": "A",
+  "d3_knowledge": "tie",
+  "d4_emotion": "A"
+ },
+ {
+  "pair_id": "jp-006",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "B",
+  "d2_style": "tie",
+  "d3_knowledge": "tie",
+  "d4_emotion": "B"
+ },
+ {
+  "pair_id": "jp-007",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "B",
+  "d2_style": "B",
+  "d3_knowledge": "tie",
+  "d4_emotion": "B"
+ },
+ {
+  "pair_id": "jp-008",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "tie",
+  "d2_style": "tie",
+  "d3_knowledge": "tie",
+  "d4_emotion": "tie"
+ },
+ {
+  "pair_id": "jp-009",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "tie",
+  "d2_style": "tie",
+  "d3_knowledge": "tie",
+  "d4_emotion": "tie"
+ },
+ {
+  "pair_id": "jp-011",
+  "card_id": "e8d498197c1d",
+  "session_id": null,
+  "d1_persona": "A",
+  "d2_style": "A",
+  "d3_knowledge": "tie",
+  "d4_emotion": "A"
+ },
+ {
+  "pair_id": "jp-013",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "B",
+  "d2_style": "B",
+  "d3_knowledge": "tie",
+  "d4_emotion": "B"
+ },
+ {
+  "pair_id": "jp-014",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "B",
+  "d2_style": "tie",
+  "d3_knowledge": "tie",
+  "d4_emotion": "B"
+ },
+ {
+  "pair_id": "jp-015",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "A",
+  "d2_style": "A",
+  "d3_knowledge": "tie",
+  "d4_emotion": "A"
+ },
+ {
+  "pair_id": "jp-016",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "tie",
+  "d2_style": "tie",
+  "d3_knowledge": "tie",
+  "d4_emotion": "tie"
+ },
+ {
+  "pair_id": "jp-017",
+  "card_id": "e8d498197c1d",
+  "session_id": null,
+  "d1_persona": "tie",
+  "d2_style": "A",
+  "d3_knowledge": "tie",
+  "d4_emotion": "A"
+ },
+ {
+  "pair_id": "jp-019",
+  "card_id": "924e8f52e104",
+  "session_id": null,
+  "d1_persona": "B",
+  "d2_style": "B",
+  "d3_knowledge": "tie",
+  "d4_emotion": "B"
+ },
+ {
+  "pair_id": "jp-021",
+  "card_id": "e8d498197c1d",
+  "session_id": null,
+  "d1_persona": "B",
+  "d2_style": "B",
+  "d3_knowledge": "tie",
+  "d4_emotion": "B"
+ }
+]
