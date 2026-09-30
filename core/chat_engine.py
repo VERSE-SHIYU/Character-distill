@@ -206,6 +206,26 @@ class ChatEngine:
         self.llm = llm
         self._ctx_engine.set_llm(llm)
 
+    def set_memory(self, memory: Any) -> None:
+        """换长期记忆视图（用户存了新 key 后由 ``deps.refresh_user_llm`` 调）。None = 不提供记忆。
+
+        记忆的引用散在四处（本类、``ContextEngine``、反思、事件），构造时各拿了一份 ——
+        漏换一处，那一处就还用旧 key 出站。故只许经这里换。
+        """
+        self._memory = memory
+        self._ctx_engine.memory = memory
+        self._reflection_service._memory = memory
+        self._event_service._memory = memory
+
+    def set_rag(self, rag: RAGEngine | None) -> None:
+        """换检索引擎（理由同 ``set_memory``）。None = 不检索。"""
+        self.rag = rag
+        self._ctx_engine.rag = rag
+
+    @property
+    def card_id(self) -> str:
+        return self._card_id
+
     # ── 11个情感字段透明转发（@property） ──────────────────────
     @property
     def _affinity(self) -> int:

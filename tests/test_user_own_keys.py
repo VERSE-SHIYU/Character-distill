@@ -345,3 +345,60 @@ def test_T7c_text_manager_hands_its_own_llm_to_the_factory(mem_factory):
     assert view._mem.llm._adapter.credential_fingerprint() == llm.credential_fingerprint()
     assert tm.memory_for("T", "") is None, "没有百炼 key 却给了记忆视图"
     assert TextManager(lambda: None, None, llm, {}, memory_manager=None).memory_for("T", "e") is None
+
+
+# ── T9：活会话中保存新 key → 下一轮 LLM / 记忆 / 检索都换成新的 ─────────────────
+
+class _RefreshStorage:
+    def __init__(self, cfg: dict):
+        self.cfg = cfg
+
+    async def get_user_api_config(self, user_id):
+        return dict(self.cfg)
+
+    async def get_card_owned(self, card_id, user_id):
+        return {"id": card_id, "text_id": "txt_live"}
+
+    async def get_text_owned(self, text_id, user_id):
+        return {"content": "原文正文"}
+
+
+def test_T9_saving_new_keys_reaches_the_live_session(mem_factory, monkeypatch):
+    from core.chat_engine import ChatEngine
+    from core.text_manager import new_session_entry
+    import core.indexing_service as IS
+
+    seen: list[str] = []
+
+    class _Svc:
+        def get_rag_for_session(self, text_id, content, *, all_characters=None,
+                                embedding_key="", embedding_region="cn"):
+            seen.append(embedding_key)
+            return ("rag-for", embedding_key)
+
+    monkeypatch.setattr(deps, "get_memory_manager", lambda: mem_factory)
+    monkeypatch.setattr(deps, "get_indexing_service", lambda: _Svc())
+
+    uid = f"usr_{uuid.uuid4().hex[:8]}"
+    old_llm = _user_llm("old-llm")
+    engine = ChatEngine(llm=old_llm, rag=None, card=CharacterCard(name="甲"), card_id="c_live",
+                        storage=None, session_id="s_live", is_new_session=True)
+    assert engine._memory is None and engine.rag is None, "前提破了：会话建出来时就已有记忆 / 检索"
+    deps.get_sessions()["s_live"] = new_session_entry(engine, None, uid)
+    try:
+        storage = _RefreshStorage({"api_key": "new-llm", "base_url": "https://api.deepseek.com",
+                                   "model": "m", "embedding_key": "new-emb", "embedding_region": "cn"})
+        swapped = _run(deps.refresh_user_llm(uid, storage))
+
+        assert swapped == 1
+        assert engine.llm is not old_llm, "LLM 没换"
+        assert engine._memory is not None, "补上两把 key 后活会话仍没有记忆"
+        assert _embed_key_of(engine._memory) == "new-emb", "记忆没用新百炼 key"
+        for holder in (engine._ctx_engine.memory, engine._reflection_service._memory,
+                       engine._event_service._memory):
+            assert holder is engine._memory, "记忆引用有一处没换（那一处还会用旧 key 出站）"
+        assert engine.rag == ("rag-for", "new-emb") and engine._ctx_engine.rag is engine.rag, \
+            "检索没按新百炼 key 换"
+    finally:
+        deps.get_sessions().pop("s_live", None)
+        deps.clear_user_llm_cache(uid)

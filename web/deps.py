@@ -173,18 +173,28 @@ def _live_engines(match: Callable[[str], bool]) -> list[Any]:
 
 
 async def refresh_user_llm(user_id: str, storage: StorageBase | None = None) -> int:
-    """把 *user_id* 活会话手里的连接换成按新配置解析出来的那一个；返回换掉的引擎数。
+    """把 *user_id* 活会话换到按新配置解析出来的那一套；返回换掉的引擎数。
 
-    存完设置后由 `update_api_config` 调 —— 不踢会话、不重建 RAG，只让**下一轮**出站
-    走新连接（在飞的那一轮归旧连接，见 `ChatEngine.set_llm`）。
+    存完设置后由 `update_api_config` 调 —— 不踢会话，只让**下一轮**用新的：
+    LLM（在飞的那一轮归旧连接，见 `ChatEngine.set_llm`）、长期记忆视图、检索引擎。
+    三样都只用用户自己的 key（`docs/specs/user-own-keys.md`）：用户刚补上百炼 key，
+    同一个会话下一轮就有记忆与检索，不必重开会话。
+
+    LLM 先整批换（与改造前同一语义）；记忆 / 检索逐个引擎换，某个引擎的检索重建失败
+    只记一笔、不挡别的引擎，也不回滚已经换好的 LLM。
 
     解析结果 `None`（用户自己没配 key）时记一笔日志、返回 0：这是「这次没得
-    换」，不是失败。
+    换」，不是失败（没配 LLM key 的用户根本建不出会话）。
 
     **单进程前提**：`_sessions` / `_group_sessions` 是本进程的内存表（`web/server.py` 的
     `uvicorn.run` 不带 `workers`），故「活会话」就是这两张表。将来要多 worker，得改成
     「按配置版本号每轮重新解析」—— 跨进程换不了别人手里的实例。
     """
+    from core.nonfatal import nonfatal
+    from web.llm_resolution import resolve_embedding
+
+    if storage is None:
+        storage = get_storage()
     clear_user_llm_cache(user_id)
     llm = await _resolve_user_llm(user_id, storage)
     if llm is None:
@@ -193,7 +203,39 @@ async def refresh_user_llm(user_id: str, storage: StorageBase | None = None) -> 
     engines = _live_engines(lambda owner: owner == user_id)
     for engine in engines:
         engine.set_llm(llm)
+    if not engines:
+        return 0
+
+    emb = resolve_embedding(await storage.get_user_api_config(user_id) or {})
+    memory = await asyncio.to_thread(get_user_memory, user_id, llm, emb.key, emb.region)
+    for engine in engines:
+        engine.set_memory(memory)
+        async with nonfatal("deps", "refresh retrieval for a live session", level=logging.WARNING):
+            engine.set_rag(await _rag_for_engine(engine, user_id, storage, emb.key, emb.region))
     return len(engines)
+
+
+async def _rag_for_engine(
+    engine: Any, user_id: str, storage: StorageBase, embedding_key: str, embedding_region: str,
+) -> Any:
+    """按新 key 给活引擎取检索：卡没有原文（独立卡片）→ None；卡 / 原文读不到 → 原样不动。"""
+    card_rec = await storage.get_card_owned(engine.card_id, user_id)
+    if not card_rec:
+        return engine.rag
+    text_id = card_rec.get("text_id") or ""
+    if not text_id:
+        return None
+    text_rec = await storage.get_text_owned(text_id, user_id)
+    if not text_rec:
+        return engine.rag
+    service = get_indexing_service()
+    if service is None:
+        return engine.rag
+    return await asyncio.to_thread(
+        service.get_rag_for_session, text_id, text_rec.get("content", ""),
+        all_characters=getattr(engine, "_all_characters", None),
+        embedding_key=embedding_key, embedding_region=embedding_region,
+    )
 
 
 def get_memory_manager() -> MemoryManager | None:
