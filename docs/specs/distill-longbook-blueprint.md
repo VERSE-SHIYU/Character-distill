@@ -504,7 +504,7 @@ spoke：本段中此人是否亲口说了话（原文里有他本人说的直接
 
 触发：刘姥姥蒸馏在归并阶段撞 `max_tokens` 被 `finish_reason=length` 截断（任务终态 `error`，宝玉按「失败即停」未跑）。根因不在措辞，在两处**按输入体量等比增长**的设计：整本走分片、归并正文没有上限。四处改动：
 
-1. **一次读完路径**（`51754ef`）：`longctx_threshold` 默认 `150000 → 900000`（`core/distiller.py`，只改这一个默认；`config.yaml` 无此键，也不新增键）。红楼梦 866149 字 ≈ 52 万 token，落在阈内 ⇒ 整本一次读完，不再分片，也就没有归并可撞。新增 `LONG_OUTPUT_MAX_TOKENS = 16384`（官方最大输出 384K 的 1/24）：一次读完与三处归并都用它，**格式化各组仍用 `CARD_MAX_TOKENS`**（每组只出卡的一部分）。一次读完的请求改成「全文在前、角色指令在后」—— Context Caching 按**前缀**匹配，共享段必须落在请求最前面（<https://api-docs.deepseek.com/guides/kv_cache>）；改前角色名开系统提示，同一本书换个角色从第 1 个 token 就分叉，正文永远进不了共享前缀。
+1. **一次读完路径**（`51754ef`）：`longctx_threshold` 默认 `150000 → 900000`（`core/distiller.py`，只改这一个默认；`config.yaml` 无此键，也不新增键）。红楼梦 866149 字 ≈ 52 万 token，落在阈内 ⇒ 整本一次读完，不再分片，也就没有归并可撞。新增 `LONG_OUTPUT_MAX_TOKENS = 16384`（官方最大输出 384K 的 1/24）：一次读完与三处归并都用它，**格式化各组仍用 `CARD_MAX_TOKENS`**（每组只出卡的一部分）。一次读完的请求改成「全文在前、角色指令在后」—— Context Caching 按**前缀**匹配，共享段必须落在请求最前面（<https://api-docs.deepseek.com/guides/kv_cache>）；改前角色名开系统提示，同一本书换个角色从第 1 个 token 就分叉，正文永远进不了共享前缀。**一次读完优先于分片的依据**：Yuan et al., EMNLP 2024（<https://aclanthology.org/2024.emnlp-main.456/>）Table 2 —— 一次总结的一致性最高，分片方法中分层合并优于增量更新。**口径声明**：该文的一次总结窗口为 12 万 token，本仓 90 万 token（≈150 万字符）是外推，未测更长输入。
 2. **合并路径**（`f560fca`，超过 90 万 token 的书仍走这里）：删掉「保留所有原文对话原句（最重要）」与 8000 字预算句，改为按维度限量 —— 「每个维度先写不超过 200 字的概括，再列最有代表性的 5 条原文原句」；`REDUCE_BUDGET_CHARS` 删除。原两句互相矛盾：输入是几十片分析，原句全留装不下任何输出上限，模型只能二选一。
 3. **默认模型**（`bb030af`）：`config.example.yaml` 的 `model: deepseek-v4-pro → deepseek-flash`。
 4. **分组**：`relationships` 从 G4 拆成 G5（`d7f7517`）—— 见 §4 WP7 的「分组更正」，本文件其余「4 组」一律读作 5 组。

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import math
 import threading
 import time
 import uuid
@@ -1332,19 +1333,21 @@ class TestQueueingDoesNotEatTheCallDeadline:
     `deadline_s=` 调 `async_chat` 走的是同一段代码，且落在真正的接缝上。
     """
 
-    N = 40
-    LIMIT = 3        # 上游：在途 > 3 即 429
-    CAP = 8
-    DEADLINE_S = 2.0
+    LIMIT = 3        # 上游：在途 > 3 即 429；闸的 cap 也取它，闸不会上探到限流
     HOLD_MS = 200
+    # 单片预算 = 收尾余量 + 5 倍单次占用：进闸后单次超时是「预算 − 余量」，负载下单次
+    # 尝试慢到 5 倍仍在超时内。数值由适配器常量推出，不写死。
+    DEADLINE_S = M._ATTEMPT_TIMEOUT_MARGIN_S + 5 * HOLD_MS / 1000
+    # 片数：最后一波排队（≈ 片数 / 上限 × 占用）至少是预算的 2 倍，去掉顺延必然判超时。
+    N = LIMIT * math.ceil(2 * DEADLINE_S / (HOLD_MS / 1000))
 
     async def test_tail_chunks_survive_the_queue(self):
         upstream = _InflightUpstream(self.LIMIT, hold_ms=self.HOLD_MS)
         llm = upstream.adapter()
-        # 初值就给上游上限、而不是从 cap 探起：从 8 探起时首波 5 片同时 429，个别片
-        # 会在 _RATE_LIMIT_ATTEMPTS 内被连撞（实测 1/40 片耗尽预算），那是 AIMD 冷启动
-        # 的噪声，会把 A4 的判据搅成 flaky。从 3 起只有一个 3↔4 的探针，每片最多撞一次。
-        gate = AdaptiveGate(cap=self.CAP, initial=self.LIMIT)
+        # cap 取上游上限：本条只判「排队不占预算」，不引入 AIMD 上探撞出的 429 ——
+        # 429 重试吃的是本片自己的预算（设计如此，重试预算另有用例锁），混进来会让
+        # 负载下的单次变慢把判据搅成 flaky。
+        gate = AdaptiveGate(cap=self.LIMIT, initial=self.LIMIT)
         client = llm._make_async_client()
         t0 = time.monotonic()
         try:
@@ -1365,8 +1368,8 @@ class TestQueueingDoesNotEatTheCallDeadline:
         assert failures == [], (
             f"排队把 {len(failures)} 片判成超时，其中 {notime} 片是「预算里挤不出一次 "
             f"attempt」（修复前正是这样挂的，尾部那批）：{failures[:2]!r}")
-        assert upstream.statuses.count(429) > 0, (
-            "假上游一次都没限流 —— 闸没被钉在上游上限附近，排队压力没形成")
+        assert upstream.peak >= self.LIMIT, (
+            f"上游在途峰值只有 {upstream.peak} < 上限 {self.LIMIT} —— 闸没被占满，排队压力没形成")
         assert elapsed > self.DEADLINE_S, (
             f"整场只跑了 {elapsed:.2f}s ≤ 单片预算 {self.DEADLINE_S}s —— 排队没超过单片预算，"
             f"这条锁空转")

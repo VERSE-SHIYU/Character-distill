@@ -15,14 +15,6 @@
     ],
     "notes": "扫描方法（2026-09-12 现跑，判定「四档对比无出处」这个**否定命题**）：`git log -S 4500 --all --oneline` 得 3 处、`-S 12000` 得 5 处，逐一核对后**无一处把这两个数当 chunk_size** —— 命中的是 AGENTS.md 自述行、core/distiller.py 的 max_profile_len 下限（≥12000）、web/frontend/e2e/avatar-fallback-verify.cjs 的 settleMs=4500；`git grep -E '\b(4500|12000)\b' -- docs/` 零命中；`.claude/sessions/` 无记录。另注：现值 5000 出自**未入库**的 config.yaml（git ls-files 无命中），与四档对比无关，但同属「数字指向 gitignored 文件」家族，见 AGENTS.md §二。"
   },
-  "config-yaml-values": {
-    "assertions": null,
-    "derived": null,
-    "non_repo_paths": [
-      "config.yaml"
-    ],
-    "notes": "扫描方法：直接读运行环境的 `config.yaml`（本机现值 `chunk_size: 5000` / `longctx_threshold: 150000`）；`git ls-files config.yaml` **零命中**。即这两个数字引用的是一个**未入库、且随环境可变**的文件 —— 与「已报数字指向 gitignored 产物」同族，但性质是运行配置而非一次性产物，故标 runtime-measured（环境还在，只是没入库）。**不改配置契约**（把值 env 化是另一件事，需另行立项）。仓库内可核的是代码默认值：`core/distiller.py` 的 `distill_cfg.get(\"chunk_size\", 3000)` 与 `effective_chunk_size` 的 classic 地板 6000。另见 ev:chunk-size-provenance —— 那条管的是另一个命题（「3000/4500/6000/12000 四档实测对比」无出处）。"
-  },
   "distill-orphan-matrix": {
     "assertions": [
       {

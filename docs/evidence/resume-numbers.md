@@ -21,22 +21,20 @@
 | 修复后 map 自然输出 out_tokens p50 1245、max 2097、撞 8192 探针上限 0/14、空正文 0/14（n=14） | `ev:thinking-maplen-after` | `PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-maplen-after python tests/perf/map_len_probe.py` （脚本 `tests/perf/map_len_probe.py`） | **1245** = 14 条 records[].out_tokens 合并后 nearest-rank 上中位（≠ 产物分档字段 summary[].out_tokens_p50 的下中位）；**0** = records 中 clipped_by_probe_cap 为 true 的条数（同为 0 的还有 out_chars == 0） |
 | 修复前 map 自然输出 out_tokens p50 8191、max 8192、撞 8192 探针上限 7/14、空正文 3/14（n=14） | `ev:thinking-maplen-before` | `git checkout f2dfd23^ -- adapters/llm_adapter.py && PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-maplen-before python tests/pe…` （脚本 `tests/perf/map_len_probe.py`） | **7** = records 中 clipped_by_probe_cap 为 true 的条数；**3** = records 中 out_chars == 0 的条数；**8191** = 14 条 records[].out_tokens 合并后 nearest-rank 上中位（断言里 records[3].out_tokens 恰为同一个数，但这里的口径是合并中位） |
 
-## 二、不可写（`runtime-measured` / `unverifiable`，4 条）
+## 二、不可写（`runtime-measured` / `unverifiable`，3 条）
 
 | 结论 | 证据 | 为什么不可写 |
 |---|---|---|
 | 把 _run_distill_task 的两处 confirm 兜底调用从 finally 里整行删掉，原有 14 条蒸馏用例仍全绿 —— 该接线当时没有任何用例覆盖；随后补 TestA2Wiring 两条（commit 9d2a9e4） | `ev:a2-wiring-mutation` | 运行期实测：环境还在，但产物没有入库 —— 按 `notes` 里的扫描方法自行重做。扫描方法：变异实验本身（删掉兜底调用 → 跑当时树上的蒸馏用例 → 观察全绿），仓内可核的是**补齐动作**：`git show 9d2a9e4 -- tests/test_distill_task_api.py`（+51 行，TestA2Wiring）。原始记载只在未入库的 … |
 | chunk_size 无统一标准：3000 起于 2026-05-19（commit 5aee0609），代码默认 3000，classic 地板 6000（effective_chunk_size）；「3000/4500/6000/12000 四档实测对比」经全仓扫描无出处 | `ev:chunk-size-provenance` | 运行期实测：环境还在，但产物没有入库 —— 按 `notes` 里的扫描方法自行重做。扫描方法（2026-09-12 现跑，判定「四档对比无出处」这个**否定命题**）：`git log -S 4500 --all --oneline` 得 3 处、`-S 12000` 得 5 处，逐一核对后**无一处把这两个数当 chunk_size** —— 命中的是 AG… |
-| 运行配置的两个值：`distill.chunk_size = 5000`、`distill.longctx_threshold = 150000`（≈25 万字符，与 `_estimate_tokens = int(len*0.6)` 同口径）；二者的来源 `config.ya… | `ev:config-yaml-values` | 运行期实测：环境还在，但产物没有入库 —— 按 `notes` 里的扫描方法自行重做。扫描方法：直接读运行环境的 `config.yaml`（本机现值 `chunk_size: 5000` / `longctx_threshold: 150000`）；`git ls-files config.yaml` **零命中**。即这两个数字引用的是一个**未入库、且随环… |
 | graphify 知识图谱快照（2026-08-15，构建 commit eb72a3bd）的统计组：语料 369 文件/~65 万词、节点 4686、边 9606、社区 434（展示 227）、语义标注 94% EXTRACTED · 6% INFERRED（603 边，平均… | `ev:graphify-snapshot-2026-08-15` | 当时结论、现已不可复现：环境或快照已不存在 —— 不得当现状引用。为什么现在复现不了（三件事写全）：① 数字产生于 2026-08-15，当时工作树为 commit eb72a3bd，图谱产物 graphify-out/graph.json **从未入库**（`.gitignore:253` 覆盖），引用它等于没有出处；② 环境已变 —— 此… |
 
-## 三、出处索引（全部 13 条）
+## 三、出处索引（全部 12 条）
 
 | id | status | 产物 | 脚本 | 脚本角色 | 产出 commit | 测量日 |
 |---|---|---|---|---|---|---|
 | `a2-wiring-mutation` | `runtime-measured` | — | — | — | `9d2a9e4` | 2026-09-10 |
 | `chunk-size-provenance` | `runtime-measured` | — | — | — | `e389fdc` | 2026-09-12 |
-| `config-yaml-values` | `runtime-measured` | — | — | — | `e389fdc` | 2026-09-12 |
 | `distill-orphan-matrix` | `verified` | docs/evidence/distill-orphan-matrix.json | tests/perf/distill_orphan_matrix.py | producer | `e389fdc` | 2026-09-12 |
 | `distill-resume-reachability` | `verified` | docs/evidence/distill-resume-reachability.json | tests/perf/distill_resume_reachability.py | producer | `e6c28a3` | 2026-09-25 |
 | `graphify-snapshot-2026-08-15` | `unverifiable` | — | — | — | `eb72a3bd` | 2026-08-15 |

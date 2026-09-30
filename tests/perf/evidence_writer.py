@@ -96,7 +96,6 @@ _ALLOWED_BY_ID: dict[str, frozenset[str]] = {
     # write_evidence 只在**调用时**拒绝空集（见其 docstring），注册时不拦，正是为此。
     "a2-wiring-mutation": frozenset(),
     "chunk-size-provenance": frozenset(),
-    "config-yaml-values": frozenset(),
     "graphify-snapshot-2026-08-15": frozenset(),
 }
 
