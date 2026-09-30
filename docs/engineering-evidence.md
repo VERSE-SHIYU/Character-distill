@@ -38,13 +38,13 @@
 | 项 | 内容 |
 |---|---|
 | **怎么发现** | 故障注入压测中出现**矛盾信号**：注入率从 10% 涨到 30%（2×），TTFT p95 却从 10.4s 涨到 62s（6×）。`raise` 是立即返回 500，理论上应让 ReAct 更快走到降级、延迟**下降**才对。矛盾本身触发了归因。 |
-| **怎么定位** | 从 Jaeger 拉 p95 附近的 trace 看 span 耗时分布：62.3s 中 59.4s 落在**单个** `llm.chat_with_tools` span 内（`error=True`）。据此排除两个竞争解释——① 非多步空转（degraded trace 只有一个 `chat_with_tools`，无多次短 span）；② 非并发排队（span 间无 gap，PG 池峰值仅 17/30 从不封顶）。再以 C=1 零并发隔离复现：单次 26.06s，与并发无关。 |
+| **怎么定位** | 从 Jaeger 拉 p95 附近的 trace 看 span 耗时分布：**根 29.1s 中 27.1s（93%）落在单个 `llm.chat_with_tools` span 内（`error=True`）**，其后 legacy 回退约 1.9s（= 根 − `agent.plan`），子 span 串接基本覆盖根（空隙 ≈ 41ms）。据此排除两个竞争解释——① 非多步空转（degraded trace 只有一个 `chat_with_tools`，健康对照才有两个短 span）；② 非并发排队（子 span 间无空隙，PG 池从不封顶：09-09 峰值仅 17/30，本次实测 `pg_active` 全程 0、`pg_total` ≤8）。再以 C=1 零并发隔离复现：单次 p50 **28.6s**，与并发无关。本次同参数重跑 p95 为 28.7s（40 条中 4 条降级，均停在 ≈27–29s），09-09 的 62s 尾部未复现；推测为多条降级并发重叠所致，未单独验证。实测件：`tests/perf/results/step4/rerun-2026-09-30/`（两档结果 + 4 条 trace + degraded 日志）。 |
 | **根因** | `adapters/llm_adapter.py` 外层重试预算 3 次（非 429 退避 5s+10s）× OpenAI SDK 内置 `max_retries=2` = 单请求最多 **9 次 HTTP**。降级只在重试全部耗尽后触发。 |
 | **修复** | 对齐 Google SRE 分层重试预算：SDK 归零消除嵌套乘法；抽 `_RetryBudget` 把三份重复重试循环收敛为单一控制点（次数 × 总时限双维，先到先弃）；退避夹逼 deadline；429 独立计数上限；per-attempt `create(timeout=min(ceiling, 剩余−margin))` 让 deadline 在 attempt 内也生效。 |
 | **量化** | raise30 p95 **62.1s → 5.3s**；hang8 p95 **100.4s → 8.1s**；blackhole（零字节挂 30s）**斩在 ~6.5s**，ok 6/6；超 15s 阈值请求 **14 → 0**。 |
 | **来源** | `✅ 仓库文档` `docs/evidence/phase24_closure.md` §1 全表<br>`✅ 代码核实` `a41fcfd` `a609e62` `2bc3658` `8ad5f05` |
 
-**面试要点**：这条的价值不在数字，在**排除法**。被问"你怎么确定不是并发排队"，答案是 PG 池峰值 17/30 从不封顶 + span 间无 gap + C=1 零并发下仍复现 26s。
+**面试要点**：这条的价值不在数字，在**排除法**。被问"你怎么确定不是并发排队"，答案是 PG 池峰值 17/30 从不封顶 + span 间无 gap + C=1 零并发下仍复现单次 28.6s。
 
 **数字核对**
 
@@ -57,10 +57,10 @@
 | PG 池峰值 17/30 | `docs/evidence/phase24_closure.md` §3 | ✅ |
 | 重试预算 3 次 / SDK `max_retries=2` / 最多 9 次 HTTP | `adapters/llm_adapter.py` `_RetryBudget` 及模块上方注释（修复前/后对照就写在注释里） | ✅ 代码核实 |
 | TTFT p95 10.4s（rate=10 档）、6× 增幅 | `tests/perf/results/step4/fb2_raise_10.json` 的 `ttft_p95 = 10422`、`fb2_raise_30.json` 的 `ttft_p95 = 62062`（6× = 62062/10422 ≈ 5.95；原始压测产物，已入库） | ✅ |
-| 62.3s / 59.4s span 分解、26.06s C=1 隔离复现 | 同上 gitignored 会话（trace id、单发隔离实验记录都在那里） | ⚠️ 待核 |
+| 根 29.1s / 单 span 27.1s（93%）/ 空隙 40.6ms / legacy 回退 1.9s；C=1 单次 p50 28.6s；`pg_active` 0、`pg_total` ≤8 | `tests/perf/results/step4/rerun-2026-09-30/`：`trace_A1_slow_p95.json`、`trace_A2_slow_2nd.json`、`trace_B1_c1_rate100.json`、`rerun_raise_30.json`、`rerun_raise_100_c1.json`（2026-09-30 重跑实测） | ✅ |
 | commits `a41fcfd` `a609e62` `2bc3658` `8ad5f05` | `git log` 逐个存在、标题与描述一致 | ✅ |
 
-> `⚠️ 待核` 的成因是**这一档（缺陷 14 类）**：实验记录在 gitignored 的 `.claude/sessions/` 里。就「第三方能按引用查到」的标准，它等同于无出处——但**数字本身是当时实测的，不是编的**，故不删，只标。要转正需把该会话提到的 trace 快照 / 复现脚本提入库。
+> 本节原 `⚠️ 待核` 一条（span 分解与 C=1 隔离复现）已于 2026-09-30 重跑转正：两档结果、trace 快照与复现命令入 `tests/perf/results/step4/rerun-2026-09-30/`。
 
 ---
 
@@ -186,12 +186,12 @@
 > 「当时实测，原始产物未入库」。**只保留**有 tracked 兜底的「12 → 19」
 > （`docs/384-dim-stale-collections.md`）。
 >
-> **与其余 `⚠️ 待核` 的区别**：§一（62.3s/59.4s span 分解）、§七（「六条」计数
+> **与其余 `⚠️ 待核` 的区别**：§七（「六条」计数
 > 标签）这几条的 `⚠️ 待核` **保持不动**——它们在 tracked 仓库里同样无支撑，
 > 但**至少在 gitignored 的 `.claude/sessions/` 里有据可查**，性质是「一手材料没入库」，补入库
 > 即可转正。本节被删的两组里，**重建成本数字**同属这一类（产物在 gitignored 的 `run_*.jsonl`）；
 > 只有**影响面总数**更彻底——连 gitignored 记录都没有，且产数脚本从未入库。
-> （§一 TTFT 10.4s 与 §九 judge 两条已于 2026-09-30 补入库产物转正，不再属本条。）
+> （§一 TTFT 10.4s 与 span 分解、§九 judge 两条已于 2026-09-30 补入库产物转正，不再属本条。）
 
 ---
 
