@@ -12,7 +12,8 @@ import logging
 
 import peer_client
 from core.nonfatal import nonfatal
-from storage.base import StorageBase
+from core.node import node_region
+from storage.base import USER_PROFILE_OP, StorageBase
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,8 @@ async def forward_card_to_peer(card: dict, storage: StorageBase) -> bool:
 
 
 #: 发件箱的操作类型 → 对端接口。前三类是删除同步（请求体是 {op_type, target_id, payload}，
-#: payload 为空串）；后四类的请求体就是入队时写好的 payload（JSON）。
+#: payload 为空串）；三类邀请码的请求体就是入队时写好的 payload（JSON）。用户资料不在表里：
+#: 它的 payload 是版本戳，由 `forward_user_profile_to_peer` 发送时现读资料。
 _OUTBOX_ENDPOINTS: dict[str, str] = {
     "card_delete": "/api/inter-node/card/delete",
     "dm_retract": "/api/inter-node/dm/retract",
@@ -95,7 +97,6 @@ _OUTBOX_ENDPOINTS: dict[str, str] = {
     "invite_create": "/api/inter-node/invite-code/receive",
     "invite_delete": "/api/inter-node/invite-code/delete",
     "invite_used": "/api/inter-node/invite-code/used",
-    "user_profile": "/api/inter-node/user/sync",
 }
 _LEGACY_DELETE_OPS = frozenset({"card_delete", "dm_retract", "user_purge"})
 
@@ -128,12 +129,58 @@ async def forward_outbox_to_peer(op_type: str, target_id: str, payload: str) -> 
         except ValueError:
             logger.error("Outbox payload is not JSON: op_type=%s", op_type)
             return False
-        what = f"op_type={op_type}" + ("" if op_type.startswith("invite_") else f" target_id={target_id}")
+        what = f"op_type={op_type}"  # 不带 target_id：邀请码的 target_id 就是码本身（凭据）
     return await _forward(endpoint, body, what=what, level=logging.ERROR)
 
 
+async def forward_user_profile_to_peer(user_id: str, storage: StorageBase) -> bool:
+    """Send one `user_profile` outbox row: read the user's current profile, POST it.
+
+    Returns True when the row is finished and may be removed: the peer
+    acknowledged, or there is nothing this node should announce —
+      - the user no longer exists here (a `user_purge` row carries the delete);
+      - the user is not homed on this node (e.g. a demo account mirrored from
+        the peer): each node announces only its own region's users.
+    Returns False to keep the row for the next round.
+
+    The profile is read at send time, not stored in the row, so a round always
+    sends the latest version; see `USER_PROFILE_OP` for the version stamp.
+    Only 3.2(1) fields go out: id / username / home_region / avatar_data.
+    """
+    if not peer_client.peer_url():
+        return False
+    what = f"op_type={USER_PROFILE_OP} target_id={user_id}"
+    try:
+        user = await storage.get_user_by_id(user_id)
+    except Exception as exc:
+        logger.error("Outbox profile read failed: %s error=%r", what, exc, exc_info=True)
+        return False
+    if user is None:
+        logger.info("Outbox profile dropped, user no longer exists: %s", what)
+        return True
+    if user.get("home_region") != node_region():
+        logger.info("Outbox profile dropped, user homed on %s not here: %s",
+                    user.get("home_region"), what)
+        return True
+
+    body = {
+        "id": user["id"],
+        "username": user.get("username", ""),
+        "home_region": user["home_region"],
+        "avatar_data": user.get("avatar_data") or "",
+    }
+    return await _forward("/api/inter-node/user/sync", body, what=what, level=logging.ERROR)
+
+
+async def _forward_outbox_row(row: dict, storage: StorageBase) -> bool:
+    """Route one outbox row to its sender by op_type."""
+    if row["op_type"] == USER_PROFILE_OP:
+        return await forward_user_profile_to_peer(row["target_id"], storage)
+    return await forward_outbox_to_peer(row["op_type"], row["target_id"], row.get("payload") or "")
+
+
 async def _resync_once(storage: StorageBase) -> None:
-    """One resync round: DMs, cards, then the delete outbox.
+    """One resync round: DMs, cards, then the outbox (deletes + user profiles).
 
     The three sections are independent — each guards its own query, so one
     failing does not cancel the others.  DM/card rows get a `synced` flag;
@@ -183,16 +230,15 @@ async def _resync_once(storage: StorageBase) -> None:
             key = _ordering_key(row["op_type"], row["target_id"])
             if key in blocked:
                 continue  # 同一个键前面那条这轮没送到：后面的不许越过它先送
-            ok = await forward_outbox_to_peer(
-                row["op_type"], row["target_id"], row.get("payload", "") or "",
-            )
+            ok = await _forward_outbox_row(row, storage)
             if not ok:
                 blocked.add(key)
                 continue
             async with nonfatal(
                 "cross_border_resync", f"remove outbox row {row['id']}",
             ):
-                await storage.remove_delete_propagation(row["id"])
+                # 按「发出时的 payload」删：资料行发送途中被换了版本戳就留到下一轮
+                await storage.remove_delete_propagation(row["id"], row.get("payload"))
 
 
 _wake: asyncio.Event | None = None

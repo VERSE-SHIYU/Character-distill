@@ -82,7 +82,7 @@ async def test_new_invite_code_is_queued_then_sent_and_removed(store, monkeypatc
     code = _uid("c")
     await store.create_invite_code(code, "admin1", propagate=True)
     rows = await _rows(store, "invite_create")
-    assert [r["target_id"] for r in rows] == [code]
+    assert [r["target_id"] for r in rows] == [code], "生成邀请码没有在同一事务里入队"
     assert json.loads(rows[0]["payload"]) == {"code": code, "created_by": "admin1"}
 
     seen = _peer(monkeypatch)
@@ -135,7 +135,8 @@ async def test_delete_used_invites_queues_each_deleted_code(store):
     await store.create_user(_uid("u"), _uid("n"), "x", invite_code=code)
     n = await store.delete_used_invites(propagate=True)
     assert n >= 1
-    assert code in [r["target_id"] for r in await _rows(store, "invite_delete")]
+    assert code in [r["target_id"] for r in await _rows(store, "invite_delete")], (
+        "批量删已使用的码没有逐个入队删除")
     assert admin  # 只为造一个不相干的用户
 
 
@@ -151,10 +152,9 @@ async def test_registration_claims_the_code_and_queues_profile_and_used(store):
     used = await _rows(store, "invite_used")
     assert [json.loads(r["payload"]) for r in used] == [{"code": code}], (
         "隐私政策 3.2(4)：邀请码同步不含使用者身份，只同步「已使用」")
-    prof = await _rows(store, "user_profile")
-    assert [json.loads(r["payload"]) for r in prof if r["target_id"] == uid] == [
-        {"id": uid, "username": name, "home_region": "cn", "avatar_data": ""}
-    ], "隐私政策 3.2(1)：资料只同步用户名、头像、所属地域（不含昵称）"
+    prof = [r for r in await _rows(store, "user_profile") if r["target_id"] == uid]
+    assert len(prof) == 1, "注册没有在同一事务里把资料入队"
+    # 资料的内容（只四个字段，政策 3.2(1)）在发送时才读，锁在 tests/test_profile_outbox.py
 
 
 async def test_a_code_can_be_claimed_only_once_even_concurrently(store):
@@ -168,7 +168,7 @@ async def test_a_code_can_be_claimed_only_once_even_concurrently(store):
     )
     ok = [r for r in results if not isinstance(r, Exception)]
     refused = [r for r in results if isinstance(r, InviteCodeUnavailable)]
-    assert len(ok) == 1 and len(refused) == 1, results
+    assert len(ok) == 1 and len(refused) == 1, f"同一个码被占用了不止一次：{results}"
     loser = b if ok[0]["id"] == a else a
     assert await store.get_user_by_id(loser) is None, "码没占到，用户也不许留下（同一事务回滚）"
 
@@ -178,15 +178,16 @@ async def test_unknown_or_used_code_refuses_registration(store):
         await store.create_user(_uid("u"), _uid("n"), "x", invite_code=_uid("nope"))
 
 
-# ── 5. 头像更新：只留最新一版 ─────────────────────────────────────────
+# ── 5. 头像更新：同一用户只留一行待发 ─────────────────────────────────
 
-async def test_avatar_updates_collapse_to_the_latest(store):
+async def test_avatar_updates_collapse_to_one_row(store):
+    """换几次头像都只留一行（发送时读最新资料，见 tests/test_profile_outbox.py）。"""
     uid = _uid("u")
     await store.create_user(uid, _uid("n"), "x", home_region="sg")
     await store.update_user_avatar(uid, "data:a")
     await store.update_user_avatar(uid, "data:b")
     prof = [r for r in await _rows(store, "user_profile") if r["target_id"] == uid]
-    assert len(prof) == 1 and json.loads(prof[0]["payload"])["avatar_data"] == "data:b"
+    assert len(prof) == 1, prof
 
 
 # ── 6. 接收端：已使用只改一次、不回传 ─────────────────────────────────
@@ -195,7 +196,7 @@ async def test_peer_used_marks_once_and_never_echoes(store):
     code = _uid("c")
     await store.create_invite_code(code, "admin1", propagate=False)
     assert await store.mark_invite_used_from_peer(code) is True
-    assert await store.mark_invite_used_from_peer(code) is False
+    assert await store.mark_invite_used_from_peer(code) is False, "对端的「已使用」覆盖了已有记录"
     assert (await store.get_invite_code(code))["used_by"] == "peer"
     assert await _rows(store) == [], "从对端收到的变更再入队就会回传给对端"
 
@@ -223,7 +224,9 @@ def _auth_app(store, operator_id=None):
 
 
 def _client(app):
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://t")
+    # 路由里没接住的异常按线上的样子回 500，而不是直接抛进用例：断言才看得到「注册失败」
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="https://t")
 
 
 @pytest.fixture
@@ -246,12 +249,11 @@ async def test_register_route_uses_the_transactional_path(store, _no_rate_limit)
     name = _uid("n")
     async with _client(_auth_app(store)) as c:
         r = await c.post("/api/auth/register", json=_register_body(name, code))
-    assert r.status_code == 200, r.text
+    assert r.status_code == 200, f"注册失败：{r.text}"
     uid = (await store.get_user_by_username(name))["id"]
     assert (await store.get_invite_code(code))["used_by"] == uid
     assert [r["target_id"] for r in await _rows(store, "invite_used")] == [code]
-    prof = [json.loads(r["payload"]) for r in await _rows(store, "user_profile") if r["target_id"] == uid]
-    assert prof and prof[0]["home_region"] and isinstance(prof[0]["home_region"], str)
+    assert [r["target_id"] for r in await _rows(store, "user_profile")].count(uid) == 1
 
 
 async def test_register_route_maps_a_lost_race_to_400(store, _no_rate_limit, monkeypatch):
@@ -284,7 +286,7 @@ async def test_admin_invite_routes_queue_and_do_not_send_inline(store, monkeypat
     ops = [(r["op_type"], r["target_id"]) for r in await _rows(store)
            if r["op_type"].startswith("invite_")]   # 建管理员本身会入一条 user_profile，不在本条断言内
     assert ops == [("invite_create", codes[0]), ("invite_create", codes[1]),
-                   ("invite_delete", codes[0])], ops
+                   ("invite_delete", codes[0])], f"管理后台的生成 / 删除没有按顺序入队：{ops}"
 
 
 @pytest.mark.parametrize("path,payload", [
@@ -304,9 +306,10 @@ async def test_changes_received_from_the_peer_are_not_echoed(store, monkeypatch,
     assert await _rows(store) == [], "从对端收到的变更再入队就会回传给对端"
 
 
-# ── 8. 存量补发（PG 032）：上线前已有的用户资料 ─────────────────────────
+# ── 8. 存量补发（PG 032）：上线前就用掉的邀请码 ───────────────────────
 #
-# 发件箱是这次才落地的，上线前就存在的用户从没入过队，对端永远看不到。
+# 发件箱是这次才落地的，上线前就用掉的码从没入过队，对端永远不知道。存量用户资料的
+# 补发是 PG 033，锁在 tests/test_profile_outbox.py。
 # 迁移只跑一次（账本），但**账本为空时全部迁移会重放**，故正文必须幂等。
 
 _BACKFILL = "032_outbox_backfill.sql"
@@ -330,23 +333,6 @@ async def _seed_pre_backfill(store):
     return u1, u2, remote
 
 
-async def _queue_existing_profile(store, user_id: str, *, avatar: str) -> None:
-    """直插一条待发资料 —— 模拟「注册 / 换头像时已经入队」的那一份。
-
-    直插而不是走 `update_user_avatar`：那条路会把 `users.avatar_data` 一起改掉，于是
-    「队里的新值」与「表里的旧快照」就没有差别，`DO NOTHING` 与 `DO UPDATE` 读数相同 ——
-    本组用例要验的正是这两者的差别。
-    """
-    async with await store._connect() as conn:
-        await conn.execute(
-            """INSERT INTO cross_border_outbox (op_type, target_id, payload)
-               VALUES ('user_profile', $1, $2)""",
-            user_id,
-            json.dumps({"id": user_id, "username": "queued", "home_region": "cn-shenzhen",
-                        "avatar_data": avatar}, ensure_ascii=False),
-        )
-
-
 async def _replay_backfill(store) -> None:
     """把 032 从账本里划掉，再用**新实例**初始化 —— 只有这一份会重跑。
 
@@ -360,33 +346,6 @@ async def _replay_backfill(store) -> None:
         await restarted._ensure_initialized()
     finally:
         await restarted.close()
-
-
-async def test_backfill_queues_every_local_user_profile_once(store):
-    """存量补发：本机每个用户入队一条资料；对端同步来的资料一条都不发，队里已有的不覆盖。
-
-    判据取「人队条数 == 本机用户数」而不是「至少两个」：多出来的一定来自
-    `remote_user_profiles`（那是从对端收的资料，发回去就是回传），少一个就是漏发。
-    """
-    u1, u2, remote = await _seed_pre_backfill(store)
-    await _queue_existing_profile(store, u1, avatar="data:newer")
-
-    await _replay_backfill(store)
-
-    rows = {r["target_id"]: json.loads(r["payload"])
-            for r in await _rows(store, "user_profile")}
-    async with await store._connect() as conn:
-        local_users = await conn.fetchval("SELECT count(*) FROM users")
-    assert len(rows) == local_users, (
-        f"本机 {local_users} 个用户，队里却只有 {len(rows)} 条资料 —— 漏发或多发")
-    assert remote not in rows, f"对端同步来的资料被发回去了（回传）：{remote}"
-    assert rows[u2]["id"] == u2 and rows[u2]["home_region"] == "cn-shenzhen", rows[u2]
-    assert rows[u2]["avatar_data"] == "", rows[u2]
-    assert set(rows[u2]) == {"id", "username", "home_region", "avatar_data"}, (
-        f"资料带上了四个字段以外的东西（政策 3.2(1) 不含昵称、注册时间）：{rows[u2]}")
-    assert rows[u1]["avatar_data"] == "data:newer", (
-        f"补发拿 users 里的旧快照盖掉了队里更新的资料：{rows[u1]!r} —— "
-        "所以必须是 DO NOTHING 而不是 DO UPDATE")
 
 
 async def _locally_used_codes(store) -> list[str]:

@@ -60,6 +60,15 @@ def new_review_id() -> str:
     return f"{int(time.time() * 1000):013d}-{_uuid.uuid4().hex[:8]}"
 
 
+# ── 跨境 outbox：用户资料同步 ────────────────────────────────────────────────
+#
+# 与删除传播、邀请码共用 `cross_border_outbox`（UNIQUE(op_type, target_id)）。
+# 这一种行的 `payload` 不是资料本身，而是**版本戳**：资料每变一次就换一个新戳；
+# 发送方在发送时才读 `users` 的最新资料，确认后按「id + 发出时的戳」删行 ——
+# 发送途中资料又变了，戳就对不上，这一行留到下一轮再发。
+USER_PROFILE_OP = "user_profile"
+
+
 class StorageBase(ABC):
     """Defines storage methods for texts, cards, sessions and messages."""
 
@@ -775,11 +784,19 @@ class StorageBase(ABC):
         """Return unsynced (synced=0) delete propagations, oldest first."""
 
     @abstractmethod
-    async def remove_delete_propagation(self, id: int) -> None:
-        """Delete an outbox row once the peer acknowledged it.
+    async def remove_delete_propagation(self, id: int, payload: str) -> None:
+        """Delete an outbox row once the peer acknowledged it — only if its
+        `payload` is still the one that was sent.
 
         Delete, not mark: nothing reads a finished row (`get_pending_...` only
         looks at `synced = 0`), so keeping it would grow the table forever.
+
+        Conditional on `payload`: a `user_profile` row is re-stamped with a new
+        payload whenever the profile changes (see `USER_PROFILE_OP`).  If that
+        happens while the old version is in flight, deleting by id alone would
+        drop the newer change; the row must stay and go out next round.
+        Delete-type rows never change their payload, so for them this is the
+        same as deleting by id.
         """
 
     @abstractmethod
