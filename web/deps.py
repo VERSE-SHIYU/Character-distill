@@ -493,7 +493,7 @@ async def _session_cleanup_loop() -> None:
 
 def _make_indexing_service() -> IndexingService:
     """构造（不是「取得」）一个 IndexingService —— 生命周期由调用方定。"""
-    return IndexingService(get_storage(), _rag_config)
+    return IndexingService(_rag_config)
 
 
 def get_indexing_service() -> IndexingService | None:

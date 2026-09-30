@@ -22,7 +22,6 @@ Run: python tests/test_rag_unusable.py   (also pytest-collectable)
 from __future__ import annotations
 
 import asyncio
-import logging
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -309,7 +308,7 @@ def test_caller_indexing_service_degrades_no_index():
     """
     from core.indexing_service import IndexingService
 
-    svc = IndexingService(storage=MagicMock(), rag_config={"embedding_key": "k"})
+    svc = IndexingService({"embedding_key": "k"})
     with patch("core.indexing_service.RAGEngine") as cls:
         inst = MagicMock()
         inst.load_existing.side_effect = CollectionUnusableError(
@@ -327,7 +326,7 @@ def test_caller_indexing_service_generic_error_still_degrades():
     """indexing_service：非维度普通故障同样上抛给本轮检索（不 500、不重建），下一轮重读。"""
     from core.indexing_service import IndexingService
 
-    svc = IndexingService(storage=MagicMock(), rag_config={"embedding_key": "k"})
+    svc = IndexingService({"embedding_key": "k"})
     with patch("core.indexing_service.RAGEngine") as cls:
         inst = MagicMock()
         inst.load_existing.side_effect = RuntimeError("embed API 瞬断")
@@ -345,8 +344,7 @@ def test_caller_indexing_service_generic_error_still_degrades():
 
 
 def test_caller_mcp_degrades_no_index():
-    """mcp_server：CollectionUnusableError → 空检索降级 + index 不触发；
-    非维度普通异常仍走旧 fallback（index）不被误伤。"""
+    """mcp_server：只装载、从不建 —— 维度不符降级为空检索，集合不存在也不 index()。"""
     import mcp_server.server as mserver
 
     orig = dict(mserver._rag_by_text_id)
@@ -357,17 +355,17 @@ def test_caller_mcp_degrades_no_index():
             inst.load_existing.side_effect = CollectionUnusableError(
                 "dim 384 != 1024", stored_dim=384, expected_dim=1024)
             cls.return_value = inst
-            rag = mserver._rag_for_text_id("mcp_unusable", "有正文")
+            rag = mserver._rag_for_text_id("mcp_unusable")
             assert rag is inst and inst.index.call_count == 0, "维度不符必须降级不 index"
         print("  [PASS] mcp_server 路径：CollectionUnusableError 降级、index 未调用")
 
         with patch("core.rag.RAGEngine") as cls:
             inst2 = MagicMock()
-            inst2.load_existing.side_effect = RuntimeError("普通故障")
+            inst2.load_existing.return_value = False
             cls.return_value = inst2
-            rag2 = mserver._rag_for_text_id("mcp_genuine_err", "有正文")
-            assert rag2 is inst2 and inst2.index.call_count == 1, "非维度异常仍应走旧 fallback"
-        print("  [PASS] mcp_server 路径：非维度普通异常仍走 index fallback（守卫未误伤）")
+            rag2 = mserver._rag_for_text_id("mcp_absent")
+            assert rag2 is inst2 and inst2.index.call_count == 0, "集合不存在时 MCP 也不许建"
+        print("  [PASS] mcp_server 路径：集合不存在不建（建集合只归 web 进程的后台作业）")
     finally:
         mserver._rag_by_text_id.clear()
         mserver._rag_by_text_id.update(orig)
@@ -387,11 +385,11 @@ def _stub(storage, name: str, **kw) -> None:
     setattr(storage, name, AsyncMock(**kw))
 
 
-def test_caller_group_rebuild_degrades_no_index(caplog):
-    """web group.py _rebuild_group_session：CollectionUnusableError → 该卡跳过场景检索 + index 不触发。
+def test_caller_group_rebuild_uses_the_session_rag_of_each_card():
+    """web group.py _rebuild_group_session：每张卡的检索都从 `get_rag_for_session` 拿（带本卡 card_id）。
 
-    断言走 `caplog` 而不是 stdout（spec-119）：这条要求的意义正是「面板上看得见」，
-    而容器 stdout 到不了面板。
+    群聊不再自己装载 / 建集合 —— 维度不符、正在建、集合不存在这些情形的处理只在
+    `IndexingService` 一处（见本文件的 indexing_service 用例与 test_session_rag_binding）。
     """
     from core.schema import CharacterCard, SpeakingStyle
 
@@ -411,42 +409,40 @@ def test_caller_group_rebuild_degrades_no_index(caplog):
             "card_ids": ["c1", "c2"],
         })
         _stub(storage, "get_card_owned", side_effect=[
-            {"id": "c1", "user_id": "u1", "text_id": "t_unusable_a", "card_json": card_json},
-            {"id": "c2", "user_id": "u1", "text_id": "t_unusable_b", "card_json": card_json},
+            {"id": "c1", "user_id": "u1", "text_id": "t_a", "card_json": card_json},
+            {"id": "c2", "user_id": "u1", "text_id": "t_a", "card_json": card_json},
         ])
-        _stub(storage, "get_text_owned", side_effect=[{"content": "正文A"}, {"content": "正文B"}])
+        _stub(storage, "get_text_owned", return_value={"content": "正文"})
         _stub(storage, "get_group_messages", return_value=[])
-        # 用户配了自己的百炼 key —— 没配时根本不建 RAG（docs/specs/user-own-keys.md），
-        # 走不到本条要测的「维度不符集合降级」那一支。
         _stub(storage, "get_user_api_config",
               return_value={"embedding_key": "k", "embedding_region": "cn"})
 
-        caplog.set_level(logging.WARNING)
+        asked: list = []
+
+        class _Indexing:
+            def get_rag_for_session(self, text_id, *, card_id, embedding_key, embedding_region):
+                asked.append((text_id, card_id, embedding_key))
+                return ("rag", card_id)
 
         async def _fake_llm(_user_id, _storage):
             return MagicMock()
 
         with (\
             patch("web.routers.group.get_user_llm", new=_fake_llm), \
-            patch("deps.get_rag_config",
-                  return_value={"chunk_size": 500, "chunk_overlap": 50, "top_k": 3}), \
+            patch("deps.get_indexing_service", return_value=_Indexing()), \
             patch("deps.get_memory_manager", return_value=MagicMock()), \
             patch("core.rag.RAGEngine") as rag_cls, \
-            patch("core.chat_engine.ChatEngine"), \
+            patch("core.chat_engine.ChatEngine") as engine_cls, \
             patch("core.group_session.GroupSession")):
-            inst = MagicMock()
-            inst.load_existing.side_effect = CollectionUnusableError(
-                "dim 384 != 1024", stored_dim=384, expected_dim=1024)
-            rag_cls.return_value = inst
             group = await grp._rebuild_group_session("grp1", "u1", storage)
         assert group is not None
-        assert inst.index.call_count == 0, "维度不符集合在 group 路径也绝不 index"
-        log = "\n".join(r.getMessage() for r in caplog.records)
-        assert "集合不可用" in log and "不自动重建" in log, \
-            f"group 降级必须留下可见日志：{log!r}"
+        assert asked == [("t_a", "c1", "k"), ("t_a", "c2", "k")], asked
+        assert [c.args[1] for c in engine_cls.call_args_list] == [("rag", "c1"), ("rag", "c2")], \
+            "同一本书的两张卡共用了一份检索"
+        rag_cls.assert_not_called()
 
     asyncio.run(_run())
-    print("  [PASS] group.py 路径：维度不符降级跳过场景检索、index 未调用、有可见日志")
+    print("  [PASS] group.py 路径：每张卡拿自己的 SessionRag、不自己装载集合")
 
 
 def main() -> int:
@@ -467,15 +463,11 @@ def main() -> int:
         test_caller_mcp_degrades_no_index,
         test_caller_indexing_service_degrades_no_index,
         test_caller_indexing_service_generic_error_still_degrades,
+        test_caller_group_rebuild_uses_the_session_rag_of_each_card,
     ]
     print("=== RAG UNUSABLE-COLLECTION REGRESSION ===\n")
     for t in tests:
         t()
-        # 另一条（test_caller_group_rebuild_*）断言的是 **logging** 记录，靠 pytest 的
-        # `caplog` fixture 拿（spec-119：落点从 print 改成模块 logger）—— 手跑这条入口没有
-        # fixture，故只列在此处、不静默少跑：
-    print("  [SKIP] test_caller_group_rebuild_degrades_no_index："
-          "只在 pytest 下跑（用 caplog 断言日志）")
     print("\n=== ALL %d TESTS PASSED ===" % len(tests))
     print("load_existing: dimension-blindness fixed (mismatch raises, never silent-True)")
     print("query/query_with_emotion: failures raise, genuine no-match still returns []")

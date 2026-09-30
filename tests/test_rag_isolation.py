@@ -64,9 +64,8 @@ async def test_schedule_scene_index_degraded():
     """schedule_scene_index must never raise, only print on error."""
     print("3. schedule_scene_index with broken embedding...", end=" ")
 
-    storage = MagicMock()
     rag_config = {"embedding_key": "INVALID_KEY_THAT_WILL_FAIL"}
-    svc = IndexingService(storage, rag_config)
+    svc = IndexingService(rag_config)
 
     # Patch RAGEngine to simulate embedding failure
     with patch("core.indexing_service.RAGEngine") as mock_rag_cls:
@@ -90,9 +89,8 @@ async def test_schedule_scene_index_dedup():
     """Dedup must prevent duplicate concurrent indexing for same card."""
     print("4. schedule_scene_index dedup...", end=" ")
 
-    storage = MagicMock()
     rag_config = {"embedding_key": "sk-ok"}
-    svc = IndexingService(storage, rag_config)
+    svc = IndexingService(rag_config)
 
     call_count = 0
 

@@ -102,7 +102,7 @@ class _MemMgr:
 
 def _text_manager(store, llm, sessions) -> TextManager:
     return TextManager(lambda: store, None, llm, sessions,
-                       indexing_service=IndexingService(store, {}),
+                       indexing_service=IndexingService({}),
                        memory_manager=_MemMgr())
 
 
@@ -266,7 +266,7 @@ _KEY_WINDOW = 8  # 旧身份只取 key 前 8 位（sk- 之后仅 5 个随机字�
 
 def test_indexing_service_never_logs_the_embedding_key(capsys, caplog):
     secret = f"sk-test-{uuid.uuid4().hex}"
-    svc = IndexingService(storage=MagicMock(), rag_config={})
+    svc = IndexingService({})
     with caplog.at_level(logging.DEBUG), \
             patch("core.indexing_service.RAGEngine", _FakeRAGEngine):
         # 后台建集合那条出口，与会话检索（第一次检索时才装载）那条出口，都扫。

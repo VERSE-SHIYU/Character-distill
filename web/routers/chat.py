@@ -193,7 +193,7 @@ async def _ensure_session(
 
     rag = text_manager._indexing_service.get_rag_for_session(
         text_id, card_id=card_id, embedding_key=emb.key, embedding_region=emb.region,
-    ) if text_id else None
+    )
     memory = await asyncio.to_thread(text_manager.memory_for, user_id, emb.key, emb.region)
     # 原会话 id 直接进构造：引擎一出生就在原 id 名下，不再「新 id 造好再搬过来」。
     await asyncio.to_thread(

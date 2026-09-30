@@ -77,9 +77,8 @@ async def _rebuild_group_session(
     """Rebuild an in-memory GroupSession from the persisted DB record."""
     from core.schema import CharacterCard
     from core.chat_engine import ChatEngine
-    from core.rag import CollectionUnusableError, RAGEngine
     from core.group_session import GroupSession
-    from deps import get_rag_config, get_user_memory
+    from deps import get_indexing_service, get_user_memory
     from web.llm_resolution import resolve_embedding
 
     session = await storage.get_group_session_owned(group_id, user_id)
@@ -93,8 +92,7 @@ async def _rebuild_group_session(
         # 503 只取决于请求者自己的配置，不暴露会话是否存在。
         raise HTTPException(503, "请先在设置页配置 API Key")
 
-    rag_config = get_rag_config()
-    # Inject per-user embedding config
+    indexing_service = get_indexing_service()
     try:
         user_cfg = await storage.get_user_api_config(user_id) or {}
     except Exception as exc:
@@ -106,8 +104,6 @@ async def _rebuild_group_session(
             user_id, group_id, exc, exc_info=True,
         )
     emb = resolve_embedding(user_cfg)
-    if emb.key:
-        rag_config["embedding_key"], rag_config["embedding_region"] = emb.key, emb.region
 
     # 用户自己的两把 key 缺一把就是 None —— 引擎原有的「记忆为空即跳过」分支即「不提供记忆」。
     memory_manager = await asyncio.to_thread(
@@ -118,7 +114,6 @@ async def _rebuild_group_session(
     persona_card_id = session.get("user_persona_card_id", "")
 
     engines: dict[str, ChatEngine] = {}
-    text_rag_cache: dict[str, RAGEngine | None] = {}
     played_card_name = ""
 
     for card_id in session["card_ids"]:
@@ -149,39 +144,16 @@ async def _rebuild_group_session(
             # 这里吞掉 —— 那是真故障，该上抛给全局处理器。
             continue
 
-        text_id = card_rec["text_id"]
-        if text_id not in text_rag_cache:
-            text_rec = await storage.get_text_owned(text_id, user_id)
-            if not text_rec:
-                continue
-            if not emb.key:
-                # 用户没配自己的百炼 key：不检索 —— 不回落全局，也不拿空 key 去试一次再靠失败降级。
-                text_rag_cache[text_id] = None
-            else:
-                rag = RAGEngine(rag_config)
-                try:
-                    rag.load_existing(f"text_{text_id}")
-                except CollectionUnusableError as exc:
-                    # 集合维度与当前 embedder 不符（如迁移前 384 旧集合）：确定性不可用。
-                    # 只降级记日志、不 index() 重建 —— 不把静默失败换成静默重建（烧 embed/写库）。
-                    logger.warning(
-                        "[Group WARN] card_id=%s text_id=%s "
-                        "text 集合不可用（向量维度不符/损坏），降级跳过场景检索、不自动重建：%s",
-                        card_id, text_id, exc,
-                    )
-                except Exception as exc:
-                    # 非「维度不符」的加载失败：走 index() 重建，下次重建时集合已在，自愈。
-                    # 失败被兜住了，但「为什么没直接加载成功」要留痕（否则每次重建都悄悄重烧 embed）。
-                    logger.warning(
-                        "Group rebuild: rag load_existing failed, reindexing "
-                        "(group_id=%s text_id=%s): %r",
-                        group_id, text_id, exc, exc_info=True,
-                    )
-                    rag.index(text_rec["content"])
-                text_rag_cache[text_id] = rag
+        text_id = card_rec.get("text_id") or ""
+        # 独立卡片（没有原文）不读原文、不检索；有原文的，原文读不到就跳过这张卡。
+        if text_id and not await storage.get_text_owned(text_id, user_id):
+            continue
+        rag = indexing_service.get_rag_for_session(
+            text_id, card_id=card_id, embedding_key=emb.key, embedding_region=emb.region,
+        ) if indexing_service else None
 
         engine = ChatEngine(
-            per_user_llm, text_rag_cache[text_id], card,
+            per_user_llm, rag, card,
             memory_manager=memory_manager,
             card_id=card_id,
             storage=storage,
@@ -330,12 +302,10 @@ async def create_group(
 
     from core.schema import CharacterCard
     from core.chat_engine import ChatEngine
-    from core.rag import CollectionUnusableError, RAGEngine
-    from deps import get_rag_config, get_user_memory
+    from deps import get_indexing_service, get_user_memory
     from web.llm_resolution import resolve_embedding
 
-    rag_config = get_rag_config()
-    # Inject per-user embedding config
+    indexing_service = get_indexing_service()
     try:
         user_cfg = await storage.get_user_api_config(user_id) or {}
     except Exception as exc:
@@ -346,8 +316,6 @@ async def create_group(
             "(user_id=%s): %r", user_id, exc, exc_info=True,
         )
     emb = resolve_embedding(user_cfg)
-    if emb.key:
-        rag_config["embedding_key"], rag_config["embedding_region"] = emb.key, emb.region
 
     # 用户自己的两把 key 缺一把就是 None —— 引擎原有的「记忆为空即跳过」分支即「不提供记忆」。
     memory_manager = await asyncio.to_thread(
@@ -358,7 +326,6 @@ async def create_group(
     group_id = uuid.uuid4().hex[:12]
     engines: dict[str, ChatEngine] = {}
     card_infos: list[dict] = []
-    text_rag_cache: dict[str, RAGEngine | None] = {}
     played_card_name = ""
 
     for card_id in req.card_ids:
@@ -376,35 +343,16 @@ async def create_group(
             card_infos.append({"card_id": card_id, "name": card.name, "played_by_user": True})
             continue
 
-        text_id = card_rec["text_id"]
-        if text_id not in text_rag_cache:
-            text_rec = await storage.get_text_owned(text_id, user_id)
-            if not text_rec:
-                raise HTTPException(404, f"原文 {text_id} 不存在")
-            if not emb.key:
-                # 用户没配自己的百炼 key：不检索 —— 不回落全局，也不拿空 key 去试一次再靠失败降级。
-                text_rag_cache[text_id] = None
-            else:
-                rag = RAGEngine(rag_config)
-                try:
-                    rag.load_existing(f"text_{text_id}")
-                except CollectionUnusableError as exc:
-                    # 维度不符的旧集合（如迁移前 384 维）：确定性不可用，降级不重建。
-                    logger.warning(
-                        "card_id=%s text_id=%s text 集合不可用（向量维度不符/损坏），"
-                        "降级跳过场景检索、不自动重建：%s",
-                        card_id, text_id, exc,
-                    )
-                except Exception:
-                    logger.warning(
-                        "card_id=%s text_id=%s RAG load_existing failed, falling back to index",
-                        card_id, text_id, exc_info=True,
-                    )
-                    rag.index(text_rec["content"])
-                text_rag_cache[text_id] = rag
+        text_id = card_rec.get("text_id") or ""
+        # 独立卡片（没有原文）不读原文、不检索。
+        if text_id and not await storage.get_text_owned(text_id, user_id):
+            raise HTTPException(404, f"原文 {text_id} 不存在")
+        rag = indexing_service.get_rag_for_session(
+            text_id, card_id=card_id, embedding_key=emb.key, embedding_region=emb.region,
+        ) if indexing_service else None
 
         engine = ChatEngine(
-            per_user_llm, text_rag_cache[text_id], card,
+            per_user_llm, rag, card,
             memory_manager=memory_manager,
             card_id=card_id,
             storage=storage,

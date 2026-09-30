@@ -1210,13 +1210,14 @@ async def reindex_rag(
         raise HTTPException(404, "Text not found")
     content = text_rec["content"]
 
-    # 不设就地捕获（理由见 `_do_identify` 上方的块注释）：识别失败冒泡到统一出口。
-    chars = await resolve_characters(storage, distiller, text_id, user_id, content)
-
+    # 先确认建得了，再识别：识别可能要调一次 LLM，建不了就不该花这一笔。
     emb = resolve_embedding(await storage.get_user_api_config(user_id) or {})
     indexing_service = get_indexing_service()
     if not emb.key or indexing_service is None:
         raise HTTPException(400, "未配置向量检索 API Key，请在设置页填写阿里云百炼 API Key")
+
+    # 不设就地捕获（理由见 `_do_identify` 上方的块注释）：识别失败冒泡到统一出口。
+    chars = await resolve_characters(storage, distiller, text_id, user_id, content)
 
     indexing_service.schedule_text_reindex(
         text_id, content, all_characters=chars,
