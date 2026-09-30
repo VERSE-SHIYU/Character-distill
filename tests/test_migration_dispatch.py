@@ -138,6 +138,46 @@ async def test_already_satisfied_drop_column_is_stripped(tmp_path):
     assert "legacy_col" not in cols2, f"第二次跑把列加了回来；实际列={sorted(cols2)}"
 
 
+async def test_rename_branch_is_target_based_and_clears_the_rebuilt_stub(tmp_path):
+    """RENAME 支的判据取**目标表**，且目标已在时要把源表空壳删掉。
+
+    ADD/DROP 两支只有一张表要管，改名有两个名字，所以判据不能照抄。取「源表已不在」当
+    判据在这里是错的：074 那类 `CREATE TABLE IF NOT EXISTS` 每轮都会把改名前那张表重建
+    出来，真实迁移（098）跑到时源表**总是在**（空壳）—— 按源表判就会每轮重发 ALTER，撞上
+    已存在的目标表（`already another table with this name`），而这正是第二次 init 的实际形态。
+
+    **变异（实测）**：把 `_apply_migration` 的 `_rename` 里那行 `return f'DROP TABLE IF
+    EXISTS ...'` 改成 `return ""`（只剥不删）→ 第三次调用后库里同时留着新表与空壳，末尾
+    那条断言红。
+    """
+    store = sqlite_store.SQLiteStore(str(tmp_path / "rename.db"))
+    mig = tmp_path / "901_rename_probe.sql"
+    mig.write_text("ALTER TABLE old_probe RENAME TO new_probe;\n", encoding="utf-8")
+    assert sqlite_store._RENAME_TABLE_RE.findall(mig.read_text(encoding="utf-8")), \
+        "探针失效：正则没认出这句 RENAME，本用例什么也没锁住"
+
+    async with await store._connect() as conn:
+        await conn.execute("CREATE TABLE old_probe (id TEXT PRIMARY KEY)")
+        await conn.commit()
+
+        await sqlite_store._apply_migration(conn, mig)   # 目标不在 ⇒ 真改名
+        assert await sqlite_store._existing_columns(conn, "new_probe"), "改名没生效"
+        assert not await sqlite_store._existing_columns(conn, "old_probe"), "源表还在"
+
+        # 造第二次 init 的实际形态：更早那句 IF NOT EXISTS 把旧名又建了出来
+        await conn.execute("CREATE TABLE IF NOT EXISTS old_probe (id TEXT PRIMARY KEY)")
+        await conn.commit()
+        await sqlite_store._apply_migration(conn, mig)   # 目标已在 ⇒ 剥掉这句 + 删掉空壳
+        assert await sqlite_store._existing_columns(conn, "new_probe"), "改名后的表被删掉了"
+        assert not await sqlite_store._existing_columns(conn, "old_probe"), (
+            "目标表已在时源表空壳没被清掉 —— 库里会永远多一张表，「重启过的库」与「全新库」"
+            "从此不是同一个 schema")
+
+        await sqlite_store._apply_migration(conn, mig)   # 源已不在 ⇒ 整份跳过，不得抛
+        assert not await sqlite_store._existing_columns(conn, "old_probe")
+        assert await sqlite_store._existing_columns(conn, "new_probe")
+
+
 def test_migration_runner_never_swallows_a_failure():
     """迁移执行区不得有「只 print、从不重抛」的 except 块。
 

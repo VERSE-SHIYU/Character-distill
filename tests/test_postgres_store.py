@@ -52,6 +52,8 @@ _PG_STORE_SRC = _REPO / "storage" / "postgres_store.py"
 
 _CREATE_TABLE_RE = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(?P<table>\w+)", re.IGNORECASE)
+_RENAME_TABLE_RE = re.compile(
+    r"ALTER\s+TABLE\s+(?P<old>\w+)\s+RENAME\s+TO\s+(?P<new>\w+)", re.IGNORECASE)
 _COMMENT_RE = re.compile(r"--[^\n]*")
 _TABLE_REF_RE = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_][a-z0-9_]*)", re.IGNORECASE)
 
@@ -87,12 +89,19 @@ async def _pg_tables() -> set[str]:
 
 
 def _declared_tables(directory: Path) -> set[str]:
-    """某个迁移目录声明的表名（去注释后扫 CREATE TABLE）—— 与 `tests/test_sqlite_fresh_schema.py`
-    的 `_pg_declared_tables` 同一个口径，独立一份免得跨测试文件 import。"""
+    """某个迁移目录声明的表名（去注释后扫 CREATE TABLE，再应用 RENAME）—— 与
+    `tests/test_sqlite_fresh_schema.py` 的 `_pg_declared_tables` 同一个口径，独立一份
+    免得跨测试文件 import。
+
+    RENAME 必须应用：`CREATE TABLE old` 在文本里不会消失，不搬名字声明集就永远留着旧名，
+    而真库改名后只有新名（031/098 表改名就是这条的实例）。"""
     names: set[str] = set()
     for p in sorted(directory.glob("*.sql")):
         sql = _COMMENT_RE.sub("", p.read_text(encoding="utf-8"))
         names |= {m.group("table") for m in _CREATE_TABLE_RE.finditer(sql)}
+        for m in _RENAME_TABLE_RE.finditer(sql):
+            names.discard(m.group("old"))
+            names.add(m.group("new"))
     return names
 
 
@@ -1263,6 +1272,12 @@ class TestPgFreshSchemaClosure:
         (d / "001_x.sql").write_text(
             "-- CREATE TABLE ignored_comment\nCREATE TABLE real_one (id TEXT);\n", encoding="utf-8")
         assert _declared_tables(d) == {"real_one"}, "DDL 提取器看不见前一行注释里的假 CREATE"
+
+        # RENAME 也要看得见：旧名那句 CREATE 在文本里不会消失，提取器不认改名就会永远
+        # 留着旧名，「真库 ⊇ 声明」变成够不到的判据（031/098 表改名踩的就是这条）。
+        (d / "002_y.sql").write_text(
+            "ALTER TABLE real_one RENAME TO renamed_one;\n", encoding="utf-8")
+        assert _declared_tables(d) == {"renamed_one"}, "DDL 提取器没把 RENAME 应用上"
 
         # 引用提取器：词表里的名字看得见，词表外的散文词被滤掉
         assert _referenced_tables("SELECT * FROM ghost WHERE x=1", {"ghost"}) == {"ghost"}

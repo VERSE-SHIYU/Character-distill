@@ -152,6 +152,7 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     # 报成漂移），README 那段只写了「加列」，锁的判据比它宽 —— 以锁为准。
     "096_comment_likes.sql",
     "097_inter_node_nonces.sql",
+    "098_rename_outbox.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -175,6 +176,12 @@ _ADD_COLUMN_RE = re.compile(
 )
 _DROP_COLUMN_RE = re.compile(
     r"ALTER\s+TABLE\s+(?P<table>\w+)\s+DROP\s+COLUMN\s+(?!IF\b)(?P<column>\w+)[^;]*;",
+    re.IGNORECASE,
+)
+# `ALTER TABLE t RENAME TO u;` —— 第三种「重复执行即报错」的形态。判据与上面两种不同：
+# 它有两个表要管（源、目标），「已生效」取**目标表已在**，理由见 `_apply_migration`。
+_RENAME_TABLE_RE = re.compile(
+    r"ALTER\s+TABLE\s+(?P<old>\w+)\s+RENAME\s+TO\s+(?P<new>\w+)[^;]*;",
     re.IGNORECASE,
 )
 
@@ -460,17 +467,31 @@ async def _rebuild_cards_published_from(conn: Any) -> None:
 async def _apply_migration(conn: Any, path: Path) -> None:
     """执行一份迁移脚本，幂等靠**读现状**（PRAGMA table_info），不靠猜错误串。
 
-    SQLite 没有 `ADD/DROP COLUMN IF [NOT] EXISTS`（PG 才有），两种列改写在脚本里都
-    「重复执行即报错」——方向相反，所以「已生效」的判据也相反：
+    SQLite 没有 `ADD/DROP COLUMN IF [NOT] EXISTS`（PG 才有），也没有 `DO $$ … IF EXISTS`
+    （031 那种 PG 守卫写不了），三种改写在脚本里都「重复执行即报错」——方向不同，
+    所以「已生效」的判据也不同：
 
     - `ADD COLUMN`：列**已在** ⇒ 这句早已生效
     - `DROP COLUMN`：列**已不在** ⇒ 这句早已生效
+    - `RENAME TO`：**目标表已在** ⇒ 这句早已生效
 
-    规则（两种形态共用同一套「读现状」）：
+    规则（三种形态共用同一套「读现状」）：
 
-    - 每句 ADD 的列都在、且每句 DROP 的列都不在 → 这份脚本早已应用过，**整份跳过**
-      （这类脚本尾部常跟一段数据回填 UPDATE/INSERT，语义上只属于首次应用）
-    - 否则剥掉那些**已生效**的列改写（ADD 列已在 / DROP 列已不在），其余照常执行
+    - 每句 ADD 的列都在、每句 DROP 的列都不在、每句 RENAME 的目标表都已在 → 这份脚本
+      早已应用过，**整份跳过**（这类脚本尾部常跟一段数据回填 UPDATE/INSERT，语义上只
+      属于首次应用）
+    - 否则剥掉那些**已生效**的改写，其余照常执行
+
+    改名有两处特别（它有源、目标两张表要管，另两种只有一张）：
+
+    - 判据取**目标表**而不是源表。「源表已不在」在这里不是「已生效」的证据：074 每轮
+      `CREATE TABLE IF NOT EXISTS` 会把改名前的那张表重建出来，跑到 098 时源表**总是在**
+      （空壳）—— 按源表判就会每轮重发 ALTER，撞上已存在的目标表（`already another table
+      with this name`）。
+    - 目标表已在、源表也在 ⇒ 把那句 ALTER 换成 `DROP TABLE IF EXISTS <源>`。源表此刻只
+      可能是同一批次里更早那句 `CREATE TABLE IF NOT EXISTS` 刚建的空壳（真实数据在第一轮
+      的 ALTER 里就搬走了）：留着它 = 库里永远多一张表，「重启过的库」与「全新库」从此
+      不是同一个 schema。
 
     **没有 except**：真失败照常上抛。此前 74 个块各自 `except Exception: print` 把它吞成
     「初始化成功」——「已建库重跑」这一正常路径每次都打一行假失败，而真正跑错也只留一行 print。
@@ -478,19 +499,41 @@ async def _apply_migration(conn: Any, path: Path) -> None:
     sql = path.read_text(encoding="utf-8")
     add_cols = list(_ADD_COLUMN_RE.finditer(sql))
     drop_cols = list(_DROP_COLUMN_RE.finditer(sql))
-    if add_cols or drop_cols:
+    rename_tables = list(_RENAME_TABLE_RE.finditer(sql))
+    if add_cols or drop_cols or rename_tables:
         present: dict[str, set[str]] = {}
         for m in (*add_cols, *drop_cols):
             table = m.group("table")
             if table not in present:
                 present[table] = await _existing_columns(conn, table)
+        # 改名读**两侧**现状，不并进上面那份缓存 —— 那份是按「被改列的表」建的，收发两张表都不在其中。
+        renames: dict[str, tuple[bool, bool]] = {}   # 源表名 → (源表在, 目标表在)
+        for m in rename_tables:
+            old = m.group("old")
+            if old not in renames:
+                renames[old] = (
+                    bool(await _existing_columns(conn, old)),
+                    bool(await _existing_columns(conn, m.group("new"))),
+                )
         if (all(m.group("column") in present[m.group("table")] for m in add_cols)
-                and all(m.group("column") not in present[m.group("table")] for m in drop_cols)):
+                and all(m.group("column") not in present[m.group("table")] for m in drop_cols)
+                and all(target for _, target in renames.values())
+                and not any(src and target for src, target in renames.values())):
             return
         sql = _ADD_COLUMN_RE.sub(
             lambda m: "" if m.group("column") in present[m.group("table")] else m.group(0), sql)
         sql = _DROP_COLUMN_RE.sub(
             lambda m: "" if m.group("column") not in present[m.group("table")] else m.group(0), sql)
+
+        def _rename(m: re.Match[str]) -> str:
+            src, target = renames[m.group("old")]
+            if not target:
+                return m.group(0)                    # 还没改过：照常 RENAME
+            # 目标已在 ⇒ 改名早已生效；源表此时只可能是更早的 CREATE TABLE IF NOT EXISTS
+            # 重建出的空壳，剥掉之外还得把它清掉（理由见 docstring）。
+            return f'DROP TABLE IF EXISTS "{m.group("old")}";' if src else ""
+
+        sql = _RENAME_TABLE_RE.sub(_rename, sql)
     await conn.executescript(sql)
     await conn.commit()
 
@@ -570,7 +613,7 @@ async def _outbox_put(conn, op_type: str, target_id: str, payload: dict, *, repl
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
     await conn.execute(
-        f"{verb} INTO cross_border_delete_outbox (op_type, target_id, payload) VALUES (?, ?, ?)",
+        f"{verb} INTO cross_border_outbox (op_type, target_id, payload) VALUES (?, ?, ?)",
         (op_type, target_id, body))
 
 
@@ -1052,7 +1095,7 @@ class SQLiteStore(StorageBase):
                     public_ids = [row[0] for row in (await cursor.fetchall())]
                     for cid in public_ids:
                         await conn.execute(
-                            "INSERT OR IGNORE INTO cross_border_delete_outbox (op_type, target_id, payload) VALUES (?, ?, ?)",
+                            "INSERT OR IGNORE INTO cross_border_outbox (op_type, target_id, payload) VALUES (?, ?, ?)",
                             ("card_delete", cid, ""),
                         )
                     # Cascade-delete sessions, then cards
@@ -1730,7 +1773,7 @@ class SQLiteStore(StorageBase):
 
                 if visibility == "public":
                     await conn.execute(
-                        """INSERT OR IGNORE INTO cross_border_delete_outbox
+                        """INSERT OR IGNORE INTO cross_border_outbox
                            (op_type, target_id, payload) VALUES (?, ?, ?)""",
                         ("card_delete", card_id, ""),
                     )
@@ -1770,7 +1813,7 @@ class SQLiteStore(StorageBase):
 
                 if visibility == "public":
                     await conn.execute(
-                        """INSERT OR IGNORE INTO cross_border_delete_outbox
+                        """INSERT OR IGNORE INTO cross_border_outbox
                            (op_type, target_id, payload) VALUES (?, ?, ?)""",
                         ("card_delete", card_id, ""),
                     )
@@ -3680,7 +3723,7 @@ class SQLiteStore(StorageBase):
 
                 # Enqueue cross-border purge — same transaction as the delete
                 await conn.execute(
-                    """INSERT OR IGNORE INTO cross_border_delete_outbox
+                    """INSERT OR IGNORE INTO cross_border_outbox
                        (op_type, target_id, payload) VALUES (?, ?, ?)""",
                     ("user_purge", user_id, ""),
                 )
@@ -5519,7 +5562,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    """INSERT OR IGNORE INTO cross_border_delete_outbox
+                    """INSERT OR IGNORE INTO cross_border_outbox
                        (op_type, target_id, payload) VALUES (?, ?, ?)""",
                     (op_type, target_id, payload),
                 )
@@ -5534,7 +5577,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """SELECT id, op_type, target_id, payload, created_at
-                       FROM cross_border_delete_outbox
+                       FROM cross_border_outbox
                        WHERE synced = 0
                        ORDER BY id ASC
                        LIMIT ?""",
@@ -5551,7 +5594,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "DELETE FROM cross_border_delete_outbox WHERE id = ?",
+                    "DELETE FROM cross_border_outbox WHERE id = ?",
                     (id,),
                 )
                 await conn.commit()
@@ -5598,7 +5641,7 @@ class SQLiteStore(StorageBase):
                     (message_id,),
                 )
                 await conn.execute(
-                    """INSERT OR IGNORE INTO cross_border_delete_outbox
+                    """INSERT OR IGNORE INTO cross_border_outbox
                        (op_type, target_id, payload) VALUES (?, ?, ?)""",
                     ("dm_retract", message_id, ""),
                 )

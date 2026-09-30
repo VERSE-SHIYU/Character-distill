@@ -64,7 +64,7 @@ def _outbox_calls(seen, path_suffix):
 async def _rows(store, op=None):
     async with await store._connect() as conn:
         rows = await conn.fetch(
-            "SELECT op_type, target_id, payload FROM cross_border_delete_outbox "
+            "SELECT op_type, target_id, payload FROM cross_border_outbox "
             "WHERE op_type = ANY($1::text[]) ORDER BY id",
             [op] if op else list(_OUTBOX_OPS))
     return [dict(r) for r in rows]

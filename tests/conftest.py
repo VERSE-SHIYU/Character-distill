@@ -498,8 +498,8 @@ async def outbox_store():
     s = PostgresStore(TEST_DATABASE_URL)
     await s._ensure_initialized()
     async with await s._connect() as conn:
-        await conn.execute("DELETE FROM cross_border_delete_outbox")
+        await conn.execute("DELETE FROM cross_border_outbox")
     yield s
     async with await s._connect() as conn:
-        await conn.execute("DELETE FROM cross_border_delete_outbox")
+        await conn.execute("DELETE FROM cross_border_outbox")
     await s.close()

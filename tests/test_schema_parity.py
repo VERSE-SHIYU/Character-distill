@@ -53,6 +53,11 @@ _COL_TYPE_RE = re.compile(
 
 _NOT_NULL_RE = re.compile(r"\bNOT\s+NULL\b", re.IGNORECASE)
 
+# 表改名。必须认它：`CREATE TABLE old` 那句在文本里**永远不会消失**，不搬名字的话
+# 声明集里永远留着旧名，而真库改名后只有新名 —— 声明集与真库的结构性偏差。
+_RENAME_RE = re.compile(
+    r"ALTER\s+TABLE\s+(\w+)\s+RENAME\s+TO\s+(\w+)", re.IGNORECASE)
+
 # 已核实、**不修**的可空性分叉 —— {("表","列"): 理由}。本锁只登记，不改任何一方：
 # 两个迁移文件都是历史文件，改任一侧都会让「全新库」与「已建库」变成两个 schema
 # （缺陷 26 的教训），真正的对齐要靠新迁移，属独立议题。
@@ -131,10 +136,34 @@ def _extract_schema(sql: str) -> dict[str, dict[str, bool]]:
         not_null = bool(_NOT_NULL_RE.search(m.group(3) or ""))
         schema.setdefault(m.group(1).lower(), {})[m.group(2).lower()] = not_null
 
+    # 改名（见 `_RENAME_RE`）：把列字典整个搬到新名上。按文件顺序扫，故 `CREATE old`
+    # 在前、`RENAME` 在后时名字能正确落地。
+    for m in _RENAME_RE.finditer(_strip_sql_comments(sql)):
+        old, new = m.group(1).lower(), m.group(2).lower()
+        if old in schema:
+            schema[new] = schema.pop(old)
+
     return schema
 
 
 # ── the test ─────────────────────────────────────────────────────
+
+
+def test_declared_schema_follows_a_rename():
+    """表改名后声明集以**新名**为准，列定义跟着走。
+
+    真实形态：PG 009 建的那张发件箱表被 031 改名（源文件见
+    `storage/migrations_pg/031_rename_outbox.sql` —— 此处不写旧名全字，改名判据要求
+    全源（含测试）grep 旧名为 0）。
+    本锁的两条判据（表集合、共有列可空性）都建立在这份声明集上，而旧名那句 CREATE 在
+    文本里**永远不会消失** —— 不认 RENAME 的话表集合当场对不上真库，红的是标尺不是库
+    （真库判据见 `tests/test_sqlite_fresh_schema.py::TestExemptionClosedLoop`）。
+    """
+    schema = _extract_schema(
+        "CREATE TABLE old_name (\n    id INTEGER,\n    created_at TIMESTAMP NOT NULL\n);\n"
+        "ALTER TABLE old_name RENAME TO new_name;\n")
+    assert set(schema) == {"new_name"}, schema
+    assert schema["new_name"] == {"id": False, "created_at": True}, schema
 
 
 def test_schema_parity():

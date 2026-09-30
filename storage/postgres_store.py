@@ -130,13 +130,13 @@ async def _outbox_put(conn, op_type: str, target_id: str, payload: dict, *, repl
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     if replace:
         await conn.execute(
-            """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+            """INSERT INTO cross_border_outbox (op_type, target_id, payload)
                VALUES ($1, $2, $3)
                ON CONFLICT (op_type, target_id) DO UPDATE SET payload = EXCLUDED.payload""",
             op_type, target_id, body)
     else:
         await conn.execute(
-            """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+            """INSERT INTO cross_border_outbox (op_type, target_id, payload)
                VALUES ($1, $2, $3)
                ON CONFLICT (op_type, target_id) DO NOTHING""",
             op_type, target_id, body)
@@ -537,7 +537,7 @@ class PostgresStore(StorageBase):
                         )
                         for row in rows:
                             await conn.execute(
-                                "INSERT INTO cross_border_delete_outbox (op_type, target_id, payload) VALUES ($1, $2, $3) ON CONFLICT (op_type, target_id) DO NOTHING",
+                                "INSERT INTO cross_border_outbox (op_type, target_id, payload) VALUES ($1, $2, $3) ON CONFLICT (op_type, target_id) DO NOTHING",
                                 "card_delete", row[0], "",
                             )
                         # Cascade-delete sessions, then cards
@@ -1207,7 +1207,7 @@ class PostgresStore(StorageBase):
 
                     if visibility == "public":
                         await conn.execute(
-                            """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                            """INSERT INTO cross_border_outbox (op_type, target_id, payload)
                                VALUES ($1, $2, $3)
                                ON CONFLICT (op_type, target_id) DO NOTHING""",
                             "card_delete", card_id, "",
@@ -1239,7 +1239,7 @@ class PostgresStore(StorageBase):
                         card_id,
                     )
                     await conn.execute(
-                        """DELETE FROM cross_border_delete_outbox
+                        """DELETE FROM cross_border_outbox
                            WHERE op_type = 'card_delete' AND target_id = $1""",
                         card_id,
                     )
@@ -1265,7 +1265,7 @@ class PostgresStore(StorageBase):
 
                     if visibility == "public":
                         await conn.execute(
-                            """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                            """INSERT INTO cross_border_outbox (op_type, target_id, payload)
                                VALUES ($1, $2, $3)
                                ON CONFLICT (op_type, target_id) DO NOTHING""",
                             "card_delete", card_id, "",
@@ -3017,7 +3017,7 @@ class PostgresStore(StorageBase):
 
                     # Enqueue cross-border purge — same transaction as the delete
                     await conn.execute(
-                        """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                        """INSERT INTO cross_border_outbox (op_type, target_id, payload)
                            VALUES ($1, $2, $3)
                            ON CONFLICT (op_type, target_id) DO NOTHING""",
                         "user_purge", user_id, "",
@@ -4730,7 +4730,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                    """INSERT INTO cross_border_outbox (op_type, target_id, payload)
                        VALUES ($1, $2, $3)
                        ON CONFLICT (op_type, target_id) DO NOTHING""",
                     op_type, target_id, payload,
@@ -4745,7 +4745,7 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 rows = await conn.fetch(
                     """SELECT id, op_type, target_id, payload, created_at
-                       FROM cross_border_delete_outbox
+                       FROM cross_border_outbox
                        WHERE synced = 0
                        ORDER BY id ASC
                        LIMIT $1""",
@@ -4761,7 +4761,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "DELETE FROM cross_border_delete_outbox WHERE id = $1",
+                    "DELETE FROM cross_border_outbox WHERE id = $1",
                     id,
                 )
         except Exception as exc:
@@ -4806,7 +4806,7 @@ class PostgresStore(StorageBase):
                         message_id,
                     )
                     await conn.execute(
-                        """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                        """INSERT INTO cross_border_outbox (op_type, target_id, payload)
                            VALUES ($1, $2, $3)
                            ON CONFLICT (op_type, target_id) DO NOTHING""",
                         "dm_retract", message_id, "",

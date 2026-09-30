@@ -252,7 +252,7 @@ async def _outbox_row(store, row_id: int):
     """按 id 直读那一行（不经过 `get_pending_delete_propagations`，见文件头说明）。"""
     async with await store._connect() as conn:
         return await conn.fetchrow(
-            "SELECT id, synced FROM cross_border_delete_outbox WHERE id = $1", row_id)
+            "SELECT id, synced FROM cross_border_outbox WHERE id = $1", row_id)
 
 
 async def _seed_one(store, op_type: str = "card_delete", target: str = "card-1") -> int:
@@ -332,14 +332,14 @@ async def pg_card(pg_store):
     async with await pg_store._connect() as conn:
         await conn.execute("DELETE FROM cards WHERE id = $1", _CARD)
         await conn.execute(
-            "DELETE FROM cross_border_delete_outbox WHERE target_id = $1", _CARD)
+            "DELETE FROM cross_border_outbox WHERE target_id = $1", _CARD)
 
 
 async def _queued_card_deletes(store) -> list[dict]:
     """直读 outbox 里这张卡的 `card_delete` 行 —— 不经 pending 视图，见文件头说明。"""
     async with await store._connect() as conn:
         rows = await conn.fetch(
-            """SELECT id, synced FROM cross_border_delete_outbox
+            """SELECT id, synced FROM cross_border_outbox
                WHERE op_type = 'card_delete' AND target_id = $1""",
             _CARD,
         )

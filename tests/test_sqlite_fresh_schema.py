@@ -35,15 +35,24 @@ RETIRED_TEXT_COLS = ("content_resolved", "coref_resolved")
 _SQLITE_INTERNAL_TABLES = frozenset({"sqlite_sequence"})
 _CREATE_TABLE_RE = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(?P<table>\w+)", re.IGNORECASE)
+_RENAME_TABLE_RE = re.compile(
+    r"ALTER\s+TABLE\s+(?P<old>\w+)\s+RENAME\s+TO\s+(?P<new>\w+)", re.IGNORECASE)
 _COMMENT_RE = re.compile(r"--[^\n]*")
 
 
 def _pg_declared_tables() -> set[str]:
-    """`migrations_pg/` 声明的全部表名（去注释后扫 CREATE TABLE）。"""
+    """`migrations_pg/` 声明的全部表名（去注释后扫 CREATE TABLE，再应用 RENAME）。
+
+    RENAME 必须应用：`CREATE TABLE old` 在文本里不会消失，不搬名字就会永远留着旧名，
+    而真库改名后只有新名 —— 下面那条 ⊇ 断言于是变成够不到的判据。
+    """
     names: set[str] = set()
     for p in sorted(PG_DIR.glob("*.sql")):
         sql = _COMMENT_RE.sub("", p.read_text(encoding="utf-8"))
         names |= {m.group("table") for m in _CREATE_TABLE_RE.finditer(sql)}
+        for m in _RENAME_TABLE_RE.finditer(sql):
+            names.discard(m.group("old"))
+            names.add(m.group("new"))
     return names
 
 
@@ -140,6 +149,36 @@ class TestFreshSqliteSchema:
         out2 = await _init(SQLiteStore(db_path), capsys)
         assert "failed" not in out1, f"新建 sqlite 库的输出里出现失败行:\n{out1}"
         assert "failed" not in out2, f"第二次 init 的输出里出现失败行:\n{out2}"
+
+    async def test_fresh_db_carries_the_renamed_outbox_table(self, tmp_path, capsys):
+        """表改名（PG 031 / SQLite 098）：新库里只有新名，**第二次 init 后仍然只有一个**。
+
+        旧名带着 `_delete_` 前缀，早已不只装删除操作（资料、邀请码也走它），031/098
+        把它改名。判据取「真库表集合」而不是迁移文本 —— 文本标尺不认 RENAME，见
+        `test_schema_parity` 里那条同款说明。按 `*outbox` 形状断言、不写旧名全字：
+        改名判据要求旧名在全源（含测试）零命中。
+
+        **第二次 init 是本用例的正文，不是重复**：074 每轮 `CREATE TABLE IF NOT EXISTS`
+        都会把改名前那张表重建出来（空壳），执行器得再删一次才干净。只跑一次的话，
+        那一轮 RENAME 本就把旧名搬走了、库里天然只有一个 —— 执行器不删空壳的那一半
+        行为**无从判定**（实测变异：把执行器的 `DROP TABLE IF EXISTS <源>` 剥成空串，
+        本条只跑一次仍绿，跑到第二次才红）。
+        """
+        store, db_path = _fresh_store(tmp_path)
+        await _init(store, capsys)
+        tables = _tables_in(db_path)
+        assert "cross_border_outbox" in tables, f"新库里没有改名后的表：{sorted(tables)}"
+        outbox = sorted(t for t in tables if t.endswith("outbox"))
+        assert outbox == ["cross_border_outbox"], (
+            f"库里的发件箱表不止改名后的那一个：{outbox} —— 098 没生效，或者执行器把 "
+            "RENAME 当成可重复语句、把旧名又建了出来")
+
+        await _init(SQLiteStore(db_path), capsys)   # 换实例：同一个 store 的第二次 init 会因
+        # `_initialized` 短路，根本不再跑迁移（隔壁 `test_second_init_adds_nothing_and_stays_silent` 同理）
+        tables = _tables_in(db_path)
+        assert sorted(t for t in tables if t.endswith("outbox")) == ["cross_border_outbox"], (
+            f"第二次 init 之后发件箱表多出来了：{sorted(t for t in tables if t.endswith('outbox'))}"
+            " —— 074 的 CREATE TABLE IF NOT EXISTS 把旧名重建成了空壳，而执行器没把它删掉")
 
     async def test_partial_state_fills_only_missing_column(self, tmp_path, capsys):
         """(e) 只缺一列时只补那一列——PRAGMA 前置与「猜错误串」的真正分界。
@@ -254,6 +293,20 @@ class TestExemptionClosedLoop:
     形状当场红，且只能靠豁免清单救，而豁免即永久放行。列级改比「另一侧真库」。
     **别把两处统一成同一个形状**，理由是写在代码里的。
     """
+
+    def test_declared_tables_follow_the_migration_rename(self):
+        """`_pg_declared_tables` 必须认 `ALTER TABLE … RENAME TO`：009 建的旧名被 031
+        改名后，声明集里只该剩新名。
+
+        不认 RENAME 的提取器会**永远**留着旧名（009 的 CREATE 不会消失），于是下面那条
+        「真库 ⊇ 声明」变成够不到的判据 —— 表改名当场红，而红的是标尺不是库。
+        """
+        declared = _pg_declared_tables()
+        assert "cross_border_outbox" in declared, sorted(declared)
+        outbox = sorted(t for t in declared if t.endswith("outbox"))
+        assert outbox == ["cross_border_outbox"], (
+            f"声明集里的发件箱表不止改名后的那一个：{outbox} —— "
+            "提取器没把 031/098 的 RENAME 应用上")
 
     async def test_fresh_db_covers_every_table_pg_declares(self, tmp_path, capsys):
         store, db_path = _fresh_store(tmp_path)
