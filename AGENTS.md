@@ -1425,6 +1425,7 @@ PROBE_IMAGE         false
 
 **97. `Login to Aliyun CR` 无 `continue-on-error` 且排在 GHCR 构建之前 —— 阿里云链路一断，GHCR 镜像也构建不出来** —— 状态：**已修**（2026-09-22，分支 `fix/registry-fallback`，commit `5525b46`）
 - **裁定（用户，2026-09-22）**：阿里云对 SZ **必需**、对 SG **只是加速**。同一条原则贯穿全程 —— **「部署用哪个镜像」只取自「实际拉取成功」的那个仓库**，不预设、不写死。据此：登录/推送的 `continue-on-error` 保留（阿里云断链不得阻塞 GHCR 产出与 digest），同时把它的挂死时长收紧。
+- **订正（用户，2026-09-30，取代上一条裁定中「对 SZ 必需」）**：app / nginx 不再推送、也不再从阿里云拉取，SZ 与 SG 一律从 GHCR 按 digest 拉（回滚按 tag）；postgres / fail2ban 仍阿里云优先。依据：阿里云个人版官方注明共享带宽、会限流、不用于生产；跨境推送 56/93 挂住，#81 的逐次超时重试上线后仍 0/1 落地（挂在一个本已存在的层上）；而 SZ 从 GHCR 回落拉取 10/10 成功（21s～1233s）。锁：`tests/test_deploy_image_pulls.py`。
 - **已修三处**：
   - `build.yml` `Login to Aliyun CR` 加 `continue-on-error: true`，与两个推送步同一条判据。**选「加标记」而不是「把登录挪到 GHCR 那两步之后」**：登录的消费者只有紧跟其后的两个阿里云推送步，挪位会把 app 的阿里云推送从「nginx 的 GHCR 构建**之前**」变成「**之后**」—— 而 timeout 的采样正是按现有序列取的，不动序列。
   - `build.yml` `Push app image to Aliyun CR` timeout `89` → `10` 分钟。依据：近 20 次成功 build 的本步耗时 p50 = 62s、19/20 ≤ 107s（最快 55s、最慢 101s）；唯一的 1762s 是**离群值**，不作基准 —— 取 max×3 会让一个正常几十秒的**可选**步骤，每次挂死白占 runner 89 分钟（本次实发正是如此）。nginx 那步本就是 3 分钟，未动。
