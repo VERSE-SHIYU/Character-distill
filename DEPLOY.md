@@ -129,6 +129,7 @@ vim .env
 - 审核阈值 `TRUST_THRESHOLD` / `BLOCK_THRESHOLD` / `MAX_TOKEN_LENGTH` 及各级关键词列表，均可用环境变量覆盖内置默认（详见 `.env.example`）。
 - `OTEL_ENABLED`：OpenTelemetry 手工埋点开关，**默认关**（关时不 import sdk、不建 provider、装饰器原样返回，零开销）。开启 = 每次推理/蒸馏/RAG 建 span，用于本地压测归因（TTFT / token 间隔 / 跨线程 trace）。生产流量稀疏、可观测主要供压测，故默认关。配套：`OTEL_EXPORTER=memory`（进程内收集供断言/调试，不落盘）；`OTEL_CAPTURE_CONTENT=1` 才捕获对话内容（默认关 —— 完整 prompt/回复属 ICP 合规敏感，只经事件捕获、绝不落 span 属性）。依赖 pin 见 `requirements.txt` 的 `opentelemetry-api/sdk`。
 - `EMBEDDING_BASE_URL` / `MEM0_LLM_BASE_URL`：分别覆盖 DashScope embedding 与 Mem0 记忆抽取 LLM 的端点（②④ 本地压测接 mock）。未设置走各自 region / 用户自己配的地址，行为逐字节不变；key 始终是用户自己的。
+- `MEM0_TELEMETRY`：mem0 库自带的使用统计，发往 mem0 官方的 PostHog（美国）。**镜像已默认关**（`Dockerfile` 的 `ENV MEM0_TELEMETRY=False`），服务器 `.env` 不用配。只关统计，不影响长期记忆功能。
 
 > 两台机器的 `JWT_SECRET`、`FERNET_KEY` 可各自独立；数据库密码各自设置。
 

@@ -167,6 +167,7 @@ expected 1600 rows 1600 errors 0
 
 ## 7.2 实现中发现、未修（按规矩只报告）
 - **mem0 遥测默认开启**：`mem0/memory/telemetry.py` 的 `MEM0_TELEMETRY` 默认 True，`mem0.init` / `add` / `search` 都会向 `https://us.i.posthog.com` 发事件（沙箱实测：被代理挡下的 PostHog 上传报错）。生产 `.env` 与 compose 都没关。关掉只需在服务器 `.env` 加 `MEM0_TELEMETRY=False`，是否关由 owner 定。
+  - **已处置（2026-09-30，owner 裁定关）**：`Dockerfile` 加 `ENV MEM0_TELEMETRY=False`，镜像自带、服务器 `.env` 不用配；锁 `tests/test_mem0_telemetry_off.py`（子进程里按 mem0 自己的解析读 Dockerfile 取值，断言遥测客户端不建）。变异：改成 `True` → 红；删掉那行 → 红。只关统计，记忆读写不读这个开关。
 - 传入共享客户端后，mem0 会把 `is_local` 置为 False（`vector_stores/qdrant.py:62`）：对本地库尝试建 payload 索引只打一条 `UserWarning`，无功能影响。
 
 ## 8. 已查实约束（规则 8）
