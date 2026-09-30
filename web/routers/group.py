@@ -99,10 +99,10 @@ async def _rebuild_group_session(
         user_cfg = await storage.get_user_api_config(user_id) or {}
     except Exception as exc:
         user_cfg = {}
-        # 读不到用户配置 → 静默用全局 embedding key（与 chat._ensure_session 同一形态）
+        # 读不到用户配置 → 下面按「没配」处理：不检索、不回落全局。失败要留痕。
         logger.warning(
-            "Group session rebuild: per-user api config unreadable, falling back to "
-            "global key (user_id=%s group_id=%s): %r",
+            "Group session rebuild: per-user api config unreadable, treating as unconfigured "
+            "(user_id=%s group_id=%s): %r",
             user_id, group_id, exc, exc_info=True,
         )
     emb = resolve_embedding(user_cfg)
@@ -115,7 +115,7 @@ async def _rebuild_group_session(
     persona_card_id = session.get("user_persona_card_id", "")
 
     engines: dict[str, ChatEngine] = {}
-    text_rag_cache: dict[str, RAGEngine] = {}
+    text_rag_cache: dict[str, RAGEngine | None] = {}
     played_card_name = ""
 
     for card_id in session["card_ids"]:
@@ -151,27 +151,31 @@ async def _rebuild_group_session(
             text_rec = await storage.get_text_owned(text_id, user_id)
             if not text_rec:
                 continue
-            rag = RAGEngine(rag_config)
-            try:
-                rag.load_existing(f"text_{text_id}")
-            except CollectionUnusableError as exc:
-                # 集合维度与当前 embedder 不符（如迁移前 384 旧集合）：确定性不可用。
-                # 只降级记日志、不 index() 重建 —— 不把静默失败换成静默重建（烧 embed/写库）。
-                logger.warning(
-                    "[Group WARN] card_id=%s text_id=%s "
-                    "text 集合不可用（向量维度不符/损坏），降级跳过场景检索、不自动重建：%s",
-                    card_id, text_id, exc,
-                )
-            except Exception as exc:
-                # 非「维度不符」的加载失败：走 index() 重建，下次重建时集合已在，自愈。
-                # 失败被兜住了，但「为什么没直接加载成功」要留痕（否则每次重建都悄悄重烧 embed）。
-                logger.warning(
-                    "Group rebuild: rag load_existing failed, reindexing "
-                    "(group_id=%s text_id=%s): %r",
-                    group_id, text_id, exc, exc_info=True,
-                )
-                rag.index(text_rec["content"])
-            text_rag_cache[text_id] = rag
+            if not emb.key:
+                # 用户没配自己的百炼 key：不检索 —— 不回落全局，也不拿空 key 去试一次再靠失败降级。
+                text_rag_cache[text_id] = None
+            else:
+                rag = RAGEngine(rag_config)
+                try:
+                    rag.load_existing(f"text_{text_id}")
+                except CollectionUnusableError as exc:
+                    # 集合维度与当前 embedder 不符（如迁移前 384 旧集合）：确定性不可用。
+                    # 只降级记日志、不 index() 重建 —— 不把静默失败换成静默重建（烧 embed/写库）。
+                    logger.warning(
+                        "[Group WARN] card_id=%s text_id=%s "
+                        "text 集合不可用（向量维度不符/损坏），降级跳过场景检索、不自动重建：%s",
+                        card_id, text_id, exc,
+                    )
+                except Exception as exc:
+                    # 非「维度不符」的加载失败：走 index() 重建，下次重建时集合已在，自愈。
+                    # 失败被兜住了，但「为什么没直接加载成功」要留痕（否则每次重建都悄悄重烧 embed）。
+                    logger.warning(
+                        "Group rebuild: rag load_existing failed, reindexing "
+                        "(group_id=%s text_id=%s): %r",
+                        group_id, text_id, exc, exc_info=True,
+                    )
+                    rag.index(text_rec["content"])
+                text_rag_cache[text_id] = rag
 
         engine = ChatEngine(
             per_user_llm, text_rag_cache[text_id], card,
@@ -333,10 +337,10 @@ async def create_group(
         user_cfg = await storage.get_user_api_config(user_id) or {}
     except Exception as exc:
         user_cfg = {}
-        # 读不到用户配置 → 静默用全局 embedding key（与 chat._ensure_session 同一形态）
+        # 读不到用户配置 → 下面按「没配」处理：不检索、不回落全局。失败要留痕。
         logger.warning(
-            "Group create: per-user api config unreadable, falling back to global "
-            "key (user_id=%s): %r", user_id, exc, exc_info=True,
+            "Group create: per-user api config unreadable, treating as unconfigured "
+            "(user_id=%s): %r", user_id, exc, exc_info=True,
         )
     emb = resolve_embedding(user_cfg)
     if emb.key:
@@ -348,7 +352,7 @@ async def create_group(
     group_id = uuid.uuid4().hex[:12]
     engines: dict[str, ChatEngine] = {}
     card_infos: list[dict] = []
-    text_rag_cache: dict[str, RAGEngine] = {}
+    text_rag_cache: dict[str, RAGEngine | None] = {}
     played_card_name = ""
 
     for card_id in req.card_ids:
@@ -371,23 +375,27 @@ async def create_group(
             text_rec = await storage.get_text_owned(text_id, user_id)
             if not text_rec:
                 raise HTTPException(404, f"原文 {text_id} 不存在")
-            rag = RAGEngine(rag_config)
-            try:
-                rag.load_existing(f"text_{text_id}")
-            except CollectionUnusableError as exc:
-                # 维度不符的旧集合（如迁移前 384 维）：确定性不可用，降级不重建。
-                logger.warning(
-                    "card_id=%s text_id=%s text 集合不可用（向量维度不符/损坏），"
-                    "降级跳过场景检索、不自动重建：%s",
-                    card_id, text_id, exc,
-                )
-            except Exception:
-                logger.warning(
-                    "card_id=%s text_id=%s RAG load_existing failed, falling back to index",
-                    card_id, text_id, exc_info=True,
-                )
-                rag.index(text_rec["content"])
-            text_rag_cache[text_id] = rag
+            if not emb.key:
+                # 用户没配自己的百炼 key：不检索 —— 不回落全局，也不拿空 key 去试一次再靠失败降级。
+                text_rag_cache[text_id] = None
+            else:
+                rag = RAGEngine(rag_config)
+                try:
+                    rag.load_existing(f"text_{text_id}")
+                except CollectionUnusableError as exc:
+                    # 维度不符的旧集合（如迁移前 384 维）：确定性不可用，降级不重建。
+                    logger.warning(
+                        "card_id=%s text_id=%s text 集合不可用（向量维度不符/损坏），"
+                        "降级跳过场景检索、不自动重建：%s",
+                        card_id, text_id, exc,
+                    )
+                except Exception:
+                    logger.warning(
+                        "card_id=%s text_id=%s RAG load_existing failed, falling back to index",
+                        card_id, text_id, exc_info=True,
+                    )
+                    rag.index(text_rec["content"])
+                text_rag_cache[text_id] = rag
 
         engine = ChatEngine(
             per_user_llm, text_rag_cache[text_id], card,

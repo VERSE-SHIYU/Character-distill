@@ -122,3 +122,72 @@ def test_T3_group_rebuild_without_own_key_is_503_not_404(client, store, user):
 
     assert resp.status_code == 503, f"{resp.status_code} {resp.text}"
     assert resp.json()["detail"] == _NO_KEY
+
+
+# ── T4：没有 embedding key → 不建 RAG、不调度场景索引、不拿空 key 去试 ──────────
+
+class _NoRagEngine:
+    """被构造就记一笔再抛错。判据是**记录**（`built`），不是异常 ——
+    `get_rag_for_session` 自带宽 `except Exception` 会把异常吞成 None，只看返回值的话，
+    「拿空 key 去试、失败后降级」与「根本没去试」长得一模一样。"""
+
+    built: list = []
+
+    def __init__(self, *_a, **_kw):
+        type(self).built.append(_kw or _a)
+        raise RuntimeError("没有 embedding key 却构造了 RAGEngine（会拿空 key 去调百炼）")
+
+
+@pytest.fixture
+def no_rag_engine(monkeypatch):
+    import core.indexing_service as IS
+    import core.rag as core_rag  # group.py 在函数内 `from core.rag import RAGEngine`，打源头
+
+    _NoRagEngine.built = []
+    monkeypatch.setattr(IS, "RAGEngine", _NoRagEngine)
+    monkeypatch.setattr(core_rag, "RAGEngine", _NoRagEngine)
+    return _NoRagEngine
+
+
+def test_T4a_rag_for_session_without_embedding_key_is_none(no_rag_engine):
+    import core.indexing_service as IS
+
+    svc = IS.IndexingService(storage=None, rag_config={"top_k": 3})
+    assert svc.get_rag_for_session("txt_x", "正文", embedding_key="", embedding_region="cn") is None
+    assert no_rag_engine.built == [], "没有 embedding key 却去构造了 RAGEngine"
+
+
+def test_T4b_scene_index_without_embedding_key_is_not_scheduled(monkeypatch):
+    import core.indexing_service as IS
+
+    scheduled: list = []
+    monkeypatch.setattr(IS.asyncio, "create_task", lambda coro: scheduled.append(coro))
+    svc = IS.IndexingService(storage=None, rag_config={"top_k": 3})
+    svc.schedule_scene_index("txt_x", "card_x", "正文", "甲", embedding_key="", embedding_region="cn")
+    assert scheduled == [], "没有 embedding key 却调度了场景索引"
+    assert "scenes_card_x" not in IS._scene_index_in_flight, "去重表里留下了一条没调度的任务"
+
+
+def test_T4c_group_without_embedding_key_builds_no_rag(client, store, user, monkeypatch, no_rag_engine):
+    """用户配了 LLM key、没配百炼 key：群聊照建，但每个引擎都不检索，也不构造 RAGEngine。"""
+    monkeypatch.setattr(deps, "get_memory_manager", lambda: None)
+    _run(store.update_user_api_config(user["id"], "user-llm-key", "https://api.deepseek.com", "m"))
+    deps.clear_user_llm_cache(user["id"])
+
+    text_id = f"txt_{uuid.uuid4().hex[:12]}"
+    card_ids = []
+    _run(store.save_text(text_id, "src.txt", "正文", user_id=user["id"]))
+    for name in ("甲", "乙"):
+        cid = f"card_{uuid.uuid4().hex[:12]}"
+        _run(store.save_card(cid, text_id, name, CharacterCard(name=name).model_dump_json(), user["id"]))
+        card_ids.append(cid)
+
+    resp = client.post("/api/group/create", json={"card_ids": card_ids}, headers=_token(user))
+    assert resp.status_code == 200, f"{resp.status_code} {resp.text}"
+    gid = resp.json()["group_id"]
+    try:
+        engines = deps.get_group_sessions()[gid].engines
+        assert engines and all(e.rag is None for e in engines.values())
+        assert no_rag_engine.built == [], "没有 embedding key 却去构造了 RAGEngine"
+    finally:
+        deps.get_group_sessions().pop(gid, None)

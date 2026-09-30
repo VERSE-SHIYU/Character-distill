@@ -317,7 +317,7 @@ def test_caller_indexing_service_degrades_no_index(caplog):
         inst.load_existing.side_effect = CollectionUnusableError(
             "dim 384 != 1024", stored_dim=384, expected_dim=1024)
         cls.return_value = inst
-        got = svc.get_rag_for_session("t_unusable", "正文内容")
+        got = svc.get_rag_for_session("t_unusable", "正文内容", embedding_key="k")
         assert got is None, "维度不符集合必须降级返回 None（不静默空、不重建）"
         inst.index.assert_not_called()
     log = "\n".join(r.getMessage() for r in caplog.records)
@@ -337,7 +337,7 @@ def test_caller_indexing_service_generic_error_still_degrades(caplog):
         inst = MagicMock()
         inst.load_existing.side_effect = RuntimeError("embed API 瞬断")
         cls.return_value = inst
-        got = svc.get_rag_for_session("t_transient", "正文内容")
+        got = svc.get_rag_for_session("t_transient", "正文内容", embedding_key="k")
         assert got is None, "瞬时 build 故障也必须降级 None，不能 500"
         inst.index.assert_not_called()
     log = "\n".join(r.getMessage() for r in caplog.records)
@@ -417,6 +417,10 @@ def test_caller_group_rebuild_degrades_no_index(caplog):
         ])
         _stub(storage, "get_text_owned", side_effect=[{"content": "正文A"}, {"content": "正文B"}])
         _stub(storage, "get_group_messages", return_value=[])
+        # 用户配了自己的百炼 key —— 没配时根本不建 RAG（docs/specs/user-own-keys.md），
+        # 走不到本条要测的「维度不符集合降级」那一支。
+        _stub(storage, "get_user_api_config",
+              return_value={"embedding_key": "k", "embedding_region": "cn"})
 
         caplog.set_level(logging.WARNING)
 
