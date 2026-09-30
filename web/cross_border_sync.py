@@ -12,7 +12,8 @@ import logging
 import os
 
 from core.nonfatal import nonfatal
-from storage.base import StorageBase
+from core.node import node_region
+from storage.base import USER_PROFILE_OP, StorageBase
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,37 @@ _ENDPOINT_MAP: dict[str, str] = {
 }
 
 
+async def _post_to_peer(endpoint: str, body: dict, what: str) -> bool:
+    """Sign `body` and POST it to the peer's `endpoint`; True only on HTTP 200.
+
+    Shared by the outbox senders.  Every failure path logs `what` (op_type /
+    target_id) plus the status code or the exception — a bare False is
+    indistinguishable from "there was nothing to send", so the row would sit in
+    the outbox with nothing to debug from.
+    """
+    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
+    if not peer_url:
+        return False
+
+    from inter_node_auth import create_auth_header
+
+    import httpx
+
+    # 签名也在 try 里：签名失败（如请求体序列化不了）只让这一行留待下一轮，不能抛出
+    # `_resync_once` 把补发循环的后台任务整个带走。
+    try:
+        headers = create_auth_header(body)
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(f"{peer_url}{endpoint}", json=body, headers=headers)
+        if resp.status_code != 200:
+            logger.error("Outbox forward rejected: %s status=%s", what, resp.status_code)
+            return False
+        return True
+    except Exception as exc:
+        logger.error("Outbox forward failed: %s error=%r", what, exc, exc_info=True)
+        return False
+
+
 async def forward_delete_to_peer(op_type: str, target_id: str, payload: str, storage: StorageBase) -> bool:
     """Forward a delete/retract/purge intent to the peer node.
 
@@ -132,51 +164,18 @@ async def forward_delete_to_peer(op_type: str, target_id: str, payload: str, sto
 
     Returns True if the peer acknowledged (HTTP 200), False otherwise.
     The caller (resync loop) is responsible for removing the outbox row.
-
-    Every failure path prints op_type / target_id plus the status code or the
-    exception — a bare False is indistinguishable from "there was nothing to
-    send", so the row would sit in the outbox with nothing to debug from.
     """
-    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
-    if not peer_url:
-        return False
-
     endpoint = _ENDPOINT_MAP.get(op_type)
     if not endpoint:
         logger.error("Unknown delete op_type: %s", op_type)
         return False
-
-    from inter_node_auth import create_auth_header
 
     body = {
         "op_type": op_type,
         "target_id": target_id,
         "payload": payload,
     }
-    headers = create_auth_header(body)
-
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                f"{peer_url}{endpoint}",
-                json=body,
-                headers=headers,
-            )
-        if resp.status_code != 200:
-            logger.error(
-                "Delete forward rejected: op_type=%s target_id=%s status=%s",
-                op_type, target_id, resp.status_code,
-            )
-            return False
-        return True
-    except Exception as exc:
-        logger.error(
-            "Delete forward failed: op_type=%s target_id=%s error=%r",
-            op_type, target_id, exc, exc_info=True,
-        )
-        return False
+    return await _post_to_peer(endpoint, body, f"op_type={op_type} target_id={target_id}")
 
 
 async def forward_invite_code_to_peer(record: dict) -> bool:
@@ -249,51 +248,53 @@ async def forward_invite_code_delete_to_peer(code: str) -> bool:
         return False
 
 
-async def forward_user_profile_to_peer(user_id: str, username: str, home_region: str, avatar_data: str = "") -> bool:
-    """Forward a user profile to the peer node (lightweight stub sync).
+async def forward_user_profile_to_peer(user_id: str, storage: StorageBase) -> bool:
+    """Send one `user_profile` outbox row: read the user's current profile, POST it.
 
-    Best-effort: returns False on failure.  Caller is not expected to retry.
+    Returns True when the row is finished and may be removed: the peer
+    acknowledged, or there is nothing this node should announce —
+      - the user no longer exists here (a `user_purge` row carries the delete);
+      - the user is not homed on this node (e.g. a demo account mirrored from
+        the peer): each node announces only its own region's users.
+    Returns False to keep the row for the next round.
 
-    A previous version of this docstring said the profile would be synced when
-    the first DM exchange happens.  That is not true: the peer's
-    ``/api/inter-node/dm/receive`` only inserts the message and never writes the
-    user row.  So once this forward fails, the peer stays without the profile
-    until some other explicit forward succeeds.
+    The profile is read at send time, not stored in the row, so a round always
+    sends the latest version; see `USER_PROFILE_OP` for the version stamp.
     """
-    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
-    if not peer_url:
-        return False
-
-    from inter_node_auth import create_auth_header
-
-    payload = {
-        "id": user_id,
-        "username": username,
-        "home_region": home_region,
-        "avatar_data": avatar_data,
-    }
-    headers = create_auth_header(payload)
-
-    import httpx
-
+    what = f"op_type={USER_PROFILE_OP} target_id={user_id}"
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                f"{peer_url}/api/inter-node/user/sync",
-                json=payload,
-                headers=headers,
-            )
-        return resp.status_code == 200
+        user = await storage.get_user_by_id(user_id)
     except Exception as exc:
-        logger.error(
-            "User-profile forward failed (no retry): user_id=%s error=%r",
-            user_id, exc, exc_info=True,
-        )
+        logger.error("Outbox profile read failed: %s error=%r", what, exc, exc_info=True)
         return False
+    if user is None:
+        logger.info("Outbox profile dropped, user no longer exists: %s", what)
+        return True
+    if user.get("home_region") != node_region():
+        logger.info("Outbox profile dropped, user homed on %s not here: %s",
+                    user.get("home_region"), what)
+        return True
+
+    body = {
+        "id": user["id"],
+        "username": user.get("username", ""),
+        "home_region": user["home_region"],
+        "avatar_data": user.get("avatar_data") or "",
+    }
+    return await _post_to_peer("/api/inter-node/user/sync", body, what)
+
+
+async def _forward_outbox_row(row: dict, storage: StorageBase) -> bool:
+    """Route one outbox row to its sender by op_type."""
+    if row["op_type"] == USER_PROFILE_OP:
+        return await forward_user_profile_to_peer(row["target_id"], storage)
+    return await forward_delete_to_peer(
+        row["op_type"], row["target_id"], row.get("payload", ""), storage,
+    )
 
 
 async def _resync_once(storage: StorageBase) -> None:
-    """One resync round: DMs, cards, then the delete outbox.
+    """One resync round: DMs, cards, then the outbox (deletes + user profiles).
 
     The three sections are independent — each guards its own query, so one
     failing does not cancel the others.  DM/card rows get a `synced` flag;
@@ -333,21 +334,19 @@ async def _resync_once(storage: StorageBase) -> None:
                 ):
                     await storage.mark_card_synced(card["id"])
 
-    # ── Delete propagation resync ──
+    # ── Outbox resync (delete propagations + user profiles) ──
     try:
         pending = await storage.get_pending_delete_propagations(limit=100)
     except Exception as exc:
         logger.error("Delete outbox query failed: %s", exc, exc_info=True)
     else:
         for row in pending:
-            ok = await forward_delete_to_peer(
-                row["op_type"], row["target_id"], row.get("payload", ""), storage,
-            )
+            ok = await _forward_outbox_row(row, storage)
             if ok:
                 async with nonfatal(
-                    "cross_border_resync", f"remove delete propagation {row['id']}",
+                    "cross_border_resync", f"remove outbox row {row['id']}",
                 ):
-                    await storage.remove_delete_propagation(row["id"])
+                    await storage.remove_delete_propagation(row["id"], row.get("payload"))
 
 
 async def _cross_border_resync_loop() -> None:

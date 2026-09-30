@@ -5484,8 +5484,11 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get pending delete propagations failed: {exc}")
             raise
 
-    async def remove_delete_propagation(self, id: int) -> None:
-        """Delete a delete propagation outbox row the peer has acknowledged."""
+    async def remove_delete_propagation(self, id: int, payload: str) -> None:
+        """Delete a delete propagation outbox row the peer has acknowledged.
+
+        SQLite 已放下（AGENTS.md「存储改动只保证 PG」）：只对齐签名，`payload` 不参与。
+        """
         try:
             async with await self._connect() as conn:
                 await conn.execute(

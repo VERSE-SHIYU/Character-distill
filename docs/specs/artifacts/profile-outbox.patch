@@ -1,0 +1,869 @@
+diff --git a/docs/TECHNICAL_REPORT.md b/docs/TECHNICAL_REPORT.md
+index 34747a9e..4fd1ce2a 100644
+--- a/docs/TECHNICAL_REPORT.md
++++ b/docs/TECHNICAL_REPORT.md
+@@ -93,7 +93,7 @@
+ - **对话流**：`ChatEngine` ──uses──▶ `LLMAdapter`（LLM 调用）＋ `RAGEngine`（情感感知检索）＋ `MemoryManager`（长期记忆）。图路径实证：`ChatEngine --uses--> LLMAdapter <--uses-- Distiller`，对话与蒸馏共用同一 LLM 适配层。
+ - **蒸馏流**：文本 ─▶ `Distiller` ─▶ `CharacterCard` ─▶ 场景索引（`SceneIndexer`/`IndexingService`）── 产物同时进入市场/历史。
+ - **存储抽象流**：业务层 ─▶ `StorageBase` ─▶ `SQLiteStore` / `PostgresStore`（工厂切换，无 import 环）。
+-- **跨区域同步**：`web/cross_border_sync.py` 的 `backfill()` ──calls──▶ `forward_user_profile_to_peer()`（图：INFERRED 边，scripts/backfill_users.py → web/cross_border_sync.py）。
++- **跨区域同步**：注册 / 改头像在同一事务里把资料写进 `cross_border_delete_outbox`（op_type `user_profile`），补发循环 `_resync_once` ──calls──▶ `forward_user_profile_to_peer()` 发送；存量由迁移 `030_backfill_profile_sync.sql` 入队（原手动脚本 `scripts/backfill_users.py` 已删）。
+ 
+ ## 6. 跨切面关注点（Hyperedges）
+ 
+diff --git a/docs/specs/HANDOFF-2026-09-30.md b/docs/specs/HANDOFF-2026-09-30.md
+index 1ffc5b17..2e2a5797 100644
+--- a/docs/specs/HANDOFF-2026-09-30.md
++++ b/docs/specs/HANDOFF-2026-09-30.md
+@@ -8,7 +8,7 @@
+ 
+ | # | 事项 | 状态 | 文件 |
+ |---|---|---|---|
+-| 0 | 注册后用户资料同步从没发出去（线上缺陷） | **修复已做（2026-09-30）**；存量补发与线上核查仍待办（见下 3、4） | `tests/test_register_profile_sync.py` |
++| 0 | 注册后用户资料同步从没发出去（线上缺陷） | **已由 `profile-outbox` 收口**：资料改走 outbox（注册 / 改头像同事务入队、自动重发），迁移 030 补发存量；线上核查已做（见下 4） | `docs/specs/profile-outbox.md`、`tests/test_profile_outbox.py` |
+ | 1 | 方案甲：后台跨节点禁用/启用 + 禁用/启用/封禁三个缺陷 | spec + 参考补丁完成（已在 main） | `docs/specs/admin-peer-disable.md`、`artifacts/admin-peer-disable.patch` |
+ | 2 | 节点间切 https + 签名 v2（RFC 9421）+ 隐私政策补 TLS 一句 | spec + 参考补丁完成（已在 main）；**上线前置核查未做** | `docs/specs/inter-node-v2.md`、`artifacts/inter-node-v2.patch` |
+ | 3 | 跨境发件箱（邀请码新增/删除/已使用、用户资料失败自动重发） | 代码与测试在沙箱基本完成，**变异预跑未跑、spec 未写** | `artifacts/cross-border-outbox.WIP.patch`、`artifacts/mutate_outbox.WIP.py` |
+@@ -31,8 +31,8 @@ await forward_user_profile_to_peer(user["id"], user.get("username", ""), node_re
+ **要做的**：
+ 1. ~~修复：`node_region` → `home_region`（一个词）。测试转绿。~~ **已做**：`web/routers/auth.py` 的注册路由改传 `home_region`；全仓 `forward_user_profile_to_peer` 调用点只此一处。
+ 2. ~~变异：改回 `node_region` → 该测试红（上面那条就是）。~~ **已跑**：改回后红在 `资料没发出去；错误日志：['Forward user profile to peer failed: Object of type function is not JSON serializable']`，还原后绿。
+-3. **存量用户补发**：修复只管以后的注册。已注册却没同步的用户需要补一次。建议不单独写脚本，由第 3 件事（发件箱）的迁移一次性把所有本地用户的资料入队（有自动重发）。若等不及，可临时对每个本地用户调一次 `forward_user_profile_to_peer`，但无重发。
+-4. 线上影响核查（只读，给执行方）：两台各跑 `docker logs character-distill-app-1 2>&1 | grep -c "Forward user profile to peer failed"`，以及在 PG 里 `SELECT count(*) FROM remote_user_profiles;` 对比对端 `SELECT count(*) FROM users;`。
++3. **存量用户补发**：**已由 `docs/specs/profile-outbox.md` 完成**（迁移 `030_backfill_profile_sync.sql` 入队全部用户，发送方只发本区用户）。第 3 件发件箱在此基础上做，不再单独处理资料。
++4. 线上影响核查：**已做（2026-09-30，Shiyu 只读查询）**。SZ 本地 11 人（`cn-shenzhen` 10、`sg-singapore` 1 = 演示账号 offerPass 的镜像，与 SG 同 id）、远端表 13；SG 本地 14 人（全 `sg-singapore`）、远端表 7 —— SZ→SG 缺 3 人。原 `docker logs | grep -c` 口径作废：容器每次部署重建，日志只覆盖最近一次部署之后。
+ 
+ ---
+ 
+@@ -61,7 +61,7 @@ spec 自带 S0、对账表（17 个变异全红）。**唯一待改**：参考
+ **剩下要做**：
+ 1. **SQLite 收敛**：WIP 补丁里 `storage/sqlite_store.py` 写了完整逻辑（`_outbox_put`、占码、入队），按新规矩只保留签名改动，函数体恢复原样。
+ 2. 跑变异预跑：`artifacts/mutate_outbox.WIP.py`（O1–O15，驱动路径写的是沙箱路径，改成你的工作目录；O15 是 SQLite 签名漂移，保留）。有存活就补测试。
+-3. **补一项**：存量用户资料一次性入队（配合第 0 件的补发），以及存量已使用邀请码的「已使用」同步（可选，问 Shiyu）。
++3. **补一项**：存量已使用邀请码的「已使用」同步（可选，问 Shiyu）。用户资料已由 `profile-outbox` 完成：WIP 补丁里 `user_profile` 相关部分作废，重基时删掉，改用 main 上的 `USER_PROFILE_OP` / `forward_user_profile_to_peer`。
+ 4. 隐私政策 3.2(4) 字段列表要补「是否已使用」，并把邀请码删除同步写进去（现行政策没写，属如实补述）；按政策 7.1 不升版本号 —— **这句法律文本改动需 Shiyu 确认**。
+ 5. 已知限制写进 spec：两台之间「已使用」有最长一轮补发（≤60s，通常立即）的窗口，这期间同一个码可能在两台各被用一次；要彻底杜绝需注册时同步问对端，会让注册依赖对端在线，不建议。
+ 6. 写 `docs/specs/cross-border-outbox.md`（按六条规矩的全部小节）。
+diff --git a/scripts/backfill_users.py b/scripts/backfill_users.py
+deleted file mode 100644
+index c9646da5..00000000
+--- a/scripts/backfill_users.py
++++ /dev/null
+@@ -1,31 +0,0 @@
+-"""Backfill local user profiles to peer node."""
+-import sys; sys.path.insert(0, '/app/web')
+-import asyncio
+-from deps import get_storage
+-from cross_border_sync import forward_user_profile_to_peer
+-
+-s = get_storage()
+-
+-async def backfill():
+-    users = await s.get_all_users_admin_fields()
+-    ok = 0
+-    fail = 0
+-    for u in users:
+-        uid = u.get('id', '')
+-        uname = u.get('username', '')
+-        region = u.get('home_region', '')
+-        avatar = u.get('avatar_data', '')
+-        try:
+-            r = await forward_user_profile_to_peer(uid, uname, region, avatar)
+-            if r:
+-                ok += 1
+-                print('  OK: ' + uname)
+-            else:
+-                fail += 1
+-                print('  FAIL: ' + uname)
+-        except Exception as e:
+-            fail += 1
+-            print('  ERROR: ' + uname + ': ' + str(e))
+-    print('Done: %d ok, %d failed' % (ok, fail))
+-
+-asyncio.run(backfill())
+diff --git a/storage/base.py b/storage/base.py
+index d824fa72..6bc4f6e8 100644
+--- a/storage/base.py
++++ b/storage/base.py
+@@ -56,6 +56,15 @@ def new_review_id() -> str:
+     return f"{int(time.time() * 1000):013d}-{_uuid.uuid4().hex[:8]}"
+ 
+ 
++# ── 跨境 outbox：用户资料同步 ────────────────────────────────────────────────
++#
++# 与删除传播共用 `cross_border_delete_outbox`（UNIQUE(op_type, target_id)）。
++# 这一种行的 `payload` 不是资料本身，而是**版本戳**：资料每变一次就换一个新戳；
++# 发送方在发送时才读 `users` 的最新资料，确认后按「id + 发出时的戳」删行 ——
++# 发送途中资料又变了，戳就对不上，这一行留到下一轮再发。
++USER_PROFILE_OP = "user_profile"
++
++
+ class StorageBase(ABC):
+     """Defines storage methods for texts, cards, sessions and messages."""
+ 
+@@ -749,11 +758,19 @@ class StorageBase(ABC):
+         """Return unsynced (synced=0) delete propagations, oldest first."""
+ 
+     @abstractmethod
+-    async def remove_delete_propagation(self, id: int) -> None:
+-        """Delete an outbox row once the peer acknowledged it.
++    async def remove_delete_propagation(self, id: int, payload: str) -> None:
++        """Delete an outbox row once the peer acknowledged it — only if its
++        `payload` is still the one that was sent.
+ 
+         Delete, not mark: nothing reads a finished row (`get_pending_...` only
+         looks at `synced = 0`), so keeping it would grow the table forever.
++
++        Conditional on `payload`: a `user_profile` row is re-stamped with a new
++        payload whenever the profile changes (see `USER_PROFILE_OP`).  If that
++        happens while the old version is in flight, deleting by id alone would
++        drop the newer change; the row must stay and go out next round.
++        Delete-type rows never change their payload, so for them this is the
++        same as deleting by id.
+         """
+ 
+     @abstractmethod
+diff --git a/storage/migrations_pg/030_backfill_profile_sync.sql b/storage/migrations_pg/030_backfill_profile_sync.sql
+new file mode 100644
+index 00000000..9d65a191
+--- /dev/null
++++ b/storage/migrations_pg/030_backfill_profile_sync.sql
+@@ -0,0 +1,13 @@
++-- 030: 存量用户资料补发一次（跨境 outbox，op_type = 'user_profile'）。
++--
++-- 注册同步缺陷（注册路由把函数 `node_region` 当地区传给发送函数，序列化抛错被吞）期间
++-- 注册的用户，资料从没发到对端。这里把**本库全部用户**各入队一条，由补发循环发送：
++-- 发送时读最新资料，且只发 home_region 等于本节点地区的用户（本库不知道自己是哪个区，
++-- 过滤在发送方 `cross_border_sync.forward_user_profile_to_peer`）。
++-- 对端 `/api/inter-node/user/sync` 是 upsert，已同步过的用户再发一次无副作用。
++-- 'user_profile' 与 `storage.base.USER_PROFILE_OP` 同值；payload 是版本戳，见该常量注释。
++-- 已有待发行保持原样（DO NOTHING）：它本身就会发最新资料。
++INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
++SELECT 'user_profile', id, gen_random_uuid()::text
++FROM users
++ON CONFLICT (op_type, target_id) DO NOTHING;
+diff --git a/storage/postgres_store.py b/storage/postgres_store.py
+index 406b4a20..080e7e65 100644
+--- a/storage/postgres_store.py
++++ b/storage/postgres_store.py
+@@ -13,7 +13,7 @@ from typing import Any
+ import asyncpg  # type: ignore[import-not-found]
+ 
+ from core.roles import ROLES
+-from .base import StorageBase, StoreError
++from .base import USER_PROFILE_OP, StorageBase, StoreError
+ from .migration_ledger import file_sha256, pending_files
+ from .pg_identity_sync import align_identity_sequences
+ from .secret_box import decrypt_secret, encrypt_secret
+@@ -121,6 +121,20 @@ class _PoolContext:
+             self.conn = None
+ 
+ 
++
++async def _enqueue_profile_sync(conn: asyncpg.Connection, user_id: str) -> None:
++    """在调用方的事务里把「这个用户的资料要发给对端」入队（见 `USER_PROFILE_OP`）。
++
++    已有待发行时换一个新版本戳（`DO UPDATE`），而不是 `DO NOTHING`：正在发送的旧版本
++    确认后按旧戳删行会落空，这一行留下来，下一轮把最新资料再发一次。
++    """
++    await conn.execute(
++        """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
++           VALUES ($1, $2, gen_random_uuid()::text)
++           ON CONFLICT (op_type, target_id) DO UPDATE SET payload = EXCLUDED.payload""",
++        USER_PROFILE_OP, user_id,
++    )
++
+ class PostgresStore(StorageBase):
+     """Asynchronous storage implementation based on PostgreSQL via asyncpg."""
+ 
+@@ -2203,6 +2217,7 @@ class PostgresStore(StorageBase):
+                         "INSERT INTO user_secrets (user_id, password_hash) VALUES ($1, $2)",
+                         id, password_hash,
+                     )
++                    await _enqueue_profile_sync(conn, id)
+                 return await self.get_user_by_username(username) or {}
+         except asyncpg.IntegrityConstraintViolationError as exc:
+             raise ValueError("用户名已存在") from exc
+@@ -2626,13 +2641,16 @@ class PostgresStore(StorageBase):
+             raise
+ 
+     async def update_user_avatar(self, user_id: str, avatar_data: str) -> None:
+-        """Store base64 avatar for a user."""
++        """Store base64 avatar for a user, and queue the new profile for the peer."""
+         try:
+             async with await self._connect() as conn:
+-                await conn.execute(
+-                    "UPDATE users SET avatar_data = $1 WHERE id = $2",
+-                    avatar_data, user_id,
+-                )
++                async with conn.transaction():
++                    status = await conn.execute(
++                        "UPDATE users SET avatar_data = $1 WHERE id = $2",
++                        avatar_data, user_id,
++                    )
++                    if self._parse_rowcount(status):
++                        await _enqueue_profile_sync(conn, user_id)
+         except Exception as exc:
+             print(f"[PostgresStore] Update user avatar failed: {exc}")
+             raise
+@@ -4661,13 +4679,17 @@ class PostgresStore(StorageBase):
+             print(f"[PostgresStore] Get pending delete propagations failed: {exc}")
+             raise
+ 
+-    async def remove_delete_propagation(self, id: int) -> None:
+-        """Delete a delete propagation outbox row the peer has acknowledged."""
++    async def remove_delete_propagation(self, id: int, payload: str) -> None:
++        """Delete an acknowledged outbox row, only if its payload is unchanged.
++
++        See `StorageBase.remove_delete_propagation` for why the payload is part
++        of the condition.
++        """
+         try:
+             async with await self._connect() as conn:
+                 await conn.execute(
+-                    "DELETE FROM cross_border_delete_outbox WHERE id = $1",
+-                    id,
++                    "DELETE FROM cross_border_delete_outbox WHERE id = $1 AND payload IS NOT DISTINCT FROM $2",
++                    id, payload,
+                 )
+         except Exception as exc:
+             print(f"[PostgresStore] Remove delete propagation failed: {exc}")
+diff --git a/storage/sqlite_store.py b/storage/sqlite_store.py
+index 33a3e95d..66c0998a 100644
+--- a/storage/sqlite_store.py
++++ b/storage/sqlite_store.py
+@@ -5484,8 +5484,11 @@ class SQLiteStore(StorageBase):
+             print(f"[SQLiteStore] Get pending delete propagations failed: {exc}")
+             raise
+ 
+-    async def remove_delete_propagation(self, id: int) -> None:
+-        """Delete a delete propagation outbox row the peer has acknowledged."""
++    async def remove_delete_propagation(self, id: int, payload: str) -> None:
++        """Delete a delete propagation outbox row the peer has acknowledged.
++
++        SQLite 已放下（AGENTS.md「存储改动只保证 PG」）：只对齐签名，`payload` 不参与。
++        """
+         try:
+             async with await self._connect() as conn:
+                 await conn.execute(
+diff --git a/tests/test_cross_border_sync.py b/tests/test_cross_border_sync.py
+index a697ad44..0eb1a0c2 100644
+--- a/tests/test_cross_border_sync.py
++++ b/tests/test_cross_border_sync.py
+@@ -359,7 +359,7 @@ async def _queued_card_deletes(store) -> list[dict]:
+     """直读 outbox 里这张卡的 `card_delete` 行 —— 不经 pending 视图，见文件头说明。"""
+     async with await store._connect() as conn:
+         rows = await conn.fetch(
+-            """SELECT id, synced FROM cross_border_delete_outbox
++            """SELECT id, synced, payload FROM cross_border_delete_outbox
+                WHERE op_type = 'card_delete' AND target_id = $1""",
+             _CARD,
+         )
+@@ -417,7 +417,7 @@ async def test_delete_requeues_after_ack_and_restore(pg_card, pg_store):
+     rows = await _queued_card_deletes(pg_store)
+     assert len(rows) == 1, "种子没入队，用例测不到东西"
+ 
+-    await pg_store.remove_delete_propagation(rows[0]["id"])
++    await pg_store.remove_delete_propagation(rows[0]["id"], rows[0]["payload"])
+     assert await _queued_card_deletes(pg_store) == [], (
+         "对端已确认，这一行必须真的从表里消失 —— 留着（哪怕标了 synced = 1）"
+         "就还占着 (op_type, target_id) 这个唯一键，同一张卡再也删不掉")
+diff --git a/tests/test_profile_outbox.py b/tests/test_profile_outbox.py
+new file mode 100644
+index 00000000..5921de1d
+--- /dev/null
++++ b/tests/test_profile_outbox.py
+@@ -0,0 +1,265 @@
++# -*- coding: utf-8 -*-
++"""用户资料走跨境 outbox 同步给对端（spec profile-outbox）。
++
++注册 / 改头像在业务写入的同一事务里入队一行 `user_profile`；补发循环 `_resync_once`
++发送时读最新资料、只发本节点地区的用户，对端 200 后按「id + 发出时的版本戳」删行。
++迁移 030 把存量用户各入队一条（注册同步缺陷期间漏发的人由此补上）。
++
++对端用 httpx 自带的 MockTransport 扮演；业务写入走真 PG。
++"""
++from __future__ import annotations
++
++import json
++import logging
++import uuid
++from pathlib import Path
++
++import httpx
++import pytest
++from fastapi import FastAPI
++
++from conftest import PG_ENV, TEST_DATABASE_URL
++from cross_border_sync import _resync_once
++from deps import get_storage
++from routers.auth import router as auth_router
++from storage.base import USER_PROFILE_OP
++from storage.postgres_store import PostgresStore
++
++pytestmark = PG_ENV.skipif("资料 outbox 用例")
++
++_HERE = "cn-shenzhen"
++_THERE = "sg-singapore"
++_SYNC_PATH = "/api/inter-node/user/sync"
++_MIGRATION = Path(__file__).resolve().parents[1] / "storage/migrations_pg/030_backfill_profile_sync.sql"
++
++
++def _uid(prefix: str) -> str:
++    return f"{prefix}{uuid.uuid4().hex[:12]}"
++
++
++@pytest.fixture
++async def store():
++    s = PostgresStore(TEST_DATABASE_URL)
++    await s._ensure_initialized()
++    async with await s._connect() as conn:
++        await conn.execute("DELETE FROM cross_border_delete_outbox")
++    yield s
++    async with await s._connect() as conn:
++        await conn.execute("DELETE FROM cross_border_delete_outbox")
++    await s.close()
++
++
++@pytest.fixture(autouse=True)
++def _env(monkeypatch):
++    import limiter as L
++
++    monkeypatch.setattr(L.limiter, "enabled", False)
++    monkeypatch.setenv("INTER_NODE_SECRET", "test-inter-node-secret-0123456789abcdef")
++    monkeypatch.setenv("PEER_NODE_URL", "https://peer-node")
++    monkeypatch.setenv("NODE_REGION", _HERE)
++
++
++class Peer:
++    """扮演对端：记录收到的资料；`status` 决定回什么；`on_request` 模拟发送途中的并发写。"""
++
++    def __init__(self, monkeypatch, status: int = 200, on_request=None):
++        self.sent: list[dict] = []
++        self.status = status
++        self._on_request = on_request
++        real_client = httpx.AsyncClient
++        peer = self
++
++        async def handler(req: httpx.Request) -> httpx.Response:
++            if req.url.path == _SYNC_PATH:
++                peer.sent.append(json.loads(req.content))
++                if peer._on_request is not None:
++                    hook, peer._on_request = peer._on_request, None
++                    await hook()
++            return httpx.Response(peer.status)
++
++        def _client(*_a, **kw):
++            return real_client(transport=httpx.MockTransport(handler), timeout=kw.get("timeout"))
++
++        monkeypatch.setattr(httpx, "AsyncClient", _client)
++
++    def for_user(self, user_id: str) -> list[dict]:
++        return [b for b in self.sent if b.get("id") == user_id]
++
++
++async def _profile_rows(store, user_id: str) -> list[dict]:
++    async with await store._connect() as conn:
++        rows = await conn.fetch(
++            "SELECT id, payload FROM cross_border_delete_outbox WHERE op_type = $1 AND target_id = $2",
++            USER_PROFILE_OP, user_id)
++    return [dict(r) for r in rows]
++
++
++async def _new_user(store, region: str = _HERE) -> str:
++    uid = _uid("u")
++    await store.create_user(uid, _uid("n"), "hash", home_region=region)
++    return uid
++
++
++# ── 注册：同一事务入队，循环发出字符串地区 ─────────────────────────────────
++
++async def test_registration_queues_and_the_loop_sends_the_profile(store, monkeypatch, caplog):
++    """注册后资料进 outbox；下一轮补发把它发给对端，地区是字符串、行随之删除。"""
++    from legal_versions import CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION
++
++    app = FastAPI()
++    app.include_router(auth_router)
++    app.dependency_overrides[get_storage] = lambda: store
++    code = _uid("c")
++    await store.create_invite_code(code, "admin1")
++    name = _uid("n")
++    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://t") as c:
++        r = await c.post("/api/auth/register", json={
++            "username": name, "password": "abcd1234", "invite_code": code,
++            "agreed_terms_version": CURRENT_TERMS_VERSION,
++            "agreed_privacy_version": CURRENT_PRIVACY_VERSION,
++        })
++    assert r.status_code == 200, r.text
++    uid = (await store.get_user_by_username(name))["id"]
++    assert len(await _profile_rows(store, uid)) == 1, "注册没有把资料入队"
++
++    peer = Peer(monkeypatch)
++    caplog.set_level(logging.INFO)
++    await _resync_once(store)
++
++    got = peer.for_user(uid)
++    assert len(got) == 1, f"资料没发出去；日志：{[x.getMessage() for x in caplog.records]}"
++    assert got[0] == {"id": uid, "username": name, "home_region": _HERE, "avatar_data": ""}
++    assert await _profile_rows(store, uid) == [], "对端已确认，这一行必须删掉"
++
++
++async def test_failed_create_user_leaves_no_profile_row(store):
++    """建用户失败（用户名重复）整笔回滚：不能留下指向不存在用户的待发行。"""
++    name = _uid("n")
++    await store.create_user(_uid("u"), name, "hash", home_region=_HERE)
++    loser = _uid("u")
++    with pytest.raises(ValueError):
++        await store.create_user(loser, name, "hash", home_region=_HERE)
++    assert await _profile_rows(store, loser) == []
++
++
++# ── 改头像：换版本戳；发送途中又改，新资料不丢 ──────────────────────────────
++
++async def test_avatar_change_requeues_and_unknown_user_does_not(store):
++    uid = await _new_user(store)
++    [before] = await _profile_rows(store, uid)
++    await store.update_user_avatar(uid, "data:new")
++    [after] = await _profile_rows(store, uid)
++    assert after["payload"] != before["payload"], "资料变了却没换版本戳"
++
++    ghost = _uid("u")
++    await store.update_user_avatar(ghost, "data:x")
++    assert await _profile_rows(store, ghost) == [], "不存在的用户不该入队"
++
++
++async def test_change_during_send_is_sent_next_round(store, monkeypatch):
++    """发送途中头像又改了：这一轮确认后不许删行，下一轮发出新头像。"""
++    uid = await _new_user(store)
++
++    async def change_avatar():
++        await store.update_user_avatar(uid, "data:v2")
++
++    peer = Peer(monkeypatch, on_request=change_avatar)
++    await _resync_once(store)
++    assert [b["avatar_data"] for b in peer.for_user(uid)] == [""]
++    assert len(await _profile_rows(store, uid)) == 1, "发送途中的新资料被这一轮的确认一起删掉了"
++
++    await _resync_once(store)
++    assert [b["avatar_data"] for b in peer.for_user(uid)] == ["", "data:v2"]
++    assert await _profile_rows(store, uid) == []
++
++
++# ── 发送方的判断：失败留行、非本区与已删用户丢行 ────────────────────────────
++
++async def test_peer_rejection_keeps_the_row_and_logs_it(store, monkeypatch, caplog):
++    uid = await _new_user(store)
++    Peer(monkeypatch, status=500)
++    caplog.set_level(logging.ERROR)
++    await _resync_once(store)
++    assert len(await _profile_rows(store, uid)) == 1, "对端没确认，这一行不能丢"
++    out = "\n".join(x.getMessage() for x in caplog.records)
++    assert uid in out and "500" in out, f"失败日志缺用户或状态码：{out!r}"
++
++
++async def test_user_not_homed_here_is_dropped_unsent(store, monkeypatch):
++    """镜像自对端的账号（如演示账号）：本节点不对外宣告，行直接结束。"""
++    uid = await _new_user(store, region=_THERE)
++    peer = Peer(monkeypatch)
++    await _resync_once(store)
++    assert peer.for_user(uid) == []
++    assert await _profile_rows(store, uid) == []
++
++
++async def test_deleted_user_is_dropped_unsent(store, monkeypatch):
++    uid = await _new_user(store)
++    async with await store._connect() as conn:
++        await conn.execute("DELETE FROM user_secrets WHERE user_id = $1", uid)
++        await conn.execute("DELETE FROM users WHERE id = $1", uid)
++    peer = Peer(monkeypatch)
++    await _resync_once(store)
++    assert peer.for_user(uid) == []
++    assert await _profile_rows(store, uid) == [], "用户已不存在，这一行永远发不出去，必须结束"
++
++
++async def test_acked_row_with_null_payload_is_removed(store, monkeypatch):
++    """payload 列可空：确认后按「发出时的 payload」删行，NULL 也要删得掉。"""
++    async with await store._connect() as conn:
++        await conn.execute(
++            "INSERT INTO cross_border_delete_outbox (op_type, target_id, payload) VALUES ('card_delete', $1, NULL)",
++            _uid("card"))
++    Peer(monkeypatch)
++    await _resync_once(store)
++    async with await store._connect() as conn:
++        left = await conn.fetchval("SELECT count(*) FROM cross_border_delete_outbox")
++    assert left == 0
++
++
++# ── 迁移 030：存量补发 ─────────────────────────────────────────────────────
++
++async def test_backfill_migration_sends_every_local_user_once(store, monkeypatch):
++    """存量用户（入队之前就建好的）经 030 入队，一轮全部发出；非本区的不发。"""
++    local = [await _new_user(store) for _ in range(3)]
++    mirror = await _new_user(store, region=_THERE)
++    async with await store._connect() as conn:
++        await conn.execute("DELETE FROM cross_border_delete_outbox")   # 模拟缺陷期：从没入过队
++        await conn.execute(_MIGRATION.read_text(encoding="utf-8"))
++        # 共用测试库里还有别的用例建的用户：只留本用例的行，一轮的上限（100）才测得准
++        await conn.execute(
++            "DELETE FROM cross_border_delete_outbox WHERE NOT (target_id = ANY($1::text[]))",
++            local + [mirror])
++    for uid in local + [mirror]:
++        assert len(await _profile_rows(store, uid)) == 1, f"{uid} 没被 030 入队"
++
++    peer = Peer(monkeypatch)
++    await _resync_once(store)
++    for uid in local:
++        assert len(peer.for_user(uid)) == 1, f"{uid} 没补发出去"
++        assert await _profile_rows(store, uid) == []
++    assert peer.for_user(mirror) == []
++
++
++async def test_backfill_migration_keeps_a_pending_row_as_is(store):
++    uid = await _new_user(store)
++    [before] = await _profile_rows(store, uid)
++    async with await store._connect() as conn:
++        await conn.execute(_MIGRATION.read_text(encoding="utf-8"))
++    assert await _profile_rows(store, uid) == [before]
++
++
++async def test_signing_failure_keeps_the_row_and_the_loop_alive(store, monkeypatch, caplog):
++    """签名抛错：这一行留到下一轮、记错误日志；`_resync_once` 不许抛出（否则补发任务整个停掉）。"""
++    import inter_node_auth
++
++    def boom(_body):
++        raise TypeError("cannot sign")
++
++    uid = await _new_user(store)
++    monkeypatch.setattr(inter_node_auth, "create_auth_header", boom)
++    caplog.set_level(logging.ERROR)
++    await _resync_once(store)
++    assert len(await _profile_rows(store, uid)) == 1
++    assert any("cannot sign" in x.getMessage() for x in caplog.records)
+diff --git a/tests/test_register_profile_sync.py b/tests/test_register_profile_sync.py
+deleted file mode 100644
+index 8b733e70..00000000
+--- a/tests/test_register_profile_sync.py
++++ /dev/null
+@@ -1,84 +0,0 @@
+-# -*- coding: utf-8 -*-
+-"""注册后把用户资料同步给对端（spec fix-register-profile-sync）。
+-
+-缺陷：注册路由把函数 `node_region`（而不是它的返回值）当所属地域传给了
+-`forward_user_profile_to_peer`，签名序列化请求体时抛 `TypeError`，被路由的 try/except
+-吞成一行错误日志 —— 资料一次都没发出去。
+-
+-对端用 httpx 自带的 MockTransport 扮演，记录收到的请求；业务写入走真 PG。
+-"""
+-from __future__ import annotations
+-
+-import json
+-import logging
+-import uuid
+-
+-import httpx
+-import pytest
+-from fastapi import FastAPI
+-
+-from conftest import PG_ENV, TEST_DATABASE_URL
+-from core.node import node_region
+-from deps import get_storage
+-from routers.auth import router as auth_router
+-from storage.postgres_store import PostgresStore
+-
+-pytestmark = PG_ENV.skipif("注册资料同步用例")
+-
+-
+-def _uid(prefix: str) -> str:
+-    return f"{prefix}_{uuid.uuid4().hex[:12]}"
+-
+-
+-@pytest.fixture
+-async def store():
+-    s = PostgresStore(TEST_DATABASE_URL)
+-    await s._ensure_initialized()
+-    yield s
+-    await s.close()
+-
+-
+-@pytest.fixture(autouse=True)
+-def _env(monkeypatch):
+-    import limiter as L
+-
+-    monkeypatch.setattr(L.limiter, "enabled", False)
+-    monkeypatch.setenv("INTER_NODE_SECRET", "test-inter-node-secret-0123456789abcdef")
+-    monkeypatch.setenv("PEER_NODE_URL", "https://peer-node")
+-
+-
+-async def test_registration_sends_the_profile_with_a_string_region(store, monkeypatch, caplog):
+-    from legal_versions import CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION
+-
+-    app = FastAPI()
+-    app.include_router(auth_router)
+-    app.dependency_overrides[get_storage] = lambda: store
+-    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://t")
+-
+-    seen: list[httpx.Request] = []
+-    real_client = httpx.AsyncClient
+-
+-    def _peer(*_a, **kw):  # 转发代码在调用时才取 httpx.AsyncClient：换成记录请求的对端
+-        return real_client(transport=httpx.MockTransport(
+-            lambda req: (seen.append(req), httpx.Response(200))[1]), timeout=kw.get("timeout"))
+-
+-    monkeypatch.setattr(httpx, "AsyncClient", _peer)
+-
+-    code = _uid("c")
+-    await store.create_invite_code(code, "admin1")
+-    name = _uid("n")
+-    caplog.set_level(logging.ERROR)
+-    async with client:
+-        r = await client.post("/api/auth/register", json={
+-            "username": name, "password": "abcd1234", "invite_code": code,
+-            "agreed_terms_version": CURRENT_TERMS_VERSION,
+-            "agreed_privacy_version": CURRENT_PRIVACY_VERSION,
+-        })
+-    assert r.status_code == 200, r.text
+-
+-    sent = [json.loads(q.content) for q in seen if q.url.path == "/api/inter-node/user/sync"]
+-    assert len(sent) == 1, (
+-        f"资料没发出去；错误日志：{[x.getMessage() for x in caplog.records]}")
+-    assert sent[0]["username"] == name
+-    assert sent[0]["home_region"] == node_region(), sent[0]
+-    assert not [x for x in caplog.records if "Forward user profile" in x.getMessage()]
+diff --git a/web/cross_border_sync.py b/web/cross_border_sync.py
+index 2efa40ca..e946a467 100644
+--- a/web/cross_border_sync.py
++++ b/web/cross_border_sync.py
+@@ -12,7 +12,8 @@ import logging
+ import os
+ 
+ from core.nonfatal import nonfatal
+-from storage.base import StorageBase
++from core.node import node_region
++from storage.base import USER_PROFILE_OP, StorageBase
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -122,6 +123,37 @@ _ENDPOINT_MAP: dict[str, str] = {
+ }
+ 
+ 
++async def _post_to_peer(endpoint: str, body: dict, what: str) -> bool:
++    """Sign `body` and POST it to the peer's `endpoint`; True only on HTTP 200.
++
++    Shared by the outbox senders.  Every failure path logs `what` (op_type /
++    target_id) plus the status code or the exception — a bare False is
++    indistinguishable from "there was nothing to send", so the row would sit in
++    the outbox with nothing to debug from.
++    """
++    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
++    if not peer_url:
++        return False
++
++    from inter_node_auth import create_auth_header
++
++    import httpx
++
++    # 签名也在 try 里：签名失败（如请求体序列化不了）只让这一行留待下一轮，不能抛出
++    # `_resync_once` 把补发循环的后台任务整个带走。
++    try:
++        headers = create_auth_header(body)
++        async with httpx.AsyncClient(timeout=10) as client:
++            resp = await client.post(f"{peer_url}{endpoint}", json=body, headers=headers)
++        if resp.status_code != 200:
++            logger.error("Outbox forward rejected: %s status=%s", what, resp.status_code)
++            return False
++        return True
++    except Exception as exc:
++        logger.error("Outbox forward failed: %s error=%r", what, exc, exc_info=True)
++        return False
++
++
+ async def forward_delete_to_peer(op_type: str, target_id: str, payload: str, storage: StorageBase) -> bool:
+     """Forward a delete/retract/purge intent to the peer node.
+ 
+@@ -132,51 +164,18 @@ async def forward_delete_to_peer(op_type: str, target_id: str, payload: str, sto
+ 
+     Returns True if the peer acknowledged (HTTP 200), False otherwise.
+     The caller (resync loop) is responsible for removing the outbox row.
+-
+-    Every failure path prints op_type / target_id plus the status code or the
+-    exception — a bare False is indistinguishable from "there was nothing to
+-    send", so the row would sit in the outbox with nothing to debug from.
+     """
+-    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
+-    if not peer_url:
+-        return False
+-
+     endpoint = _ENDPOINT_MAP.get(op_type)
+     if not endpoint:
+         logger.error("Unknown delete op_type: %s", op_type)
+         return False
+ 
+-    from inter_node_auth import create_auth_header
+-
+     body = {
+         "op_type": op_type,
+         "target_id": target_id,
+         "payload": payload,
+     }
+-    headers = create_auth_header(body)
+-
+-    import httpx
+-
+-    try:
+-        async with httpx.AsyncClient(timeout=10) as client:
+-            resp = await client.post(
+-                f"{peer_url}{endpoint}",
+-                json=body,
+-                headers=headers,
+-            )
+-        if resp.status_code != 200:
+-            logger.error(
+-                "Delete forward rejected: op_type=%s target_id=%s status=%s",
+-                op_type, target_id, resp.status_code,
+-            )
+-            return False
+-        return True
+-    except Exception as exc:
+-        logger.error(
+-            "Delete forward failed: op_type=%s target_id=%s error=%r",
+-            op_type, target_id, exc, exc_info=True,
+-        )
+-        return False
++    return await _post_to_peer(endpoint, body, f"op_type={op_type} target_id={target_id}")
+ 
+ 
+ async def forward_invite_code_to_peer(record: dict) -> bool:
+@@ -249,51 +248,53 @@ async def forward_invite_code_delete_to_peer(code: str) -> bool:
+         return False
+ 
+ 
+-async def forward_user_profile_to_peer(user_id: str, username: str, home_region: str, avatar_data: str = "") -> bool:
+-    """Forward a user profile to the peer node (lightweight stub sync).
++async def forward_user_profile_to_peer(user_id: str, storage: StorageBase) -> bool:
++    """Send one `user_profile` outbox row: read the user's current profile, POST it.
+ 
+-    Best-effort: returns False on failure.  Caller is not expected to retry.
++    Returns True when the row is finished and may be removed: the peer
++    acknowledged, or there is nothing this node should announce —
++      - the user no longer exists here (a `user_purge` row carries the delete);
++      - the user is not homed on this node (e.g. a demo account mirrored from
++        the peer): each node announces only its own region's users.
++    Returns False to keep the row for the next round.
+ 
+-    A previous version of this docstring said the profile would be synced when
+-    the first DM exchange happens.  That is not true: the peer's
+-    ``/api/inter-node/dm/receive`` only inserts the message and never writes the
+-    user row.  So once this forward fails, the peer stays without the profile
+-    until some other explicit forward succeeds.
++    The profile is read at send time, not stored in the row, so a round always
++    sends the latest version; see `USER_PROFILE_OP` for the version stamp.
+     """
+-    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
+-    if not peer_url:
++    what = f"op_type={USER_PROFILE_OP} target_id={user_id}"
++    try:
++        user = await storage.get_user_by_id(user_id)
++    except Exception as exc:
++        logger.error("Outbox profile read failed: %s error=%r", what, exc, exc_info=True)
+         return False
++    if user is None:
++        logger.info("Outbox profile dropped, user no longer exists: %s", what)
++        return True
++    if user.get("home_region") != node_region():
++        logger.info("Outbox profile dropped, user homed on %s not here: %s",
++                    user.get("home_region"), what)
++        return True
+ 
+-    from inter_node_auth import create_auth_header
+-
+-    payload = {
+-        "id": user_id,
+-        "username": username,
+-        "home_region": home_region,
+-        "avatar_data": avatar_data,
++    body = {
++        "id": user["id"],
++        "username": user.get("username", ""),
++        "home_region": user["home_region"],
++        "avatar_data": user.get("avatar_data") or "",
+     }
+-    headers = create_auth_header(payload)
++    return await _post_to_peer("/api/inter-node/user/sync", body, what)
+ 
+-    import httpx
+ 
+-    try:
+-        async with httpx.AsyncClient(timeout=10) as client:
+-            resp = await client.post(
+-                f"{peer_url}/api/inter-node/user/sync",
+-                json=payload,
+-                headers=headers,
+-            )
+-        return resp.status_code == 200
+-    except Exception as exc:
+-        logger.error(
+-            "User-profile forward failed (no retry): user_id=%s error=%r",
+-            user_id, exc, exc_info=True,
+-        )
+-        return False
++async def _forward_outbox_row(row: dict, storage: StorageBase) -> bool:
++    """Route one outbox row to its sender by op_type."""
++    if row["op_type"] == USER_PROFILE_OP:
++        return await forward_user_profile_to_peer(row["target_id"], storage)
++    return await forward_delete_to_peer(
++        row["op_type"], row["target_id"], row.get("payload", ""), storage,
++    )
+ 
+ 
+ async def _resync_once(storage: StorageBase) -> None:
+-    """One resync round: DMs, cards, then the delete outbox.
++    """One resync round: DMs, cards, then the outbox (deletes + user profiles).
+ 
+     The three sections are independent — each guards its own query, so one
+     failing does not cancel the others.  DM/card rows get a `synced` flag;
+@@ -333,21 +334,19 @@ async def _resync_once(storage: StorageBase) -> None:
+                 ):
+                     await storage.mark_card_synced(card["id"])
+ 
+-    # ── Delete propagation resync ──
++    # ── Outbox resync (delete propagations + user profiles) ──
+     try:
+         pending = await storage.get_pending_delete_propagations(limit=100)
+     except Exception as exc:
+         logger.error("Delete outbox query failed: %s", exc, exc_info=True)
+     else:
+         for row in pending:
+-            ok = await forward_delete_to_peer(
+-                row["op_type"], row["target_id"], row.get("payload", ""), storage,
+-            )
++            ok = await _forward_outbox_row(row, storage)
+             if ok:
+                 async with nonfatal(
+-                    "cross_border_resync", f"remove delete propagation {row['id']}",
++                    "cross_border_resync", f"remove outbox row {row['id']}",
+                 ):
+-                    await storage.remove_delete_propagation(row["id"])
++                    await storage.remove_delete_propagation(row["id"], row.get("payload"))
+ 
+ 
+ async def _cross_border_resync_loop() -> None:
+diff --git a/web/routers/auth.py b/web/routers/auth.py
+index 605cdd80..46b0fc2d 100644
+--- a/web/routers/auth.py
++++ b/web/routers/auth.py
+@@ -441,12 +441,8 @@ async def register(
+     if inv:
+         await storage.use_invite_code(inv, user["id"])
+ 
+-    # Best-effort sync profile to peer node
+-    try:
+-        from cross_border_sync import forward_user_profile_to_peer
+-        await forward_user_profile_to_peer(user["id"], user.get("username", ""), home_region, user.get("avatar_data", ""))
+-    except Exception as exc:
+-        logger.error("Forward user profile to peer failed: %s", exc, exc_info=True)
++    # 资料同步给对端：`create_user` 已在建用户的同一事务里入队，由补发循环发送（见
++    # `storage.base.USER_PROFILE_OP`）。
+ 
+     # Record consent
+     try:

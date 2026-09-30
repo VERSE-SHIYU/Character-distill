@@ -93,7 +93,7 @@
 - **对话流**：`ChatEngine` ──uses──▶ `LLMAdapter`（LLM 调用）＋ `RAGEngine`（情感感知检索）＋ `MemoryManager`（长期记忆）。图路径实证：`ChatEngine --uses--> LLMAdapter <--uses-- Distiller`，对话与蒸馏共用同一 LLM 适配层。
 - **蒸馏流**：文本 ─▶ `Distiller` ─▶ `CharacterCard` ─▶ 场景索引（`SceneIndexer`/`IndexingService`）── 产物同时进入市场/历史。
 - **存储抽象流**：业务层 ─▶ `StorageBase` ─▶ `SQLiteStore` / `PostgresStore`（工厂切换，无 import 环）。
-- **跨区域同步**：`web/cross_border_sync.py` 的 `backfill()` ──calls──▶ `forward_user_profile_to_peer()`（图：INFERRED 边，scripts/backfill_users.py → web/cross_border_sync.py）。
+- **跨区域同步**：注册 / 改头像在同一事务里把资料写进 `cross_border_delete_outbox`（op_type `user_profile`），补发循环 `_resync_once` ──calls──▶ `forward_user_profile_to_peer()` 发送；存量由迁移 `030_backfill_profile_sync.sql` 入队（原手动脚本 `scripts/backfill_users.py` 已删）。
 
 ## 6. 跨切面关注点（Hyperedges）
 
