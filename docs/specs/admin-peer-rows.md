@@ -102,3 +102,10 @@
 
 ## 验收
 视觉只多一行提示文字、少几个按钮，不单独截图；部署后你打开用户管理页看一眼对端行即可。
+
+## 补充：审计结论（2026-09-30）
+- 934bffe 落位后，「节点」列（:552–:553）仍手写 `u.node_region === 'peer'`，违反「已查实的约束」第 2 条（对端判定只在 `isPeerRow` 一处）；且 `admin-status${… ? '' : ''}` 两分支同值，是死三元。
+- 已在本段改动面内直接修：5406199 `refactor(admin): 节点列去掉死三元、对端判定统一走 isPeerRow`。className 固定为 `admin-status`，文字改用 `isPeerRow(u)`；行为不变。
+- 复核：`git grep -n "node_region" origin/main -- web/frontend/src/components/AdminPanel.jsx` 只剩 :49（`isPeerRow` 定义本身）。
+- 代码经 PR #77 合入 main（cae5510f）。
+- 不在本段（归下一份 spec）：跨节点禁用/启用、`set_user_disabled` 找不到用户静默成功、能禁用自己。
