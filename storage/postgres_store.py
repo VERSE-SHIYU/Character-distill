@@ -2505,7 +2505,12 @@ class PostgresStore(StorageBase):
     async def set_user_disabled(self, user_id: str, is_disabled: bool) -> None:
         try:
             async with await self._connect() as conn:
-                await conn.execute("UPDATE users SET is_disabled = $1 WHERE id = $2", int(is_disabled), user_id)
+                tag = await conn.execute(
+                    "UPDATE users SET is_disabled = $1 WHERE id = $2", int(is_disabled), user_id)
+            if self._parse_rowcount(tag) == 0:
+                raise ValueError(f"用户不存在：{user_id}")
+        except ValueError:
+            raise
         except Exception as exc:
             print(f"[PostgresStore] Set user disabled failed: {exc}")
             raise
@@ -3004,7 +3009,10 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 async with conn.transaction():
-                    await conn.execute("UPDATE users SET is_disabled = 1 WHERE id = $1", user_id)
+                    tag = await conn.execute("UPDATE users SET is_disabled = 1 WHERE id = $1", user_id)
+                    if self._parse_rowcount(tag) == 0:
+                        # 在事务内抛：后两条写一条都不落。
+                        raise ValueError(f"用户不存在：{user_id}")
                     tag = await conn.execute("DELETE FROM user_posts WHERE user_id = $1", user_id)
                     counts["posts_deleted"] = self._parse_rowcount(tag)
                     tag = await conn.execute(
@@ -3015,6 +3023,8 @@ class PostgresStore(StorageBase):
                     )
                     counts["reports_resolved"] = self._parse_rowcount(tag)
             return counts
+        except ValueError:
+            raise
         except Exception as exc:
             print(f"[PostgresStore] Ban user failed: {exc}")
             raise

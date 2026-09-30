@@ -3142,8 +3142,13 @@ class SQLiteStore(StorageBase):
     async def set_user_disabled(self, user_id: str, is_disabled: bool) -> None:
         try:
             async with await self._connect() as conn:
-                await conn.execute("UPDATE users SET is_disabled = ? WHERE id = ?", (int(is_disabled), user_id))
+                cursor = await conn.execute(
+                    "UPDATE users SET is_disabled = ? WHERE id = ?", (int(is_disabled), user_id))
                 await conn.commit()
+            if cursor.rowcount == 0:
+                raise ValueError(f"用户不存在：{user_id}")
+        except ValueError:
+            raise
         except Exception as exc:
             print(f"[SQLiteStore] Set user disabled failed: {exc}")
             raise
@@ -3702,7 +3707,9 @@ class SQLiteStore(StorageBase):
         counts = {"posts_deleted": 0, "reports_resolved": 0}
         try:
             async with await self._connect() as conn:
-                await conn.execute("UPDATE users SET is_disabled = 1 WHERE id = ?", (user_id,))
+                cursor = await conn.execute("UPDATE users SET is_disabled = 1 WHERE id = ?", (user_id,))
+                if cursor.rowcount == 0:
+                    raise ValueError(f"用户不存在：{user_id}")
                 cursor = await conn.execute("DELETE FROM user_posts WHERE user_id = ?", (user_id,))
                 counts["posts_deleted"] = cursor.rowcount
                 cursor = await conn.execute(
@@ -3714,6 +3721,8 @@ class SQLiteStore(StorageBase):
                 counts["reports_resolved"] = cursor.rowcount
                 await conn.commit()
             return counts
+        except ValueError:
+            raise
         except Exception as exc:
             print(f"[SQLiteStore] Ban user failed: {exc}")
             raise

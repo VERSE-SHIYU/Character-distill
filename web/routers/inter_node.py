@@ -8,13 +8,18 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+import admin_user_ops
 from deps import get_storage
 from inter_node_auth import verify_auth_header
+from limiter import limiter
 from storage.base import StorageBase
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/inter-node", tags=["inter-node"])
@@ -287,3 +292,52 @@ async def receive_user_sync(
     await storage.upsert_remote_user_profile(user_id, username, home_region, avatar_data)
 
     return {"ok": True, "user_id": user_id}
+
+
+#: 与发起端 `routers/admin.py::PEER_SET_DISABLED_OP` 同值。请求体里必须带这个操作名：
+#: 现行签名只覆盖请求体、不覆盖路径，别的接口签出来的请求体若字段凑巧兼容，就能搬到
+#: 这里来 —— 校验操作名把这份请求体绑定到本接口（字段名也刻意不与其它接收端重合）。
+SET_DISABLED_OP = "admin_set_user_disabled"
+
+
+@router.post("/admin/user-disabled")
+@limiter.limit("30/minute")
+async def receive_admin_set_user_disabled(
+    request: Request,
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """对端管理员禁用 / 启用本节点的用户（谁的用户谁执行）。
+
+    Authenticated via HMAC-SHA256, NOT JWT. 执行走 `admin_user_ops.set_user_disabled`，
+    与本地路由同一份前置条件（404 / 不能禁用自己）。
+    """
+    body = await request.json()
+    payload = body if isinstance(body, dict) else {}
+
+    auth_header = request.headers.get("Authorization", "")
+    valid, reason = verify_auth_header(auth_header, payload)
+    if not valid:
+        raise HTTPException(401, f"Unauthorized: {reason}")
+
+    if payload.get("op") != SET_DISABLED_OP:
+        raise HTTPException(400, "op 与接口不符")
+    subject = str(payload.get("subject_user_id") or "")
+    operator = str(payload.get("operator_id") or "")
+    disabled = payload.get("disabled")
+    request_id = str(payload.get("request_id") or "")
+    if not subject or not operator or not isinstance(disabled, bool):
+        raise HTTPException(400, "Missing required fields: subject_user_id, operator_id, disabled")
+
+    try:
+        await admin_user_ops.set_user_disabled(
+            storage, target_id=subject, operator_id=operator, disabled=disabled,
+        )
+    except HTTPException as exc:
+        logger.warning(
+            "peer admin set_disabled refused: request_id=%s operator=%s subject=%s "
+            "disabled=%s status=%s", request_id, operator, subject, disabled, exc.status_code)
+        raise
+    logger.info(
+        "peer admin set_disabled applied: request_id=%s operator=%s subject=%s disabled=%s",
+        request_id, operator, subject, disabled)
+    return {"ok": True}

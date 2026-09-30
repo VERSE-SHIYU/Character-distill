@@ -569,7 +569,14 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def set_user_disabled(self, user_id: str, is_disabled: bool) -> None:
-        """Disable or enable a user account."""
+        """Disable or enable a user account. Unknown id raises ValueError（不返回「成功却没写」）。"""
+
+    @abstractmethod
+    async def ban_user_and_contents(self, user_id: str, admin_id: str) -> dict:
+        """Disable user + delete their posts + resolve their comment reports, in one transaction.
+
+        Unknown id raises ValueError and nothing is written.
+        """
 
     @abstractmethod
     async def reset_user_password(self, user_id: str, password_hash: str) -> bool:
