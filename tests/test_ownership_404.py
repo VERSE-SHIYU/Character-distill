@@ -182,6 +182,17 @@ def _card(store, uid):
     return cid
 
 
+def _book_cards(store, uid) -> list[str]:
+    """同一本书里两个不同角色的卡 —— 群聊成员的最小合法组合（`group._check_group_members`）。"""
+    tid = _text(store, uid)
+    cids = []
+    for name in ("张三", "李四"):
+        cid = f"card_{uuid.uuid4().hex}"
+        _run_async(store.save_card(cid, tid, name, f'{{"name": "{name}"}}', user_id=uid))
+        cids.append(cid)
+    return cids
+
+
 def _group(store, uid):
     gid = f"grp_{uuid.uuid4().hex}"
     _run_async(store.create_group_session(gid, "群聊A", [], user_id=uid))
@@ -254,12 +265,11 @@ class TestGroupOwnership:
     def test_create_group_with_foreign_card_404(self, store, owner, intruder_client):
         """入参 card_id 属主校验：非属主的卡与不存在的卡同判 404。
 
-        身份用 stranger（单卡即可），否则默认 director 模式会先因「至少2个AI角色」返 400，
+        用一组合法的成员（同一本书的两个角色），否则请求会先因成员规则返 422 / 400，
         到不了属主校验那一行。
         """
-        cid = _card(store, owner)
         r = intruder_client.post("/api/group/create", json={
-            "card_ids": [cid],
+            "card_ids": _book_cards(store, owner),
             "user_persona_type": "stranger",
             "user_persona_name": "路人",
         })
@@ -754,9 +764,10 @@ class TestGroupSessionOwnership:
     """群聊：内存命中也得判「是不是你的」，不只看删没删。"""
 
     def _create_owned_group(self, client, store, owner):
-        cid = _card(store, owner)
+        cards = _book_cards(store, owner)
+        cid = cards[0]
         r = client.post("/api/group/create", json={
-            "card_ids": [cid],
+            "card_ids": cards,
             "user_persona_type": "stranger",
             "user_persona_name": "路人",
         })

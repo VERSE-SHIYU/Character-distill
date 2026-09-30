@@ -19,12 +19,12 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from core.message_outbox import SaveState, save_field
-from core.nonfatal import nonfatal
 from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
-from adapters.llm_adapter import user_facing_error
+from adapters.llm_adapter import LLMAdapter, user_facing_error
 from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
+from core.embeddings import EMBEDDING_KEY_REQUIRED
 from core.export import export_tavern_json
 from core.schema import CharacterCard
 from core.utils import try_record_usage
@@ -1210,13 +1210,14 @@ async def reindex_rag(
         raise HTTPException(404, "Text not found")
     content = text_rec["content"]
 
-    # 不设就地捕获（理由见 `_do_identify` 上方的块注释）：识别失败冒泡到统一出口。
-    chars = await resolve_characters(storage, distiller, text_id, user_id, content)
-
+    # 先确认建得了，再识别：识别可能要调一次 LLM，建不了就不该花这一笔。
     emb = resolve_embedding(await storage.get_user_api_config(user_id) or {})
     indexing_service = get_indexing_service()
     if not emb.key or indexing_service is None:
-        raise HTTPException(400, "未配置向量检索 API Key，请在设置页填写阿里云百炼 API Key")
+        raise HTTPException(400, EMBEDDING_KEY_REQUIRED)
+
+    # 不设就地捕获（理由见 `_do_identify` 上方的块注释）：识别失败冒泡到统一出口。
+    chars = await resolve_characters(storage, distiller, text_id, user_id, content)
 
     indexing_service.schedule_text_reindex(
         text_id, content, all_characters=chars,

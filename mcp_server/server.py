@@ -22,10 +22,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
-import io
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # 让本进程能 import 仓库内的 core/ / adapters/
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -45,12 +45,12 @@ SERVER_VERSION = "0.1.0"
 
 
 # ── 进程级缓存 ─────────────────────────────────────────────
-# card_id → AgentToolkit；text_id → RAGEngine（照抄 group.py text_rag_cache 口径，
-# RAG 是 per-text_id 而非 per-card：同文本多卡共享一个引擎，靠 card.name 过滤角色片段）。
+# card_id → AgentToolkit；text_id → RAGEngine（RAG 是 per-text_id 而非 per-card：同文本
+# 多卡共享一个只读引擎，靠 card.name 过滤角色片段；MCP 从不改指、从不建集合）。
 # 多卡仍串行（exec_lock 串行化构建/执行），缓存更新无并发竞争，无需额外加锁。
 _toolkit_by_card_id: dict[str, AgentToolkit] = {}
-_rag_by_text_id: dict[str, "Any"] = {}
-_storage: "Any" = None  # storage.get_store() 单例，首次在 serve 事件循环内惰性创建
+_rag_by_text_id: dict[str, Any] = {}
+_storage: Any = None  # storage.get_store() 单例，首次在 serve 事件循环内惰性创建
 
 
 class _NoCardError(Exception):
@@ -120,9 +120,6 @@ def _lazy_llm():
 def _make_toolkit(card, rag, card_id: str):
     """按 CharacterCard 构建 ContextEngine + AgentToolkit。构建会 print（ContextEngine
     预算、RAG），调用方需自行包 _stdout_to_stderr。"""
-    from core.agent.tools import AgentToolkit
-    from core.context_engine import ContextEngine
-
     llm, llm_model = _lazy_llm()
     ctx = ContextEngine(
         card=card,
@@ -136,11 +133,12 @@ def _make_toolkit(card, rag, card_id: str):
     return AgentToolkit(ctx, current_mood=os.getenv("MCP_MOOD"))
 
 
-def _rag_for_text_id(text_id: str, text_content: str | None):
-    """per-text_id 取/建 RAGEngine（照抄 group.py:129-139）。text_id 空 → None。
+def _rag_for_text_id(text_id: str):
+    """per-text_id 取 RAGEngine（进程内缓存）。text_id 空 → None。
 
-    只读 load_existing(f"text_{text_id}")，不主动建集合——文本在蒸馏时就已索引，
-    与生产一致：未索引文本 scenes 检索为空，而非 MCP 调用时突发重建烧 embed。
+    只装载 `text_{text_id}`，**从不建集合**：集合只由 web 进程的后台作业建
+    （`core/indexing_service.py` 的构建登记只管本进程，MCP 若也建就会与它并发先删后建）。
+    未索引的文本 scenes 检索为空，而非 MCP 调用时突发重建烧 embed。
     """
     if not text_id:
         return None
@@ -154,19 +152,14 @@ def _rag_for_text_id(text_id: str, text_content: str | None):
         rag.load_existing(f"text_{text_id}")
     except CollectionUnusableError as exc:
         # 集合维度与当前 embedder 不符（如迁移前 384 旧集合）：确定性不可用，
-        # 降级为无集合检索、不 index() 重建 —— 重建留待显式迁移方案。
+        # 降级为无集合检索、不重建 —— 重建留待显式迁移方案。
         print(f"[MCP] text_{text_id} 集合不可用（向量维度不符/损坏），降级空检索、不重建：{exc}",
               file=sys.stderr)
-    except Exception as exc:  # noqa: BLE001 —— load 真抛错且非维度不符才回退重建
-        if text_content:
-            rag.index(text_content, collection_name=f"text_{text_id}")
-        else:
-            print(f"[MCP] text_{text_id} 无正文且 load_existing 失败：{exc}", file=sys.stderr)
     _rag_by_text_id[text_id] = rag
     return rag
 
 
-def _build_toolkit_blocking(card_rec: dict, text_content: str | None, card_id: str):
+def _build_toolkit_blocking(card_rec: dict, card_id: str):
     """同步构建 worker（chroma load_existing / ContextEngine 构建会 print → 转 stderr）。"""
     with _stdout_to_stderr():
         from core.schema import CharacterCard
@@ -177,7 +170,7 @@ def _build_toolkit_blocking(card_rec: dict, text_content: str | None, card_id: s
             raise _NoCardError(f"card_id={card_id!r} card_json 解析失败：{exc}") from exc
 
         text_id = (card_rec.get("text_id") or "").strip()
-        rag = _rag_for_text_id(text_id, text_content) if text_id else None
+        rag = _rag_for_text_id(text_id)
         return _make_toolkit(card, rag, card_id)
 
 
@@ -192,15 +185,7 @@ async def _toolkit_for(card_id: str):
     if not card_rec:
         raise _NoCardError(f"card not found：{card_id!r}")
 
-    text_id = (card_rec.get("text_id") or "").strip()
-    text_content = None
-    if text_id and text_id not in _rag_by_text_id:
-        # _unscoped：MCP stdio 通道无身份语境，按 card_id 路由，可服务任意已蒸馏卡。
-        text_rec = await _get_storage().get_text_unscoped(text_id)
-        if text_rec:
-            text_content = text_rec.get("content")
-
-    toolkit = await asyncio.to_thread(_build_toolkit_blocking, card_rec, text_content, card_id)
+    toolkit = await asyncio.to_thread(_build_toolkit_blocking, card_rec, card_id)
     _toolkit_by_card_id[card_id] = toolkit
     return toolkit
 

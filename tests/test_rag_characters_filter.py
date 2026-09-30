@@ -170,6 +170,9 @@ class _CapturingCollection:
     def add(self, documents=None, ids=None, metadatas=None):
         self.metas = metadatas
 
+    def modify(self, metadata=None):
+        self.metadata = dict(metadata or {})  # 真件语义：整份覆盖
+
 
 class _CapturingClient:
     """chroma Client 替身。形状照真件：`get_collection` 不存在即 `NotFoundError`、

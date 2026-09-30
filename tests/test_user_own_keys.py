@@ -152,7 +152,7 @@ def no_rag_engine(monkeypatch):
 def test_T4a_rag_for_session_without_embedding_key_is_none(no_rag_engine):
     import core.indexing_service as IS
 
-    svc = IS.IndexingService(storage=None, rag_config={"top_k": 3})
+    svc = IS.IndexingService({"top_k": 3})
     assert svc.get_rag_for_session(
         "txt_x", card_id="card_x", embedding_key="", embedding_region="cn") is None
     assert no_rag_engine.built == [], "没有 embedding key 却去构造了 RAGEngine"
@@ -163,7 +163,7 @@ def test_T4b_scene_index_without_embedding_key_is_not_scheduled(monkeypatch):
 
     scheduled: list = []
     monkeypatch.setattr(IS.asyncio, "create_task", lambda coro: scheduled.append(coro))
-    svc = IS.IndexingService(storage=None, rag_config={"top_k": 3})
+    svc = IS.IndexingService({"top_k": 3})
     svc.schedule_scene_index("txt_x", "card_x", "正文", "甲", embedding_key="", embedding_region="cn")
     assert scheduled == [], "没有 embedding key 却调度了场景索引"
     assert "scenes_card_x" not in IS._scene_index_in_flight, "去重表里留下了一条没调度的任务"

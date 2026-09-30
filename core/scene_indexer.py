@@ -7,11 +7,10 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any
 
 from chromadb.errors import NotFoundError
 
-from core.rag import CollectionUnusableError, RAGEngine, characters_tag
+from core.rag import CollectionUnusableError, RAGEngine, characters_tag, mark_built
 
 # 简单情感关键词映射（可扩充）
 _EMOTION_KEYWORDS: dict[str, list[str]] = {
@@ -66,11 +65,11 @@ class SceneIndexer:
 
         幂等的由来：本方法有**两处**调度者（蒸馏落卡、打开卡片时的
         `/start_session`），两者之间隔着人操作时间（分钟到天），
-        `IndexingService` 那层 `_scene_index_in_flight` 去重只管并发窗口，
-        挡不住第二次。而重建要付两笔代价：一次全量 embedding，以及
-        `delete_collection` 先于 `create_collection` 的那段空窗 —— 正在读这个
-        集合的会话在空窗里查询恒空。故先按正文指纹复用；正文变了
-        （重解析）才重建。
+        `IndexingService` 那层去重只管同一时刻（跑着时再来的排在后面），
+        挡不住隔了很久的第二次。而重建要付两笔代价：一次全量 embedding，以及
+        `delete_collection` 先于 `create_collection` 的那段空窗 —— 这期间会话
+        检索跳过本集合（回落原文集合，或本轮记为失败）。故先按正文指纹复用；
+        正文变了（重解析）或维度不符才重建。
         """
         scenes = self._split_scenes(text)
         if not scenes:
@@ -113,6 +112,7 @@ class SceneIndexer:
             })
 
         collection.add(documents=docs, ids=ids, metadatas=metas)
+        mark_built(collection)
         print(f"[embed-stats] Scene index scenes={len(docs)} collection={name}")
 
         rag.collection = collection

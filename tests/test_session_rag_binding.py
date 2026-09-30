@@ -14,9 +14,10 @@
   5. `/api/distill/reindex/{text_id}` 遍历内存里**所有用户**的会话，拿调用者的原文重建
      每个会话的检索。
 
-**现在的约定。** 会话拿 `SessionRag`：建会话时不做 IO；每次检索前按
-`scenes_{card_id}` → `text_{text_id}` 装载，绑上本卡场景集合后不再重读；查询失败丢掉
-手里的引擎、下一轮重读。建集合只在后台，按集合名加锁，去重键在线程真正结束后才释放。
+**现在的约定。** 会话拿 `SessionRag`：建会话时不做 IO；按 `scenes_{card_id}` →
+`text_{text_id}` 取第一个可用的集合（正在建 / 维度不符的跳过看下一个），装载结果一直用到
+有集合建完或本会话查询失败才重读。建集合只在后台，经构建登记按集合名互斥；去重键在线程
+真正结束后才释放，期间再来的调度按最新参数排在后面跑。
 
 **观测面。** 服务层用假 chroma 客户端驱动真 `IndexingService` / 真 `SceneIndexer`；
 调用点层用「按 (text_id, card_id) 返回不同对象」的索引服务替身。不碰真 chroma、不碰
@@ -27,9 +28,8 @@ Run: pytest tests/test_session_rag_binding.py -v
 from __future__ import annotations
 
 import asyncio
-import threading
 import time
-from typing import Any
+import uuid
 
 import pytest
 from chromadb.errors import NotFoundError
@@ -59,6 +59,8 @@ class _Embedder:
 class _Collection:
     def __init__(self, name: str, metadata: dict | None = None) -> None:
         self.name = name
+        self.id = uuid.uuid4()  # 真件语义：先删后建换 id
+        self.dim = _Embedder._dimensions  # 改成别的值 = 由别的 embedder 写的旧集合
         self.metadata = dict(metadata or {})
         self.docs: list[str] = []
         self.metas: list[dict] = []
@@ -68,11 +70,14 @@ class _Collection:
         self.docs.extend(documents or [])
         self.metas.extend(metadatas or [{} for _ in (documents or [])])
 
+    def modify(self, metadata=None):
+        self.metadata = dict(metadata or {})  # 真件语义：整份覆盖，不合并
+
     def count(self) -> int:
         return len(self.docs)
 
     def peek(self, limit: int = 1):
-        return {"embeddings": [[0.0] * _Embedder._dimensions] if self.docs else []}
+        return {"embeddings": [[0.0] * self.dim] if self.docs else []}
 
     def query(self, query_texts=None, n_results=3, include=None):
         if self.fail_next_query:
@@ -89,8 +94,9 @@ class _Client:
         self.cols: dict[str, _Collection] = {}
         self.creates: list[str] = []
 
-    def seed(self, name: str) -> None:
+    def seed(self, name: str, *, dim: int = _Embedder._dimensions) -> None:
         col = _Collection(name)
+        col.dim = dim
         col.add(documents=["x"], metadatas=[{"characters": "魏无羡"}])
         self.cols[name] = col
 
@@ -131,7 +137,7 @@ def _patch_engine(monkeypatch, client: _Client) -> list[RAGEngine]:
 
 
 def _svc() -> IS.IndexingService:
-    return IS.IndexingService(storage=None, rag_config={"chunk_size": 200, "chunk_overlap": 20, "top_k": 3})
+    return IS.IndexingService({"chunk_size": 200, "chunk_overlap": 20, "top_k": 3})
 
 
 def _view(svc, text_id: str, card_id: str):
@@ -289,6 +295,66 @@ def test_b4_a_failed_query_drops_the_engine_and_the_next_turn_rereads(monkeypatc
     assert view.collection_name == "scenes_c1"
 
 
+def test_b5_unusable_scenes_fall_back_to_the_text_collection(monkeypatch):
+    """本卡场景集合是别的 embedder 写的旧集合：跳过它，原文集合照样用。"""
+    client = _Client()
+    client.seed("scenes_c1", dim=384)
+    client.seed("text_t1")
+    _patch_engine(monkeypatch, client)
+    view = _view(_svc(), "t1", "c1")
+
+    _ask(view)
+
+    assert view.collection_name == "text_t1", (
+        f"场景集合不可用时没回落原文集合：{view.collection_name!r}")
+
+
+def test_b6_no_usable_collection_fails_each_turn_but_loads_once(monkeypatch):
+    """集合都不可用：每轮检索都记为失败，但集合没变就不重读 —— 集合被重建后下一轮接上。
+
+    重建放在构建登记**之外**做，模拟别的进程（离线修复脚本）改了集合：会话只能靠
+    集合自己的版本令牌（id / 条数）发现。
+    """
+    client = _Client()
+    client.seed("text_t1", dim=384)
+    made = _patch_engine(monkeypatch, client)
+    view = _view(_svc(), "t1", "c1")
+
+    for _ in range(3):
+        with pytest.raises(CollectionUnusableError):
+            _ask(view)
+    assert len(made) == 1, f"不可用的结论没留住，每轮都在重读（造了 {len(made)} 个引擎）"
+
+    client.seed("text_t1")  # 另一个进程按当前 embedder 重建了它
+    _ask(view)
+
+    assert len(made) == 2 and view.collection_name == "text_t1", (
+        "集合被别的进程重建好之后，下一轮没有重读")
+
+
+def test_b7_a_collection_being_built_fails_the_turn_instead_of_reading_empty(monkeypatch):
+    """原文集合正在重建（先删后建）：本轮是「失败」，不是「真没有」；建完下一轮接上。
+
+    写入发生在这一轮检索**之前**：构建结束时集合的 id / 条数都不再变，只能靠令牌里
+    「本进程是否正在建」那一项发现构建已结束。
+    """
+    client = _Client()
+    _patch_engine(monkeypatch, client)
+    view = _view(_svc(), "t1", "c1")
+
+    with IS._builds.building("text_t1"):
+        client.seed("text_t1")
+        with pytest.raises(IS.CollectionBuilding):
+            _ask(view)
+    _ask(view)
+
+    assert view.collection_name == "text_t1"
+
+
+def test_b8_a_session_without_text_gets_no_retrieval():
+    assert _view(_svc(), "", "c1") is None, "独立卡片（没有原文）不该拿到检索"
+
+
 # ── 后台：同一集合一次只建一份；去重键等线程结束才释放 ────────────────────────
 
 
@@ -354,6 +420,33 @@ def test_c2_dedup_key_is_held_until_the_worker_thread_finishes(monkeypatch):
         f"第一个作业的线程还在写，第二个作业又建了一遍（原文集合建了 {calls.count('text_t1')} 次）")
 
 
+def test_c3_a_job_scheduled_while_one_runs_is_run_after_it_with_the_latest_input(monkeypatch):
+    """重建还在跑时又来两次：不丢，也不并发；前一个结束后按**最新**那次的名单再跑一次。"""
+    client = _Client()
+    _patch_engine(monkeypatch, client)
+    rosters: list = []
+
+    def _index(self, text, collection_name=None, all_characters=None):
+        rosters.append(all_characters)
+        time.sleep(0.2)
+        col = client.create_collection(name=collection_name)
+        col.add(documents=["x"], metadatas=[{}])
+        self.collection, self.collection_name = col, collection_name
+
+    monkeypatch.setattr(RAGEngine, "index", _index)
+    svc = _svc()
+
+    def _reindex(roster):
+        svc.schedule_text_reindex("t1", TEXT, all_characters=roster,
+                                  embedding_key=KEY, embedding_region=REGION)
+
+    _run_jobs(lambda: (_reindex(["第一次"]), _reindex(["第二次"]), _reindex(["第三次"])))
+
+    assert rosters == [["第一次"], ["第三次"]], (
+        f"跑着的时候再来的调度应合并成一次、用最新的名单：{rosters}")
+    assert "text_t1" not in IS._scene_index_in_flight and "text_t1" not in IS._pending_jobs
+
+
 # ── 调用点层：每条建会话的路都把「本卡的」检索交给引擎 ─────────────────────────
 
 
@@ -364,7 +457,8 @@ class _Indexing:
         self.reindexed: list[tuple] = []
 
     def get_rag_for_session(self, text_id, *, card_id, embedding_key, embedding_region):
-        return ("rag", text_id, card_id)
+        # 与真件同一契约：没有原文（独立卡片）→ None。
+        return ("rag", text_id, card_id) if text_id else None
 
     def schedule_scene_index(self, *_a, **_kw):
         return None
@@ -621,3 +715,157 @@ def test_x4_reindex_touches_no_session_and_schedules_the_callers_text(monkeypatc
     assert touched == [], "reindex 动了别的用户的会话检索"
     assert resp.status_code == 200, resp.text
     assert indexing.reindexed == [("t1", KEY)], f"没有在后台重建调用者这本书：{indexing.reindexed}"
+
+
+def test_x5_reindex_without_embedding_key_spends_no_identify_call(monkeypatch):
+    """建不了（没配向量检索 key）就先拒绝 —— 不先花一次识别调用。"""
+    import deps
+    import routers.distill as D
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from deps import get_storage
+    from routers.auth import get_current_user
+
+    identified: list = []
+
+    async def _chars(*_a, **_kw):
+        identified.append(1)
+        return []
+
+    class _NoKeyStore(_Store):
+        async def get_user_api_config(self, user_id):
+            return {}
+
+    indexing = _Indexing()
+    monkeypatch.setattr(deps, "get_user_llm", _user_llm)
+    monkeypatch.setattr(deps, "get_distiller", lambda **_kw: object())
+    monkeypatch.setattr(D, "resolve_characters", _chars)
+    monkeypatch.setattr(D, "get_indexing_service", lambda: indexing)
+    app = FastAPI()
+    app.include_router(D.router)
+    app.dependency_overrides[get_storage] = lambda: _NoKeyStore("u1")
+    app.dependency_overrides[get_current_user] = lambda: {"id": "u1", "role": "user"}
+
+    resp = TestClient(app, raise_server_exceptions=False).post("/api/distill/reindex/t1")
+
+    from core.embeddings import EMBEDDING_KEY_REQUIRED
+
+    assert resp.status_code == 400, resp.text
+    assert resp.json() == {"detail": EMBEDDING_KEY_REQUIRED}, f"没配 key 时只该给配置提示：{resp.json()}"
+    assert identified == [], "没配 key、建不了，却先跑了一次角色识别"
+    assert indexing.reindexed == []
+
+
+# ── 版本令牌对真 chroma 成立：另一个进程重建集合，本进程读得到 ─────────────────────
+
+
+_OTHER_PROCESS = r"""
+import sys
+sys.path.insert(0, sys.argv[2])
+import chromadb
+from chromadb.api.types import EmbeddingFunction
+from core.rag import mark_built
+
+class EF(EmbeddingFunction):
+    def __init__(self):
+        pass
+    def __call__(self, input):
+        return [[0.1, 0.2] for _ in input]
+    @staticmethod
+    def name():
+        return "test"
+
+client = chromadb.PersistentClient(path=sys.argv[1])
+if sys.argv[3] == "rebuild":
+    client.delete_collection("text_t1")
+    col = client.create_collection("text_t1", embedding_function=EF())
+else:  # "append"：同一个集合追加写入，id 不变
+    col = client.get_collection("text_t1", embedding_function=EF())
+col.add(ids=[f"n{i}" for i in range(2)], embeddings=[[0.1, 0.2]] * 2, documents=["x", "y"])
+mark_built(col)
+"""
+
+
+class _RealEF:
+    """真 chroma 用的小嵌入函数（不出网）。"""
+
+    def __new__(cls):
+        from chromadb.api.types import EmbeddingFunction
+
+        class _EF(EmbeddingFunction):
+            def __init__(self):
+                pass
+
+            def __call__(self, input):
+                return [[0.1, 0.2] for _ in input]
+
+            @staticmethod
+            def name():
+                return "test"
+
+        return _EF()
+
+
+def _real_engine(path) -> RAGEngine:
+    import chromadb
+
+    eng = object.__new__(RAGEngine)
+    eng._client = chromadb.PersistentClient(path=str(path))
+    eng._embedding_function = _RealEF()
+    return eng
+
+
+def _in_other_process(path, mode: str) -> None:
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo = str(Path(__file__).resolve().parent.parent)
+    subprocess.run([sys.executable, "-c", _OTHER_PROCESS, str(path), repo, mode], check=True)
+
+
+@pytest.mark.parametrize("mode", ["rebuild", "append"])
+def test_d1_stamp_sees_a_build_done_by_another_process(tmp_path, mode):
+    """令牌前提实测：别的进程重建（换 id）或追加写入后打标记（换构建号），本进程都看得到。"""
+    from core.rag import mark_built
+
+    eng = _real_engine(tmp_path)
+    col = eng._client.create_collection("text_t1", embedding_function=eng._embedding_function)
+    col.add(ids=["a"], embeddings=[[0.1, 0.2]], documents=["x"])
+    mark_built(col)
+    before = eng.collection_stamp("text_t1")
+
+    _in_other_process(tmp_path, mode)
+    after = eng.collection_stamp("text_t1")
+
+    assert before is not None and after is not None
+    assert after != before, f"别的进程{mode}了集合，本进程的版本令牌没变：{before} → {after}"
+    assert eng.collection_stamp("text_missing") is None
+
+
+def test_d2_mark_built_keeps_the_existing_metadata(tmp_path):
+    """chroma 的 modify(metadata=...) 是整份覆盖：打标记不许冲掉场景集合的正文指纹。"""
+    from core.rag import BUILD_MARK_KEY, mark_built
+
+    eng = _real_engine(tmp_path)
+    col = eng._client.create_collection(
+        "scenes_c1", embedding_function=eng._embedding_function, metadata={"fp": "abc"})
+    mark_built(col)
+    first = eng._client.get_collection("scenes_c1").metadata
+    mark_built(col)
+    second = eng._client.get_collection("scenes_c1").metadata
+
+    assert first["fp"] == second["fp"] == "abc", f"打标记冲掉了原有元数据：{second}"
+    assert first[BUILD_MARK_KEY] and second[BUILD_MARK_KEY] != first[BUILD_MARK_KEY]
+
+
+def test_d3_every_build_ends_with_a_mark(monkeypatch):
+    """后台作业建的原文集合与场景集合，建完都带构建号 —— 否则别的进程里的会话发现不了。"""
+    from core.rag import BUILD_MARK_KEY
+
+    client = _Client()
+    _patch_engine(monkeypatch, client)
+    _run_jobs(lambda: _schedule(_svc(), "cA"))
+
+    for name in ("text_t1", "scenes_cA"):
+        assert (client.cols[name].metadata or {}).get(BUILD_MARK_KEY), f"{name} 建完没打标记"

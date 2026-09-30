@@ -360,6 +360,12 @@ class TestIdentifyFamilyRoutesKeepDistillError:
     def test_reindex_identify_failure_is_400(self, store, user_id, monkeypatch):
         """`POST /api/distill/reindex/{id}` 的名单段 → 400 + 真实原因。"""
         tid = _seed_text(store, user_id, body=f"角色说的话{uuid.uuid4().hex}")
+
+        async def _with_embedding_key(_user_id):
+            # 没配向量检索 key 时 /reindex 在识别之前就 400 —— 那一支不是本条要测的。
+            return {"embedding_key": "sk-test", "embedding_region": "cn"}
+
+        monkeypatch.setattr(store, "get_user_api_config", _with_embedding_key)
         client = _build_client(
             store, user_id, monkeypatch, distiller=_failing_distiller())
 

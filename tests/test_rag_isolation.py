@@ -5,6 +5,8 @@ This simulates the worst case — embedding API misconfigured — and verifies:
 2. ChatEngine accepts rag=None without error
 3. ContextEngine._retrieve_scenes returns "" when rag is None
 4. schedule_scene_index degrades silently (prints log, does not raise)
+5. schedule_scene_index for one card never runs concurrently; calls that arrive
+   while it runs are merged into one follow-up run
 """
 
 import asyncio
@@ -61,64 +63,87 @@ async def test_create_session_rag_none():
 
 
 async def test_schedule_scene_index_degraded():
-    """schedule_scene_index must never raise, only print on error."""
+    """后台作业失败只记日志：不抛给调度方，去重键在作业结束后释放。"""
     print("3. schedule_scene_index with broken embedding...", end=" ")
 
-    storage = MagicMock()
-    rag_config = {"embedding_key": "INVALID_KEY_THAT_WILL_FAIL"}
-    svc = IndexingService(storage, rag_config)
+    import core.indexing_service as mod
 
-    # Patch RAGEngine to simulate embedding failure
+    svc = IndexingService({})
+
     with patch("core.indexing_service.RAGEngine") as mock_rag_cls:
         mock_rag = MagicMock()
         mock_rag.load_existing.return_value = False
         mock_rag.index.side_effect = Exception("Embedding API timeout")
         mock_rag_cls.return_value = mock_rag
 
-        # This must NOT raise — fire-and-forget means external error doesn't propagate
         svc.schedule_scene_index(
             text_id="t1", card_id="c1", content="测试内容",
-            char_name="测试角色", all_characters=[],
+            char_name="测试角色", all_characters=[], embedding_key="sk-test",
         )
-        # Wait a tiny bit for the background task
-        await asyncio.sleep(0.3)
+        assert "scenes_c1" in mod._scene_index_in_flight, "作业没调度起来 —— 下面的断言会空转"
+        for _ in range(50):
+            if "scenes_c1" not in mod._scene_index_in_flight:
+                break
+            await asyncio.sleep(0.02)
 
-    print("PASS (no exception propagated)")
+    assert mock_rag.index.called, "失败的嵌入调用没有发生"
+    assert "scenes_c1" not in mod._scene_index_in_flight, "作业失败后去重键没有释放"
+    print("PASS (failure logged, dedup key released)")
 
 
 async def test_schedule_scene_index_dedup():
-    """Dedup must prevent duplicate concurrent indexing for same card."""
+    """同一张卡的场景预索引不并发：只建一个后台任务，跑着时再来的调度合并成一次后续运行。"""
     print("4. schedule_scene_index dedup...", end=" ")
 
-    storage = MagicMock()
-    rag_config = {"embedding_key": "sk-ok"}
-    svc = IndexingService(storage, rag_config)
+    import threading
+    import time
 
-    call_count = 0
-
-    async def slow_index(*a, **kw):
-        nonlocal call_count
-        call_count += 1
-        await asyncio.sleep(0.5)
-
-    # Patch _bg to track calls
     import core.indexing_service as mod
-    original = mod._scene_index_in_flight.copy()
 
-    # First call
-    svc.schedule_scene_index("t1", "c1", "content", "name")
-    # Second call immediately after — should be deduped
-    svc.schedule_scene_index("t1", "c1", "content", "name")
-    await asyncio.sleep(0.1)
-    # Third call from another path — should also be deduped
-    svc.schedule_scene_index("t1", "c1", "content", "name")
-    await asyncio.sleep(0.1)
+    svc = IndexingService({})
+    lock = threading.Lock()
+    state = {"running": 0, "max_running": 0, "runs": 0}
 
-    # At most 1 task was created (others skipped by dedup)
-    in_flight = mod._scene_index_in_flight
-    # Clean up
-    mod._scene_index_in_flight = original
-    print("PASS (dedup set working)")
+    def slow_index(*_a, **_kw):
+        with lock:
+            state["running"] += 1
+            state["runs"] += 1
+            state["max_running"] = max(state["max_running"], state["running"])
+        time.sleep(0.2)
+        with lock:
+            state["running"] -= 1
+
+    tasks: list = []
+    real_create_task = asyncio.create_task
+
+    def counting_create_task(coro):
+        task = real_create_task(coro)
+        tasks.append(task)
+        return task
+
+    mock_rag = MagicMock()
+    mock_rag.load_existing.return_value = False
+    mock_rag.index.side_effect = slow_index
+
+    with patch("core.indexing_service.RAGEngine", return_value=mock_rag), \
+            patch("core.indexing_service.SceneIndexer"), \
+            patch.object(mod.asyncio, "create_task", counting_create_task):
+        try:
+            svc.schedule_scene_index("t1", "c1", "content", "name", embedding_key="sk-test")
+            # 同一时刻再来一次 —— 不该再起第二个任务
+            svc.schedule_scene_index("t1", "c1", "content", "name", embedding_key="sk-test")
+            await asyncio.sleep(0.1)
+            # 第一个还在跑时从另一条路又来一次 —— 与上一次合并成一次后续运行
+            svc.schedule_scene_index("t1", "c1", "content", "name", embedding_key="sk-test")
+            await asyncio.gather(*tasks)
+        finally:
+            mod._scene_index_in_flight.discard("scenes_c1")
+            mod._pending_jobs.pop("scenes_c1", None)
+
+    assert len(tasks) == 1, f"同一张卡起了 {len(tasks)} 个后台任务"
+    assert state["max_running"] == 1, f"同一张卡的作业并发跑了 {state['max_running']} 份"
+    assert state["runs"] == 2, f"期间的两次调度应合并成一次后续运行，实际共跑了 {state['runs']} 次"
+    print("PASS (one task, never concurrent, later calls merged into one rerun)")
 
 
 async def main():

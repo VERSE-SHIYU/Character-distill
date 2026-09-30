@@ -7,14 +7,13 @@ import logging
 import asyncio
 import json
 import random
-import time
 from typing import Any, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from deps import get_sessions, get_storage, get_text_manager, touch_session
+from deps import get_sessions, get_storage, touch_session
 from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
@@ -193,7 +192,7 @@ async def _ensure_session(
 
     rag = text_manager._indexing_service.get_rag_for_session(
         text_id, card_id=card_id, embedding_key=emb.key, embedding_region=emb.region,
-    ) if text_id else None
+    )
     memory = await asyncio.to_thread(text_manager.memory_for, user_id, emb.key, emb.region)
     # 原会话 id 直接进构造：引擎一出生就在原 id 名下，不再「新 id 造好再搬过来」。
     await asyncio.to_thread(

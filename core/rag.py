@@ -24,6 +24,23 @@ def _set_hits(sp, result) -> None:
     T.set_attr(sp, "retrieval_hits", len(result))
 
 
+# 构建完成标记在集合元数据里的键。每次建完（全部写入之后）换一个新值。
+BUILD_MARK_KEY = "build_id"
+
+
+def mark_built(collection: Collection) -> None:
+    """给集合打「这一次构建已完成」的标记：全部写入之后调用，换一个新的构建号。
+
+    读方（会话的版本令牌，`RAGEngine.collection_stamp`）只比 id 与构建号，不数条数 ——
+    与 Hadoop 输出目录的 `_SUCCESS` 同一思路：写完最后落一个标记。
+    chroma 的 `modify(metadata=...)` 是整份覆盖不是合并，故先并上原有元数据
+    （场景集合的正文指纹等）。
+    """
+    metadata = dict(collection.metadata or {})
+    metadata[BUILD_MARK_KEY] = uuid.uuid4().hex
+    collection.modify(metadata=metadata)
+
+
 class CollectionUnusableError(RuntimeError):
     """检索集合不可用：向量维度与当前 embedder 不符，或集合已损坏。
 
@@ -307,6 +324,7 @@ class RAGEngine:
         except Exception as exc:
             print(f"向 Chroma collection 写入文档失败：{exc}")
             raise
+        mark_built(collection)
 
         self.collection = collection
         self.collection_name = name
@@ -554,6 +572,21 @@ class RAGEngine:
             return int(len(embs[0]))
         except (TypeError, ValueError):
             return None
+
+    def collection_stamp(self, collection_name: str) -> tuple[str, str | None] | None:
+        """集合当前的版本令牌 `(id, 构建号)`；集合不存在 → None。
+
+        只读集合元数据（常数时间，不数条数、不嵌入、不 peek）。先删后建换 id，建完
+        `mark_built` 换构建号 —— 另一个进程做的也读得到（持久化目录是共享的）。
+        调用方拿它判断「上次装载之后集合有没有变过」。
+        """
+        try:
+            col = self._client.get_collection(
+                name=collection_name, embedding_function=self._embedding_function,
+            )
+        except NotFoundError:
+            return None
+        return str(col.id), (col.metadata or {}).get(BUILD_MARK_KEY)
 
     def load_existing(self, collection_name: str) -> bool:
         """装载已存在的持久化集合，可用返回 True。

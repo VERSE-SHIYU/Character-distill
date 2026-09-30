@@ -4,9 +4,14 @@
 DashScope text-embedding-v4(1024)。此后（commit 4a971d1 起）load_existing 对维度不符
 抛 CollectionUnusableError → 旧 384 集合场景检索降级、不再静默空。
 
-只重建 **text_{text_id}** —— 场景检索真正读取的集合（chat.py:157 / group.py /
-mcp 全走 load_existing(f"text_{text_id}")）。scenes_{card_id} 与 rag_{uuid} 在代码里
-无读取方（只写不读 / 每次实例 UUID），重建无收益，plan 会说明并跳过。
+只重建 **text_{text_id}**。会话检索按 scenes_{card_id} → text_{text_id} 取第一个可用的
+（`core/indexing_service.py::_session_candidates`），维度不符的 scenes_ 会被跳过、回落到
+text_，且下一次场景预索引会按当前 embedder 重建它（`SceneIndexer.index_scenes`）——
+故 scenes_ 不在本脚本射程。rag_{uuid} 是一次性实例集合，无读取方。plan 会说明并跳过。
+
+**web 进程不用重启**：会话每轮检索前比对候选集合的版本令牌（集合 id / 构建号，读的是
+共享的 chroma 持久化目录，见 `core/indexing_service.py::SessionRag`）。本脚本重建换了 id、
+写完打上新的构建号（`core.rag.mark_built`），已开的会话下一轮就会重新装载。
 
 判定（plan / rebuild 同口径）：
   REBUILD      dim==384 且 texts 行存在 且 ≥1 张 live 卡引用
@@ -49,7 +54,7 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from core.embeddings import DashScopeEmbedding, get_embed_stats, reset_embed_stats  # noqa: E402
-from core.rag import RAGEngine  # noqa: E402
+from core.rag import RAGEngine, mark_built  # noqa: E402
 from core.request_context import system_llm_context  # noqa: E402
 from web.llm_resolution import EmbeddingResolution, resolve_embedding  # noqa: E402
 
@@ -263,7 +268,7 @@ def print_manifest(chroma_path: Path, db: Path) -> None:
 
     print(f"\n【scenes_/rag_ 集合】scenes_ {scenes['n']}（384×{scenes['d384']}，"
           f"1024×{scenes['d1024']}）；rag_ {rag['n']}（384×{rag['d384']}，"
-          f"1024×{rag['d1024']}）。代码无读取方（只写不读/实例 UUID）→ 重建无收益，跳过。")
+          f"1024×{rag['d1024']}）。scenes_ 由场景预索引按当前 embedder 重建，rag_ 无读取方 → 跳过。")
     print("\n用法：确认后 python scripts/rebuild_384_collections.py rebuild --all")
     print("      （或指定 text_id；已 1024 自动跳过，失败可原命令续跑）")
 
@@ -339,6 +344,7 @@ def rebuild_one(db: Path, chroma_path: Path, cfg: dict, text_id: str,
         if metas is not None:
             add_kwargs["metadatas"] = metas
         col.add(**add_kwargs)
+        mark_built(col)  # 最后一步：已开着的 web 会话据此发现集合换了内容
     except Exception as exc:  # noqa: BLE001
         return {**rec, "ok": False, "status": "swap-failed",
                 "detail": str(exc)[:300], "secs": round(time.time() - t0, 1)}
