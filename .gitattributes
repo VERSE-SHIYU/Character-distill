@@ -1,0 +1,5 @@
+# 行尾统一（issue #73）：入库一律 LF；工作区也一律 LF（含 Windows + core.autocrlf=true），
+# 只有 .bat 例外（cmd.exe 需要 CRLF）。二进制由 text=auto 按内容判定，不做转换。
+# 依据：git gitattributes(5) 的 `text` / `eol` 两节。锁：tests/test_line_endings.py。
+*        text=auto eol=lf
+*.bat    text eol=crlf
