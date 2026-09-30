@@ -24,7 +24,7 @@ except ModuleNotFoundError:
     aiosqlite = None  # type: ignore[assignment]
 
 from core.roles import ROLES
-from .base import StorageBase, StoreError
+from .base import InviteCodeUnavailable, StorageBase, StoreError
 from .secret_box import decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(__name__)
@@ -151,6 +151,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     # 新**表**也要孪生的理由：列集锁比的是**表集合**（只在一侧的表会被 `_column_drift`
     # 报成漂移），README 那段只写了「加列」，锁的判据比它宽 —— 以锁为准。
     "096_comment_likes.sql",
+    "097_inter_node_nonces.sql",
+    "098_rename_outbox.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -174,6 +176,12 @@ _ADD_COLUMN_RE = re.compile(
 )
 _DROP_COLUMN_RE = re.compile(
     r"ALTER\s+TABLE\s+(?P<table>\w+)\s+DROP\s+COLUMN\s+(?!IF\b)(?P<column>\w+)[^;]*;",
+    re.IGNORECASE,
+)
+# `ALTER TABLE t RENAME TO u;` —— 第三种「重复执行即报错」的形态。判据与上面两种不同：
+# 它有两个表要管（源、目标），「已生效」取**目标表已在**，理由见 `_apply_migration`。
+_RENAME_TABLE_RE = re.compile(
+    r"ALTER\s+TABLE\s+(?P<old>\w+)\s+RENAME\s+TO\s+(?P<new>\w+)[^;]*;",
     re.IGNORECASE,
 )
 
@@ -456,20 +464,52 @@ async def _rebuild_cards_published_from(conn: Any) -> None:
         await conn.commit()
 
 
+async def _drop_rebuilt_shell(conn: Any, table: str) -> str:
+    """源表是「改名前那张表被重建出来的空壳」时，返回清掉它的语句；**非空则抛**。
+
+    判据与 PG 031 对齐：两表同时存在、旧表**却有行** ⇒ 改名早已生效，这张旧表不该有数据
+    （回放重建出来的只可能是空壳）。不自动删，人工确认后再处理。此前这里直接 DROP ——
+    PG 报错、SQLite 静默丢数据，两侧语义不一致。
+    """
+    cursor = await conn.execute(f'SELECT count(*) FROM "{table}"')
+    (row,) = await cursor.fetchall()
+    if row[0]:
+        raise RuntimeError(
+            f'"{table}" 与改名后的表同时存在，且旧表有 {row[0]} 行'
+            '—— 改名早已生效，这张旧表不该有数据（回放重建的只会是空壳）。'
+            '不自动删，人工确认后再处理。')
+    return f'DROP TABLE IF EXISTS "{table}";'
+
+
 async def _apply_migration(conn: Any, path: Path) -> None:
     """执行一份迁移脚本，幂等靠**读现状**（PRAGMA table_info），不靠猜错误串。
 
-    SQLite 没有 `ADD/DROP COLUMN IF [NOT] EXISTS`（PG 才有），两种列改写在脚本里都
-    「重复执行即报错」——方向相反，所以「已生效」的判据也相反：
+    SQLite 没有 `ADD/DROP COLUMN IF [NOT] EXISTS`（PG 才有），也没有 `DO $$ … IF EXISTS`
+    （031 那种 PG 守卫写不了），三种改写在脚本里都「重复执行即报错」——方向不同，
+    所以「已生效」的判据也不同：
 
     - `ADD COLUMN`：列**已在** ⇒ 这句早已生效
     - `DROP COLUMN`：列**已不在** ⇒ 这句早已生效
+    - `RENAME TO`：**目标表已在** ⇒ 这句早已生效
 
-    规则（两种形态共用同一套「读现状」）：
+    规则（三种形态共用同一套「读现状」）：
 
-    - 每句 ADD 的列都在、且每句 DROP 的列都不在 → 这份脚本早已应用过，**整份跳过**
-      （这类脚本尾部常跟一段数据回填 UPDATE/INSERT，语义上只属于首次应用）
-    - 否则剥掉那些**已生效**的列改写（ADD 列已在 / DROP 列已不在），其余照常执行
+    - 每句 ADD 的列都在、每句 DROP 的列都不在、每句 RENAME 的目标表都已在 → 这份脚本
+      早已应用过，**整份跳过**（这类脚本尾部常跟一段数据回填 UPDATE/INSERT，语义上只
+      属于首次应用）
+    - 否则剥掉那些**已生效**的改写，其余照常执行
+
+    改名有两处特别（它有源、目标两张表要管，另两种只有一张）：
+
+    - 判据取**目标表**而不是源表。「源表已不在」在这里不是「已生效」的证据：074 每轮
+      `CREATE TABLE IF NOT EXISTS` 会把改名前的那张表重建出来，跑到 098 时源表**总是在**
+      （空壳）—— 按源表判就会每轮重发 ALTER，撞上已存在的目标表（`already another table
+      with this name`）。
+    - 目标表已在、源表也在 ⇒ 把那句 ALTER 换成 `DROP TABLE IF EXISTS <源>`。源表此刻只
+      可能是同一批次里更早那句 `CREATE TABLE IF NOT EXISTS` 刚建的空壳（真实数据在第一轮
+      的 ALTER 里就搬走了）：留着它 = 库里永远多一张表，「重启过的库」与「全新库」从此
+      不是同一个 schema。**清之前先确认它真是空壳**（`_drop_rebuilt_shell`）：非空即抛，
+      与 PG 031 同语义 —— 真有数据还留在旧名下，删了就是静默丢数据。
 
     **没有 except**：真失败照常上抛。此前 74 个块各自 `except Exception: print` 把它吞成
     「初始化成功」——「已建库重跑」这一正常路径每次都打一行假失败，而真正跑错也只留一行 print。
@@ -477,19 +517,46 @@ async def _apply_migration(conn: Any, path: Path) -> None:
     sql = path.read_text(encoding="utf-8")
     add_cols = list(_ADD_COLUMN_RE.finditer(sql))
     drop_cols = list(_DROP_COLUMN_RE.finditer(sql))
-    if add_cols or drop_cols:
+    rename_tables = list(_RENAME_TABLE_RE.finditer(sql))
+    if add_cols or drop_cols or rename_tables:
         present: dict[str, set[str]] = {}
         for m in (*add_cols, *drop_cols):
             table = m.group("table")
             if table not in present:
                 present[table] = await _existing_columns(conn, table)
+        # 改名读**两侧**现状，不并进上面那份缓存 —— 那份是按「被改列的表」建的，收发两张表都不在其中。
+        renames: dict[str, tuple[bool, bool]] = {}   # 源表名 → (源表在, 目标表在)
+        for m in rename_tables:
+            old = m.group("old")
+            if old not in renames:
+                renames[old] = (
+                    bool(await _existing_columns(conn, old)),
+                    bool(await _existing_columns(conn, m.group("new"))),
+                )
         if (all(m.group("column") in present[m.group("table")] for m in add_cols)
-                and all(m.group("column") not in present[m.group("table")] for m in drop_cols)):
+                and all(m.group("column") not in present[m.group("table")] for m in drop_cols)
+                and all(target for _, target in renames.values())
+                and not any(src and target for src, target in renames.values())):
             return
         sql = _ADD_COLUMN_RE.sub(
             lambda m: "" if m.group("column") in present[m.group("table")] else m.group(0), sql)
         sql = _DROP_COLUMN_RE.sub(
             lambda m: "" if m.group("column") not in present[m.group("table")] else m.group(0), sql)
+
+        # 「目标已在、源也在」要清掉源表空壳，而清之前得先确认它真是空壳 —— 那一步要 await，
+        # `re.sub` 的回调拿不到，故在这里统一算好；回调只负责取用（理由见 _drop_rebuilt_shell）。
+        shell_drops = {old: await _drop_rebuilt_shell(conn, old)
+                       for old, (src, target) in renames.items() if src and target}
+
+        def _rename(m: re.Match[str]) -> str:
+            src, target = renames[m.group("old")]
+            if not target:
+                return m.group(0)                    # 还没改过：照常 RENAME
+            # 目标已在 ⇒ 改名早已生效；源表此时只可能是更早的 CREATE TABLE IF NOT EXISTS
+            # 重建出的空壳，剥掉之外还得把它清掉（理由见 docstring）。
+            return shell_drops[m.group("old")] if src else ""
+
+        sql = _RENAME_TABLE_RE.sub(_rename, sql)
     await conn.executescript(sql)
     await conn.commit()
 
@@ -562,6 +629,15 @@ _COMMENT_LIKE_TABLES: dict[str, tuple[str, str]] = {
     "post": ("post_comments", "post_comment_likes"),
     "card": ("card_comments", "card_comment_likes"),
 }
+
+
+async def _outbox_put(conn, op_type: str, target_id: str, payload: dict, *, replace: bool = False) -> None:
+    """跨境发件箱写一条（PG 侧同名函数的孪生；SQLite 只保证接口能跑）。"""
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
+    await conn.execute(
+        f"{verb} INTO cross_border_outbox (op_type, target_id, payload) VALUES (?, ?, ?)",
+        (op_type, target_id, body))
 
 
 class SQLiteStore(StorageBase):
@@ -1042,7 +1118,7 @@ class SQLiteStore(StorageBase):
                     public_ids = [row[0] for row in (await cursor.fetchall())]
                     for cid in public_ids:
                         await conn.execute(
-                            "INSERT OR IGNORE INTO cross_border_delete_outbox (op_type, target_id, payload) VALUES (?, ?, ?)",
+                            "INSERT OR IGNORE INTO cross_border_outbox (op_type, target_id, payload) VALUES (?, ?, ?)",
                             ("card_delete", cid, ""),
                         )
                     # Cascade-delete sessions, then cards
@@ -1720,7 +1796,7 @@ class SQLiteStore(StorageBase):
 
                 if visibility == "public":
                     await conn.execute(
-                        """INSERT OR IGNORE INTO cross_border_delete_outbox
+                        """INSERT OR IGNORE INTO cross_border_outbox
                            (op_type, target_id, payload) VALUES (?, ?, ?)""",
                         ("card_delete", card_id, ""),
                     )
@@ -1760,7 +1836,7 @@ class SQLiteStore(StorageBase):
 
                 if visibility == "public":
                     await conn.execute(
-                        """INSERT OR IGNORE INTO cross_border_delete_outbox
+                        """INSERT OR IGNORE INTO cross_border_outbox
                            (op_type, target_id, payload) VALUES (?, ?, ?)""",
                         ("card_delete", card_id, ""),
                     )
@@ -2799,8 +2875,8 @@ class SQLiteStore(StorageBase):
         return "\n".join(lines)
 
     async def create_user(self, id: str, username: str, password_hash: str, *,
-                          email: str = "", home_region: str = "") -> dict:
-        """Create a new user. Raises on duplicate username."""
+                          email: str = "", home_region: str = "", invite_code: str = "") -> dict:
+        """Create a new user. Raises on duplicate username / unavailable invite code."""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
@@ -2811,8 +2887,21 @@ class SQLiteStore(StorageBase):
                     "INSERT INTO user_secrets (user_id, password_hash) VALUES (?, ?)",
                     (id, password_hash),
                 )
+                if invite_code:
+                    cursor = await conn.execute(
+                        "UPDATE invite_codes SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL",
+                        (id, datetime.now(timezone.utc).isoformat(), invite_code),
+                    )
+                    if cursor.rowcount == 0:
+                        raise InviteCodeUnavailable("邀请码无效或已被使用")
+                    await _outbox_put(conn, "invite_used", invite_code, {"code": invite_code})
+                await _outbox_put(conn, "user_profile", id, {
+                    "id": id, "username": username, "home_region": home_region, "avatar_data": ""},
+                    replace=True)
                 await conn.commit()
                 return await self.get_user_by_username(username) or {}
+        except InviteCodeUnavailable:
+            raise
         except Exception as exc:
             if "UNIQUE constraint" in str(exc):
                 raise ValueError("用户名已存在") from exc
@@ -3015,6 +3104,21 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get all users failed: {exc}")
             raise
 
+    async def claim_inter_node_nonce(self, nonce: str, *, keep_seconds: int) -> bool:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "DELETE FROM inter_node_nonces WHERE created_at < datetime('now', ?)",
+                    (f"-{int(keep_seconds)} seconds",),
+                )
+                cursor = await conn.execute(
+                    "INSERT OR IGNORE INTO inter_node_nonces (nonce) VALUES (?)", (nonce,))
+                await conn.commit()
+            return cursor.rowcount == 1
+        except Exception as exc:
+            print(f"[SQLiteStore] Claim inter-node nonce failed: {exc}")
+            raise
+
     async def get_all_users_admin_fields(self) -> list[dict]:
         """List all users with admin-safe fields only (for cross-border export).
 
@@ -3142,8 +3246,13 @@ class SQLiteStore(StorageBase):
     async def set_user_disabled(self, user_id: str, is_disabled: bool) -> None:
         try:
             async with await self._connect() as conn:
-                await conn.execute("UPDATE users SET is_disabled = ? WHERE id = ?", (int(is_disabled), user_id))
+                cursor = await conn.execute(
+                    "UPDATE users SET is_disabled = ? WHERE id = ?", (int(is_disabled), user_id))
                 await conn.commit()
+            if cursor.rowcount == 0:
+                raise ValueError(f"用户不存在：{user_id}")
+        except ValueError:
+            raise
         except Exception as exc:
             print(f"[SQLiteStore] Set user disabled failed: {exc}")
             raise
@@ -3268,13 +3377,20 @@ class SQLiteStore(StorageBase):
             raise
 
     async def update_user_avatar(self, user_id: str, avatar_data: str) -> None:
-        """Store base64 avatar for a user."""
+        """Store base64 avatar for a user（同一事务把最新资料写进发件箱）。"""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
                     "UPDATE users SET avatar_data = ? WHERE id = ?",
                     (avatar_data, user_id),
                 )
+                cursor = await conn.execute(
+                    "SELECT id, username, home_region FROM users WHERE id = ?", (user_id,))
+                row = await cursor.fetchone()
+                if row is not None:
+                    await _outbox_put(conn, "user_profile", user_id, {
+                        "id": row[0], "username": row[1], "home_region": row[2] or "",
+                        "avatar_data": avatar_data or ""}, replace=True)
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Update user avatar failed: {exc}")
@@ -3397,7 +3513,7 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Record user consent failed: {exc}")
             raise StoreError("record_user_consent", exc) from exc
 
-    async def create_invite_code(self, code: str, created_by: str) -> dict:
+    async def create_invite_code(self, code: str, created_by: str, *, propagate: bool) -> dict:
         import uuid as _uuid
         cid = _uuid.uuid4().hex[:16]
         try:
@@ -3406,6 +3522,8 @@ class SQLiteStore(StorageBase):
                     "INSERT INTO invite_codes (id, code, created_by) VALUES (?, ?, ?)",
                     (cid, code, created_by),
                 )
+                if propagate:
+                    await _outbox_put(conn, "invite_create", code, {"code": code, "created_by": created_by})
                 await conn.commit()
             return await self.get_invite_code(code) or {}
         except Exception as exc:
@@ -3425,17 +3543,17 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get invite code failed: {exc}")
             raise
 
-    async def use_invite_code(self, code: str, used_by: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+    async def mark_invite_used_from_peer(self, code: str) -> bool:
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE invite_codes SET used_by = ?, used_at = ? WHERE code = ?",
-                    (used_by, now, code),
+                cursor = await conn.execute(
+                    "UPDATE invite_codes SET used_by = 'peer', used_at = ? WHERE code = ? AND used_by IS NULL",
+                    (datetime.now(timezone.utc).isoformat(), code),
                 )
                 await conn.commit()
+            return cursor.rowcount > 0
         except Exception as exc:
-            print(f"[SQLiteStore] Use invite code failed: {exc}")
+            print(f"[SQLiteStore] Mark invite used from peer failed: {exc}")
             raise
 
     async def list_invite_codes(self) -> list[dict]:
@@ -3450,26 +3568,32 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] List invite codes failed: {exc}")
             raise
 
-    async def delete_invite_code(self, code: str) -> bool:
+    async def delete_invite_code(self, code: str, *, propagate: bool) -> bool:
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     "DELETE FROM invite_codes WHERE code = ?", (code,)
                 )
+                deleted = cursor.rowcount > 0
+                if deleted and propagate:
+                    await _outbox_put(conn, "invite_delete", code, {"code": code})
                 await conn.commit()
-                return cursor.rowcount > 0
+                return deleted
         except Exception as exc:
             print(f"[SQLiteStore] Delete invite code failed: {exc}")
             raise
 
-    async def delete_used_invites(self) -> int:
+    async def delete_used_invites(self, *, propagate: bool) -> int:
         try:
             async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    "DELETE FROM invite_codes WHERE used_by IS NOT NULL"
-                )
+                cursor = await conn.execute("SELECT code FROM invite_codes WHERE used_by IS NOT NULL")
+                codes = [r[0] for r in await cursor.fetchall()]
+                await conn.execute("DELETE FROM invite_codes WHERE used_by IS NOT NULL")
+                if propagate:
+                    for c in codes:
+                        await _outbox_put(conn, "invite_delete", c, {"code": c})
                 await conn.commit()
-                return cursor.rowcount
+                return len(codes)
         except Exception as exc:
             print(f"[SQLiteStore] Delete used invites failed: {exc}")
             raise
@@ -3622,7 +3746,7 @@ class SQLiteStore(StorageBase):
 
                 # Enqueue cross-border purge — same transaction as the delete
                 await conn.execute(
-                    """INSERT OR IGNORE INTO cross_border_delete_outbox
+                    """INSERT OR IGNORE INTO cross_border_outbox
                        (op_type, target_id, payload) VALUES (?, ?, ?)""",
                     ("user_purge", user_id, ""),
                 )
@@ -3702,7 +3826,9 @@ class SQLiteStore(StorageBase):
         counts = {"posts_deleted": 0, "reports_resolved": 0}
         try:
             async with await self._connect() as conn:
-                await conn.execute("UPDATE users SET is_disabled = 1 WHERE id = ?", (user_id,))
+                cursor = await conn.execute("UPDATE users SET is_disabled = 1 WHERE id = ?", (user_id,))
+                if cursor.rowcount == 0:
+                    raise ValueError(f"用户不存在：{user_id}")
                 cursor = await conn.execute("DELETE FROM user_posts WHERE user_id = ?", (user_id,))
                 counts["posts_deleted"] = cursor.rowcount
                 cursor = await conn.execute(
@@ -3714,6 +3840,8 @@ class SQLiteStore(StorageBase):
                 counts["reports_resolved"] = cursor.rowcount
                 await conn.commit()
             return counts
+        except ValueError:
+            raise
         except Exception as exc:
             print(f"[SQLiteStore] Ban user failed: {exc}")
             raise
@@ -5457,7 +5585,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    """INSERT OR IGNORE INTO cross_border_delete_outbox
+                    """INSERT OR IGNORE INTO cross_border_outbox
                        (op_type, target_id, payload) VALUES (?, ?, ?)""",
                     (op_type, target_id, payload),
                 )
@@ -5472,9 +5600,9 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """SELECT id, op_type, target_id, payload, created_at
-                       FROM cross_border_delete_outbox
+                       FROM cross_border_outbox
                        WHERE synced = 0
-                       ORDER BY created_at ASC
+                       ORDER BY id ASC
                        LIMIT ?""",
                     (limit,),
                 )
@@ -5492,7 +5620,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "DELETE FROM cross_border_delete_outbox WHERE id = ?",
+                    "DELETE FROM cross_border_outbox WHERE id = ?",
                     (id,),
                 )
                 await conn.commit()
@@ -5539,7 +5667,7 @@ class SQLiteStore(StorageBase):
                     (message_id,),
                 )
                 await conn.execute(
-                    """INSERT OR IGNORE INTO cross_border_delete_outbox
+                    """INSERT OR IGNORE INTO cross_border_outbox
                        (op_type, target_id, payload) VALUES (?, ?, ?)""",
                     ("dm_retract", message_id, ""),
                 )

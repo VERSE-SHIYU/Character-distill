@@ -3,9 +3,9 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import AdminPanel from '../AdminPanel'
 import { adminAPI } from '../../api/client'
 
-// 联邦用户列表里对端行的写入口必须全部消失：本页写接口都只按本库 user_id 打，
-// 而 offerPass 在两端整号复制、id 相同 —— 点对端那行的删除 / 重置密码，打到的是
-// **本节点**同 id 的账号。行的身份是 (节点, id)，不是裸 id。
+// 联邦用户列表里对端行只留「禁用/启用」一个写入口，且它走跨节点接口：本页其余写接口
+// 都只按本库 user_id 打，而 offerPass 在两端整号复制、id 相同 —— 点对端那行的删除 /
+// 重置密码，打到的是**本节点**同 id 的账号。行的身份是 (节点, id)，不是裸 id。
 
 const LOCAL_X = { id: 'x1', username: 'local-x', role: 'user', node_region: 'local', is_disabled: false }
 // 真实白名单（隐私政策第 (5) 条）不含 role —— 对端下发的那份没有这个字段。
@@ -30,6 +30,10 @@ vi.mock('../../api/client', () => ({
     getDashboard: vi.fn(() => Promise.resolve({})),
     listUsersFederated: vi.fn(() => Promise.resolve({ local: [LOCAL_X], peer: [PEER_X] })),
     setUserRole: vi.fn(() => Promise.resolve({})),
+    disableUser: vi.fn(() => Promise.resolve({})),
+    enableUser: vi.fn(() => Promise.resolve({})),
+    peerDisableUser: vi.fn(() => Promise.resolve({})),
+    peerEnableUser: vi.fn(() => Promise.resolve({})),
   },
   fetchWithTimeout: vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({}) })),
 }))
@@ -43,22 +47,60 @@ async function openUsersTab() {
 }
 
 beforeEach(() => {
+  for (const fn of ['disableUser', 'enableUser', 'peerDisableUser', 'peerEnableUser']) {
+    adminAPI[fn].mockReset()
+    adminAPI[fn].mockResolvedValue({})
+  }
   adminAPI.setUserRole.mockReset()
   adminAPI.setUserRole.mockResolvedValue({})
   adminAPI.listUsersFederated.mockResolvedValue({ local: [LOCAL_X], peer: [PEER_X] })
 })
 
 describe('AdminPanel 对端行', () => {
-  it('对端行不给任何写入口：0 个按钮 + 提示，同 id 的本地行 5 个照常', async () => {
+  it('对端行只有「禁用」一个写按钮 + 提示，同 id 的本地行 5 个照常', async () => {
     const { container } = await openUsersTab()
     const rows = container.querySelectorAll('.admin-table tbody tr')
     expect(rows).toHaveLength(2)
 
     const localActions = rows[0].querySelector('.admin-actions-cell')
     const peerActions = rows[1].querySelector('.admin-actions-cell')
-    expect(peerActions.querySelectorAll('button'), '对端行还留着写按钮').toHaveLength(0)
-    expect(peerActions.textContent).toContain('请在对端节点操作')
+    const peerButtons = [...peerActions.querySelectorAll('button')].map((b) => b.textContent)
+    expect(peerButtons, '对端行只该剩禁用一个写按钮').toEqual(['禁用'])
+    expect(peerActions.textContent).toContain('其余操作请在对端节点进行')
     expect(localActions.querySelectorAll('button'), '同 id 的本地行按钮不该被连带去掉').toHaveLength(5)
+  })
+
+  it('对端行禁用走跨节点接口，不碰本节点同 id 的账号', async () => {
+    const { container } = await openUsersTab()
+    const peerRow = container.querySelectorAll('.admin-table tbody tr')[1]
+    fireEvent.click(peerRow.querySelector('.admin-actions-cell button'))
+    expect(screen.getByText(/确定禁用对端节点的用户/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '确定' }))
+    await waitFor(() => expect(adminAPI.peerDisableUser).toHaveBeenCalledWith('x1'))
+    expect(adminAPI.disableUser, '打到了本节点同 id 的账号').not.toHaveBeenCalled()
+  })
+
+  it('已禁用的对端行启用走跨节点接口', async () => {
+    adminAPI.listUsersFederated.mockResolvedValue({ local: [LOCAL_X], peer: [{ ...PEER_X, is_disabled: true }] })
+    const { container } = await openUsersTab()
+    const peerRow = container.querySelectorAll('.admin-table tbody tr')[1]
+    fireEvent.click(peerRow.querySelector('.admin-actions-cell button'))
+    await waitFor(() => expect(adminAPI.peerEnableUser).toHaveBeenCalledWith('x1'))
+    expect(adminAPI.enableUser).not.toHaveBeenCalled()
+  })
+
+  it('自己那两行（本地 + 对端同 id）都不给禁用按钮', async () => {
+    const SELF_L = { ...LOCAL_X, id: 'admin1', username: 'me', role: 'admin' }
+    const SELF_P = { ...PEER_X, id: 'admin1', username: 'me-peer' }
+    adminAPI.listUsersFederated.mockResolvedValue({ local: [SELF_L, LOCAL_X], peer: [SELF_P] })
+    const { container } = await openUsersTab()
+    const rows = [...container.querySelectorAll('.admin-table tbody tr')]
+    expect(rows).toHaveLength(3)
+    // 行序 = 本地在前、对端在后：rows[0] 本地自己、rows[2] 对端自己
+    for (const r of [rows[0], rows[2]]) {
+      const labels = [...r.querySelectorAll('.admin-actions-cell button')].map((b) => b.textContent)
+      expect(labels, '自己那行出现了禁用按钮').not.toContain('禁用')
+    }
   })
 
   it('同 id 的本地行与对端行各是一行，不报重复 key', async () => {

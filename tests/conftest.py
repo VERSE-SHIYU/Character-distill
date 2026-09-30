@@ -488,3 +488,18 @@ def cause_chain(exc: BaseException) -> list[BaseException]:
         out.append(exc)
         exc = exc.__cause__ or exc.__context__
     return out
+
+
+@pytest.fixture
+async def outbox_store():
+    """PG 存储，前后清空跨境发件箱：用例之间互不看到对方的待发记录。"""
+    from storage.postgres_store import PostgresStore
+
+    s = PostgresStore(TEST_DATABASE_URL)
+    await s._ensure_initialized()
+    async with await s._connect() as conn:
+        await conn.execute("DELETE FROM cross_border_outbox")
+    yield s
+    async with await s._connect() as conn:
+        await conn.execute("DELETE FROM cross_border_outbox")
+    await s.close()

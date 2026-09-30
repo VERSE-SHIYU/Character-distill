@@ -1,0 +1,11 @@
+-- 098 — cross_border_delete_outbox → cross_border_outbox（PG 031 的 SQLite 孪生）
+--
+-- 这份表早已不只装删除操作（用户资料、邀请码都走它），旧名在误导人。只改名。
+--
+-- **没有 DO 块可用**，重跑的安全由执行器兜：`sqlite_store._apply_migration` 以
+-- **目标表已在**判「这句早已生效」—— 不能在文件里写守卫，因为本仓无账本、每轮重跑，
+-- 而 074 的 `CREATE TABLE IF NOT EXISTS` 会把旧名重建出来（空壳），源表判据在此无效。
+-- 执行器还负责把那个空壳清掉，否则库里永远多一张表。
+-- 孪生这半是必需的：表集合锁（tests/test_schema_parity.py）与「真库 ⊇ 文本声明」
+-- （tests/test_sqlite_fresh_schema.py::TestExemptionClosedLoop）都要求两侧库同名同表。
+ALTER TABLE cross_border_delete_outbox RENAME TO cross_border_outbox;

@@ -8,16 +8,43 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+import admin_user_ops
 from deps import get_storage
-from inter_node_auth import verify_auth_header
+from inter_node_auth import verify_inter_node_request
+from limiter import limiter
 from storage.base import StorageBase
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/inter-node", tags=["inter-node"])
+
+
+async def _verified_payload(request: Request, storage: StorageBase) -> dict:
+    """本路由所有接口的唯一验签入口：读原始请求体 → 验签（v2 或 v1）→ 返回 JSON 对象。
+
+    v2 的摘要算在**原始字节**上，所以必须先 `request.body()` 再解析，不能反过来。
+    请求体不是 JSON 对象时按空对象处理（与原先各接口的写法一致），缺字段由各接口判 400。
+    """
+    raw = await request.body()
+    try:
+        parsed = json.loads(raw) if raw else {}
+    except ValueError:
+        parsed = {}
+    payload = parsed if isinstance(parsed, dict) else {}
+    valid, reason, version = await verify_inter_node_request(request, raw, payload, storage)
+    if not valid:
+        logger.warning("inter-node rejected: path=%s version=%s reason=%s",
+                       request.url.path, version, reason)
+        raise HTTPException(401, f"Unauthorized: {reason}")
+    logger.info("inter-node accepted: path=%s version=%s", request.url.path, version)
+    return payload
 
 
 @router.post("/dm/receive")
@@ -30,13 +57,7 @@ async def receive_dm(
     Authenticated via HMAC-SHA256 (inter_node_auth), NOT JWT.
     Idempotent: re-delivery of the same message_id is silently ignored.
     """
-    body = await request.json()
-    msg = body if isinstance(body, dict) else {}
-
-    auth_header = request.headers.get("Authorization", "")
-    valid, reason = verify_auth_header(auth_header, msg)
-    if not valid:
-        raise HTTPException(401, f"Unauthorized: {reason}")
+    msg = await _verified_payload(request, storage)
 
     msg_id = msg.get("id", "")
     sender_id = msg.get("sender_id", "")
@@ -67,13 +88,7 @@ async def receive_card(
     Upserts into remote_cards (INSERT if new, UPDATE if existing) as a
     read-only copy with no FK dependencies on local texts/users.
     """
-    body = await request.json()
-    card = body if isinstance(body, dict) else {}
-
-    auth_header = request.headers.get("Authorization", "")
-    valid, reason = verify_auth_header(auth_header, card)
-    if not valid:
-        raise HTTPException(401, f"Unauthorized: {reason}")
+    card = await _verified_payload(request, storage)
 
     required = ("id", "user_id", "name", "card_json", "visibility", "origin_region")
     missing = [f for f in required if not card.get(f)]
@@ -105,13 +120,7 @@ async def receive_card_delete(
     Authenticated via HMAC-SHA256, NOT JWT.
     Idempotent: deleting an already-deleted (or never-synced) card returns 200.
     """
-    body = await request.json()
-    payload = body if isinstance(body, dict) else {}
-
-    auth_header = request.headers.get("Authorization", "")
-    valid, reason = verify_auth_header(auth_header, payload)
-    if not valid:
-        raise HTTPException(401, f"Unauthorized: {reason}")
+    payload = await _verified_payload(request, storage)
 
     card_id = str(payload.get("target_id", ""))
     if not card_id:
@@ -132,13 +141,7 @@ async def receive_dm_retract(
     Authenticated via HMAC-SHA256, NOT JWT.
     Idempotent: retracting an already-retracted (or missing) message returns 200.
     """
-    body = await request.json()
-    payload = body if isinstance(body, dict) else {}
-
-    auth_header = request.headers.get("Authorization", "")
-    valid, reason = verify_auth_header(auth_header, payload)
-    if not valid:
-        raise HTTPException(401, f"Unauthorized: {reason}")
+    payload = await _verified_payload(request, storage)
 
     message_id = str(payload.get("target_id", ""))
     if not message_id:
@@ -159,13 +162,7 @@ async def receive_invite_code(
     Authenticated via HMAC-SHA256, NOT JWT.
     Idempotent: re-delivery of an existing code is silently ignored.
     """
-    body = await request.json()
-    payload = body if isinstance(body, dict) else {}
-
-    auth_header = request.headers.get("Authorization", "")
-    valid, reason = verify_auth_header(auth_header, payload)
-    if not valid:
-        raise HTTPException(401, f"Unauthorized: {reason}")
+    payload = await _verified_payload(request, storage)
 
     code = str(payload.get("code", ""))
     created_by = str(payload.get("created_by", "peer"))
@@ -176,7 +173,7 @@ async def receive_invite_code(
     if existing:
         return {"ok": True, "duplicate": True}
 
-    await storage.create_invite_code(code, created_by)
+    await storage.create_invite_code(code, created_by, propagate=False)  # 从对端来的，不回传
 
     return {"ok": True}
 
@@ -191,21 +188,32 @@ async def receive_invite_code_delete(
     Authenticated via HMAC-SHA256, NOT JWT.
     Idempotent: deleting an already-deleted (or never-synced) code returns 200.
     """
-    body = await request.json()
-    payload = body if isinstance(body, dict) else {}
-
-    auth_header = request.headers.get("Authorization", "")
-    valid, reason = verify_auth_header(auth_header, payload)
-    if not valid:
-        raise HTTPException(401, f"Unauthorized: {reason}")
+    payload = await _verified_payload(request, storage)
 
     code = str(payload.get("code", ""))
     if not code:
         raise HTTPException(400, "Missing required field: code")
 
-    await storage.delete_invite_code(code)
+    await storage.delete_invite_code(code, propagate=False)  # 从对端来的，不回传
 
     return {"ok": True}
+
+
+@router.post("/invite-code/used")
+async def receive_invite_code_used(
+    request: Request,
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """对端通知某个邀请码已被使用（隐私政策 3.2(4)：只同步「已使用」，不含使用者身份）。
+
+    Idempotent：码已被使用（或本机没有这个码）照样回 200 —— 对端发件箱据此删掉这一行。
+    """
+    payload = await _verified_payload(request, storage)
+    code = str(payload.get("code", ""))
+    if not code:
+        raise HTTPException(400, "Missing required field: code")
+    marked = await storage.mark_invite_used_from_peer(code)
+    return {"ok": True, "marked": marked}
 
 
 @router.post("/user/purge")
@@ -218,13 +226,7 @@ async def receive_user_purge(
     Authenticated via HMAC-SHA256, NOT JWT.
     Idempotent: purging an already-purged (or never-synced) user returns 200.
     """
-    body = await request.json()
-    payload = body if isinstance(body, dict) else {}
-
-    auth_header = request.headers.get("Authorization", "")
-    valid, reason = verify_auth_header(auth_header, payload)
-    if not valid:
-        raise HTTPException(401, f"Unauthorized: {reason}")
+    payload = await _verified_payload(request, storage)
 
     user_id = str(payload.get("target_id", ""))
     if not user_id:
@@ -247,13 +249,7 @@ async def receive_admin_users(
     any secrets from user_secrets table.  This is the read-only view used
     by the peer node's admin panel.
     """
-    body = await request.json()
-    payload = body if isinstance(body, dict) else {}
-
-    auth_header = request.headers.get("Authorization", "")
-    valid, reason = verify_auth_header(auth_header, payload)
-    if not valid:
-        raise HTTPException(401, f"Unauthorized: {reason}")
+    payload = await _verified_payload(request, storage)
 
     return await storage.get_all_users_admin_fields()
 
@@ -268,13 +264,7 @@ async def receive_user_sync(
     Authenticated via HMAC-SHA256, NOT JWT.
     Idempotent: upserts into remote_user_profiles table.
     """
-    body = await request.json()
-    payload = body if isinstance(body, dict) else {}
-
-    auth_header = request.headers.get("Authorization", "")
-    valid, reason = verify_auth_header(auth_header, payload)
-    if not valid:
-        raise HTTPException(401, f"Unauthorized: {reason}")
+    payload = await _verified_payload(request, storage)
 
     user_id = str(payload.get("id", ""))
     username = str(payload.get("username", ""))
@@ -287,3 +277,46 @@ async def receive_user_sync(
     await storage.upsert_remote_user_profile(user_id, username, home_region, avatar_data)
 
     return {"ok": True, "user_id": user_id}
+
+
+#: 与发起端 `routers/admin.py::PEER_SET_DISABLED_OP` 同值。请求体里必须带这个操作名：
+#: 现行签名只覆盖请求体、不覆盖路径，别的接口签出来的请求体若字段凑巧兼容，就能搬到
+#: 这里来 —— 校验操作名把这份请求体绑定到本接口（字段名也刻意不与其它接收端重合）。
+SET_DISABLED_OP = "admin_set_user_disabled"
+
+
+@router.post("/admin/user-disabled")
+@limiter.limit("30/minute")
+async def receive_admin_set_user_disabled(
+    request: Request,
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """对端管理员禁用 / 启用本节点的用户（谁的用户谁执行）。
+
+    Authenticated via HMAC-SHA256, NOT JWT. 执行走 `admin_user_ops.set_user_disabled`，
+    与本地路由同一份前置条件（404 / 不能禁用自己）。
+    """
+    payload = await _verified_payload(request, storage)
+
+    if payload.get("op") != SET_DISABLED_OP:
+        raise HTTPException(400, "op 与接口不符")
+    subject = str(payload.get("subject_user_id") or "")
+    operator = str(payload.get("operator_id") or "")
+    disabled = payload.get("disabled")
+    request_id = str(payload.get("request_id") or "")
+    if not subject or not operator or not isinstance(disabled, bool):
+        raise HTTPException(400, "Missing required fields: subject_user_id, operator_id, disabled")
+
+    try:
+        await admin_user_ops.set_user_disabled(
+            storage, target_id=subject, operator_id=operator, disabled=disabled,
+        )
+    except HTTPException as exc:
+        logger.warning(
+            "peer admin set_disabled refused: request_id=%s operator=%s subject=%s "
+            "disabled=%s status=%s", request_id, operator, subject, disabled, exc.status_code)
+        raise
+    logger.info(
+        "peer admin set_disabled applied: request_id=%s operator=%s subject=%s disabled=%s",
+        request_id, operator, subject, disabled)
+    return {"ok": True}

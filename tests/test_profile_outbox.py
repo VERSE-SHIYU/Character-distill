@@ -3,7 +3,7 @@
 
 注册 / 改头像在业务写入的同一事务里入队一行 `user_profile`；补发循环 `_resync_once`
 发送时读最新资料、只发本节点地区的用户，对端 200 后按「id + 发出时的版本戳」删行。
-迁移 030 把存量用户各入队一条（注册同步缺陷期间漏发的人由此补上）。
+迁移 033 把存量用户各入队一条（注册同步缺陷期间漏发的人由此补上）。
 
 对端用 httpx 自带的 MockTransport 扮演；业务写入走真 PG。
 """
@@ -18,19 +18,18 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from conftest import PG_ENV, TEST_DATABASE_URL
+from conftest import PG_ENV
 from cross_border_sync import _resync_once
 from deps import get_storage
 from routers.auth import router as auth_router
 from storage.base import USER_PROFILE_OP
-from storage.postgres_store import PostgresStore
 
 pytestmark = PG_ENV.skipif("资料 outbox 用例")
 
 _HERE = "cn-shenzhen"
 _THERE = "sg-singapore"
 _SYNC_PATH = "/api/inter-node/user/sync"
-_MIGRATION = Path(__file__).resolve().parents[1] / "storage/migrations_pg/030_backfill_profile_sync.sql"
+_MIGRATION = Path(__file__).resolve().parents[1] / "storage/migrations_pg/033_backfill_profile_sync.sql"
 
 
 def _uid(prefix: str) -> str:
@@ -38,15 +37,8 @@ def _uid(prefix: str) -> str:
 
 
 @pytest.fixture
-async def store():
-    s = PostgresStore(TEST_DATABASE_URL)
-    await s._ensure_initialized()
-    async with await s._connect() as conn:
-        await conn.execute("DELETE FROM cross_border_delete_outbox")
-    yield s
-    async with await s._connect() as conn:
-        await conn.execute("DELETE FROM cross_border_delete_outbox")
-    await s.close()
+def store(outbox_store):
+    return outbox_store
 
 
 @pytest.fixture(autouse=True)
@@ -89,7 +81,7 @@ class Peer:
 async def _profile_rows(store, user_id: str) -> list[dict]:
     async with await store._connect() as conn:
         rows = await conn.fetch(
-            "SELECT id, payload FROM cross_border_delete_outbox WHERE op_type = $1 AND target_id = $2",
+            "SELECT id, payload FROM cross_border_outbox WHERE op_type = $1 AND target_id = $2",
             USER_PROFILE_OP, user_id)
     return [dict(r) for r in rows]
 
@@ -110,7 +102,7 @@ async def test_registration_queues_and_the_loop_sends_the_profile(store, monkeyp
     app.include_router(auth_router)
     app.dependency_overrides[get_storage] = lambda: store
     code = _uid("c")
-    await store.create_invite_code(code, "admin1")
+    await store.create_invite_code(code, "admin1", propagate=False)
     name = _uid("n")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://t") as c:
         r = await c.post("/api/auth/register", json={
@@ -209,30 +201,30 @@ async def test_acked_row_with_null_payload_is_removed(store, monkeypatch):
     """payload 列可空：确认后按「发出时的 payload」删行，NULL 也要删得掉。"""
     async with await store._connect() as conn:
         await conn.execute(
-            "INSERT INTO cross_border_delete_outbox (op_type, target_id, payload) VALUES ('card_delete', $1, NULL)",
+            "INSERT INTO cross_border_outbox (op_type, target_id, payload) VALUES ('card_delete', $1, NULL)",
             _uid("card"))
     Peer(monkeypatch)
     await _resync_once(store)
     async with await store._connect() as conn:
-        left = await conn.fetchval("SELECT count(*) FROM cross_border_delete_outbox")
+        left = await conn.fetchval("SELECT count(*) FROM cross_border_outbox")
     assert left == 0, "确认过的 NULL payload 行没删掉"
 
 
-# ── 迁移 030：存量补发 ─────────────────────────────────────────────────────
+# ── 迁移 033：存量补发 ─────────────────────────────────────────────────────
 
 async def test_backfill_migration_sends_every_local_user_once(store, monkeypatch):
-    """存量用户（入队之前就建好的）经 030 入队，一轮全部发出；非本区的不发。"""
+    """存量用户（入队之前就建好的）经 033 入队，一轮全部发出；非本区的不发。"""
     local = [await _new_user(store) for _ in range(3)]
     mirror = await _new_user(store, region=_THERE)
     async with await store._connect() as conn:
-        await conn.execute("DELETE FROM cross_border_delete_outbox")   # 模拟缺陷期：从没入过队
+        await conn.execute("DELETE FROM cross_border_outbox")   # 模拟缺陷期：从没入过队
         await conn.execute(_MIGRATION.read_text(encoding="utf-8"))
         # 共用测试库里还有别的用例建的用户：只留本用例的行，一轮的上限（100）才测得准
         await conn.execute(
-            "DELETE FROM cross_border_delete_outbox WHERE NOT (target_id = ANY($1::text[]))",
+            "DELETE FROM cross_border_outbox WHERE NOT (target_id = ANY($1::text[]))",
             local + [mirror])
     for uid in local + [mirror]:
-        assert len(await _profile_rows(store, uid)) == 1, f"{uid} 没被 030 入队"
+        assert len(await _profile_rows(store, uid)) == 1, f"{uid} 没被 033 入队"
 
     peer = Peer(monkeypatch)
     await _resync_once(store)
@@ -247,18 +239,20 @@ async def test_backfill_migration_keeps_a_pending_row_as_is(store):
     [before] = await _profile_rows(store, uid)
     async with await store._connect() as conn:
         await conn.execute(_MIGRATION.read_text(encoding="utf-8"))
-    assert await _profile_rows(store, uid) == [before], "030 改动了已有的待发行"
+    assert await _profile_rows(store, uid) == [before], "033 改动了已有的待发行"
 
 
 async def test_signing_failure_keeps_the_row_and_the_loop_alive(store, monkeypatch, caplog):
     """签名抛错：这一行留到下一轮、记错误日志；`_resync_once` 不许抛出（否则补发任务整个停掉）。"""
-    import inter_node_auth
+    import peer_client
 
     def boom(_body):
         raise TypeError("cannot sign")
 
     uid = await _new_user(store)
-    monkeypatch.setattr(inter_node_auth, "create_auth_header", boom)
+    # 打在 `peer_client` 的名字上：它 `from inter_node_auth import create_auth_header`，
+    # 改 `inter_node_auth` 模块属性碰不到它（签名改用 v1 时才走这一支，缺省即 v1）
+    monkeypatch.setattr(peer_client, "create_auth_header", boom)
     caplog.set_level(logging.ERROR)
     try:
         await _resync_once(store)

@@ -21,6 +21,10 @@ def _rebuild_store_error(op: str, message: str) -> "StoreError":
     return obj
 
 
+class InviteCodeUnavailable(ValueError):
+    """注册时邀请码不存在或已被占用。建用户与占码在同一事务里，抛它时用户也不会留下。"""
+
+
 class StoreError(RuntimeError):
     """store 层的**可辨失败语义** —— 「查询/写入失败」，与「无数据」互斥。
 
@@ -58,7 +62,7 @@ def new_review_id() -> str:
 
 # ── 跨境 outbox：用户资料同步 ────────────────────────────────────────────────
 #
-# 与删除传播共用 `cross_border_delete_outbox`（UNIQUE(op_type, target_id)）。
+# 与删除传播、邀请码共用 `cross_border_outbox`（UNIQUE(op_type, target_id)）。
 # 这一种行的 `payload` 不是资料本身，而是**版本戳**：资料每变一次就换一个新戳；
 # 发送方在发送时才读 `users` 的最新资料，确认后按「id + 发出时的戳」删行 ——
 # 发送途中资料又变了，戳就对不上，这一行留到下一轮再发。
@@ -536,9 +540,12 @@ class StorageBase(ABC):
     async def create_user(
         self, id: str, username: str, password_hash: str,
         *,
-        email: str = "", home_region: str = "",
+        email: str = "", home_region: str = "", invite_code: str = "",
     ) -> dict:
         """Create a new user.
+
+        同一事务里还做两件事：①给 `invite_code` 占位（未被用过才占得到，否则抛
+        `InviteCodeUnavailable`、整笔回滚）；②往跨境发件箱写「用户资料」（及「邀请码已使用」）。
 
         ``email`` / ``home_region`` 是 keyword-only：两者都是 str 且相邻，按位置传
         错位不会报错 —— ``home_region`` 的值会静默落进 ``email``。本条约束的由来是
@@ -561,6 +568,13 @@ class StorageBase(ABC):
         """List all users (admin)."""
 
     @abstractmethod
+    async def claim_inter_node_nonce(self, nonce: str, *, keep_seconds: int) -> bool:
+        """登记一个节点间请求的 nonce。首次出现返回 True；已登记过（= 重放）返回 False。
+
+        同一次调用顺带删掉早于 `keep_seconds` 的旧行 —— 签名窗口外的 nonce 对防重放已无用。
+        """
+
+    @abstractmethod
     async def get_all_users_admin_fields(self) -> list[dict]:
         """List all users with only admin-safe fields (no secrets, for cross-border export)."""
 
@@ -578,7 +592,14 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def set_user_disabled(self, user_id: str, is_disabled: bool) -> None:
-        """Disable or enable a user account."""
+        """Disable or enable a user account. Unknown id raises ValueError（不返回「成功却没写」）。"""
+
+    @abstractmethod
+    async def ban_user_and_contents(self, user_id: str, admin_id: str) -> dict:
+        """Disable user + delete their posts + resolve their comment reports, in one transaction.
+
+        Unknown id raises ValueError and nothing is written.
+        """
 
     @abstractmethod
     async def reset_user_password(self, user_id: str, password_hash: str) -> bool:
@@ -601,28 +622,33 @@ class StorageBase(ABC):
         """Get all card IDs owned by a user (for Mem0 cleanup)."""
 
     @abstractmethod
-    async def create_invite_code(self, code: str, created_by: str) -> dict:
-        """Create an invite code."""
+    async def create_invite_code(self, code: str, created_by: str, *, propagate: bool) -> dict:
+        """Create an invite code. `propagate=True` 时同一事务写发件箱（本机生成的码）；
+        从对端收到的码传 False，否则会回传给对端。"""
 
     @abstractmethod
     async def get_invite_code(self, code: str) -> dict | None:
         """Get an invite code record by code string."""
 
     @abstractmethod
-    async def use_invite_code(self, code: str, used_by: str) -> None:
-        """Mark an invite code as used by a user."""
+    async def mark_invite_used_from_peer(self, code: str) -> bool:
+        """对端通知「这个码已被使用」：未被使用才标记（`used_by='peer'`），返回是否标了。不入发件箱。"""
 
     @abstractmethod
     async def list_invite_codes(self) -> list[dict]:
         """List all invite codes."""
 
     @abstractmethod
-    async def delete_invite_code(self, code: str) -> bool:
-        """Delete a single invite code by its code string."""
+    async def delete_invite_code(self, code: str, *, propagate: bool) -> bool:
+        """Delete a single invite code. `propagate=True` 且确有删除时同一事务写发件箱。"""
 
     @abstractmethod
-    async def delete_used_invites(self) -> int:
-        """Delete all used invite codes, return count deleted."""
+    async def delete_used_invites(self, *, propagate: bool) -> int:
+        """Delete all used invite codes, return count deleted（`propagate=True` 时逐个入发件箱）。"""
+
+    @abstractmethod
+    async def update_user_avatar(self, user_id: str, avatar_data: str) -> None:
+        """Store base64 avatar；同一事务把最新的用户资料写进发件箱（同一用户只留最新一条）。"""
 
     @abstractmethod
     async def save_refresh_token(self, token_hash: str, user_id: str, expires_at: str, replaced_by: str = "") -> None:

@@ -302,6 +302,11 @@ export const adminAPI = {
 
   enableUser: (userId) => postJSON(`/api/admin/users/${userId}/enable`, {}),
 
+  // 对端节点的用户：命令签名后发给对端执行（本节点不改任何状态）
+  peerDisableUser: (userId) => postJSON(`/api/admin/peer/users/${userId}/disable`, {}),
+
+  peerEnableUser: (userId) => postJSON(`/api/admin/peer/users/${userId}/enable`, {}),
+
   deleteUser: (userId) => fetchWithTimeout(`/api/admin/users/${userId}`, { method: 'DELETE' }).then(r => r.json()),
 
   batchDeleteUsers: (userIds) => postJSON('/api/admin/users/batch-delete', { user_ids: userIds }),

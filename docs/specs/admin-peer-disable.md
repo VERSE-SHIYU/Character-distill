@@ -196,3 +196,6 @@ SG: https=0 http=1 secret_ok=1 utc=1790753159
 
 ### 2026-09-30 转交项已出 spec
 「转交」一节的两项已写进 `docs/specs/inter-node-v2.md`（节点间切 https + 签名 v2）。它以本段为前置：先合本段，再做 v2。
+
+### 2026-09-30 参考实现改为分支提交
+参考补丁文件已删除：补丁文件会与代码脱节、CI 也不跑它。本段代码是分支 `feat/cross-border-outbox` 上的提交 `feat(admin): disable and enable users on the peer node`。「S0」里核对补丁文件、`git apply --check` 两步不再适用，改为在该分支上跑本 spec「测试」一节。

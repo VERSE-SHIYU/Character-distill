@@ -152,7 +152,10 @@ def test_inter_node_failure_hides_the_raw_text_and_logs_a_traced_error(
     `except Exception as exc: raise HTTPException(500, f"...: {exc}")` —— 本条立刻红两处：
     `detail` 变成拼了原文的串，且因 `HTTPException` 不经过全局处理器而**一条 ERROR 都没有**。
     """
-    monkeypatch.setattr(IN, "verify_auth_header", lambda *_a, **_k: (True, ""))
+    async def _accept(*_a, **_k):
+        return True, "", 1
+
+    monkeypatch.setattr(IN, "verify_inter_node_request", _accept)
 
     def _boom(_msg_id):
         raise RuntimeError(_RAW_DETAIL)

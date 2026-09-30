@@ -42,12 +42,18 @@ const ROLE_KEYS = ['admin', 'user', 'guest']
 const roleLabel = (role) => ROLE_LABELS[role] || role || ''
 const ROLE_OPTIONS = ROLE_KEYS.map((r) => ({ value: r, label: roleLabel(r) }))
 
-// 「是不是对端行」全页只此一处判据：本页写接口（禁用/启用、角色、重置密码、邮箱、删除、
-// 批量删除）都只按本库 user_id 打，而 offerPass 在两端整号复制、id 相同 —— 放开对端行
-// 等于操作本节点同 id 的账号。行的身份是 (节点, id)：同 id 可以同时出现在两端，
+// 「是不是对端行」全页只此一处判据：本页写接口（角色、重置密码、邮箱、删除、批量删除）
+// 都只按本库 user_id 打，而 offerPass 在两端整号复制、id 相同 —— 放开对端行等于操作
+// 本节点同 id 的账号。行的身份是 (节点, id)：同 id 可以同时出现在两端，
 // 所以 React key 不能是裸 id。
+// 唯一例外是禁用/启用：对端行走专门的跨节点接口（命令发给对端执行），选哪条接口只在
+// `setDisabledFor` 一处判。
 const isPeerRow = (u) => u.node_region === 'peer'
 const rowKey = (u) => `${isPeerRow(u) ? 'peer' : 'local'}:${u.id}`
+const setDisabledFor = (u, disabled) => {
+  if (isPeerRow(u)) return disabled ? adminAPI.peerDisableUser(u.id) : adminAPI.peerEnableUser(u.id)
+  return disabled ? adminAPI.disableUser(u.id) : adminAPI.enableUser(u.id)
+}
 
 /* ── SVG 圆环进度条 ── */
 function CircularProgress({ percent, size = 72, strokeWidth = 5 }) {
@@ -353,11 +359,7 @@ function UsersTab() {
       return
     }
     try {
-      if (user.is_disabled) {
-        await adminAPI.enableUser(user.id)
-      } else {
-        await adminAPI.disableUser(user.id)
-      }
+      await setDisabledFor(user, false)
       await load()
     } catch (err) {
       setActionError(err.message)
@@ -585,7 +587,15 @@ function UsersTab() {
                   <td>{fmtDate(u.created_at)}</td>
                   <td className="admin-actions-cell">
                     {isPeerRow(u) ? (
-                      <span>请在对端节点操作</span>
+                      <>
+                        {/* 不能禁用自己：两端管理员整号复制、id 相同，对端同 id 那行就是自己 */}
+                        {u.id !== authUser?.id && (
+                          <button className="btn-ghost-sm" onClick={() => toggleDisable(u)}>
+                            {u.is_disabled ? '启用' : '禁用'}
+                          </button>
+                        )}
+                        <span>其余操作请在对端节点进行</span>
+                      </>
                     ) : (
                       <>
                         <button
@@ -594,12 +604,14 @@ function UsersTab() {
                         >
                           详情
                         </button>
-                        <button
-                          className="btn-ghost-sm"
-                          onClick={() => toggleDisable(u)}
-                        >
-                          {u.is_disabled ? '启用' : '禁用'}
-                        </button>
+                        {u.id !== authUser?.id && (
+                          <button
+                            className="btn-ghost-sm"
+                            onClick={() => toggleDisable(u)}
+                          >
+                            {u.is_disabled ? '启用' : '禁用'}
+                          </button>
+                        )}
                         <button
                           className="btn-ghost-sm"
                           onClick={() => { setEmailTarget(u); setNewEmail(''); setEmailError(''); setEmailOk('') }}
@@ -768,13 +780,13 @@ function UsersTab() {
       <ConfirmModal
         isOpen={!!disableConfirm}
         title="禁用用户"
-        message={`确定禁用用户「${disableConfirm ? displayName(disableConfirm) : '?'}」？`}
+        message={`确定禁用${disableConfirm && isPeerRow(disableConfirm) ? '对端节点的' : ''}用户「${disableConfirm ? displayName(disableConfirm) : '?'}」？`}
         confirmText="确定"
         onConfirm={async () => {
           const user = disableConfirm
           setDisableConfirm(null)
           try {
-            await adminAPI.disableUser(user.id)
+            await setDisabledFor(user, true)
             await load()
           } catch (err) {
             setActionError(err.message)

@@ -6,6 +6,7 @@ import logging
 
 import secrets
 import time
+import uuid
 from enum import Enum
 from typing import Any
 
@@ -13,7 +14,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
-from cross_border_sync import forward_invite_code_delete_to_peer, forward_invite_code_to_peer
+import httpx
+
+import admin_user_ops
+import peer_client
+from cross_border_sync import wake_resync
 from routers.auth import get_current_user
 from deps import get_config, get_sessions, get_storage, get_memory_manager, patch_config
 from storage.base import StorageBase
@@ -71,7 +76,6 @@ async def list_users_federated(
     inter-node request.  Peer unreachable degrades gracefully — returns
     local users with ``peer_unreachable=True`` flag.
     """
-    import os
 
     # 1. Local users — full admin fields (no password_hash)
     local_users = await storage.get_all_users()
@@ -95,22 +99,13 @@ async def list_users_federated(
     }
 
     # 2. Peer users (only if inter-node is configured)
-    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
-    if not peer_url:
+    if not peer_client.peer_url():
         return result
 
-    from inter_node_auth import create_auth_header
-    import httpx
-
-    payload = {"request": "admin_users"}
-    headers = create_auth_header(payload)
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                f"{peer_url}/api/inter-node/admin/users",
-                json=payload,
-                headers=headers,
-            )
+        resp = await peer_client.post_to_peer(
+            "/api/inter-node/admin/users", {"request": "admin_users"},
+        )
         if resp.status_code == 200:
             peer_users = resp.json()
             for u in peer_users:
@@ -146,16 +141,22 @@ async def dashboard(
     return await storage.get_dashboard_stats()
 
 
+async def _set_disabled(storage: StorageBase, user_id: str, admin: dict, disabled: bool) -> dict:
+    await admin_user_ops.set_user_disabled(
+        storage, target_id=user_id, operator_id=admin["id"], disabled=disabled,
+    )
+    return {"ok": True}
+
+
 @router.post("/users/{user_id}/disable")
 @limiter.limit("30/minute")
 async def disable_user(
     request: Request,
     user_id: str,
-    _admin: dict = Depends(require_admin),
+    admin_user: dict = Depends(require_admin),
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
-    await storage.set_user_disabled(user_id, True)
-    return {"ok": True}
+    return await _set_disabled(storage, user_id, admin_user, True)
 
 
 @router.post("/users/{user_id}/enable")
@@ -163,11 +164,70 @@ async def disable_user(
 async def enable_user(
     request: Request,
     user_id: str,
-    _admin: dict = Depends(require_admin),
+    admin_user: dict = Depends(require_admin),
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
-    await storage.set_user_disabled(user_id, False)
-    return {"ok": True}
+    return await _set_disabled(storage, user_id, admin_user, False)
+
+
+# 跨节点禁用 / 启用：命令签名后发给对端，由对端用同一个共用函数执行（谁的用户谁执行）。
+# 请求体带操作名 `op`，对端逐一校验 —— 别的接口签出来的请求体搬不过来。
+PEER_SET_DISABLED_OP = "admin_set_user_disabled"
+PEER_SET_DISABLED_PATH = "/api/inter-node/admin/user-disabled"
+
+
+async def _peer_set_disabled(user_id: str, admin: dict, disabled: bool) -> dict:
+    request_id = uuid.uuid4().hex
+    payload = {
+        "op": PEER_SET_DISABLED_OP,
+        "subject_user_id": user_id,
+        "operator_id": admin["id"],
+        "disabled": disabled,
+        "request_id": request_id,
+    }
+    try:
+        resp = await peer_client.post_to_peer(PEER_SET_DISABLED_PATH, payload)
+    except peer_client.PeerNotConfigured:
+        raise HTTPException(503, "未配置对端节点")
+    except peer_client.PeerNotSecure:
+        raise HTTPException(503, "对端节点地址不是 https，已拒绝发送")
+    except httpx.HTTPError as exc:
+        logger.error("peer set_disabled failed: request_id=%s subject=%s: %r",
+                     request_id, user_id, exc, exc_info=True)
+        raise HTTPException(502, "对端节点不可达，未确认执行，请刷新列表核对状态")
+    if resp.status_code == 200:
+        logger.info("peer set_disabled ok: request_id=%s operator=%s subject=%s disabled=%s",
+                    request_id, admin["id"], user_id, disabled)
+        return {"ok": True}
+    if resp.status_code in (400, 404):
+        try:
+            detail = resp.json().get("detail") or "对端拒绝了该操作"
+        except ValueError:
+            detail = "对端拒绝了该操作"
+        raise HTTPException(resp.status_code, detail)
+    logger.error("peer set_disabled refused: request_id=%s subject=%s status=%s",
+                 request_id, user_id, resp.status_code)
+    raise HTTPException(502, "对端节点拒绝或出错，未执行")
+
+
+@router.post("/peer/users/{user_id}/disable")
+@limiter.limit("30/minute")
+async def peer_disable_user(
+    request: Request,
+    user_id: str,
+    admin_user: dict = Depends(require_admin),
+) -> dict[str, Any]:
+    return await _peer_set_disabled(user_id, admin_user, True)
+
+
+@router.post("/peer/users/{user_id}/enable")
+@limiter.limit("30/minute")
+async def peer_enable_user(
+    request: Request,
+    user_id: str,
+    admin_user: dict = Depends(require_admin),
+) -> dict[str, Any]:
+    return await _peer_set_disabled(user_id, admin_user, False)
 
 
 class RoleRequest(str, Enum):
@@ -372,9 +432,9 @@ async def generate_invites(
     codes = []
     for _ in range(count):
         code = secrets.token_urlsafe(12)
-        record = await storage.create_invite_code(code, admin_user["id"])
-        await forward_invite_code_to_peer(record)
+        record = await storage.create_invite_code(code, admin_user["id"], propagate=True)
         codes.append(record)
+    wake_resync()  # 同步由发件箱负责（写入时同一事务入队），这里只请补发循环立刻跑一轮
     return codes
 
 
@@ -397,10 +457,10 @@ async def delete_invite(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Delete a single invite code."""
-    ok = await storage.delete_invite_code(code)
+    ok = await storage.delete_invite_code(code, propagate=True)
     if not ok:
         raise HTTPException(404, "邀请码不存在")
-    await forward_invite_code_delete_to_peer(code)
+    wake_resync()
     return {"ok": True}
 
 
@@ -412,7 +472,8 @@ async def delete_used_invites(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Delete all used invite codes."""
-    count = await storage.delete_used_invites()
+    count = await storage.delete_used_invites(propagate=True)
+    wake_resync()
     return {"ok": True, "deleted": count}
 
 
@@ -572,24 +633,18 @@ async def admin_delete_post(
     return {"ok": True}
 
 
-class BanUserRequest(BaseModel):
-    admin_id: str = ""
-
-
 @router.post("/users/{user_id}/ban")
 @limiter.limit("30/minute")
 async def admin_ban_user(
     request: Request,
     user_id: str,
-    req: BanUserRequest,
     admin_user: dict = Depends(require_admin),
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
-    """Disable user + delete their posts + resolve reports."""
-    if user_id == admin_user.get("id"):
-        raise HTTPException(400, "不能封禁自己的账号")
-    admin_id = req.admin_id or admin_user["id"]
-    counts = await storage.ban_user_and_contents(user_id, admin_id)
+    """Disable user + delete their posts + resolve reports. 操作者只取登录身份。"""
+    counts = await admin_user_ops.ban_user(
+        storage, target_id=user_id, operator_id=admin_user["id"],
+    )
     return {"ok": True, **counts}
 
 

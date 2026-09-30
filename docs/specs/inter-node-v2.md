@@ -169,3 +169,6 @@ v1 代码的删除不在本段：第 3 步稳定后另开一个小改动删掉�
 ## 补充
 ### 2026-09-30 隐私政策一句已定
 Shiyu 定：补「节点间传输经 TLS 加密」。已并入本段设计与步骤 4，参考补丁同步更新（新 sha256 见文件头）；前端 `npm test` 60 文件 300 条全绿。
+
+### 2026-09-30 参考实现改为分支提交
+参考补丁文件已删除，理由同 `admin-peer-disable.md` 同日补充。本段代码是分支 `feat/cross-border-outbox` 上的提交 `feat(inter-node): https transport and RFC 9421 request signatures`，前一个提交是方案甲。「S0」里核对补丁文件、`git apply --check` 两步不再适用；上线前的证书核查照旧。

@@ -13,7 +13,7 @@ from typing import Any
 import asyncpg  # type: ignore[import-not-found]
 
 from core.roles import ROLES
-from .base import USER_PROFILE_OP, StorageBase, StoreError
+from .base import USER_PROFILE_OP, InviteCodeUnavailable, StorageBase, StoreError
 from .migration_ledger import file_sha256, pending_files
 from .pg_identity_sync import align_identity_sequences
 from .secret_box import decrypt_secret, encrypt_secret
@@ -121,6 +121,21 @@ class _PoolContext:
             self.conn = None
 
 
+async def _outbox_put(conn, op_type: str, target_id: str, payload: dict) -> None:
+    """跨境发件箱写一条邀请码记录（调用方负责把它放进业务写入的同一个事务）。
+
+    内容在**写入时**就定好（事务发件箱的标准写法），发送时原样发出；同一目标已有待发行时
+    保持原样（`DO NOTHING`）。用户资料不走这里，走 `_enqueue_profile_sync`：资料只有最新
+    那份有意义，队里存的是版本戳，发送时才读最新资料。
+    """
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    await conn.execute(
+        """INSERT INTO cross_border_outbox (op_type, target_id, payload)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (op_type, target_id) DO NOTHING""",
+        op_type, target_id, body)
+
+
 async def _enqueue_profile_sync(conn: asyncpg.Connection, user_id: str) -> None:
     """在调用方的事务里把「这个用户的资料要发给对端」入队（见 `USER_PROFILE_OP`）。
 
@@ -128,7 +143,7 @@ async def _enqueue_profile_sync(conn: asyncpg.Connection, user_id: str) -> None:
     确认后按旧戳删行会落空，这一行留下来，下一轮把最新资料再发一次。
     """
     await conn.execute(
-        """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+        """INSERT INTO cross_border_outbox (op_type, target_id, payload)
            VALUES ($1, $2, gen_random_uuid()::text)
            ON CONFLICT (op_type, target_id) DO UPDATE SET payload = EXCLUDED.payload""",
         USER_PROFILE_OP, user_id,
@@ -524,7 +539,7 @@ class PostgresStore(StorageBase):
                         )
                         for row in rows:
                             await conn.execute(
-                                "INSERT INTO cross_border_delete_outbox (op_type, target_id, payload) VALUES ($1, $2, $3) ON CONFLICT (op_type, target_id) DO NOTHING",
+                                "INSERT INTO cross_border_outbox (op_type, target_id, payload) VALUES ($1, $2, $3) ON CONFLICT (op_type, target_id) DO NOTHING",
                                 "card_delete", row[0], "",
                             )
                         # Cascade-delete sessions, then cards
@@ -1194,7 +1209,7 @@ class PostgresStore(StorageBase):
 
                     if visibility == "public":
                         await conn.execute(
-                            """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                            """INSERT INTO cross_border_outbox (op_type, target_id, payload)
                                VALUES ($1, $2, $3)
                                ON CONFLICT (op_type, target_id) DO NOTHING""",
                             "card_delete", card_id, "",
@@ -1226,7 +1241,7 @@ class PostgresStore(StorageBase):
                         card_id,
                     )
                     await conn.execute(
-                        """DELETE FROM cross_border_delete_outbox
+                        """DELETE FROM cross_border_outbox
                            WHERE op_type = 'card_delete' AND target_id = $1""",
                         card_id,
                     )
@@ -1252,7 +1267,7 @@ class PostgresStore(StorageBase):
 
                     if visibility == "public":
                         await conn.execute(
-                            """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                            """INSERT INTO cross_border_outbox (op_type, target_id, payload)
                                VALUES ($1, $2, $3)
                                ON CONFLICT (op_type, target_id) DO NOTHING""",
                             "card_delete", card_id, "",
@@ -2204,8 +2219,12 @@ class PostgresStore(StorageBase):
     # ── Users ──────────────────────────────────────────────────────
 
     async def create_user(self, id: str, username: str, password_hash: str, *,
-                          email: str = "", home_region: str = "") -> dict:
-        """Create a new user. Raises on duplicate username."""
+                          email: str = "", home_region: str = "", invite_code: str = "") -> dict:
+        """Create a new user. Raises on duplicate username / unavailable invite code.
+
+        建用户、占邀请码、写跨境发件箱在**同一个事务**里：码被别人抢先占了就整笔回滚，
+        不会出现「用户建好了、码却没占到」或「占了码、资料却没进发件箱」。
+        """
         try:
             async with await self._connect() as conn:
                 async with conn.transaction():
@@ -2217,8 +2236,20 @@ class PostgresStore(StorageBase):
                         "INSERT INTO user_secrets (user_id, password_hash) VALUES ($1, $2)",
                         id, password_hash,
                     )
+                    if invite_code:
+                        claimed = await conn.fetchval(
+                            """UPDATE invite_codes SET used_by = $1, used_at = $2
+                               WHERE code = $3 AND used_by IS NULL RETURNING code""",
+                            id, datetime.now(timezone.utc).isoformat(), invite_code,
+                        )
+                        if claimed is None:
+                            raise InviteCodeUnavailable("邀请码无效或已被使用")
+                        # 隐私政策 3.2(4)：只同步「已使用」，不含使用者身份
+                        await _outbox_put(conn, "invite_used", invite_code, {"code": invite_code})
                     await _enqueue_profile_sync(conn, id)
                 return await self.get_user_by_username(username) or {}
+        except InviteCodeUnavailable:
+            raise
         except asyncpg.IntegrityConstraintViolationError as exc:
             raise ValueError("用户名已存在") from exc
         except Exception as exc:
@@ -2408,6 +2439,25 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get all users failed: {exc}")
             raise
 
+    async def claim_inter_node_nonce(self, nonce: str, *, keep_seconds: int) -> bool:
+        try:
+            async with await self._connect() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        "DELETE FROM inter_node_nonces "
+                        "WHERE created_at < CURRENT_TIMESTAMP - make_interval(secs => $1)",
+                        keep_seconds,
+                    )
+                    row = await conn.fetchrow(
+                        "INSERT INTO inter_node_nonces (nonce) VALUES ($1) "
+                        "ON CONFLICT (nonce) DO NOTHING RETURNING nonce",
+                        nonce,
+                    )
+            return row is not None
+        except Exception as exc:
+            print(f"[PostgresStore] Claim inter-node nonce failed: {exc}")
+            raise
+
     async def get_all_users_admin_fields(self) -> list[dict]:
         """List all users with admin-safe fields only (for cross-border export).
 
@@ -2520,7 +2570,12 @@ class PostgresStore(StorageBase):
     async def set_user_disabled(self, user_id: str, is_disabled: bool) -> None:
         try:
             async with await self._connect() as conn:
-                await conn.execute("UPDATE users SET is_disabled = $1 WHERE id = $2", int(is_disabled), user_id)
+                tag = await conn.execute(
+                    "UPDATE users SET is_disabled = $1 WHERE id = $2", int(is_disabled), user_id)
+            if self._parse_rowcount(tag) == 0:
+                raise ValueError(f"用户不存在：{user_id}")
+        except ValueError:
+            raise
         except Exception as exc:
             print(f"[PostgresStore] Set user disabled failed: {exc}")
             raise
@@ -2763,15 +2818,19 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Record user consent failed: {exc}")
             raise StoreError("record_user_consent", exc) from exc
 
-    async def create_invite_code(self, code: str, created_by: str) -> dict:
+    async def create_invite_code(self, code: str, created_by: str, *, propagate: bool) -> dict:
         import uuid as _uuid
         cid = _uuid.uuid4().hex[:16]
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "INSERT INTO invite_codes (id, code, created_by) VALUES ($1, $2, $3)",
-                    cid, code, created_by,
-                )
+                async with conn.transaction():
+                    await conn.execute(
+                        "INSERT INTO invite_codes (id, code, created_by) VALUES ($1, $2, $3)",
+                        cid, code, created_by,
+                    )
+                    if propagate:
+                        await _outbox_put(conn, "invite_create", code,
+                                          {"code": code, "created_by": created_by})
             return await self.get_invite_code(code) or {}
         except Exception as exc:
             print(f"[PostgresStore] Create invite code failed: {exc}")
@@ -2789,16 +2848,17 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get invite code failed: {exc}")
             raise
 
-    async def use_invite_code(self, code: str, used_by: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+    async def mark_invite_used_from_peer(self, code: str) -> bool:
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE invite_codes SET used_by = $1, used_at = $2 WHERE code = $3",
-                    used_by, now, code,
+                tag = await conn.execute(
+                    """UPDATE invite_codes SET used_by = 'peer', used_at = $1
+                       WHERE code = $2 AND used_by IS NULL""",
+                    datetime.now(timezone.utc).isoformat(), code,
                 )
+            return self._parse_rowcount(tag) > 0
         except Exception as exc:
-            print(f"[PostgresStore] Use invite code failed: {exc}")
+            print(f"[PostgresStore] Mark invite used from peer failed: {exc}")
             raise
 
     async def list_invite_codes(self) -> list[dict]:
@@ -2812,24 +2872,32 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] List invite codes failed: {exc}")
             raise
 
-    async def delete_invite_code(self, code: str) -> bool:
+    async def delete_invite_code(self, code: str, *, propagate: bool) -> bool:
         try:
             async with await self._connect() as conn:
-                tag = await conn.execute(
-                    "DELETE FROM invite_codes WHERE code = $1", code,
-                )
-                return self._parse_rowcount(tag) > 0
+                async with conn.transaction():
+                    tag = await conn.execute(
+                        "DELETE FROM invite_codes WHERE code = $1", code,
+                    )
+                    deleted = self._parse_rowcount(tag) > 0
+                    if deleted and propagate:
+                        await _outbox_put(conn, "invite_delete", code, {"code": code})
+                return deleted
         except Exception as exc:
             print(f"[PostgresStore] Delete invite code failed: {exc}")
             raise
 
-    async def delete_used_invites(self) -> int:
+    async def delete_used_invites(self, *, propagate: bool) -> int:
         try:
             async with await self._connect() as conn:
-                tag = await conn.execute(
-                    "DELETE FROM invite_codes WHERE used_by IS NOT NULL"
-                )
-                return self._parse_rowcount(tag)
+                async with conn.transaction():
+                    rows = await conn.fetch(
+                        "DELETE FROM invite_codes WHERE used_by IS NOT NULL RETURNING code"
+                    )
+                    if propagate:
+                        for r in rows:
+                            await _outbox_put(conn, "invite_delete", r["code"], {"code": r["code"]})
+                return len(rows)
         except Exception as exc:
             print(f"[PostgresStore] Delete used invites failed: {exc}")
             raise
@@ -2945,7 +3013,7 @@ class PostgresStore(StorageBase):
 
                     # Enqueue cross-border purge — same transaction as the delete
                     await conn.execute(
-                        """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                        """INSERT INTO cross_border_outbox (op_type, target_id, payload)
                            VALUES ($1, $2, $3)
                            ON CONFLICT (op_type, target_id) DO NOTHING""",
                         "user_purge", user_id, "",
@@ -3022,7 +3090,10 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 async with conn.transaction():
-                    await conn.execute("UPDATE users SET is_disabled = 1 WHERE id = $1", user_id)
+                    tag = await conn.execute("UPDATE users SET is_disabled = 1 WHERE id = $1", user_id)
+                    if self._parse_rowcount(tag) == 0:
+                        # 在事务内抛：后两条写一条都不落。
+                        raise ValueError(f"用户不存在：{user_id}")
                     tag = await conn.execute("DELETE FROM user_posts WHERE user_id = $1", user_id)
                     counts["posts_deleted"] = self._parse_rowcount(tag)
                     tag = await conn.execute(
@@ -3033,6 +3104,8 @@ class PostgresStore(StorageBase):
                     )
                     counts["reports_resolved"] = self._parse_rowcount(tag)
             return counts
+        except ValueError:
+            raise
         except Exception as exc:
             print(f"[PostgresStore] Ban user failed: {exc}")
             raise
@@ -4653,7 +4726,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                    """INSERT INTO cross_border_outbox (op_type, target_id, payload)
                        VALUES ($1, $2, $3)
                        ON CONFLICT (op_type, target_id) DO NOTHING""",
                     op_type, target_id, payload,
@@ -4668,9 +4741,9 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 rows = await conn.fetch(
                     """SELECT id, op_type, target_id, payload, created_at
-                       FROM cross_border_delete_outbox
+                       FROM cross_border_outbox
                        WHERE synced = 0
-                       ORDER BY created_at ASC
+                       ORDER BY id ASC
                        LIMIT $1""",
                     limit,
                 )
@@ -4688,7 +4761,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "DELETE FROM cross_border_delete_outbox WHERE id = $1 AND payload IS NOT DISTINCT FROM $2",
+                    "DELETE FROM cross_border_outbox WHERE id = $1 AND payload IS NOT DISTINCT FROM $2",
                     id, payload,
                 )
         except Exception as exc:
@@ -4733,7 +4806,7 @@ class PostgresStore(StorageBase):
                         message_id,
                     )
                     await conn.execute(
-                        """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                        """INSERT INTO cross_border_outbox (op_type, target_id, payload)
                            VALUES ($1, $2, $3)
                            ON CONFLICT (op_type, target_id) DO NOTHING""",
                         "dm_retract", message_id, "",
