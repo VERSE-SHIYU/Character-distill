@@ -441,12 +441,8 @@ async def register(
     if inv:
         await storage.use_invite_code(inv, user["id"])
 
-    # Best-effort sync profile to peer node
-    try:
-        from cross_border_sync import forward_user_profile_to_peer
-        await forward_user_profile_to_peer(user["id"], user.get("username", ""), home_region, user.get("avatar_data", ""))
-    except Exception as exc:
-        logger.error("Forward user profile to peer failed: %s", exc, exc_info=True)
+    # 资料同步给对端：`create_user` 已在建用户的同一事务里入队，由补发循环发送（见
+    # `storage.base.USER_PROFILE_OP`）。
 
     # Record consent
     try:

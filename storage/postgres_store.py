@@ -13,7 +13,7 @@ from typing import Any
 import asyncpg  # type: ignore[import-not-found]
 
 from core.roles import ROLES
-from .base import StorageBase, StoreError
+from .base import USER_PROFILE_OP, StorageBase, StoreError
 from .migration_ledger import file_sha256, pending_files
 from .pg_identity_sync import align_identity_sequences
 from .secret_box import decrypt_secret, encrypt_secret
@@ -120,6 +120,20 @@ class _PoolContext:
                     logger.warning("Terminate connection failed: %s", term_exc, exc_info=True)
             self.conn = None
 
+
+
+async def _enqueue_profile_sync(conn: asyncpg.Connection, user_id: str) -> None:
+    """在调用方的事务里把「这个用户的资料要发给对端」入队（见 `USER_PROFILE_OP`）。
+
+    已有待发行时换一个新版本戳（`DO UPDATE`），而不是 `DO NOTHING`：正在发送的旧版本
+    确认后按旧戳删行会落空，这一行留下来，下一轮把最新资料再发一次。
+    """
+    await conn.execute(
+        """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+           VALUES ($1, $2, gen_random_uuid()::text)
+           ON CONFLICT (op_type, target_id) DO UPDATE SET payload = EXCLUDED.payload""",
+        USER_PROFILE_OP, user_id,
+    )
 
 class PostgresStore(StorageBase):
     """Asynchronous storage implementation based on PostgreSQL via asyncpg."""
@@ -2203,6 +2217,7 @@ class PostgresStore(StorageBase):
                         "INSERT INTO user_secrets (user_id, password_hash) VALUES ($1, $2)",
                         id, password_hash,
                     )
+                    await _enqueue_profile_sync(conn, id)
                 return await self.get_user_by_username(username) or {}
         except asyncpg.IntegrityConstraintViolationError as exc:
             raise ValueError("用户名已存在") from exc
@@ -2626,13 +2641,16 @@ class PostgresStore(StorageBase):
             raise
 
     async def update_user_avatar(self, user_id: str, avatar_data: str) -> None:
-        """Store base64 avatar for a user."""
+        """Store base64 avatar for a user, and queue the new profile for the peer."""
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE users SET avatar_data = $1 WHERE id = $2",
-                    avatar_data, user_id,
-                )
+                async with conn.transaction():
+                    status = await conn.execute(
+                        "UPDATE users SET avatar_data = $1 WHERE id = $2",
+                        avatar_data, user_id,
+                    )
+                    if self._parse_rowcount(status):
+                        await _enqueue_profile_sync(conn, user_id)
         except Exception as exc:
             print(f"[PostgresStore] Update user avatar failed: {exc}")
             raise
@@ -4661,13 +4679,17 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get pending delete propagations failed: {exc}")
             raise
 
-    async def remove_delete_propagation(self, id: int) -> None:
-        """Delete a delete propagation outbox row the peer has acknowledged."""
+    async def remove_delete_propagation(self, id: int, payload: str) -> None:
+        """Delete an acknowledged outbox row, only if its payload is unchanged.
+
+        See `StorageBase.remove_delete_propagation` for why the payload is part
+        of the condition.
+        """
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "DELETE FROM cross_border_delete_outbox WHERE id = $1",
-                    id,
+                    "DELETE FROM cross_border_delete_outbox WHERE id = $1 AND payload IS NOT DISTINCT FROM $2",
+                    id, payload,
                 )
         except Exception as exc:
             print(f"[PostgresStore] Remove delete propagation failed: {exc}")
