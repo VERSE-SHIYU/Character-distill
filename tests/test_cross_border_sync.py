@@ -339,7 +339,7 @@ async def _queued_card_deletes(store) -> list[dict]:
     """直读 outbox 里这张卡的 `card_delete` 行 —— 不经 pending 视图，见文件头说明。"""
     async with await store._connect() as conn:
         rows = await conn.fetch(
-            """SELECT id, synced FROM cross_border_outbox
+            """SELECT id, synced, payload FROM cross_border_outbox
                WHERE op_type = 'card_delete' AND target_id = $1""",
             _CARD,
         )
@@ -397,7 +397,7 @@ async def test_delete_requeues_after_ack_and_restore(pg_card, pg_store):
     rows = await _queued_card_deletes(pg_store)
     assert len(rows) == 1, "种子没入队，用例测不到东西"
 
-    await pg_store.remove_delete_propagation(rows[0]["id"])
+    await pg_store.remove_delete_propagation(rows[0]["id"], rows[0]["payload"])
     assert await _queued_card_deletes(pg_store) == [], (
         "对端已确认，这一行必须真的从表里消失 —— 留着（哪怕标了 synced = 1）"
         "就还占着 (op_type, target_id) 这个唯一键，同一张卡再也删不掉")

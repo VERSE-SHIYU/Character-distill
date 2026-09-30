@@ -13,7 +13,7 @@ from typing import Any
 import asyncpg  # type: ignore[import-not-found]
 
 from core.roles import ROLES
-from .base import InviteCodeUnavailable, StorageBase, StoreError
+from .base import USER_PROFILE_OP, InviteCodeUnavailable, StorageBase, StoreError
 from .migration_ledger import file_sha256, pending_files
 from .pg_identity_sync import align_identity_sequences
 from .secret_box import decrypt_secret, encrypt_secret
@@ -121,31 +121,33 @@ class _PoolContext:
             self.conn = None
 
 
-async def _outbox_put(conn, op_type: str, target_id: str, payload: dict, *, replace: bool = False) -> None:
-    """跨境发件箱写一条（调用方负责把它放进业务写入的同一个事务）。
+async def _outbox_put(conn, op_type: str, target_id: str, payload: dict) -> None:
+    """跨境发件箱写一条邀请码记录（调用方负责把它放进业务写入的同一个事务）。
 
-    内容在**写入时**就定好（事务发件箱的标准写法），发送时原样发出。`replace=True` 用于
-    「只有最新状态有意义」的类型（用户资料）：同一目标还没发出的那条被新内容覆盖。
+    内容在**写入时**就定好（事务发件箱的标准写法），发送时原样发出；同一目标已有待发行时
+    保持原样（`DO NOTHING`）。用户资料不走这里，走 `_enqueue_profile_sync`：资料只有最新
+    那份有意义，队里存的是版本戳，发送时才读最新资料。
     """
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    if replace:
-        await conn.execute(
-            """INSERT INTO cross_border_outbox (op_type, target_id, payload)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (op_type, target_id) DO UPDATE SET payload = EXCLUDED.payload""",
-            op_type, target_id, body)
-    else:
-        await conn.execute(
-            """INSERT INTO cross_border_outbox (op_type, target_id, payload)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (op_type, target_id) DO NOTHING""",
-            op_type, target_id, body)
+    await conn.execute(
+        """INSERT INTO cross_border_outbox (op_type, target_id, payload)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (op_type, target_id) DO NOTHING""",
+        op_type, target_id, body)
 
 
-def _profile_payload(user_id: str, username: str, home_region: str, avatar_data: str) -> dict:
-    """隐私政策 3.2(1)：公开资料只同步用户名、头像、所属地域（不含昵称、注册时间）。"""
-    return {"id": user_id, "username": username, "home_region": home_region,
-            "avatar_data": avatar_data or ""}
+async def _enqueue_profile_sync(conn: asyncpg.Connection, user_id: str) -> None:
+    """在调用方的事务里把「这个用户的资料要发给对端」入队（见 `USER_PROFILE_OP`）。
+
+    已有待发行时换一个新版本戳（`DO UPDATE`），而不是 `DO NOTHING`：正在发送的旧版本
+    确认后按旧戳删行会落空，这一行留下来，下一轮把最新资料再发一次。
+    """
+    await conn.execute(
+        """INSERT INTO cross_border_outbox (op_type, target_id, payload)
+           VALUES ($1, $2, gen_random_uuid()::text)
+           ON CONFLICT (op_type, target_id) DO UPDATE SET payload = EXCLUDED.payload""",
+        USER_PROFILE_OP, user_id,
+    )
 
 
 class PostgresStore(StorageBase):
@@ -2244,8 +2246,7 @@ class PostgresStore(StorageBase):
                             raise InviteCodeUnavailable("邀请码无效或已被使用")
                         # 隐私政策 3.2(4)：只同步「已使用」，不含使用者身份
                         await _outbox_put(conn, "invite_used", invite_code, {"code": invite_code})
-                    await _outbox_put(conn, "user_profile", id,
-                                      _profile_payload(id, username, home_region, ""), replace=True)
+                    await _enqueue_profile_sync(conn, id)
                 return await self.get_user_by_username(username) or {}
         except InviteCodeUnavailable:
             raise
@@ -2695,21 +2696,16 @@ class PostgresStore(StorageBase):
             raise
 
     async def update_user_avatar(self, user_id: str, avatar_data: str) -> None:
-        """Store base64 avatar for a user（同一事务把最新资料写进发件箱）。"""
+        """Store base64 avatar for a user, and queue the new profile for the peer."""
         try:
             async with await self._connect() as conn:
                 async with conn.transaction():
-                    row = await conn.fetchrow(
-                        """UPDATE users SET avatar_data = $1 WHERE id = $2
-                           RETURNING id, username, home_region""",
+                    status = await conn.execute(
+                        "UPDATE users SET avatar_data = $1 WHERE id = $2",
                         avatar_data, user_id,
                     )
-                    if row is not None:
-                        await _outbox_put(
-                            conn, "user_profile", user_id,
-                            _profile_payload(row["id"], row["username"], row["home_region"] or "",
-                                             avatar_data),
-                            replace=True)
+                    if self._parse_rowcount(status):
+                        await _enqueue_profile_sync(conn, user_id)
         except Exception as exc:
             print(f"[PostgresStore] Update user avatar failed: {exc}")
             raise
@@ -4756,13 +4752,17 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get pending delete propagations failed: {exc}")
             raise
 
-    async def remove_delete_propagation(self, id: int) -> None:
-        """Delete a delete propagation outbox row the peer has acknowledged."""
+    async def remove_delete_propagation(self, id: int, payload: str) -> None:
+        """Delete an acknowledged outbox row, only if its payload is unchanged.
+
+        See `StorageBase.remove_delete_propagation` for why the payload is part
+        of the condition.
+        """
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "DELETE FROM cross_border_outbox WHERE id = $1",
-                    id,
+                    "DELETE FROM cross_border_outbox WHERE id = $1 AND payload IS NOT DISTINCT FROM $2",
+                    id, payload,
                 )
         except Exception as exc:
             print(f"[PostgresStore] Remove delete propagation failed: {exc}")
