@@ -17,7 +17,7 @@
 | Docker Compose 文件规范 services（约 45 天前更新） | `pull_policy: missing`：本地缓存没有才拉；`latest` 即使 missing 也总会拉 | 行为 1；行为 5（调用方不得用 latest） |
 
 ## 做法
-1. 新增 `have_image <repo:tag> [digest]`：本地有该引用返回真；给了 digest 时，本地镜像的 RepoDigests 必须含 `<repo>@<digest>`。
+1. 新增 `have_image <repo:tag> [digest]`：本地有该引用返回真；给了 digest 时，本地镜像的 RepoDigests 里必须有一条**整条等于** `<repo>@<digest>`（逐条整行比对，不用子串；2026-09-30 审计订正，见「补充」）。
 2. `pull_image` 开头先查本地：阿里云引用（`$1` 非空）命中 → 用它；回落仓库的 `$2:$4` 命中 → 用它；都不命中才走**原有拉取流程（一行不改）**。命中时打一行「本地已有 …，跳过拉取」。
 
 ## 已查实的约束（基线 `599e467`；S0 逐条复核，不成立即停下报告）
@@ -53,6 +53,8 @@ C6 全部调用都在 `|| { …; exit 1; }` / `|| { …; return 1; }` 里，函�
 | app / nginx，本地 digest 不同 | 照常按 digest 拉 | `test_local_image_with_other_digest_is_pulled` |
 | 回滚 app / nginx，本地有 `:PREV_SHA` | 不拉；RESULT=GHCR | `test_local_rollback_image_skips_pull` |
 | 任一调用点，本地没有 | 原拉取流程 | 原有 5 条行为用例 |
+| app / nginx，本地只有以目标 digest 开头的另一条记录 | 不认本地，照常按 digest 拉 | `test_digest_prefix_is_not_a_match` |
+| app / nginx，RepoDigests 多条、其中一条等于目标 | 不拉 | `test_digest_found_among_several_repodigests` |
 | 6 个调用点的 tag | 都不是 latest | `test_no_call_site_uses_latest` |
 
 ## 改动原文（补丁 `image-if-not-present.patch`，已在干净的 `599e467` 上 `git apply --3way` 通过）
@@ -218,7 +220,7 @@ index 5b3c180..b0bd189 100644
 docker compose -f docker-compose.test.yml up -d --wait
 python -m pytest tests/test_deploy_image_pulls.py tests/test_health_probe_targets.py -q -rs
 ```
-预期：无失败；`test_deploy_image_pulls.py` 共 15 条，Windows 上 9 条 skipped（行为用例），Linux 分支 CI 上 15 条全部 passed。不跑 `npm test`。合并门是分支 CI；合并只做 git 操作。
+预期：无失败；`test_deploy_image_pulls.py` 共 17 条（审计补 2 条），Windows 上 11 条 skipped（行为用例），Linux 分支 CI 上 17 条全部 passed。不跑 `npm test`。合并门是分支 CI；合并只做 git 操作。
 沙箱实测：改后 15 passed；基线 deploy.yml + 新测试 9 失败（行为用例因找不到 `have_image` 全部失败），6 通过。YAML 解析与 actionlint 通过。
 
 ## 对账表
@@ -230,14 +232,16 @@ python -m pytest tests/test_deploy_image_pulls.py tests/test_health_probe_target
 | 4. digest 不同必须重新拉 | `test_local_image_with_other_digest_is_pulled` | I3、I4 | 两节点始终同一 sha256 |
 | 5. 调用方不用 latest | `test_no_call_site_uses_latest` | I8 | 「本地有就不拉」只作用于固定版本 |
 | 6.（原有）#87 全部行为 | 原 10 条 | G1～G13 | 不变 |
+| 7. digest 整条比对，不认前缀（审计补） | `test_digest_prefix_is_not_a_match` | I9 | 本地有「以目标 digest 开头」的另一镜像时不误用 |
+| 8. 多条 RepoDigests 逐条比对（审计补） | `test_digest_found_among_several_repodigests` | I10 | 同一镜像既有阿里云又有 GHCR 记录时仍命中 |
 
-### 变异实跑结果（发出前实跑，共 21 条）
+### 变异实跑结果（2026-09-30 审计后重跑，共 23 条 = 原 21 条 + I9、I10）
 ```
 RED   G1 build 恢复阿里云推送步 :: test_build_does_not_touch_aliyun
 RED   G2 build 恢复 ALIYUN env :: test_build_does_not_touch_aliyun
 RED   G3 app 调用改回阿里云优先 :: test_app_and_nginx_pull_only_from_ghcr
 RED   G4 回滚 nginx 改回阿里云优先 :: test_app_and_nginx_pull_only_from_ghcr
-RED   G5 去掉 $1 为空的跳过判断 :: test_empty_first_arg_goes_straight_to_ghcr, test_local_image_with_other_digest_is_pulled
+RED   G5 去掉 $1 为空的跳过判断 :: test_digest_prefix_is_not_a_match, test_empty_first_arg_goes_straight_to_ghcr, test_local_image_with_other_digest_is_pulled
 RED   G6 command_timeout 40m→30m :: test_worst_case_fits_ssh_budget
 RED   G7 阿里云单次超时 120→420（超出预算） :: test_worst_case_fits_ssh_budget
 RED   G8 去掉阿里云那支的 timeout :: test_aliyun_hang_falls_back_within_timeout
@@ -246,14 +250,16 @@ RED   G10 恢复 2>/dev/null :: test_aliyun_missing_tag_falls_back_and_says_why
 RED   G11 postgres 跳过阿里云 :: test_third_party_images_stay_aliyun_first
 RED   G12 阿里云成功后不 return :: test_aliyun_ok_stays_on_aliyun_without_notice
 RED   G13 app 回落仓库改成阿里云 :: test_app_and_nginx_pull_only_from_ghcr
-RED   I1 删掉本地优先（两段都删） :: test_local_own_image_with_same_digest_skips_pull, test_local_rollback_image_skips_pull, test_local_third_party_image_skips_pull
+RED   I1 删掉本地优先（两段都删） :: test_digest_found_among_several_repodigests, test_local_own_image_with_same_digest_skips_pull, test_local_rollback_image_skips_pull, test_local_third_party_image_skips_pull
 RED   I2 只删阿里云引用的本地检查 :: test_local_third_party_image_skips_pull
-RED   I3 不核对 digest :: test_local_image_with_other_digest_is_pulled
-RED   I4 have_image 恒真 :: test_aliyun_hang_falls_back_within_timeout, test_aliyun_missing_tag_falls_back_and_says_why, test_both_registries_fail_returns_nonzero, test_empty_first_arg_goes_straight_to_ghcr, test_local_image_with_other_digest_is_pulled
-RED   I5 digest 比对用错仓库名（含 tag） :: test_local_own_image_with_same_digest_skips_pull
-RED   I6 删跳过拉取的日志行 :: test_local_own_image_with_same_digest_skips_pull
-RED   I7 本地命中后不 return（继续拉取） :: test_local_own_image_with_same_digest_skips_pull, test_local_rollback_image_skips_pull
+RED   I3 不核对 digest :: test_digest_prefix_is_not_a_match, test_local_image_with_other_digest_is_pulled
+RED   I4 have_image 恒真 :: test_aliyun_hang_falls_back_within_timeout, test_aliyun_missing_tag_falls_back_and_says_why, test_both_registries_fail_returns_nonzero, test_digest_prefix_is_not_a_match, test_empty_first_arg_goes_straight_to_ghcr, test_local_image_with_other_digest_is_pulled
+RED   I5 digest 比对用错仓库名（含 tag） :: test_digest_found_among_several_repodigests, test_local_own_image_with_same_digest_skips_pull
+RED   I6 删跳过拉取的日志行 :: test_digest_found_among_several_repodigests, test_local_own_image_with_same_digest_skips_pull
+RED   I7 本地命中后不 return（继续拉取） :: test_digest_found_among_several_repodigests, test_local_own_image_with_same_digest_skips_pull, test_local_rollback_image_skips_pull
 RED   I8 调用方传 latest :: test_no_call_site_uses_latest
+RED   I9 digest 改回子串匹配 :: test_digest_prefix_is_not_a_match
+RED   I10 去掉逐条拆行（多条 RepoDigests 不再命中） :: test_digest_found_among_several_repodigests
 存活变异: 0
 ```
 
@@ -324,7 +330,7 @@ M=[
  ("I4 have_image 恒真",D,rep('''              docker image inspect "$1" >/dev/null 2>&1 || return 1
 ''','''              return 0
 ''')),
- ("I5 digest 比对用错仓库名（含 tag）",D,rep('''grep -qF "${1%:*}@$2"''','''grep -qF "$1@$2"''')),
+ ("I5 digest 比对用错仓库名（含 tag）",D,rep('''grep -qxF "${1%:*}@$2"''','''grep -qxF "$1@$2"''')),
  ("I6 删跳过拉取的日志行",D,rep('''                echo "本地已有 $2:$4，跳过拉取"
 ''',"")),
  ("I7 本地命中后不 return（继续拉取）",D,rep('''                echo "本地已有 $2:$4，跳过拉取"
@@ -332,6 +338,8 @@ M=[
 ''','''                echo "本地已有 $2:$4，跳过拉取"
 ''')),
  ("I8 调用方传 latest",D,rep('''"docker.io/crazymax/fail2ban" "" "1.1.0"''','''"docker.io/crazymax/fail2ban" "" "latest"''')),
+ ("I9 digest 改回子串匹配",D,rep('''| tr ' ' '\\n' | grep -qxF "${1%:*}@$2"''','''| grep -qF "${1%:*}@$2"''')),
+ ("I10 去掉逐条拆行（多条 RepoDigests 不再命中）",D,rep('''| tr ' ' '\\n' | grep''','''| grep''')),
 ]
 alive=0
 for name,path,f in M:
@@ -352,3 +360,16 @@ print("存活变异:",alive)
   原因：`tests/test_ledger_substitution_markers.py` 判「栖息地」而不是形状 —— 未被替换的替换标记
   在台账里必须为 0、在台账外必须落在 JSON 字符串值里，嵌入的 diff 正文两者都不是，因此该锁把
   本文档判成「判不了性质的新栖息地」。该锁的失败信息给的处置就是「两者都不是，别用这个形状」。
+- 2026-09-30 审计订正（落在本分支的第三个提交）：
+  1. **digest 比对由子串改为整条比对**。原写法 `grep -qF "<repo>@<digest>"` 是子串匹配：本地只有
+     「以目标 digest 开头」的另一条记录时也判命中（实测：本地 `…@sha256:dOTHER`、目标 `…@sha256:d`
+     → 跳过拉取）。生产 digest 都是等长的 64 位十六进制，今天不会误判，但判据比注释说的宽，而原测试的
+     假 digest 太短、照不出来。改为 RepoDigests 逐条拆行后 `grep -qxF`；补
+     `test_digest_prefix_is_not_a_match`（I9）与 `test_digest_found_among_several_repodigests`（I10）。
+  2. **「固定版本」措辞订正**。`16-alpine` / `1.1.0` 是会移动的 tag，不是固定版本；行为不变（方案 A
+     已拍板），deploy.yml 注释与 `test_no_call_site_uses_latest` 的说明改为如实描述，并写明升级做法：
+     新镜像推到阿里云后在 SZ 上手动 `docker pull <阿里云引用>`（不用 `docker rmi`：容器在跑时删不掉）。
+  3. **无 digest 只认 tag 的范围写明**：postgres / fail2ban、回滚的 `:PREV_SHA`、以及 deploy.yml
+     `image_sha` 回滚模式（digest 为空）的 `:SHA`。同一 commit 在 main 上重跑过 build 时，后者会用本地
+     旧构建而不是 GHCR 上的新构建 —— 两者出自同一 commit，接受。
+  4. 附录驱动的 I5 锚点随 grep 形状更新；AGENTS.md 缺陷 97 下补一行订正。

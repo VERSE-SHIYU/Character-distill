@@ -7,7 +7,8 @@
   - deploy.yml 的 app / nginx（含回滚）只从 GHCR 拉，postgres / fail2ban 仍阿里云优先
     （Docker Hub 从 SZ 拉会超时，这两个是同区镜像，拉取正常）；
   - pull_image 的 $1（阿里云引用）为空即跳过阿里云；非空时保留 120s 单次超时与失败原因；
-  - 本地已有同一镜像（有 digest 时须 digest 一致）就不拉（IfNotPresent），本地没有才拉。
+  - 本地已有同一镜像（有 digest 时须某条 RepoDigests 整条等于 <repo>@<digest>）就不拉（IfNotPresent），
+    本地没有才拉。
 
 行为用例按比例复刻：阿里云超时取 1s、替身挂 30s，断言 10s 内回落。
 """
@@ -216,8 +217,27 @@ def test_local_image_with_other_digest_is_pulled(tmp_path):
     assert "跳过拉取" not in proc.stdout
 
 
+@needs_posix
+def test_digest_prefix_is_not_a_match(tmp_path):
+    """本地只有「以目标 digest 开头」的另一条记录 → 不是同一镜像，必须照常拉（整条比对，不是子串）。"""
+    proc, _, calls = _run(tmp_path, aliyun="fail", ghcr="ok", first_arg="", local=_LOCAL_APP,
+                          repodigests=f"{_GHCR}/character-distill-app@sha256:dOTHER")
+    assert calls == [_SAME], calls
+    assert "跳过拉取" not in proc.stdout
+
+
+@needs_posix
+def test_digest_found_among_several_repodigests(tmp_path):
+    """RepoDigests 有多条（阿里云 + GHCR）时，只要其中一条整条等于目标就算命中。"""
+    proc, _, calls = _run(tmp_path, aliyun="fail", ghcr="hang", first_arg="", local=_LOCAL_APP,
+                          repodigests=f"{_ALIYUN}/character-distill-app@sha256:x {_SAME}")
+    assert calls == [], calls
+    assert f"本地已有 {_LOCAL_APP}，跳过拉取" in proc.stdout
+
+
 def test_no_call_site_uses_latest():
-    """「本地有就不拉」只对固定版本成立；:latest 必须每次拉（Compose 同规则）。调用方不得传 latest。"""
+    """「本地有就不拉」对 :latest 不适用，:latest 必须每次拉（Compose 同规则），调用方不得传 latest。
+    注意这只拦 latest：16-alpine / 1.1.0 这类会移动的 tag 本地有了也不再更新（已拍板，升级靠手动 pull）。"""
     assert all(c[3] != "latest" for c in _calls()), _calls()
 
 
