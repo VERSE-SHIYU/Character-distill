@@ -27,7 +27,7 @@ import logging
 import os
 import sqlite3
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from pwdlib import PasswordHash
@@ -85,6 +85,9 @@ class _FakeRAGEngine:
     def load_existing(self, name) -> bool:
         self.collection_name = name
         return True
+
+    def collection_stamp(self, name):
+        return ("fake", 1)
 
     def index(self, *_a, collection_name=None, **_kw) -> None:
         self.collection_name = collection_name

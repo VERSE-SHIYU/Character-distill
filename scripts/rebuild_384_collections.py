@@ -9,9 +9,9 @@ DashScope text-embedding-v4(1024)。此后（commit 4a971d1 起）load_existing 
 text_，且下一次场景预索引会按当前 embedder 重建它（`SceneIndexer.index_scenes`）——
 故 scenes_ 不在本脚本射程。rag_{uuid} 是一次性实例集合，无读取方。plan 会说明并跳过。
 
-**进程边界**：web 进程只在「本进程里有集合建完」时让已开的会话重读
-（`core/indexing_service.py::_CollectionBuilds`）。本脚本在另一个进程里重建，web 那边
-已判过「集合不可用」的会话感知不到 —— 跑完后重启 web 进程（或让会话重建）才会接上。
+**web 进程不用重启**：会话每轮检索前比对候选集合的版本令牌（集合 id / 条数，读的是
+共享的 chroma 持久化目录，见 `core/indexing_service.py::SessionRag`）。本脚本重建换了 id，
+已开的会话下一轮就会重新装载。
 
 判定（plan / rebuild 同口径）：
   REBUILD      dim==384 且 texts 行存在 且 ≥1 张 live 卡引用

@@ -4,12 +4,14 @@ Two sides, kept apart on purpose:
 
 * **Building** a collection (embedding the text) happens only in background jobs
   (`schedule_scene_index` / `schedule_text_reindex`). Every build goes through
-  `_builds.building(name)`: one thread per collection name at a time, and when it
-  ends the build generation moves on.
+  `_builds.building(name)`: one thread per collection name at a time.
 * **Sessions only load.** Each session gets its own `SessionRag`, which loads the
-  first usable of `scenes_{card_id}` → `text_{text_id}`, and loads again only when
-  a build has finished since (or its last query failed) — so a collection finished
-  in the background is picked up on the next turn without anyone pushing it.
+  first usable of `scenes_{card_id}` → `text_{text_id}` and keeps that result while
+  the candidates' version stamps stay the same (validation-token caching, like an
+  HTTP ETag). A stamp is `(building here?, collection id, row count)`, read from
+  chroma's shared persistent store — so a collection rebuilt in the background, or
+  by another process (e.g. `scripts/rebuild_384_collections.py`), is picked up on
+  the next turn without anyone pushing it.
 
 This module is the ONLY place that imports SceneIndexer.
 """
@@ -40,23 +42,22 @@ class CollectionBuilding(RuntimeError):
 
 
 class _CollectionBuilds:
-    """进程内的集合构建登记：谁在建哪个集合、到现在一共建完过几次。
+    """进程内的集合构建登记：谁在建哪个集合。
 
     * `building(name)`：建集合时持有。同名集合同一时刻只许一个线程在建 ——
       `index()` / `index_scenes` 都是「先删后建」，两个线程并发建同一集合，一个的写入
       会落进被另一个删掉的集合里。
-    * `is_building(name)`：会话装载时区分「此刻正在建」与「不存在」。
-    * `generation`：每结束一次构建（成功或失败）加一。会话据此判断「上次装载之后
-      有没有集合变过」，没变就不重读。
+    * `is_building(name)`：会话装载时区分「此刻正在建」与「不存在」；它也是版本令牌的
+      一部分 —— 构建结束（锁释放）令牌就变，会话下一轮重读。
 
-    只管本进程。`text_*` / `scenes_*` 只有 web 进程会建（MCP 只读，见
-    `mcp_server/server.py::_rag_for_text_id`）。
+    互斥只管本进程（web 进程的后台作业；MCP 只读，见
+    `mcp_server/server.py::_rag_for_text_id`）。别的进程改了集合，会话靠版本令牌里的
+    集合 id / 条数发现，不靠这里。
     """
 
     def __init__(self) -> None:
         self._guard = threading.Lock()
         self._locks: dict[str, threading.Lock] = {}
-        self._generation = 0
 
     def _lock(self, name: str) -> threading.Lock:
         with self._guard:
@@ -68,19 +69,10 @@ class _CollectionBuilds:
     @contextlib.contextmanager
     def building(self, name: str) -> Iterator[None]:
         with self._lock(name):
-            try:
-                yield
-            finally:
-                with self._guard:
-                    self._generation += 1
+            yield
 
     def is_building(self, name: str) -> bool:
         return self._lock(name).locked()
-
-    @property
-    def generation(self) -> int:
-        with self._guard:
-            return self._generation
 
 
 _builds = _CollectionBuilds()
@@ -100,9 +92,9 @@ def _session_candidates(text_id: str, card_id: str) -> list[str]:
 class SessionRag:
     """一个会话自己的检索：只装载、不建。
 
-    装载结果（可用的引擎 / 真没有 / 不可用的原因）一直用到下面两件事之一发生：
-    某个集合建完了（`_builds.generation` 变了），或本会话的一次查询失败了
-    （集合被删了再建，旧句柄失效）。两者都在下一次检索前重读。
+    装载结果（可用的引擎 / 真没有 / 不可用的原因）连同候选集合的版本令牌一起记下；
+    每次检索前先比令牌（只读元数据），令牌没变就沿用，变了（有集合被重建 / 写入 /
+    开始或结束构建，不论哪个进程做的）才重新装载。本会话的一次查询失败也会强制重读。
 
     对外只提供 `ContextEngine` 用到的 `query_with_emotion_ex`；
     `collection_name` 只读，供观测。
@@ -119,20 +111,25 @@ class SessionRag:
         self._region = embedding_region
         self._engine: RAGEngine | None = None
         self._unavailable: Exception | None = None
-        self._loaded_at: int | None = None  # 上次装载时的构建代数；None = 下次检索前必须装载
+        self._probe: RAGEngine | None = None  # 读版本令牌用：上次装载用的那个引擎
+        self._stamp: tuple | None = None       # 上次装载时的版本令牌；None = 下次检索前必须装载
 
     @property
     def collection_name(self) -> str | None:
         return self._engine.collection_name if self._engine is not None else None
 
     def _refresh(self) -> None:
-        generation = _builds.generation  # 先读代数：装载期间有构建结束，下一轮会再读
-        if self._loaded_at == generation:
-            return
-        self._engine, self._unavailable, self._loaded_at = None, None, None
-        self._engine, self._unavailable = self._service._load_session_rag(
-            self._text_id, self._card_id, self._key, self._region)
-        self._loaded_at = generation
+        service = self._service
+        if self._probe is not None:
+            if service._candidates_stamp(self._probe, self._text_id, self._card_id) == self._stamp:
+                return
+        rag = service._new_rag(self._key, self._region)
+        # 先读令牌再装载：装载期间集合又变了，下一轮令牌对不上会再读。
+        stamp = service._candidates_stamp(rag, self._text_id, self._card_id)
+        self._engine, self._unavailable, self._stamp = None, None, None
+        self._engine, self._unavailable = service._load_session_rag(
+            rag, self._text_id, self._card_id)
+        self._probe, self._stamp = rag, stamp
 
     def query_with_emotion_ex(self, query_text: str, **kwargs: Any) -> EvidenceHits:
         self._refresh()
@@ -143,7 +140,7 @@ class SessionRag:
         try:
             return self._engine.query_with_emotion_ex(query_text, **kwargs)
         except CollectionUnusableError:
-            self._loaded_at = None
+            self._stamp = None
             raise
 
 
@@ -167,10 +164,23 @@ class IndexingService:
         rag_config["embedding_region"] = embedding_region
         return RAGEngine(rag_config)
 
+    @staticmethod
+    def _candidates_stamp(rag: RAGEngine, text_id: str, card_id: str) -> tuple:
+        """会话候选集合此刻的版本令牌：每个候选 `(是否本进程正在建, (id, 条数) 或 None)`。(sync)
+
+        只读 chroma 元数据（不嵌入、不 peek）。重建换 id、写入改条数、本进程构建开始 /
+        结束改第一项 —— 任一变化都让令牌对不上。
+        """
+        return tuple(
+            (_builds.is_building(name), rag.collection_stamp(name))
+            for name in _session_candidates(text_id, card_id)
+        )
+
+    @staticmethod
     def _load_session_rag(
-        self, text_id: str, card_id: str, embedding_key: str, embedding_region: str,
+        rag: RAGEngine, text_id: str, card_id: str,
     ) -> tuple[RAGEngine | None, Exception | None]:
-        """只装载、不建：取 `_session_candidates` 里第一个可用的集合。(sync)
+        """只装载、不建：把 `rag` 指到 `_session_candidates` 里第一个可用的集合。(sync)
 
         一个候选不可用（正在建 / 维度不符）就看下一个 —— 本卡场景集合坏了，原文集合
         照样能用。返回 `(引擎, None)`；一个集合都没有 → `(None, None)`，本轮检索为空；
@@ -178,7 +188,6 @@ class IndexingService:
 
         本地 chroma 读，不走网络、不嵌入。
         """
-        rag = self._new_rag(embedding_key, embedding_region)
         unavailable: Exception | None = None
         for name in _session_candidates(text_id, card_id):
             if _builds.is_building(name):

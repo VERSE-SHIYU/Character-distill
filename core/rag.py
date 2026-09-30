@@ -555,6 +555,20 @@ class RAGEngine:
         except (TypeError, ValueError):
             return None
 
+    def collection_stamp(self, collection_name: str) -> tuple[str, int] | None:
+        """集合当前的版本令牌 `(id, 条数)`；集合不存在 → None。只读元数据，不嵌入、不 peek。
+
+        重建（先删后建）换 id，写入改条数 —— 另一个进程改的也读得到（持久化目录是共享的）。
+        调用方拿它判断「上次装载之后集合有没有变过」。
+        """
+        try:
+            col = self._client.get_collection(
+                name=collection_name, embedding_function=self._embedding_function,
+            )
+        except NotFoundError:
+            return None
+        return str(col.id), col.count()
+
     def load_existing(self, collection_name: str) -> bool:
         """装载已存在的持久化集合，可用返回 True。
 

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 
 import pytest
 from chromadb.errors import NotFoundError
@@ -58,6 +59,7 @@ class _Embedder:
 class _Collection:
     def __init__(self, name: str, metadata: dict | None = None) -> None:
         self.name = name
+        self.id = uuid.uuid4()  # 真件语义：先删后建换 id
         self.dim = _Embedder._dimensions  # 改成别的值 = 由别的 embedder 写的旧集合
         self.metadata = dict(metadata or {})
         self.docs: list[str] = []
@@ -305,7 +307,11 @@ def test_b5_unusable_scenes_fall_back_to_the_text_collection(monkeypatch):
 
 
 def test_b6_no_usable_collection_fails_each_turn_but_loads_once(monkeypatch):
-    """集合都不可用：每轮检索都记为失败，但不每轮重读 —— 直到有集合建完。"""
+    """集合都不可用：每轮检索都记为失败，但集合没变就不重读 —— 集合被重建后下一轮接上。
+
+    重建放在构建登记**之外**做，模拟别的进程（离线修复脚本）改了集合：会话只能靠
+    集合自己的版本令牌（id / 条数）发现。
+    """
     client = _Client()
     client.seed("text_t1", dim=384)
     made = _patch_engine(monkeypatch, client)
@@ -316,24 +322,27 @@ def test_b6_no_usable_collection_fails_each_turn_but_loads_once(monkeypatch):
             _ask(view)
     assert len(made) == 1, f"不可用的结论没留住，每轮都在重读（造了 {len(made)} 个引擎）"
 
-    with IS._builds.building("text_t1"):
-        client.seed("text_t1")
+    client.seed("text_t1")  # 另一个进程按当前 embedder 重建了它
     _ask(view)
 
     assert len(made) == 2 and view.collection_name == "text_t1", (
-        "集合重建好之后，下一轮没有重读")
+        "集合被别的进程重建好之后，下一轮没有重读")
 
 
 def test_b7_a_collection_being_built_fails_the_turn_instead_of_reading_empty(monkeypatch):
-    """原文集合正在重建（先删后建）：本轮是「失败」，不是「真没有」；建完下一轮接上。"""
+    """原文集合正在重建（先删后建）：本轮是「失败」，不是「真没有」；建完下一轮接上。
+
+    写入发生在这一轮检索**之前**：构建结束时集合的 id / 条数都不再变，只能靠令牌里
+    「本进程是否正在建」那一项发现构建已结束。
+    """
     client = _Client()
     _patch_engine(monkeypatch, client)
     view = _view(_svc(), "t1", "c1")
 
     with IS._builds.building("text_t1"):
+        client.seed("text_t1")
         with pytest.raises(IS.CollectionBuilding):
             _ask(view)
-        client.seed("text_t1")
     _ask(view)
 
     assert view.collection_name == "text_t1"
@@ -742,3 +751,62 @@ def test_x5_reindex_without_embedding_key_spends_no_identify_call(monkeypatch):
     assert resp.json() == {"detail": EMBEDDING_KEY_REQUIRED}, f"没配 key 时只该给配置提示：{resp.json()}"
     assert identified == [], "没配 key、建不了，却先跑了一次角色识别"
     assert indexing.reindexed == []
+
+
+# ── 版本令牌对真 chroma 成立：另一个进程重建集合，本进程读得到 ─────────────────────
+
+
+_CROSS_PROCESS_REBUILD = r'''
+import sys
+import chromadb
+from chromadb.api.types import EmbeddingFunction
+
+class EF(EmbeddingFunction):
+    def __init__(self):
+        pass
+    def __call__(self, input):
+        return [[0.1, 0.2] for _ in input]
+    @staticmethod
+    def name():
+        return "test"
+
+client = chromadb.PersistentClient(path=sys.argv[1])
+client.delete_collection("text_t1")
+col = client.create_collection("text_t1", embedding_function=EF())
+col.add(ids=["a", "b"], embeddings=[[0.1, 0.2]] * 2, documents=["x", "y"])
+'''
+
+
+def test_d1_stamp_sees_a_rebuild_done_by_another_process(tmp_path):
+    """`RAGEngine.collection_stamp` 的前提实测：别的进程先删后建再写入，本进程的令牌变了。"""
+    import subprocess
+    import sys
+
+    import chromadb
+    from chromadb.api.types import EmbeddingFunction
+
+    class _EF(EmbeddingFunction):
+        def __init__(self):
+            pass
+
+        def __call__(self, input):
+            return [[0.1, 0.2] for _ in input]
+
+        @staticmethod
+        def name():
+            return "test"
+
+    eng = object.__new__(RAGEngine)
+    eng._client = chromadb.PersistentClient(path=str(tmp_path))
+    eng._embedding_function = _EF()
+    col = eng._client.create_collection("text_t1", embedding_function=eng._embedding_function)
+    col.add(ids=["a"], embeddings=[[0.1, 0.2]], documents=["x"])
+    before = eng.collection_stamp("text_t1")
+
+    subprocess.run([sys.executable, "-c", _CROSS_PROCESS_REBUILD, str(tmp_path)], check=True)
+    after = eng.collection_stamp("text_t1")
+
+    assert before is not None and after is not None
+    assert after != before, f"别的进程重建了集合，本进程的版本令牌没变：{before} → {after}"
+    assert after[1] == 2
+    assert eng.collection_stamp("text_missing") is None
