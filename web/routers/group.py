@@ -88,7 +88,10 @@ async def _rebuild_group_session(
 
     per_user_llm = await get_user_llm(user_id, storage)
     if per_user_llm is None:
-        return None
+        # 属主已核过（上一行），这里的 None 只意味着「这个用户没配自己的 key」。返回 None
+        # 会被调用方报成 404「群聊会话已过期」—— 用户会去重建群聊而不是去配 key。
+        # 503 只取决于请求者自己的配置，不暴露会话是否存在。
+        raise HTTPException(503, "请先在设置页配置 API Key")
 
     rag_config = get_rag_config()
     # Inject per-user embedding config
@@ -231,6 +234,8 @@ async def _get_owned_group(
     内存命中这条路原来只判「删没删」，不判「是不是你的」—— `_group_sessions` 是全局表，
     任何登录用户拿别人的 group_id 就能以群主身份发言。非属主与「群不存在」在这里都收敛到
     `None`，调用方同判 404（同码同文案，不给存在性枚举留信道）。
+
+    属主本人要重建、却没配自己的 key 时，重建那一步直接 503（`_rebuild_group_session`）。
     """
     group = get_group_sessions().get(group_id)
     if group is not None and group.user_id == user_id:

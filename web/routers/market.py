@@ -904,6 +904,9 @@ async def at_reply(
 
     # 5. 调 LLM（用发起人的 API key）
     llm = await get_user_llm(user["id"], storage)
+    if llm is None:
+        # 用自己的 key（不回落全局）；没配就在这里说清，别让 `llm.chat` 炸成 500。
+        raise HTTPException(503, "请先在设置页配置 API Key")
     ai_text = await asyncio.to_thread(
         llm.chat, system_prompt, [{"role": "user", "content": user_content}]
     )
