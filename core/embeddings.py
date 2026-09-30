@@ -440,15 +440,17 @@ class Mem0BridgeEmbedder:
         return self._dashscope._embed_impl(texts)
 
 
+# 没配向量检索 key 时给用户的唯一提示语（嵌入函数构造处与 /reindex 共用）。
+EMBEDDING_KEY_REQUIRED = "请先在设置页配置阿里云百炼 API Key，配置后才能使用向量检索"
+
+
 def create_safe_embedding_fn(
     api_key: str = "",
     region: str = "cn",
 ) -> EmbeddingFunction:
     """Create a DashScope embedding function. Requires api_key to be configured."""
     if not api_key:
-        raise RuntimeError(
-            "未配置向量检索 API Key，请在设置页填写阿里云百炼 API Key"
-        )
+        raise RuntimeError(EMBEDDING_KEY_REQUIRED)
     cache_key = f"dashscope:{region}:{key_fingerprint(api_key)}"
     if cache_key not in _cache:
         _cache[cache_key] = DashScopeEmbedding(api_key, region)

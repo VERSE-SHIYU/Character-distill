@@ -736,6 +736,9 @@ def test_x5_reindex_without_embedding_key_spends_no_identify_call(monkeypatch):
 
     resp = TestClient(app, raise_server_exceptions=False).post("/api/distill/reindex/t1")
 
+    from core.embeddings import EMBEDDING_KEY_REQUIRED
+
     assert resp.status_code == 400, resp.text
+    assert resp.json() == {"detail": EMBEDDING_KEY_REQUIRED}, f"没配 key 时只该给配置提示：{resp.json()}"
     assert identified == [], "没配 key、建不了，却先跑了一次角色识别"
     assert indexing.reindexed == []
