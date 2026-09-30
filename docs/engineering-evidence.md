@@ -56,7 +56,7 @@
 | 超 15s 阈值 14 → 0 | 同表 `over15s` 列：`fb2_raise_30` = 14 → D1a/D1b = 0 | ✅ |
 | PG 池峰值 17/30 | `docs/evidence/phase24_closure.md` §3 | ✅ |
 | 重试预算 3 次 / SDK `max_retries=2` / 最多 9 次 HTTP | `adapters/llm_adapter.py` `_RetryBudget` 及模块上方注释（修复前/后对照就写在注释里） | ✅ 代码核实 |
-| TTFT p95 10.4s（rate=10 档）、6× 增幅 | `.claude/sessions/2026-09-09-step4-press.md`（**gitignored**）。仓库内文档只有双峰结论与各档 p95，无 10.4s 这个点 | ⚠️ 待核 |
+| TTFT p95 10.4s（rate=10 档）、6× 增幅 | `tests/perf/results/step4/fb2_raise_10.json` 的 `ttft_p95 = 10422`、`fb2_raise_30.json` 的 `ttft_p95 = 62062`（6× = 62062/10422 ≈ 5.95；原始压测产物，已入库） | ✅ |
 | 62.3s / 59.4s span 分解、26.06s C=1 隔离复现 | 同上 gitignored 会话（trace id、单发隔离实验记录都在那里） | ⚠️ 待核 |
 | commits `a41fcfd` `a609e62` `2bc3658` `8ad5f05` | `git log` 逐个存在、标题与描述一致 | ✅ |
 
@@ -186,11 +186,12 @@
 > 「当时实测，原始产物未入库」。**只保留**有 tracked 兜底的「12 → 19」
 > （`docs/384-dim-stale-collections.md`）。
 >
-> **与其余 `⚠️ 待核` 的区别**：§一（TTFT 10.4s、62.3s/59.4s span 分解）、§七（「六条」计数
-> 标签）、§九（judge κ≈0）这几条的 `⚠️ 待核` **保持不动**——它们在 tracked 仓库里同样无支撑，
+> **与其余 `⚠️ 待核` 的区别**：§一（62.3s/59.4s span 分解）、§七（「六条」计数
+> 标签）这几条的 `⚠️ 待核` **保持不动**——它们在 tracked 仓库里同样无支撑，
 > 但**至少在 gitignored 的 `.claude/sessions/` 里有据可查**，性质是「一手材料没入库」，补入库
 > 即可转正。本节被删的两组里，**重建成本数字**同属这一类（产物在 gitignored 的 `run_*.jsonl`）；
 > 只有**影响面总数**更彻底——连 gitignored 记录都没有，且产数脚本从未入库。
+> （§一 TTFT 10.4s 与 §九 judge 两条已于 2026-09-30 补入库产物转正，不再属本条。）
 
 ---
 
@@ -276,10 +277,11 @@
 |---|---|---|
 | 注入对抗样本集 | **60 条**（`tests/eval/injection/`：upload / card / chat 三链路各 20 条） | `✅ 代码核实`（本人计数） |
 | Agent 工具调用评测集 | **40 条**（`tests/eval/agent_eval_cases.jsonl`） | `✅ 代码核实`（本人计数） |
-| LLM-as-judge 证伪 | κ≈0、位次偏见、跨代模型不可复现 → 判定不可作质量代理 | `⚠️ 待核` |
+| LLM-as-judge 证伪 | 两臂 per-dim κ 均低（**n=16 对**）：qwen-max `0.111 / −0.091 / 0.264`、deepseek 补跑 `0.158 / 0.091 / 0.168`（d1 / d2 / d4）→ 判定不可作质量代理 | `tests/eval/judge/`（金标 + 两臂标签 + 复算脚本，可现场重跑；见该目录 `README.md`） |
 
-> **`⚠️ 待核` 说明**：judge 证伪这条在本仓库中**找不到支撑**（grep `judge`/`kappa` 只命中 `card_guard` 等无关模块）。它可能属于另一条工作线或只存在于对话中。**在补到一手材料之前，不要写进简历**——这正是本档存在的理由。
-> （入库核对补注：`.claude/sessions/2026-09-08-judge-anchors-v1.md` 里确有 qwen-max 主臂 κ≈0 的记录，但该目录 **gitignored**，且这只是本人当时的过程记录、**不是**用户所说的「一手材料」。**标记不动，判据不变**。）
+> **入库说明（2026-09-30）**：judge 证伪这条已转正。复核件落在 `tests/eval/judge/`（`score_kappa.py` + `gold_final.json` + 两臂 4 个标签 jsonl + `README.md`），上游取窗/配对/打标流水线依赖真实对话正文与生产库，因隐私不入库。复算命令：
+> `python tests/eval/judge/score_kappa.py`（qwen 臂）、`python tests/eval/judge/score_kappa.py --labels tests/eval/judge/judge_labels_ds.jsonl`（deepseek 补跑臂）。
+> deepseek 原始 run（0.250 / 0.091 / 0.163）的 raw 已被覆盖、不可复算，不采用；引用的补跑值可复算。d3（知识越界）本语料全 tie、不可评，脚本单独声明。
 
 **数字核对**
 
@@ -287,7 +289,7 @@
 |---|---|---|
 | 注入集 **60 条**（20 / 20 / 20） | 入库时实测：`tests/eval/injection/upload_corpus_samples.json` **20**、`card_market_samples.json` **20**、`chat_conv_samples.json` **20**。（档里写的「upload / card / chat 三链路」指的是这三个文件的链路，**不是三个子目录**——该目录下无子目录） | ✅ |
 | Agent 评测集 **40 条** | 入库时实测：`tests/eval/agent_eval_cases.jsonl` = **40** 行 | ✅ |
-| judge κ≈0 | 无仓库内支撑 | `⚠️ 待核`（保留） |
+| judge per-dim κ（两臂，**n=16 对**） | 入库时实跑复算：qwen-max `0.111 / −0.091 / 0.264`、deepseek 补跑 `0.158 / 0.091 / 0.168`（d1 / d2 / d4）；命令 `python tests/eval/judge/score_kappa.py [--labels tests/eval/judge/judge_labels_ds.jsonl]` | ✅ |
 
 ---
 
@@ -358,7 +360,7 @@
 
 ## 待办
 
-- [ ] judge 证伪补一手材料，或从简历中移除（`⚠️ 待核` 保持）
+- [x] ~~judge 证伪补一手材料，或从简历中移除~~ → **已入库**（2026-09-30）：复核件在 `tests/eval/judge/`，复算命令见该目录 `README.md`；引用值改为可复算的两臂实数，`⚠️ 待核` 撤除（本 commit）
 - [x] ~~`e2e/scratch/` 是 gitignored，thinking 的原始 JSON 不在仓库里——已摘要进 `AGENTS.md` §二，但原始数据无代码支撑，考虑把探针脚本入库（与 `leak_probe.py` 同处理）~~ → **已处置**（2026-09-11）：探针脚本 + 原始产物已提入库，落点 `tests/perf/`（commit `5ba7b9e`，语料去标识与占位符硬门见 `bc19511`），索引见 `AGENTS.md` §五「思考参数证据档」
 - [ ] 若要恢复 §五 被删的数字：**影响面总数**需重跑审计并把审计脚本入库（该脚本从未入库）；**重建成本**只需补入库 `data/eval_scratch/rebuild_384/run_*.jsonl`（重建脚本 `scripts/rebuild_384_collections.py` 已在库）。根因是「产物没入库」，只补数字不算转正
 - [x] ~~§六 的 403/404 口径矛盾裁定（改代码 or 改台账）~~ → **已裁定并修复**（2026-09-11）：改代码（`text.py` 403→404，与 voice.py 同口径），补回归 + 变异验证
