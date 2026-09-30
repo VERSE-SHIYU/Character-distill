@@ -61,62 +61,32 @@ async def test_create_session_rag_none():
 
 
 async def test_schedule_scene_index_degraded():
-    """schedule_scene_index must never raise, only print on error."""
+    """后台作业失败只记日志：不抛给调度方，去重键在作业结束后释放。"""
     print("3. schedule_scene_index with broken embedding...", end=" ")
 
-    rag_config = {"embedding_key": "INVALID_KEY_THAT_WILL_FAIL"}
-    svc = IndexingService(rag_config)
+    import core.indexing_service as mod
 
-    # Patch RAGEngine to simulate embedding failure
+    svc = IndexingService({})
+
     with patch("core.indexing_service.RAGEngine") as mock_rag_cls:
         mock_rag = MagicMock()
         mock_rag.load_existing.return_value = False
         mock_rag.index.side_effect = Exception("Embedding API timeout")
         mock_rag_cls.return_value = mock_rag
 
-        # This must NOT raise — fire-and-forget means external error doesn't propagate
         svc.schedule_scene_index(
             text_id="t1", card_id="c1", content="测试内容",
-            char_name="测试角色", all_characters=[],
+            char_name="测试角色", all_characters=[], embedding_key="sk-test",
         )
-        # Wait a tiny bit for the background task
-        await asyncio.sleep(0.3)
+        assert "scenes_c1" in mod._scene_index_in_flight, "作业没调度起来 —— 下面的断言会空转"
+        for _ in range(50):
+            if "scenes_c1" not in mod._scene_index_in_flight:
+                break
+            await asyncio.sleep(0.02)
 
-    print("PASS (no exception propagated)")
-
-
-async def test_schedule_scene_index_dedup():
-    """Dedup must prevent duplicate concurrent indexing for same card."""
-    print("4. schedule_scene_index dedup...", end=" ")
-
-    rag_config = {"embedding_key": "sk-ok"}
-    svc = IndexingService(rag_config)
-
-    call_count = 0
-
-    async def slow_index(*a, **kw):
-        nonlocal call_count
-        call_count += 1
-        await asyncio.sleep(0.5)
-
-    # Patch _bg to track calls
-    import core.indexing_service as mod
-    original = mod._scene_index_in_flight.copy()
-
-    # First call
-    svc.schedule_scene_index("t1", "c1", "content", "name")
-    # Second call immediately after — should be deduped
-    svc.schedule_scene_index("t1", "c1", "content", "name")
-    await asyncio.sleep(0.1)
-    # Third call from another path — should also be deduped
-    svc.schedule_scene_index("t1", "c1", "content", "name")
-    await asyncio.sleep(0.1)
-
-    # At most 1 task was created (others skipped by dedup)
-    in_flight = mod._scene_index_in_flight
-    # Clean up
-    mod._scene_index_in_flight = original
-    print("PASS (dedup set working)")
+    assert mock_rag.index.called, "失败的嵌入调用没有发生"
+    assert "scenes_c1" not in mod._scene_index_in_flight, "作业失败后去重键没有释放"
+    print("PASS (failure logged, dedup key released)")
 
 
 async def main():
@@ -125,14 +95,13 @@ async def main():
         await test_context_engine_rag_none()
         await test_create_session_rag_none()
         await test_schedule_scene_index_degraded()
-        await test_schedule_scene_index_dedup()
     except Exception as exc:
         print(f"\nFAIL: {exc}")
         import traceback
         traceback.print_exc()
         return 1
 
-    print("\n=== ALL 4 TESTS PASSED ===")
+    print("\n=== ALL 3 TESTS PASSED ===")
     print("Embedding failure → distillation still returns chat-ready card.")
     print("Isolation is REAL, not a patch.")
     return 0

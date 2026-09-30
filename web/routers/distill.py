@@ -19,10 +19,9 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from core.message_outbox import SaveState, save_field
-from core.nonfatal import nonfatal
 from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
-from adapters.llm_adapter import user_facing_error
+from adapters.llm_adapter import LLMAdapter, user_facing_error
 from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core.export import export_tavern_json

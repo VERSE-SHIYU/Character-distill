@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 
 import asyncio
-import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request

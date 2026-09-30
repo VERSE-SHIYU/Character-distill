@@ -22,10 +22,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
-import io
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # 让本进程能 import 仓库内的 core/ / adapters/
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -49,8 +49,8 @@ SERVER_VERSION = "0.1.0"
 # 多卡共享一个只读引擎，靠 card.name 过滤角色片段；MCP 从不改指、从不建集合）。
 # 多卡仍串行（exec_lock 串行化构建/执行），缓存更新无并发竞争，无需额外加锁。
 _toolkit_by_card_id: dict[str, AgentToolkit] = {}
-_rag_by_text_id: dict[str, "Any"] = {}
-_storage: "Any" = None  # storage.get_store() 单例，首次在 serve 事件循环内惰性创建
+_rag_by_text_id: dict[str, Any] = {}
+_storage: Any = None  # storage.get_store() 单例，首次在 serve 事件循环内惰性创建
 
 
 class _NoCardError(Exception):
@@ -120,9 +120,6 @@ def _lazy_llm():
 def _make_toolkit(card, rag, card_id: str):
     """按 CharacterCard 构建 ContextEngine + AgentToolkit。构建会 print（ContextEngine
     预算、RAG），调用方需自行包 _stdout_to_stderr。"""
-    from core.agent.tools import AgentToolkit
-    from core.context_engine import ContextEngine
-
     llm, llm_model = _lazy_llm()
     ctx = ContextEngine(
         card=card,

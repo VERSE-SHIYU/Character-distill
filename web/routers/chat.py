@@ -7,14 +7,13 @@ import logging
 import asyncio
 import json
 import random
-import time
 from typing import Any, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from deps import get_sessions, get_storage, get_text_manager, touch_session
+from deps import get_sessions, get_storage, touch_session
 from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user

@@ -4,9 +4,14 @@
 DashScope text-embedding-v4(1024)。此后（commit 4a971d1 起）load_existing 对维度不符
 抛 CollectionUnusableError → 旧 384 集合场景检索降级、不再静默空。
 
-只重建 **text_{text_id}** —— 场景检索真正读取的集合（chat.py:157 / group.py /
-mcp 全走 load_existing(f"text_{text_id}")）。scenes_{card_id} 与 rag_{uuid} 在代码里
-无读取方（只写不读 / 每次实例 UUID），重建无收益，plan 会说明并跳过。
+只重建 **text_{text_id}**。会话检索按 scenes_{card_id} → text_{text_id} 取第一个可用的
+（`core/indexing_service.py::_session_candidates`），维度不符的 scenes_ 会被跳过、回落到
+text_，且下一次场景预索引会按当前 embedder 重建它（`SceneIndexer.index_scenes`）——
+故 scenes_ 不在本脚本射程。rag_{uuid} 是一次性实例集合，无读取方。plan 会说明并跳过。
+
+**进程边界**：web 进程只在「本进程里有集合建完」时让已开的会话重读
+（`core/indexing_service.py::_CollectionBuilds`）。本脚本在另一个进程里重建，web 那边
+已判过「集合不可用」的会话感知不到 —— 跑完后重启 web 进程（或让会话重建）才会接上。
 
 判定（plan / rebuild 同口径）：
   REBUILD      dim==384 且 texts 行存在 且 ≥1 张 live 卡引用
@@ -263,7 +268,7 @@ def print_manifest(chroma_path: Path, db: Path) -> None:
 
     print(f"\n【scenes_/rag_ 集合】scenes_ {scenes['n']}（384×{scenes['d384']}，"
           f"1024×{scenes['d1024']}）；rag_ {rag['n']}（384×{rag['d384']}，"
-          f"1024×{rag['d1024']}）。代码无读取方（只写不读/实例 UUID）→ 重建无收益，跳过。")
+          f"1024×{rag['d1024']}）。scenes_ 由场景预索引按当前 embedder 重建，rag_ 无读取方 → 跳过。")
     print("\n用法：确认后 python scripts/rebuild_384_collections.py rebuild --all")
     print("      （或指定 text_id；已 1024 自动跳过，失败可原命令续跑）")
 

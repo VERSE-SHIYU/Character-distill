@@ -28,9 +28,7 @@ Run: pytest tests/test_session_rag_binding.py -v
 from __future__ import annotations
 
 import asyncio
-import threading
 import time
-from typing import Any
 
 import pytest
 from chromadb.errors import NotFoundError
