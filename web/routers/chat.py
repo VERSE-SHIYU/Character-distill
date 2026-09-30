@@ -253,7 +253,9 @@ class ChatRequest(BaseModel):
     affinity_enabled: bool = True
     reply_to_id: int | None = None
     reply_to_preview: str = ""
-    agent_mode: bool = False
+    # 默认走工具编排（场景 / 记忆 / 联网三个检索工具）。不带这个字段的调用方
+    # 与前端默认一致；要旧的「无条件注入」路径须显式传 false。
+    agent_mode: bool = True
 
 
 class RevokeRequest(BaseModel):
