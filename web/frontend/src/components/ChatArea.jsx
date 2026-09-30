@@ -169,6 +169,9 @@ function ChatView() {
   const [showMemoryPanel, setShowMemoryPanel] = useState(false)
   const [memories, setMemories] = useState([])
   const [memoriesLoading, setMemoriesLoading] = useState(false)
+  // 长期记忆只用用户自己的 LLM key + 百炼 key；没配齐时后端给 configured: false
+  // （默认 true：加载完成前不闪引导文案）。
+  const [memoryConfigured, setMemoryConfigured] = useState(true)
   const [editingMemId, setEditingMemId] = useState(null)
   const [editMemText, setEditMemText] = useState('')
   const [addingMem, setAddingMem] = useState(false)
@@ -405,6 +408,7 @@ function ChatView() {
       const res = await fetchWithTimeout(`/api/memory/list/${cardId}`)
       const data = await res.json()
       setMemories(data.memories || [])
+      setMemoryConfigured(data.configured !== false)
     } catch { /* ignore */ }
     finally { setMemoriesLoading(false) }
   }, [cardId])
@@ -866,16 +870,21 @@ function ChatView() {
                     <button type="button" className="btn-ghost btn-sm" onClick={() => { setAddingMem(false); setAddMemText('') }}>取消</button>
                   </div>
                 </div>
-              ) : (
+              ) : memoryConfigured ? (
                 <button type="button" className="memory-add-trigger" onClick={() => setAddingMem(true)}>
                   + 添加记忆
                 </button>
+              ) : null}
+              {!memoriesLoading && !memoryConfigured && (
+                <p className="memory-empty memory-unconfigured">
+                  长期记忆需要你在设置页配置自己的 LLM Key 与百炼 Key，配好后聊天中的重要信息会自动记录
+                </p>
               )}
 
               {memoriesLoading ? (
                 <p className="memory-empty">加载中…</p>
               ) : memories.length === 0 ? (
-                <p className="memory-empty">暂无记忆，聊天中的重要信息会自动记录</p>
+                memoryConfigured && <p className="memory-empty">暂无记忆，聊天中的重要信息会自动记录</p>
               ) : (
                 memories.map((m) => (
                   <div key={m.id} className="memory-item">
