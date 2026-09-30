@@ -1195,6 +1195,26 @@ index 2efa40c..748ec19 100644
          return
  
      # ── DM resync ──
+diff --git a/web/frontend/src/legal/privacy_v3.md b/web/frontend/src/legal/privacy_v3.md
+index bc6bea1..39c6077 100644
+--- a/web/frontend/src/legal/privacy_v3.md
++++ b/web/frontend/src/legal/privacy_v3.md
+@@ -1,6 +1,6 @@
+ # 「笺中拾语」隐私政策
+ 
+-**最后更新日期：2026 年 6 月**
++**最后更新日期：2026 年 10 月**
+ **生效日期：自您接受之日起生效**
+ 
+ ---
+@@ -121,6 +121,7 @@
+ 
+ 本平台对上述跨地域同步采取以下技术保护措施：
+ 
++- **节点间传输加密：** 所有跨节点请求经 TLS（HTTPS）加密传输；节点不会以明文方式发送同步数据。
+ - **节点间传输鉴权：** 所有跨节点请求采用 HMAC-SHA256 签名校验（inter_node_auth），仅持有共享密钥的授权节点可发起同步；接收端对每个请求逐一验签，验签失败即拒绝（HTTP 401）。
+ - **最小必要 + 字段白名单：** 每类同步均按本条 3.2 所列字段构造显式 payload。密码(password_hash)、AI 服务密钥(api_key)等敏感字段未被纳入任何同步 payload，在技术实现上不可能被传输。
+ - **幂等与可删除：** 同步接口对重复投递幂等处理；当您删除作品、撤回私信或注销账户时，3.2(6)所述机制会将相应的跨地域副本同步删除。
 diff --git a/web/inter_node_auth.py b/web/inter_node_auth.py
 index 0da6df7..6aafd7a 100644
 --- a/web/inter_node_auth.py

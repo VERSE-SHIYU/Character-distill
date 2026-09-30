@@ -4,7 +4,7 @@
 > **前置**：`docs/specs/admin-peer-disable.md`（方案甲）已合进 main —— 本段在它引入的
 > `web/peer_client.py` 上继续做。
 > **执行方**：从合入方案甲之后的 origin/main 新开分支 `feat/inter-node-v2`（`--unset-upstream`）。
-> **参考补丁**：`docs/specs/artifacts/inter-node-v2.patch`（sha256 `a8193111ea2585abdbe6a3d89a3390f7faca8fef1d1cc669117c8b21e11b7932`），
+> **参考补丁**：`docs/specs/artifacts/inter-node-v2.patch`（sha256 `ba011cd30ca92d77d93d1807aca1da0f68ff5eefa2636de835aef856713f408a`），
 > 基线 = `3dbc58b` + `admin-peer-disable.patch`。对账表就是用它预跑的。
 
 ## 目标
@@ -18,6 +18,7 @@
 | 服务间通信要保证传输保密性与完整性；mTLS 需自建 PKI、难点是证书发放/吊销/轮换 | OWASP Microservices Security Cheat Sheet「Service-to-service authentication → Mutual transport layer security」（github.com/OWASP/CheatSheetSeries，`cheatsheets/Microservices_Security_Cheat_Sheet.md`） | B1（只走 https）；不做 mTLS，身份由签名承担 |
 | RFC 9421 签名：必须带 `created`；必须签 `@method` 与目标地址；必须带并签名 `Content-Digest`（RFC 9530） | Mastodon 文档 `content/en/spec/security.md`「HTTP Message Signatures (RFC9421)」（github.com/mastodon/documentation）；RFC 9421 §2.2、§7.2 | B2、B3、B4 |
 | nonce 防重放 | RFC 9421 §2.3（`nonce` 参数）、§7.2.2 | B5 |
+| 政策修订只在「处理目的、方式、范围的实质性变化」时才需显著提示 / 重新同意 | 本站隐私政策 `web/frontend/src/legal/privacy_v3.md` 第 7.1 条（基线 `:191`） | B6：补传输加密一句属如实描述安全措施，不升版本号 |
 | 库：`http-message-signatures` 2.0.1（Apache-2.0，2026-01-19 发布，Python ≥ 3.10，唯一运行依赖 `cryptography`，锁里已有 50.0.1） | PyPI | 全部签名 / 验签 |
 
 ## 已查实的约束（基线 `3dbc58b`，另标出处的除外）
@@ -88,6 +89,7 @@ $ git show 3dbc58b:nginx/nginx.conf | grep -n "server_name\|location /api/inter-
 - **`web/routers/inter_node.py`**：10 个接口改调 `_verified_payload`；每次接受记 INFO `inter-node accepted: path=… version=N`，拒绝记 WARNING —— 观察期就数这两行。
 - **存储**：`claim_inter_node_nonce(nonce, *, keep_seconds) -> bool`（base + PG + SQLite）；PG `030_inter_node_nonces.sql` + SQLite 孪生 `097`（表集锁要求两侧相等）。
 - **nginx**：删 80 端口那段 `/api/inter-node/`；443 段注释里的 `curl http://` 改 https。
+- **隐私政策**（Shiyu 2026-09-30 已定要补）：`privacy_v3.md` 第 3.3 节（基线 `:124`）在「节点间传输鉴权」前加一条「节点间传输加密：所有跨节点请求经 TLS（HTTPS）加密传输」，「最后更新日期」（`:3`）改为 2026 年 10 月。**不升版本号**：`web/legal_versions.py` / `versions.js` 的版本号一改，注册接口就会要求所有人按新版本重新同意（`auth.py:422`），而按 7.1 条这次不属于实质变化。这句话必须在 https 真的生效后才对外可见 —— 它随第 1b 步部署，而第 1a 步（切 https）在它之前完成。
 - **新配置**（`.env.example` 补齐）：`PEER_NODE_URL`（https）、`INTER_NODE_SELF_HOST`、`INTER_NODE_SIGN_VERSION`（缺省 1）、`INTER_NODE_ACCEPT_V1`（缺省 1）、`INTER_NODE_SECRET_PREV`（换密钥时用）。
 - **依赖**：`requirements.in` 加 `http-message-signatures>=2.0.1`，按文件头的配方（带 `--constraint requirements.txt`）重锁；实测 131 个包一个不动，只多这一条，`cryptography` 多一条 via 注解。
 
@@ -95,7 +97,7 @@ $ git show 3dbc58b:nginx/nginx.conf | grep -n "server_name\|location /api/inter-
 1. **[deps]** `requirements.in` / `requirements.txt`。
 2. **[storage]** 两条迁移 + 次序表登记 + `claim_inter_node_nonce` 三处；`core/fingerprint.py` 挪函数 + 三处 import。
 3. **[web]** `inter_node_auth.py` v2、`peer_client.py`、`cross_border_sync.py` 迁移、`inter_node.py` 共用验签、`admin.py` 加 `PeerNotSecure → 503`。
-4. **[deploy]** `nginx/nginx.conf`、`.env.example`。
+4. **[deploy]** `nginx/nginx.conf`、`.env.example`、`web/frontend/src/legal/privacy_v3.md`（只动第 3 行日期与第 3.3 节一行）。
 5. **[tests]** 新增 `tests/test_inter_node_v2.py`（21 条）；改 `test_cross_border_sync.py`（打桩改到 `peer_client._client` + MockTransport、地址改 https，断言内容不变）、`test_admin_peer_disable.py`（地址改 https）、`test_router_unified_exits.py`（打桩对象改为 `verify_inter_node_request`）。
 
 ## 调用点矩阵
@@ -162,8 +164,8 @@ v1 代码的删除不在本段：第 3 步稳定后另开一个小改动删掉�
 3. 「补充」一节已有运维前置核查结果，且两个方向都是 401；否则只做代码、不做上线。
 
 ## 需要 Shiyu 另行拍板（本段不改）
-- 隐私政策 `web/frontend/src/legal/privacy_v3.md` 第 3.3 节「同步的安全措施」目前只写了 HMAC 签名。上线后要不要补一句「节点间传输经 TLS 加密」—— 这是法律文本，改不改由你定。
-- 约束 7 的三类无补发转发（邀请码新增 / 删除、用户资料）：本段只保证切换期间不丢；要不要给它们也加补发，是另一个设计问题。
+- 约束 7 的三类无补发转发（邀请码新增 / 删除、用户资料）：本段只保证切换期间不丢；是否补上重发是另一个设计问题，方案对比见会话，拍板后另出 spec。
 
 ## 补充
-（空）
+### 2026-09-30 隐私政策一句已定
+Shiyu 定：补「节点间传输经 TLS 加密」。已并入本段设计与步骤 4，参考补丁同步更新（新 sha256 见文件头）；前端 `npm test` 60 文件 300 条全绿。
