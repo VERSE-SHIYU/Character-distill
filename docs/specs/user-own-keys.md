@@ -1,7 +1,8 @@
 # 模型调用一律用用户自己的 key（主对话 + RAG + 长期记忆）
 
-> 状态：**草案 v1（设计评审用，未发执行）**。第 7 节的变异要在实现之后实跑，实跑有存活的变异就不发。
+> 状态：**已实现（v2，2026-09-30）**。第 7 节变异已全部实跑、无存活；docker / 真 PG compose / Playwright 这三项在本地跑（见 §10）。
 > 日期：2026-09-30　分支：`claude/mem0-disabled-nodes-mu8qhi`　基线：`cae5510`
+> 沙箱全量：基线 2253 passed / 1 skipped → 实现后 **2267 passed / 1 skipped**（Python 3.12，本地 PostgreSQL 16 起在 55432 的 `charsim_test`）；前端 vitest 296/296、`npm run build` 通过。
 
 ## 1. 目的与验收
 
@@ -138,18 +139,35 @@ expected 1600 rows 1600 errors 0
 
 明确要翻转的：`test_llm_access_gate.py::test_l1_start_falls_back_to_global_instance`、`::test_l2_background_thread_gets_the_resolved_instance`（前提「无 key + 全局可用」）。`resolve_llm` 纯函数契约（`:557-567`）不变。其余 7 个文件实现时逐个判定：是否依赖回落；依赖的话，改成给用户配 key，或者改断言 503。
 
-## 7. 变异清单（实现后实跑，结果回填；有存活就不发）
-| # | 变异 | 应该红的用例 |
+## 7. 变异清单（已实跑；每条都红在预期用例上，逐条还原）
+
+| # | 变异 | 实跑结果 |
 |---|---|---|
-| M1 | C1 恢复 `get_global=get_llm` | T1 |
-| M2 | 删掉 `at_reply` 的 None 判断 | T2 |
-| M3 | 群聊重建缺 key 时退回 404 | T3 |
-| M4 | C4 恢复用空 key 建 RAG | T4 |
-| M5 | 缓存键去掉用户 key 指纹 | T6 |
-| M6 | 缺一把 key 时仍返回视图 | T7 |
-| M7 | `clear` 改走需要 key 的视图 | T8 |
-| M8 | `refresh_user_llm` 只换 LLM | T9 |
-| M9 | 去掉 `history_db_path` 配置 | T10 |
+| M1 | C1 恢复 `get_global=get_llm` | L1 红（「解析出口回落到了全局实例」） |
+| M2 | 删 `at_reply` 的 None 判断 | T2 红（500 ≠ 503） |
+| M3 | 群聊重建缺 key 时退回 `return None` | T3 红（404 ≠ 503） |
+| M4a | 删 `get_rag_for_session` 的无 key 守卫 | T4a 红。**首轮存活**：毒替身抛的异常被宽 `except` 吞成 None；改为断言「构造记录为空」后才红 |
+| M4b | 删 `schedule_scene_index` 的无 key 守卫 | T4b 红 |
+| M4c | 删群聊两处 `if not emb.key` | T4c 红 |
+| M5 | 缓存键去掉 embedding key 指纹 | T6 红 |
+| M6 | 缺 embedding key 仍返回视图 | T7 红 |
+| M7 | `clear` 改走需要 key 的用户视图 | T8 红 |
+| M8a/b/c | 刷新时不换记忆 / 不换检索 / 漏换一处记忆引用 | T9 红（各一） |
+| M9 | 去掉 `history_db_path` | T5 红 |
+| M10 | 每个视图各开自己的 qdrant 客户端 | T5 + T5b 红（真 qdrant 当场报 already accessed） |
+| M11 | `memory_for` 恒返回 None | T7c 红 |
+| F1 | 前端忽略 `configured` | 新 vitest 3 条中 2 条红 |
+
+## 7.1 与草案 v1 的差异（实现时按事实改的）
+- T7 的「恰好一条 WARNING」改为 **INFO**：没配 key 是常态，每开一次会话记一条 WARNING 会刷满日志面板。
+- 「未配置」没有另造错误码字段：前端只读 `detail` + 状态码（`web/frontend/src/api/client.js`），故写入接口回 **409 + 固定文案**，列表接口多给 `configured` 布尔。
+- C8 刷新检索要知道会话用的是哪本原文：按 `card_id` 查卡取 `text_id`（独立卡片 → 不检索；卡 / 原文读不到 → 检索原样不动），每个引擎单独兜底。
+- 恢复了 `MEM0_LLM_BASE_URL`（压测导 mock 用，`tests/perf/e2e_otel.py` 依赖）：只换提炼地址，key 仍是用户自己的（T5c）。
+- `LLMAdapter` 新增 `derive()` / `credential_fingerprint()`：提炼适配器从用户实例派生、缓存键用指纹，不读私有字段。L6 的非出站名单相应登记这两个名字。
+
+## 7.2 实现中发现、未修（按规矩只报告）
+- **mem0 遥测默认开启**：`mem0/memory/telemetry.py` 的 `MEM0_TELEMETRY` 默认 True，`mem0.init` / `add` / `search` 都会向 `https://us.i.posthog.com` 发事件（沙箱实测：被代理挡下的 PostHog 上传报错）。生产 `.env` 与 compose 都没关。关掉只需在服务器 `.env` 加 `MEM0_TELEMETRY=False`，是否关由 owner 定。
+- 传入共享客户端后，mem0 会把 `is_local` 置为 False（`vector_stores/qdrant.py:62`）：对本地库尝试建 payload 索引只打一条 `UserWarning`，无功能影响。
 
 ## 8. 已查实约束（规则 8）
 - 测试库：`docker-compose.test.yml` 端口 **55432**，库名 `charsim_test`（`tests/conftest.py` 会核对库名以 `_test` 结尾）。
@@ -157,6 +175,13 @@ expected 1600 rows 1600 errors 0
 - 生产 Mem0 向量目录：`./data/mem0_db`（挂载 `./data:/app/data`）。两台 Mem0 一直是禁用状态，预计没有存量向量；上线前只读核对一次目录是否为空。
 - 生产 `.env` 本仓核不到；DEEPSEEK key 口径改为「只用于发布审核」。
 
-## 9. 待定
-- 前端（设置页 / 记忆面板）要不要加引导文案：待用户定。只做后端时，前端能收到 503 文案和 `memory_unconfigured` 错误码，但界面上暂时没有引导。
-- 运维：GlitchTip postgres 口令需要轮换（与本 spec 无关，只作提醒）。
+## 9. 前端
+记忆面板读 `configured`：为 false 时显示「长期记忆需要你在设置页配置自己的 LLM Key 与百炼 Key，配好后聊天中的重要信息会自动记录」，隐藏「+ 添加记忆」，已有记忆照常查看 / 删除。对话没 key 时的 503 文案沿用既有展示。锁：`web/frontend/src/components/__tests__/ChatAreaMemoryUnconfigured.test.jsx`；Playwright 验收脚本 `web/frontend/e2e/memory-own-keys-verify.cjs`（本地跑）。
+
+运维提醒（与本 spec 无关）：GlitchTip postgres 口令需要轮换。
+
+## 10. 本地验证（需 docker，沙箱没有 docker daemon）
+1. `docker compose -f docker-compose.test.yml up -d --wait` 后按 CI 口径全量：`REQUIRE_PG_TESTS=1 REQUIRE_COMPOSE_TESTS=1 pytest tests -q`。
+2. 重建本地 app 容器后，`docker logs` 能实时看到 `[MemoryManager]` 等 print 输出（验证 `PYTHONUNBUFFERED`）。
+3. `node web/frontend/e2e/memory-own-keys-verify.cjs` 在 testadmin「没配齐 key」「配齐 key」两种状态各跑一次，截图给人看。
+4. 配齐 key 的账号聊几轮：日志出现 `add OK`，`data/mem0_db/history.db` 存在。
