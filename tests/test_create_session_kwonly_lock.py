@@ -77,7 +77,7 @@ def test_keyword_call_binds_each_name_to_its_own_value():
         None, card,
         all_characters=[], rag=None,
         card_id="card_x", user_id="u_x",
-        user_role="读者",
+        user_role="读者", memory=None,
     )
     assert bound.arguments["card"] is card
     assert bound.arguments["user_role"] == "读者"

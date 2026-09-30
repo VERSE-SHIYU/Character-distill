@@ -193,27 +193,34 @@ def _as_caller(ip: str):
         LLM_CALLER.reset(token)
 
 
-def test_memory_manager_injects_the_adapter_as_the_llm(monkeypatch):
-    """上面几条自己注入，锁不住生产那行 —— 这里跑 `MemoryManager.__init__` 本体的接线。
+def _production_view(monkeypatch, tmp_path, user_adapter: LLMAdapter):
+    """跑 `MemoryManager.for_user` 本体接出来的视图 —— 不是测试自己装配的。
 
-    `Memory.from_config` 换成空壳：本测试只问「构造完之后 `Memory.llm` 是谁」，
+    `Memory.from_config` 换成空壳：这里只问「构造完之后 `Memory.llm` 是谁、发什么请求」，
     qdrant/配置那些不是这里的事。
     """
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-fake")
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test-fake")
-
     import mem0
 
-    class _BareMemory:
-        pass
+    monkeypatch.setattr(mem0.Memory, "from_config", lambda cfg: type("_BareMemory", (), {})())
+    mm = MemoryManager({}, db_dir=tmp_path / "mem0_db")
+    view = mm.for_user(user_id="usr_test", llm=user_adapter, embedding_key="sk-emb-fake")
+    assert view is not None, "两把 key 都给了，却没拿到视图"
+    return view
 
-    monkeypatch.setattr(mem0.Memory, "from_config", lambda cfg: _BareMemory())
 
-    mm = MemoryManager({})
+def test_memory_manager_injects_the_adapter_as_the_llm(monkeypatch, tmp_path):
+    """上面几条自己注入，锁不住生产那行 —— 这里跑 `for_user` 本体的接线。"""
+    user_adapter = LLMAdapter(api_key="sk-user-fake", base_url=WHITELISTED, model="user-model",
+                              is_user_key=True)
+    view = _production_view(monkeypatch, tmp_path, user_adapter)
 
-    assert mm.enabled, "构造没走通"
-    assert isinstance(mm._mem.llm, AdapterLLM), "MemoryManager 没把 Memory.llm 接到适配器上"
-    assert mm._mem.llm._adapter.model == default_model()
+    assert isinstance(view._mem.llm, AdapterLLM), "for_user 没把 Memory.llm 接到适配器上"
+    extractor = view._mem.llm._adapter
+    assert extractor is not user_adapter, "提炼要换采样参数，不能直接拿对话用的那个实例"
+    assert extractor.model == "user-model" and extractor.base_url == WHITELISTED, \
+        "提炼没用用户自己的模型 / 地址"
+    assert extractor.credential_fingerprint() == user_adapter.credential_fingerprint(), \
+        "提炼没用用户自己的 key"
 
 
 def test_add_is_refused_for_a_domestic_user_on_a_non_whitelisted_host(tmp_path, gate):
@@ -251,28 +258,17 @@ _EXTRACT_PRESENCE_PENALTY = 0.0
 _EXTRACT_TOP_P = 0.1
 
 
-def _production_extraction_adapter(monkeypatch) -> tuple[LLMAdapter, _FakeClient]:
-    """跑 `MemoryManager.__init__` 本体接出来的那个适配器，不是测试自己装配的。
-
-    `Memory.from_config` 换成空壳：本测试只问「生产那行构造出的适配器发什么请求」，
-    qdrant 与 mem0 的其余接线在别的用例里。
-    """
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-fake")
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test-fake")
-
-    import mem0
-
-    monkeypatch.setattr(mem0.Memory, "from_config", lambda cfg: type("_BareMemory", (), {})())
-
-    mm = MemoryManager({})
-    adapter = mm._mem.llm._adapter
+def _production_extraction_adapter(monkeypatch, tmp_path) -> tuple[LLMAdapter, _FakeClient]:
+    """跑 `MemoryManager.for_user` 本体接出来的那个提炼适配器，不是测试自己装配的。"""
+    user_adapter = LLMAdapter(api_key="sk-user-fake", base_url=WHITELISTED, is_user_key=True)
+    adapter = _production_view(monkeypatch, tmp_path, user_adapter)._mem.llm._adapter
     fake = _FakeClient()
     adapter._client = fake
     return adapter, fake
 
 
-def test_extraction_uses_mem0s_sampling_params(monkeypatch):
-    adapter, fake = _production_extraction_adapter(monkeypatch)
+def test_extraction_uses_mem0s_sampling_params(monkeypatch, tmp_path):
+    adapter, fake = _production_extraction_adapter(monkeypatch, tmp_path)
 
     adapter.chat("sys", [{"role": "user", "content": "hi"}])
 

@@ -87,6 +87,9 @@ class _FakeRAGEngine:
 class _MemMgr:
     enabled = False
 
+    def for_user(self, **_kw):
+        return None
+
 
 def _text_manager(store, llm, sessions) -> TextManager:
     return TextManager(lambda: store, None, llm, sessions,
@@ -138,7 +141,7 @@ async def _drive(store, uid: str, llm, api_key: str, embedding_key: str) -> str:
     # 建会话：不传 user_role —— 站在缺陷 55 的射程里（空角色会话才会漏）
     sid = text_manager._create_session(
         card, all_characters=[{"name": "张三", "aliases": []}],
-        card_id=card_id, user_id=uid)
+        card_id=card_id, user_id=uid, memory=None)
     await store.save_session(sid, card_id, "", "", uid)
     await _turn(sessions[sid]["engine"], sid)
 

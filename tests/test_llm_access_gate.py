@@ -572,8 +572,9 @@ def test_l5_resolve_llm_table():
 
 # ── L6：每个出站方法都先过守卫 ────────────────────────────────────────────
 
-#: 公开可调用成员里**不是出站**的三个：`model`/`base_url` 是只读事实，`aclose` 是收尾。
-_NON_CALL = {"model", "aclose", "base_url"}
+#: 公开可调用成员里**不是出站**的：`model`/`base_url` 是只读事实，`aclose` 是收尾，
+#: `credential_fingerprint` 只做哈希，`derive` 只造一个新实例（它自己的出站照样过守卫）。
+_NON_CALL = {"model", "aclose", "base_url", "credential_fingerprint", "derive"}
 
 _REFUSAL = "总拒绝：本用例注册的守卫"
 

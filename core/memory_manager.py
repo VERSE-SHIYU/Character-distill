@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 
 import math
-import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -148,101 +147,198 @@ _EXTRACT_PRESENCE_PENALTY = 0.0
 _EXTRACT_TOP_P = 0.1
 
 
-class MemoryManager:
-    """封装 Mem0 Memory 实例，提供角色级别的记忆读写。
+class MemoryKeyMissing(RuntimeError):
+    """底层实例被要求做一件需要模型的事。底层实例只该查看 / 删除 —— 走到这里就是接错了线。"""
 
-    每个角色（card_id）有独立的记忆空间，跨会话持久化。
-    提炼用的 LLM 走项目适配器（模型名取配置），Embedding 走 DashScope + 共享缓存。
+
+class _NoKeyEmbedder:
+    """底层实例（不属于任何用户）的 embedder：一调用就炸，绝不拿谁的 key 去出站。"""
+
+    def embed(self, *_a: Any, **_kw: Any) -> Any:
+        raise MemoryKeyMissing("底层记忆实例不做向量化：检索 / 写入必须走 for_user() 的用户视图")
+
+    def embed_batch(self, *_a: Any, **_kw: Any) -> Any:
+        raise MemoryKeyMissing("底层记忆实例不做向量化：检索 / 写入必须走 for_user() 的用户视图")
+
+
+class _NoKeyLLM:
+    """底层实例的 LLM：一调用就炸（理由同 `_NoKeyEmbedder`）。"""
+
+    def generate_response(self, *_a: Any, **_kw: Any) -> Any:
+        raise MemoryKeyMissing("底层记忆实例不提炼记忆：写入必须走 for_user() 的用户视图")
+
+
+# 底层实例构造 mem0 自带客户端时要一个非空 key（构造完立刻被上面两个替身换掉，从不出站）。
+_UNUSED_KEY = "unused-no-outbound"
+
+
+class MemoryManager:
+    """长期记忆的**工厂**：一份共享的向量库，按用户给出绑定其自己 key 的视图。
+
+    口径（`docs/specs/user-own-keys.md`）：提炼用的 LLM 与向量化用的 embedding **都用
+    用户自己的 key**，缺一把就不给视图（`for_user` 返回 None）—— 引擎拿到 None 时原有的
+    「记忆为空即跳过」分支就是「不提供记忆」的实现。
+
+    为什么是「工厂 + 视图」而不是一个实例：本地 qdrant 同一目录只允许一个客户端（第二个
+    直接 `RuntimeError: ... already accessed by another instance`），而每个用户的 key 不同。
+    故只开**一个** `QdrantClient`，每个用户一个 `Memory`，经 mem0 官方参数
+    `vector_store.config.client` 共用它（mem0 2.0.20 `configs/vector_stores/qdrant.py:13`）。
+    视图按「用户 + LLM 凭据指纹 + embedding key 指纹」缓存，与 RAG 的
+    `IndexingService._get_or_build_rag` 同一写法 —— 用户换了 key，下次取到的就是新视图。
+
+    `base()` 是不属于任何用户的底层视图：只做查看 / 删除（这两类 mem0 不调模型）。
+    它的 embedder / LLM 是一碰就炸的替身，保证它绝不会替谁出站。
     """
 
-    def __init__(self, config: dict[str, Any] | None = None):
+    def __init__(self, config: dict[str, Any] | None = None, *, db_dir: str | Path | None = None):
         config = config or {}
         self._enabled = config.get("enabled", True)
         self._search_top_k = config.get("search_top_k", 10)
         self._context_window = config.get("context_window", 30)
-        self._mem: Any = None  # mem0.Memory, lazy-imported
+        repo_root = Path(__file__).resolve().parent.parent
+        self._db_dir = Path(db_dir) if db_dir is not None else repo_root / "data" / "mem0_db"
         self._lock = threading.Lock()
-
+        self._client: Any = None  # qdrant_client.QdrantClient，首次用到时才开（开目录即上锁）
+        self._views: dict[str, MemoryView] = {}
+        self._base: MemoryView | None = None
         if not self._enabled:
-            return
+            logger.warning("Mem0 disabled by config (memory.enabled = false)")
 
-        api_key = os.getenv("DEEPSEEK_API_KEY")
-        if not api_key:
-            print("[MemoryManager] DEEPSEEK_API_KEY not set — Mem0 disabled")
-            self._enabled = False
-            return
+    @property
+    def enabled(self) -> bool:
+        """配置层面开没开。某个用户有没有记忆，看 `for_user` 返回的是不是 None。"""
+        return bool(self._enabled)
 
-        dashscope_key = os.getenv("DASHSCOPE_API_KEY")
-        if not dashscope_key:
-            print("[MemoryManager] 请在 .env 配置 DASHSCOPE_API_KEY 以启用记忆功能")
-            self._enabled = False
-            return
+    def _shared_client(self) -> Any:
+        if self._client is None:
+            from qdrant_client import QdrantClient
 
-        try:
-            from mem0 import Memory
+            self._db_dir.mkdir(parents=True, exist_ok=True)
+            self._client = QdrantClient(path=str(self._db_dir))
+        return self._client
 
-            repo_root = Path(__file__).resolve().parent.parent
-            db_path = str(repo_root / "data" / "mem0_db")
+    def _build(self, *, llm: Any, llm_key: str, embedder: Any, embed_key: str) -> Any:
+        """官方 `Memory.from_config` + 注入。调用方持锁。"""
+        from mem0 import Memory
 
-            # mem0 自带的 LLM 提供方关不掉思考、也绕开项目的出站守卫与重试预算，故
-            # 用**适配器**实例：全局 key，MEM0_LLM_BASE_URL 覆盖（本地压测剥离外部
-            # LLM 延迟），未设置时走配置里的地址。
-            llm_adapter = LLMAdapter(
-                api_key=api_key,
-                base_url=os.environ.get("MEM0_LLM_BASE_URL") or None,
+        mem = Memory.from_config({
+            "vector_store": {
+                "provider": "qdrant",
+                "config": {
+                    "client": self._shared_client(),
+                    "embedding_model_dims": 1024,
+                },
+            },
+            # 这两段只用来把 `Memory` 构造起来（`from_config` 会各建一个客户端），建完
+            # 立刻被下面的注入替换掉。
+            "llm": {
+                "provider": "openai",
+                "config": {"model": getattr(llm, "model", "unused"), "api_key": llm_key},
+            },
+            "embedder": {
+                "provider": "openai",
+                "config": {"model": "text-embedding-v4", "api_key": embed_key, "embedding_dims": 1024},
+            },
+            # 显式落在数据卷里：mem0 默认是 `~/.mem0/history.db`，容器里不在 `./data` 卷上，
+            # 每次部署都被清空；而提炼时要读它（`get_last_messages`，mem0 main.py:920）。
+            "history_db_path": str(self._db_dir / "history.db"),
+        })
+        mem.llm = llm
+        mem.embedding_model = embedder
+        return mem
+
+    def base(self) -> MemoryView | None:
+        """不属于任何用户的底层视图：只做查看 / 删除。配置关掉时返回 None。"""
+        if not self._enabled:
+            return None
+        with self._lock:
+            if self._base is None:
+                mem = self._build(llm=_NoKeyLLM(), llm_key=_UNUSED_KEY,
+                                  embedder=_NoKeyEmbedder(), embed_key=_UNUSED_KEY)
+                self._base = MemoryView(mem, self._search_top_k, self._context_window)
+            return self._base
+
+    # ── 不需要 key 的操作：查看 / 删除（mem0 这几条路径不调模型）。没配 key 的用户照样能用，
+    # 删用户时的清理也不依赖任何人的 key。
+
+    def get_all(self, card_id: str) -> list[dict[str, Any]]:
+        base = self.base()
+        return base.get_all(card_id) if base is not None else []
+
+    def delete(self, memory_id: str) -> bool:
+        base = self.base()
+        return base.delete(memory_id) if base is not None else False
+
+    def delete_all(self, card_id: str) -> bool:
+        base = self.base()
+        return base.delete_all(card_id) if base is not None else False
+
+    def for_user(
+        self,
+        *,
+        user_id: str,
+        llm: LLMAdapter | None,
+        embedding_key: str,
+        embedding_region: str = "cn",
+    ) -> MemoryView | None:
+        """这个用户的记忆视图；LLM 或 embedding key 缺一把就返回 None（不提供记忆）。
+
+        *llm* 必须是**用户自己的**适配器（调用方从 `deps.get_user_llm` 取，它不回落全局）。
+        提炼用的是从它派生的新实例 —— 同一份凭据，换成 mem0 那套低温采样。
+        """
+        if not self._enabled:
+            return None
+        if llm is None or not embedding_key:
+            logger.info(
+                "Mem0 off for user_id=%s: missing own %s", user_id,
+                "LLM key" if llm is None else "embedding key",
+            )
+            return None
+        from core.embeddings import Mem0BridgeEmbedder, key_fingerprint
+
+        cache_key = (
+            f"{user_id}:{llm.credential_fingerprint()}:"
+            f"{key_fingerprint(embedding_key)}:{embedding_region}"
+        )
+        with self._lock:
+            view = self._views.get(cache_key)
+            if view is not None:
+                return view
+            extractor = llm.derive(
                 temperature=_EXTRACT_TEMPERATURE,
                 presence_penalty=_EXTRACT_PRESENCE_PENALTY,
                 top_p=_EXTRACT_TOP_P,
             )
-
-            mem0_config = {
-                "vector_store": {
-                    "provider": "qdrant",
-                    "config": {
-                        "path": db_path,
-                        "on_disk": True,
-                        "embedding_model_dims": 1024,
-                    },
-                },
-                # 这一段只用来把 `Memory` 构造起来（`from_config` 在 :499 会按它建一个
-                # 客户端），建完立刻被下面的注入替换掉；取值与适配器一致，免得它显示
-                # 一个我们其实不用的模型名/地址。
-                "llm": {
-                    "provider": "openai",
-                    "config": {
-                        "model": llm_adapter.model,
-                        "api_key": api_key,
-                        "openai_base_url": llm_adapter.base_url,
-                    },
-                },
-                "embedder": {
-                    "provider": "openai",
-                    "config": {
-                        "model": "text-embedding-v4",
-                        "api_key": dashscope_key,
-                        "openai_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                        "embedding_dims": 1024,
-                    },
-                },
-            }
-            self._mem = Memory.from_config(mem0_config)
-            # 提炼的 LLM 换成走适配器的那一个（注入点与理由见 core/mem0_llm.py）。
             from core.mem0_llm import AdapterLLM
-            self._mem.llm = AdapterLLM(llm_adapter)
-            # Replace embedder with shared-cache bridge so RAG and Mem0
-            # share the module-level LRU cache (identical texts embedded once).
-            from core.embeddings import Mem0BridgeEmbedder
-            self._mem.embedding_model = Mem0BridgeEmbedder(
-                api_key=dashscope_key,
-                region="cn",
+
+            embedder = Mem0BridgeEmbedder(
+                api_key=embedding_key,
+                region=embedding_region,
                 model="text-embedding-v4",
                 dimensions=1024,
             )
-            print(f"[MemoryManager] Mem0 initialized (LLM via adapter: {llm_adapter.model}; "
-                  "DashScope Embedding via shared cache)")
-        except Exception as exc:
-            logger.error("Mem0 init failed: %s", exc, exc_info=True)
-            self._enabled = False
+            mem = self._build(llm=AdapterLLM(extractor), llm_key=_UNUSED_KEY,
+                              embedder=embedder, embed_key=_UNUSED_KEY)
+            view = MemoryView(mem, self._search_top_k, self._context_window)
+            self._views[cache_key] = view
+            logger.info("Mem0 view built for user_id=%s (LLM: %s)", user_id, extractor.model)
+            return view
+
+
+class MemoryView:
+    """绑定**一个** mem0 `Memory` 实例的记忆读写（用户视图或底层视图）。
+
+    方法体沿用改造前的 `MemoryManager`（逐字搬过来）：引擎侧的调用面不变 ——
+    `ChatEngine` / `ContextEngine` / `ReflectionService` / `EventService` 拿到的就是它，
+    拿到 None 时照旧跳过。
+    """
+
+    def __init__(self, mem: Any, search_top_k: int = 10, context_window: int = 30):
+        self._enabled = True
+        self._search_top_k = search_top_k
+        self._context_window = context_window
+        self._mem = mem
+        self._lock = threading.Lock()
 
     @property
     def enabled(self) -> bool:

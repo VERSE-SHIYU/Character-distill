@@ -25,7 +25,7 @@ from adapters.llm_adapter import LLMAdapter, default_model
 from core import scheduling
 from core.distiller import Distiller
 from core.indexing_service import IndexingService
-from core.memory_manager import MemoryManager
+from core.memory_manager import MemoryManager, MemoryView
 from core.text_manager import TextManager
 from storage import get_store
 from storage.base import StorageBase
@@ -202,6 +202,22 @@ def get_memory_manager() -> MemoryManager | None:
     if _memory_manager is None:
         _memory_manager = MemoryManager(_memory_config)
     return _memory_manager
+
+
+def get_user_memory(
+    user_id: str, llm: LLMAdapter | None, embedding_key: str, embedding_region: str = "cn",
+) -> MemoryView | None:
+    """*user_id* 的长期记忆视图；没配齐自己的 LLM key 与百炼 key 时返回 None。（同步，
+    首次会建 mem0 实例 —— async 调用方用 `asyncio.to_thread`。）
+
+    *llm* 必须是用户自己的适配器（`get_user_llm` / `_resolve_user_llm` 的结果）。
+    """
+    manager = get_memory_manager()
+    if manager is None:
+        return None
+    return manager.for_user(
+        user_id=user_id, llm=llm, embedding_key=embedding_key, embedding_region=embedding_region,
+    )
 
 
 def get_storage() -> StorageBase:

@@ -277,6 +277,9 @@ class _StubTextManager:
     async def _build_all_characters(self, *args, **kwargs):
         return []
 
+    def memory_for(self, *_a, **_kw):
+        return None  # 长期记忆不在本用例射程
+
     def _create_session(self, *args, **kwargs):
         return f"ses_stub_{uuid.uuid4().hex[:8]}"
 

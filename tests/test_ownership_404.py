@@ -77,6 +77,10 @@ class _MemMgr:
     def add(self, messages, card_id, metadata=None):
         return True
 
+    def for_user(self, **_kw):
+        """工厂接口：替身同时充当「用户视图」—— 调用方拿到的就是它自己。"""
+        return self
+
     def add_manual(self, text, card_id):
         return True
 

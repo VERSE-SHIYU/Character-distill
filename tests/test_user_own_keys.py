@@ -191,3 +191,157 @@ def test_T4c_group_without_embedding_key_builds_no_rag(client, store, user, monk
         assert no_rag_engine.built == [], "没有 embedding key 却去构造了 RAGEngine"
     finally:
         deps.get_group_sessions().pop(gid, None)
+
+
+# ── T5–T7 / T10：长期记忆的工厂 —— 只用用户自己的两把 key ─────────────────────
+
+class _FakeMemory:
+    """`Memory.from_config` 的替身：记下收到的配置，提供不调模型的查看 / 删除。"""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.deleted: list[str] = []
+
+    def get_all(self, filters=None):
+        return {"results": []}
+
+    def delete_all(self, user_id=None):
+        self.deleted.append(user_id)
+
+
+@pytest.fixture
+def mem_factory(monkeypatch, tmp_path):
+    """真 `MemoryManager`（本体逻辑），只把 `Memory.from_config` 换成记账的替身。"""
+    import mem0
+    from core.memory_manager import MemoryManager
+
+    built: list[_FakeMemory] = []
+
+    def _from_config(cfg):
+        m = _FakeMemory(cfg)
+        built.append(m)
+        return m
+
+    monkeypatch.setattr(mem0.Memory, "from_config", _from_config)
+    mm = MemoryManager({}, db_dir=tmp_path / "mem0_db")
+    mm.built = built
+    return mm
+
+
+def _user_llm(key: str, model: str = "m"):
+    from adapters.llm_adapter import LLMAdapter
+
+    return LLMAdapter(api_key=key, base_url="https://api.deepseek.com", model=model, is_user_key=True)
+
+
+def _embed_key_of(view) -> str:
+    return view._mem.embedding_model._dashscope._client.api_key
+
+
+def test_T5_view_uses_the_users_own_keys_and_shared_client(mem_factory):
+    llm = _user_llm("user-llm-A")
+    view = mem_factory.for_user(user_id="A", llm=llm, embedding_key="user-emb-A")
+
+    assert view is not None
+    assert _embed_key_of(view) == "user-emb-A", "向量化没用用户自己的百炼 key"
+    extractor = view._mem.llm._adapter
+    assert extractor.credential_fingerprint() == llm.credential_fingerprint(), "提炼没用用户自己的 LLM key"
+    cfg = view._mem.cfg
+    assert cfg["vector_store"]["config"]["client"] is mem_factory._shared_client(), \
+        "没经官方 `client` 参数共用同一个 qdrant 客户端"
+    # T10：历史库必须落在数据目录里（mem0 默认在 ~/.mem0，容器重建即丢）
+    assert cfg["history_db_path"].startswith(str(mem_factory._db_dir)), cfg["history_db_path"]
+
+
+def test_T6_views_are_per_user_and_follow_key_changes(mem_factory):
+    va = mem_factory.for_user(user_id="A", llm=_user_llm("kA"), embedding_key="eA")
+    vb = mem_factory.for_user(user_id="B", llm=_user_llm("kB"), embedding_key="eB")
+    assert va is not vb and _embed_key_of(va) == "eA" and _embed_key_of(vb) == "eB", "两个用户的 key 串了"
+    assert mem_factory.for_user(user_id="A", llm=_user_llm("kA"), embedding_key="eA") is va, "同一份凭据没命中缓存"
+    va2 = mem_factory.for_user(user_id="A", llm=_user_llm("kA"), embedding_key="eA-new")
+    assert va2 is not va and _embed_key_of(va2) == "eA-new", "换了百炼 key 仍拿到旧视图"
+    va3 = mem_factory.for_user(user_id="A", llm=_user_llm("kA-new"), embedding_key="eA")
+    assert va3 is not va, "换了 LLM key 仍拿到旧视图"
+
+
+def test_T7_missing_either_key_gives_no_view_and_builds_nothing(mem_factory):
+    assert mem_factory.for_user(user_id="C", llm=None, embedding_key="e") is None
+    assert mem_factory.for_user(user_id="C", llm=_user_llm("k"), embedding_key="") is None
+    assert mem_factory.built == [], "缺 key 却构造了 mem0 实例"
+
+
+def test_T7b_base_view_never_calls_a_model(mem_factory):
+    from core.memory_manager import MemoryKeyMissing
+
+    base = mem_factory.base()
+    assert mem_factory.get_all("card1") == []
+    assert mem_factory.delete_all("card1") is True and base._mem.deleted == ["card1"]
+    with pytest.raises(MemoryKeyMissing):
+        base._mem.embedding_model.embed("x")
+    with pytest.raises(MemoryKeyMissing):
+        base._mem.llm.generate_response([])
+
+
+def test_T5b_real_mem0_views_share_one_local_qdrant(tmp_path, monkeypatch):
+    """真 mem0 + 真本地 qdrant：两个用户视图 + 底层视图同开一个目录，不撞文件锁。
+
+    本地 qdrant 同一目录只允许一个客户端（第二个 `RuntimeError: ... already accessed`），
+    本条就是「共用官方 `client` 参数」这个设计的实测依据。遥测关掉：否则 mem0 会往
+    外网发事件。
+    """
+    import mem0.memory.main as mem0_main
+    import mem0.memory.telemetry as mem0_telemetry
+    from core.memory_manager import MemoryManager
+
+    # 两处都要关：main 里那份只管遥测向量库，发事件的判断在 telemetry 模块自己那份。
+    monkeypatch.setattr(mem0_main, "MEM0_TELEMETRY", False)
+    monkeypatch.setattr(mem0_telemetry, "MEM0_TELEMETRY", False)
+    mm = MemoryManager({}, db_dir=tmp_path / "mem0_db")
+    va = mm.for_user(user_id="A", llm=_user_llm("kA"), embedding_key="eA")
+    vb = mm.for_user(user_id="B", llm=_user_llm("kB"), embedding_key="eB")
+    base = mm.base()
+    clients = {id(v._mem.vector_store.client) for v in (va, vb, base)}
+    assert len(clients) == 1, "三个视图没共用同一个 qdrant 客户端"
+    assert base.get_all("card1") == []
+
+
+# ── T8：记忆接口 —— 查看 / 删除不需要 key；写入没 key → 409 ─────────────────
+
+@pytest.fixture
+def mem_client(client, mem_factory):
+    from deps import get_memory_manager
+
+    server.app.dependency_overrides[get_memory_manager] = lambda: mem_factory
+    try:
+        yield client
+    finally:
+        server.app.dependency_overrides.pop(get_memory_manager, None)
+
+
+def test_T8_memory_routes_without_own_keys(mem_client, store, user):
+    _assert_premise(store, user)
+    src_id, _ = _seed_public_pair(store, user["id"])
+
+    r = mem_client.get(f"/api/memory/list/{src_id}", headers=_token(user))
+    assert r.status_code == 200, r.text
+    assert r.json()["configured"] is False and r.json()["enabled"] is True
+
+    r = mem_client.delete(f"/api/memory/clear/{src_id}", headers=_token(user))
+    assert r.status_code == 200, f"没 key 就清不掉自己的记忆：{r.status_code} {r.text}"
+
+    r = mem_client.post(f"/api/memory/add/{src_id}", json={"text": "一条记忆"}, headers=_token(user))
+    assert r.status_code == 409, r.text
+    assert "百炼 Key" in r.json()["detail"]
+
+
+def test_T7c_text_manager_hands_its_own_llm_to_the_factory(mem_factory):
+    """建会话处取记忆视图走 `TextManager.memory_for`：LLM 用它手里那个（用户自己的）。"""
+    from core.text_manager import TextManager
+
+    llm = _user_llm("user-llm-T")
+    tm = TextManager(lambda: None, None, llm, {}, memory_manager=mem_factory)
+    view = tm.memory_for("T", "user-emb-T")
+    assert view is not None, "两把 key 齐了，建会话处却没拿到记忆视图"
+    assert view._mem.llm._adapter.credential_fingerprint() == llm.credential_fingerprint()
+    assert tm.memory_for("T", "") is None, "没有百炼 key 却给了记忆视图"
+    assert TextManager(lambda: None, None, llm, {}, memory_manager=None).memory_for("T", "e") is None

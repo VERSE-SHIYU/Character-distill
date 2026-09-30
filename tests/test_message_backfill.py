@@ -68,6 +68,10 @@ class _MemMgr:
     def add(self, messages, card_id, metadata=None):
         return True
 
+    def for_user(self, **_kw):
+        """工厂接口：替身同时充当「用户视图」—— 调用方拿到的就是它自己。"""
+        return self
+
 
 class _ChatLLM:
     """假 LLM：非 None 且真能出文本（开场白与聊天都靠它）。"""

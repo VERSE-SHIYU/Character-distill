@@ -1353,6 +1353,18 @@ async def start_session(
 
     card = CharacterCard.model_validate_json(card_rec["card_json"])
 
+    # 两条分支（原文 / 独立卡片）都要：检索用 embedding，长期记忆用 LLM + embedding。
+    try:
+        user_cfg = await storage.get_user_api_config(user_id) or {}
+    except Exception as exc:
+        user_cfg = {}
+        # 读不到用户配置 → 下面按「没配」处理：不检索、不回落全局。失败要留痕。
+        logger.warning(
+            "Distill session: per-user api config unreadable, treating as unconfigured "
+            "(user_id=%s): %r", user_id, exc, exc_info=True,
+        )
+    emb = resolve_embedding(user_cfg)
+    memory = await asyncio.to_thread(text_manager.memory_for, user_id, emb.key, emb.region)
 
     if req.text_id:
         text_rec = await storage.get_text_owned(req.text_id, user_id)
@@ -1361,21 +1373,11 @@ async def start_session(
         content = text_rec["content"]
         existing_cards = await storage.list_cards(req.text_id, user_id)
         all_characters = await text_manager._build_all_characters(req.text_id, existing_cards, user_id)
-        try:
-            user_cfg = await storage.get_user_api_config(user_id) or {}
-        except Exception as exc:
-            user_cfg = {}
-            # 读不到用户配置 → 下面按「没配」处理：不检索、不回落全局。失败要留痕。
-            logger.warning(
-                "Distill session: per-user api config unreadable, treating as unconfigured "
-                "(user_id=%s): %r", user_id, exc, exc_info=True,
-            )
-        emb = resolve_embedding(user_cfg)
         session_id = await asyncio.to_thread(
             text_manager._create_session, card,
             all_characters=all_characters, rag=None,
             card_id=req.card_id, user_id=user_id,
-            user_role=req.user_role,
+            user_role=req.user_role, memory=memory,
         )
         # Fire-and-forget scene index via isolated service
         indexing_service = get_indexing_service()
@@ -1393,7 +1395,7 @@ async def start_session(
             text_manager._create_session, card,
             all_characters=[], rag=None,
             card_id=req.card_id, user_id=user_id,
-            user_role=req.user_role,
+            user_role=req.user_role, memory=memory,
         )
         all_characters = []
 

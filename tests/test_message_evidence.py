@@ -645,6 +645,9 @@ class TestResumeCarriesEvidence:
         class _StubTextManager:
             _indexing_service = _StubIndexing()
 
+            def memory_for(self, *_a, **_kw):
+                return None  # 长期记忆不在本用例射程
+
             def _create_session(self, *_a, **kw):
                 # 重建路径把原 id 交给构造函数了，替身照它登记（不再自编 id 等路由改名）。
                 sid = kw["session_id"]
@@ -681,6 +684,9 @@ class TestResumeCarriesEvidence:
 
         class _StubTextManager:
             _indexing_service = _StubIndexing()
+
+            def memory_for(self, *_a, **_kw):
+                return None  # 长期记忆不在本用例射程
 
             def _create_session(self, *_a, **kw):
                 # 重建路径把原 id 交给构造函数了，替身照它登记（不再自编 id 等路由改名）。

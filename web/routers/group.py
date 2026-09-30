@@ -79,7 +79,7 @@ async def _rebuild_group_session(
     from core.chat_engine import ChatEngine
     from core.rag import CollectionUnusableError, RAGEngine
     from core.group_session import GroupSession
-    from deps import get_rag_config, get_memory_manager
+    from deps import get_rag_config, get_user_memory
     from web.llm_resolution import resolve_embedding
 
     session = await storage.get_group_session_owned(group_id, user_id)
@@ -109,7 +109,10 @@ async def _rebuild_group_session(
     if emb.key:
         rag_config["embedding_key"], rag_config["embedding_region"] = emb.key, emb.region
 
-    memory_manager = get_memory_manager()
+    # 用户自己的两把 key 缺一把就是 None —— 引擎原有的「记忆为空即跳过」分支即「不提供记忆」。
+    memory_manager = await asyncio.to_thread(
+        get_user_memory, user_id, per_user_llm, emb.key, emb.region,
+    )
 
     persona_type = session.get("user_persona_type", "director")
     persona_card_id = session.get("user_persona_card_id", "")
@@ -328,7 +331,7 @@ async def create_group(
     from core.schema import CharacterCard
     from core.chat_engine import ChatEngine
     from core.rag import CollectionUnusableError, RAGEngine
-    from deps import get_rag_config, get_memory_manager
+    from deps import get_rag_config, get_user_memory
     from web.llm_resolution import resolve_embedding
 
     rag_config = get_rag_config()
@@ -346,7 +349,10 @@ async def create_group(
     if emb.key:
         rag_config["embedding_key"], rag_config["embedding_region"] = emb.key, emb.region
 
-    memory_manager = get_memory_manager()
+    # 用户自己的两把 key 缺一把就是 None —— 引擎原有的「记忆为空即跳过」分支即「不提供记忆」。
+    memory_manager = await asyncio.to_thread(
+        get_user_memory, user_id, per_user_llm, emb.key, emb.region,
+    )
 
     # 群身份先于引擎生成：每个引擎出生时就带上它，不再等「要评估好感度了」再补。
     group_id = uuid.uuid4().hex[:12]

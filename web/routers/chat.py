@@ -189,12 +189,14 @@ async def _ensure_session(
         card_rec["text_id"], text_rec["content"],
         all_characters=all_characters, embedding_key=emb.key, embedding_region=emb.region,
     )
+    memory = await asyncio.to_thread(text_manager.memory_for, user_id, emb.key, emb.region)
     # 原会话 id 直接进构造：引擎一出生就在原 id 名下，不再「新 id 造好再搬过来」。
     await asyncio.to_thread(
         text_manager._create_session, card,
         all_characters=all_characters, rag=rag,
         card_id=card_id, user_id=user_id,
         session_id=session_id,
+        memory=memory,
     )
 
     engine = sessions.get(session_id, {}).get("engine")
