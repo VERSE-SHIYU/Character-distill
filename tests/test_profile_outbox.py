@@ -139,7 +139,7 @@ async def test_failed_create_user_leaves_no_profile_row(store):
     loser = _uid("u")
     with pytest.raises(ValueError):
         await store.create_user(loser, name, "hash", home_region=_HERE)
-    assert await _profile_rows(store, loser) == []
+    assert await _profile_rows(store, loser) == [], "建用户失败却留下了待发行"
 
 
 # ── 改头像：换版本戳；发送途中又改，新资料不丢 ──────────────────────────────
@@ -169,8 +169,8 @@ async def test_change_during_send_is_sent_next_round(store, monkeypatch):
     assert len(await _profile_rows(store, uid)) == 1, "发送途中的新资料被这一轮的确认一起删掉了"
 
     await _resync_once(store)
-    assert [b["avatar_data"] for b in peer.for_user(uid)] == ["", "data:v2"]
-    assert await _profile_rows(store, uid) == []
+    assert [b["avatar_data"] for b in peer.for_user(uid)] == ["", "data:v2"], "对端没收到最新头像"
+    assert await _profile_rows(store, uid) == [], "按发出时的版本戳删不掉已确认的行"
 
 
 # ── 发送方的判断：失败留行、非本区与已删用户丢行 ────────────────────────────
@@ -190,7 +190,7 @@ async def test_user_not_homed_here_is_dropped_unsent(store, monkeypatch):
     uid = await _new_user(store, region=_THERE)
     peer = Peer(monkeypatch)
     await _resync_once(store)
-    assert peer.for_user(uid) == []
+    assert peer.for_user(uid) == [], "非本区用户被本节点宣告出去了"
     assert await _profile_rows(store, uid) == []
 
 
@@ -215,7 +215,7 @@ async def test_acked_row_with_null_payload_is_removed(store, monkeypatch):
     await _resync_once(store)
     async with await store._connect() as conn:
         left = await conn.fetchval("SELECT count(*) FROM cross_border_delete_outbox")
-    assert left == 0
+    assert left == 0, "确认过的 NULL payload 行没删掉"
 
 
 # ── 迁移 030：存量补发 ─────────────────────────────────────────────────────
@@ -247,7 +247,7 @@ async def test_backfill_migration_keeps_a_pending_row_as_is(store):
     [before] = await _profile_rows(store, uid)
     async with await store._connect() as conn:
         await conn.execute(_MIGRATION.read_text(encoding="utf-8"))
-    assert await _profile_rows(store, uid) == [before]
+    assert await _profile_rows(store, uid) == [before], "030 改动了已有的待发行"
 
 
 async def test_signing_failure_keeps_the_row_and_the_loop_alive(store, monkeypatch, caplog):
@@ -260,6 +260,9 @@ async def test_signing_failure_keeps_the_row_and_the_loop_alive(store, monkeypat
     uid = await _new_user(store)
     monkeypatch.setattr(inter_node_auth, "create_auth_header", boom)
     caplog.set_level(logging.ERROR)
-    await _resync_once(store)
+    try:
+        await _resync_once(store)
+    except Exception as exc:
+        raise AssertionError(f"签名失败把补发循环带停了：{exc!r}") from exc
     assert len(await _profile_rows(store, uid)) == 1
     assert any("cannot sign" in x.getMessage() for x in caplog.records)

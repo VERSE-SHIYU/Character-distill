@@ -10,7 +10,7 @@
 | 前置 | 交接文档 `docs/specs/HANDOFF-2026-09-30.md` 第 0 件（在分支 `claude/adoring-newton-qnmgo4`） |
 | 分支起点 | main `5249fa58`，再合入 `origin/claude/adoring-newton-qnmgo4`（`1fed5ae2`） |
 | 参考补丁 | `docs/specs/artifacts/profile-outbox.patch`，sha256 `f17e1dbf428dd07e6a18334d3b9fde2300f3234cb125f3d30db47e49d590d230`，基线 = 上一行的合并树 |
-| 变异驱动 | `docs/specs/artifacts/mutate_profile_outbox.py`，sha256 `ed72c249961b77fa5d52d51125838008e1abf5351200d745b1322dd67cd1ded6` |
+| 变异驱动 | `docs/specs/artifacts/mutate_profile_outbox.py`，sha256 `38a85d4f09b6b28dfc7d13ecff04265e34e0902f0fe0c4107ed18f057fbbb1b2（审计后重写，原 `ed72c249961b…` 见「补充 1」）` |
 
 ## 要解决的问题
 
@@ -146,4 +146,36 @@ pytest tests/test_profile_outbox.py tests/test_cross_border_sync.py tests/test_s
 
 ## 补充
 
-（空）
+### 补充 1：交付审计（2026-09-30，PR #96 @ `1e542c9`）
+
+**逐文件清单**（改动 16 个文件，全部看过）：
+
+| 文件 | 结论 |
+|---|---|
+| `storage/base.py` | 通过。`USER_PROFILE_OP` 与条件删除签名、docstring 与实现一致 |
+| `storage/postgres_store.py` | 通过。入队在 `create_user` 事务内；`update_user_avatar` 按行数入队；条件删除用 `IS NOT DISTINCT FROM`。顺手修：`_enqueue_profile_sync` 前后空行（原 3 行 / 1 行，改为 2 / 2） |
+| `storage/sqlite_store.py` | 通过。只对齐签名 |
+| `storage/migrations_pg/030_backfill_profile_sync.sql` | 通过。`home_region` 是 `NOT NULL DEFAULT 'cn-shenzhen'`（`005_data_residency.sql:13`），没有空地区被发送方误丢 |
+| `web/cross_border_sync.py` | 通过。`get_user_by_id` 的 SELECT 含 `avatar_data` / `home_region`，查不到返回 None；签名在 try 内；资料行排在 `user_purge` 前发送时用户已不存在即丢弃，换版本戳不改 `created_at`、不插队 |
+| `web/routers/auth.py` | 通过。旧调用已删，全仓无旧签名调用点 |
+| `scripts/backfill_users.py`（删除） | 通过。全仓无引用 |
+| `tests/test_cross_border_sync.py` | 通过 |
+| `tests/test_profile_outbox.py` | 有问题，已修（见下 2、3） |
+| `docs/specs/artifacts/mutate_profile_outbox.py` | 有问题，已重写（见下 1、2） |
+| `docs/specs/artifacts/profile-outbox.patch` | 通过。sha256 与头部一致；在 `86f0aaf` 上应用后与 `1e542c9` 在 `docs/specs` 之外逐字节相同 |
+| `docs/specs/profile-outbox.md` | 本节 |
+| `docs/TECHNICAL_REPORT.md` | 通过 |
+| `docs/specs/HANDOFF-2026-09-30.md` | 通过。第 0 件状态已更新 |
+| `docs/specs/artifacts/cross-border-outbox.WIP.patch`、`mutate_outbox.WIP.py` | 随合并带入，未审内容（第 3 件的 WIP）。交接文档已写明其中 `user_profile` 部分作废，重基时删掉 |
+
+**发现与处理**（都在本段改动面内，直接修）：
+
+1. **变异驱动只看 pytest 退出码。** 实测：解释器缺 `asyncpg` 时 pytest 在会话开始就崩，原驱动照样输出「17 条全红、存活：无」、退出码 0 —— 「跑不起来」与「红」共用一个信号。重写为复用仓内共享层：改文件 / 跑 / 还原用 `tests/perf/route_facts_mutations.py`（`_apply` / `_run` / `_restore`），基线门与判档用 `tests/lock_coverage.py`（`baseline_verdict` / `refuse_on_baseline` / `outcome`）；每条变异带红源标记，必须红在指定断言上。不放进 `tests/perf/`、不写 `*_red_lines.json`：它是本 spec 的一次性对账，不登记进覆盖闭合元锁。M2 原先的特判钩子（`M2_EXTRA`）并成一条两锚点的编辑。
+2. **M14 是坏变异。** 原变异把迁移改成语法错误的 SQL，红源是 `PostgresSyntaxError`，不是「存量没入队」。改为真正的空迁移（`SELECT 1;`），红在「没被 030 入队」。
+3. **五条断言没有消息、M17 红在逃逸的 `TypeError` 上**，红源无法指认。给 M2 / M7 / M8 / M13 / M15 / M16 对应的断言补了消息；`test_signing_failure_keeps_the_row_and_the_loop_alive` 把「补发循环不许被带停」写成显式断言。测试的命题不变。
+
+**验收（本地，PG 16 @ 55432，Python 3.12，按锁装依赖）**：
+- 重写后的驱动：基线 `11 passed`；M1–M17 全部 RED 且红源命中；三个靶子文件还原后 sha256 逐字节一致；退出码 0。
+- 负控：用没装 `asyncpg` 的解释器跑，驱动报「基线不可用」、退出码 3（原驱动此时报「存活：无」、退出码 0）。
+- 「测试」一节的文件 + `tests/test_lock_coverage.py` + `tests/test_collection_surface_lock.py`：293 passed、1 failed。失败的是 `test_evidence_integrity.py::TestManifestEntries::test_code_sha_resolves`：本地是浅克隆（`git rev-parse --is-shallow-repository` = true），证据清单里的历史 commit 不在本地；CI 全量历史下该条为绿，与本改动无关。
+

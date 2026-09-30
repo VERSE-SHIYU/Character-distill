@@ -121,7 +121,6 @@ class _PoolContext:
             self.conn = None
 
 
-
 async def _enqueue_profile_sync(conn: asyncpg.Connection, user_id: str) -> None:
     """在调用方的事务里把「这个用户的资料要发给对端」入队（见 `USER_PROFILE_OP`）。
 
@@ -134,6 +133,7 @@ async def _enqueue_profile_sync(conn: asyncpg.Connection, user_id: str) -> None:
            ON CONFLICT (op_type, target_id) DO UPDATE SET payload = EXCLUDED.payload""",
         USER_PROFILE_OP, user_id,
     )
+
 
 class PostgresStore(StorageBase):
     """Asynchronous storage implementation based on PostgreSQL via asyncpg."""
