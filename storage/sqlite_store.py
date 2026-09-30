@@ -554,7 +554,7 @@ async def _apply_migration(conn: Any, path: Path) -> None:
                 return m.group(0)                    # 还没改过：照常 RENAME
             # 目标已在 ⇒ 改名早已生效；源表此时只可能是更早的 CREATE TABLE IF NOT EXISTS
             # 重建出的空壳，剥掉之外还得把它清掉（理由见 docstring）。
-            return shell_drops.get(m.group("old"), "") if src else ""
+            return shell_drops[m.group("old")] if src else ""
 
         sql = _RENAME_TABLE_RE.sub(_rename, sql)
     await conn.executescript(sql)

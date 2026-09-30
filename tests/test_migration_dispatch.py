@@ -186,8 +186,8 @@ async def test_rename_branch_refuses_to_drop_a_nonempty_source(tmp_path):
     在同样情形下 `RAISE EXCEPTION`（两表同存、旧表有 N 行、不自动删）；SQLite 此前直接
     DROP，两侧语义不一致。
 
-    **变异（实测）**：去掉 `_drop_rebuilt_shell` 里的 `if rows: raise`（或让它永远返回 DROP
-    语句）→ `pytest.raises` 收不到异常，红。
+    **变异（实测）**：去掉 `_drop_rebuilt_shell` 里的 `if row[0]:` 那道检查（或让它永远返回
+    DROP 语句）→ `pytest.raises` 收不到异常，红。
     """
     store = sqlite_store.SQLiteStore(str(tmp_path / "rename_guard.db"))
     mig = tmp_path / "902_rename_guard.sql"
