@@ -313,7 +313,7 @@ jobs:
       # 每次重建、哈希随之变，每 build 跨境重传约 276MB 到阿里云，撞 10 分钟超时。
       # 依据：https://docs.docker.com/build/cache/backends/gha/#scope
       # gha 缓存有容量上限，被淘汰时偶发一次全量重传属**预期**，由两个阿里云推送步的
-      # continue-on-error 与部署侧的 GHCR 回落兜住 —— 不为此加大超时、不改推送方式。
+      # 重试 + continue-on-error 与部署侧的 GHCR 回落兜住（重试见下方推送步的注释）。
       - name: Build and push app image
         id: build_app
         uses: docker/build-push-action@v7
@@ -326,24 +326,27 @@ jobs:
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app
 
-      # 光有 continue-on-error 只接了「失败」，接不住「挂住」：挂死不算失败，这一步会一直
-      # 占着直到 build job 撞 360 分钟上限，把整条 build 一起拖住（2026-09-21 实发：卡在
-      # `docker push` 上 2h40m）。step 级 timeout-minutes 到点即失败，由本步的
-      # continue-on-error 接住 —— 挂死从此也落进「可选步骤失败」那一类。
-      # 取值 10 分钟的依据（近 20 次成功 build 的本步耗时，原始样本见 `ec62a04`）：
-      #   p50 = 62s，19/20 次 ≤ 107s（最快 55s、最慢 101s，其余全在 55–63s 一条带上）。
-      #   唯一的 1762s（约 29 分钟）是**离群值**，不作为基准 —— 取 max×3 就会让一个正常
-      #   几十秒的可选步骤，每次挂死都白占 runner 89 分钟（上面那次实发正是如此）。
-      #   10 分钟 = p50 的 9.7 倍、离群值以外最大值的 5.6 倍，正常抖动够用，挂死也收得住。
+      # 阿里云推送：跨境请求会**挂住**（不报错、不超时），`docker push` 自己不设请求超时也不重试。
+      # 2026-09 全量 census（93 次 run）：凡需真上传的推送没有一次在 10 分钟内推完，挂住的层
+      # 事后却出现在阿里云上 —— 故每次尝试设超时、到点杀掉整棵进程树重来，重试时已落地的层
+      # 走「Layer already exists」。重试用现成的 nick-fields/retry（钉 v4.0.0 的 commit），不自写循环。
+      # 预算：step timeout-minutes 必须大于 max_attempts × timeout_minutes + 各次间隔，否则 GitHub
+      # 会在重试之前把整步杀掉（tests/test_aliyun_image_timeouts.py 锁这条不等式）。
+      # continue-on-error 仍保留：阿里云是可选的，全部尝试失败时部署侧回落 GHCR。
       - name: Push app image to Aliyun CR
         continue-on-error: true
-        timeout-minutes: 10
-        run: |
-          docker pull ${{ env.APP_IMAGE }}:${{ github.sha }}
-          docker tag ${{ env.APP_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_APP_IMAGE }}:${{ github.sha }}
-          docker tag ${{ env.APP_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_APP_IMAGE }}:latest
-          docker push ${{ env.ALIYUN_APP_IMAGE }}:${{ github.sha }}
-          docker push ${{ env.ALIYUN_APP_IMAGE }}:latest
+        timeout-minutes: 20
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+        with:
+          timeout_minutes: 6
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: |
+            docker pull ${{ env.APP_IMAGE }}:${{ github.sha }}
+            docker tag ${{ env.APP_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_APP_IMAGE }}:${{ github.sha }}
+            docker tag ${{ env.APP_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_APP_IMAGE }}:latest
+            docker push ${{ env.ALIYUN_APP_IMAGE }}:${{ github.sha }}
+            docker push ${{ env.ALIYUN_APP_IMAGE }}:latest
 
       - name: Build and push nginx image
         id: build_nginx
@@ -357,16 +360,21 @@ jobs:
           cache-from: type=gha,scope=nginx
           cache-to: type=gha,mode=max,scope=nginx
 
-      # 同上一步：取值 = 最近 20 次成功 build 中本步耗时的 max×3 向上取整，数据见引入本行的 commit message。
+      # 同上一步的机制；nginx 近 12 次本步最长 41s，单次尝试 2 分钟。
       - name: Push nginx image to Aliyun CR
         continue-on-error: true
-        timeout-minutes: 3
-        run: |
-          docker pull ${{ env.NGINX_IMAGE }}:${{ github.sha }}
-          docker tag ${{ env.NGINX_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_NGINX_IMAGE }}:${{ github.sha }}
-          docker tag ${{ env.NGINX_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_NGINX_IMAGE }}:latest
-          docker push ${{ env.ALIYUN_NGINX_IMAGE }}:${{ github.sha }}
-          docker push ${{ env.ALIYUN_NGINX_IMAGE }}:latest
+        timeout-minutes: 8
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+        with:
+          timeout_minutes: 2
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: |
+            docker pull ${{ env.NGINX_IMAGE }}:${{ github.sha }}
+            docker tag ${{ env.NGINX_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_NGINX_IMAGE }}:${{ github.sha }}
+            docker tag ${{ env.NGINX_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_NGINX_IMAGE }}:latest
+            docker push ${{ env.ALIYUN_NGINX_IMAGE }}:${{ github.sha }}
+            docker push ${{ env.ALIYUN_NGINX_IMAGE }}:latest
 
       - name: Write digest file
         run: |
