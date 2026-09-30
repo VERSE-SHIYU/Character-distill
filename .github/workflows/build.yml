@@ -15,9 +15,6 @@ env:
   REGISTRY: ghcr.io
   APP_IMAGE: ghcr.io/verse-shiyu/character-distill-app
   NGINX_IMAGE: ghcr.io/verse-shiyu/character-distill-nginx
-  ALIYUN_REGISTRY: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com
-  ALIYUN_APP_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-app
-  ALIYUN_NGINX_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-nginx
 
 jobs:
   # ══════════════════════════════════════════════════════════════════════════
@@ -290,30 +287,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # continue-on-error 的判据与下面两个 Aliyun 推送步是同一条：阿里云是**可选**的 ——
-      # 它断了，GHCR 那条路照样要把 app / nginx / digest 产出来。原先唯独登录步没有这个
-      # 标记，于是阿里云链路一断（2026-09-21 实发：`read: connection reset by peer`），
-      # 本步 failure → 后面全部 skipped，**连推 GHCR 的两步一起带走**，一次构建一个镜像
-      # 都没推出去（GHCR 那两步也是 skipped，而 gate / sentinel 都是 success）。
-      # 选「加标记」而不是「把登录挪到 GHCR 那两步之后」：登录的消费者只有紧跟其后的两个
-      # 阿里云推送步；挪位会把 build 序列切成两段（app 的阿里云推送插到 nginx 的 GHCR 构建
-      # 之前变成之后），而 timeout 的采样是按现有序列取的。加一行标记不动序列，失败照旧可见
-      # （本步仍然标红），只是不再带走后面所有步。
-      - name: Login to Aliyun CR
-        continue-on-error: true
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.ALIYUN_REGISTRY }}
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
-
       # scope 必须两个 build 各设一个：`type=gha` 的 scope 缺省都是 `buildkit`，共用它时
       # 「每个 build 会覆盖上一个 build 的缓存，只留下最后一个」—— 后跑的 nginx 覆盖 app 的，
       # app 因此每次 CACHED=0，那两层 101MB（apt build-essential）与 174.6MB（pip install）
-      # 每次重建、哈希随之变，每 build 跨境重传约 276MB 到阿里云，撞 10 分钟超时。
+      # 每次重建、哈希随之变，每次 build 都要重推这两层。
       # 依据：https://docs.docker.com/build/cache/backends/gha/#scope
-      # gha 缓存有容量上限，被淘汰时偶发一次全量重传属**预期**，由两个阿里云推送步的
-      # 重试 + continue-on-error 与部署侧的 GHCR 回落兜住（重试见下方推送步的注释）。
       - name: Build and push app image
         id: build_app
         uses: docker/build-push-action@v7
@@ -326,28 +304,6 @@ jobs:
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app
 
-      # 阿里云推送：跨境请求会**挂住**（不报错、不超时），`docker push` 自己不设请求超时也不重试。
-      # 2026-09 全量 census（93 次 run）：凡需真上传的推送没有一次在 10 分钟内推完，挂住的层
-      # 事后却出现在阿里云上 —— 故每次尝试设超时、到点杀掉整棵进程树重来，重试时已落地的层
-      # 走「Layer already exists」。重试用现成的 nick-fields/retry（钉 v4.0.0 的 commit），不自写循环。
-      # 预算：step timeout-minutes 必须大于 max_attempts × timeout_minutes + 各次间隔，否则 GitHub
-      # 会在重试之前把整步杀掉（tests/test_aliyun_image_timeouts.py 锁这条不等式）。
-      # continue-on-error 仍保留：阿里云是可选的，全部尝试失败时部署侧回落 GHCR。
-      - name: Push app image to Aliyun CR
-        continue-on-error: true
-        timeout-minutes: 20
-        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
-        with:
-          timeout_minutes: 6
-          max_attempts: 3
-          retry_wait_seconds: 30
-          command: |
-            docker pull ${{ env.APP_IMAGE }}:${{ github.sha }}
-            docker tag ${{ env.APP_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_APP_IMAGE }}:${{ github.sha }}
-            docker tag ${{ env.APP_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_APP_IMAGE }}:latest
-            docker push ${{ env.ALIYUN_APP_IMAGE }}:${{ github.sha }}
-            docker push ${{ env.ALIYUN_APP_IMAGE }}:latest
-
       - name: Build and push nginx image
         id: build_nginx
         uses: docker/build-push-action@v7
@@ -359,22 +315,6 @@ jobs:
             ${{ env.NGINX_IMAGE }}:${{ github.sha }}
           cache-from: type=gha,scope=nginx
           cache-to: type=gha,mode=max,scope=nginx
-
-      # 同上一步的机制；nginx 近 12 次本步最长 41s，单次尝试 2 分钟。
-      - name: Push nginx image to Aliyun CR
-        continue-on-error: true
-        timeout-minutes: 8
-        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
-        with:
-          timeout_minutes: 2
-          max_attempts: 3
-          retry_wait_seconds: 30
-          command: |
-            docker pull ${{ env.NGINX_IMAGE }}:${{ github.sha }}
-            docker tag ${{ env.NGINX_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_NGINX_IMAGE }}:${{ github.sha }}
-            docker tag ${{ env.NGINX_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_NGINX_IMAGE }}:latest
-            docker push ${{ env.ALIYUN_NGINX_IMAGE }}:${{ github.sha }}
-            docker push ${{ env.ALIYUN_NGINX_IMAGE }}:latest
 
       - name: Write digest file
         run: |
