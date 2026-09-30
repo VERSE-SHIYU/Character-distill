@@ -464,6 +464,23 @@ async def _rebuild_cards_published_from(conn: Any) -> None:
         await conn.commit()
 
 
+async def _drop_rebuilt_shell(conn: Any, table: str) -> str:
+    """源表是「改名前那张表被重建出来的空壳」时，返回清掉它的语句；**非空则抛**。
+
+    判据与 PG 031 对齐：两表同时存在、旧表**却有行** ⇒ 改名早已生效，这张旧表不该有数据
+    （回放重建出来的只可能是空壳）。不自动删，人工确认后再处理。此前这里直接 DROP ——
+    PG 报错、SQLite 静默丢数据，两侧语义不一致。
+    """
+    cursor = await conn.execute(f'SELECT count(*) FROM "{table}"')
+    (row,) = await cursor.fetchall()
+    if row[0]:
+        raise RuntimeError(
+            f'"{table}" 与改名后的表同时存在，且旧表有 {row[0]} 行'
+            '—— 改名早已生效，这张旧表不该有数据（回放重建的只会是空壳）。'
+            '不自动删，人工确认后再处理。')
+    return f'DROP TABLE IF EXISTS "{table}";'
+
+
 async def _apply_migration(conn: Any, path: Path) -> None:
     """执行一份迁移脚本，幂等靠**读现状**（PRAGMA table_info），不靠猜错误串。
 
@@ -491,7 +508,8 @@ async def _apply_migration(conn: Any, path: Path) -> None:
     - 目标表已在、源表也在 ⇒ 把那句 ALTER 换成 `DROP TABLE IF EXISTS <源>`。源表此刻只
       可能是同一批次里更早那句 `CREATE TABLE IF NOT EXISTS` 刚建的空壳（真实数据在第一轮
       的 ALTER 里就搬走了）：留着它 = 库里永远多一张表，「重启过的库」与「全新库」从此
-      不是同一个 schema。
+      不是同一个 schema。**清之前先确认它真是空壳**（`_drop_rebuilt_shell`）：非空即抛，
+      与 PG 031 同语义 —— 真有数据还留在旧名下，删了就是静默丢数据。
 
     **没有 except**：真失败照常上抛。此前 74 个块各自 `except Exception: print` 把它吞成
     「初始化成功」——「已建库重跑」这一正常路径每次都打一行假失败，而真正跑错也只留一行 print。
@@ -525,13 +543,18 @@ async def _apply_migration(conn: Any, path: Path) -> None:
         sql = _DROP_COLUMN_RE.sub(
             lambda m: "" if m.group("column") not in present[m.group("table")] else m.group(0), sql)
 
+        # 「目标已在、源也在」要清掉源表空壳，而清之前得先确认它真是空壳 —— 那一步要 await，
+        # `re.sub` 的回调拿不到，故在这里统一算好；回调只负责取用（理由见 _drop_rebuilt_shell）。
+        shell_drops = {old: await _drop_rebuilt_shell(conn, old)
+                       for old, (src, target) in renames.items() if src and target}
+
         def _rename(m: re.Match[str]) -> str:
             src, target = renames[m.group("old")]
             if not target:
                 return m.group(0)                    # 还没改过：照常 RENAME
             # 目标已在 ⇒ 改名早已生效；源表此时只可能是更早的 CREATE TABLE IF NOT EXISTS
             # 重建出的空壳，剥掉之外还得把它清掉（理由见 docstring）。
-            return f'DROP TABLE IF EXISTS "{m.group("old")}";' if src else ""
+            return shell_drops.get(m.group("old"), "") if src else ""
 
         sql = _RENAME_TABLE_RE.sub(_rename, sql)
     await conn.executescript(sql)

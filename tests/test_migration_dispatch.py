@@ -178,6 +178,41 @@ async def test_rename_branch_is_target_based_and_clears_the_rebuilt_stub(tmp_pat
         assert await sqlite_store._existing_columns(conn, "new_probe")
 
 
+async def test_rename_branch_refuses_to_drop_a_nonempty_source(tmp_path):
+    """目标表已在、源表**有行**时不静默 DROP，而是抛 —— 与 PG 031 同语义。
+
+    上面那条锁的是「源表是空壳」这一支：空壳该清掉，否则库比全新库多一张表。本条锁另一支：
+    源表**非空**说明改名并没有真的生效（数据还留在旧名下），此时清掉旧表 = 丢数据。PG 031
+    在同样情形下 `RAISE EXCEPTION`（两表同存、旧表有 N 行、不自动删）；SQLite 此前直接
+    DROP，两侧语义不一致。
+
+    **变异（实测）**：去掉 `_drop_rebuilt_shell` 里的 `if rows: raise`（或让它永远返回 DROP
+    语句）→ `pytest.raises` 收不到异常，红。
+    """
+    store = sqlite_store.SQLiteStore(str(tmp_path / "rename_guard.db"))
+    mig = tmp_path / "902_rename_guard.sql"
+    mig.write_text("ALTER TABLE old_guard RENAME TO new_guard;\n", encoding="utf-8")
+    assert sqlite_store._RENAME_TABLE_RE.findall(mig.read_text(encoding="utf-8")), \
+        "探针失效：正则没认出这句 RENAME，本用例什么也没锁住"
+
+    async with await store._connect() as conn:
+        # 两表同存、旧表里真有一行：改名早已生效的形态下旧表不该有数据
+        await conn.execute("CREATE TABLE new_guard (id TEXT PRIMARY KEY)")
+        await conn.execute("CREATE TABLE old_guard (id TEXT PRIMARY KEY)")
+        await conn.execute("INSERT INTO old_guard (id) VALUES ('keep-me')")
+        await conn.commit()
+
+        with pytest.raises(RuntimeError, match="旧表有 1 行"):
+            await sqlite_store._apply_migration(conn, mig)
+
+        # 抛了就不许动数据：旧表还在，那一行也还在
+        assert await sqlite_store._existing_columns(conn, "old_guard"), (
+            "抛错之后源表还是被删掉了 —— 这正是要防的静默丢数据")
+        cursor = await conn.execute("SELECT count(*) FROM old_guard")
+        (kept,) = await cursor.fetchall()
+        assert kept[0] == 1, f"抛错后源表的行数变了：{kept[0]}"
+
+
 def test_migration_runner_never_swallows_a_failure():
     """迁移执行区不得有「只 print、从不重抛」的 except 块。
 
