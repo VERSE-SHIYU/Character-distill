@@ -18,7 +18,7 @@ import httpx
 
 import admin_user_ops
 import peer_client
-from cross_border_sync import forward_invite_code_delete_to_peer, forward_invite_code_to_peer
+from cross_border_sync import wake_resync
 from routers.auth import get_current_user
 from deps import get_config, get_sessions, get_storage, get_memory_manager, patch_config
 from storage.base import StorageBase
@@ -432,9 +432,9 @@ async def generate_invites(
     codes = []
     for _ in range(count):
         code = secrets.token_urlsafe(12)
-        record = await storage.create_invite_code(code, admin_user["id"])
-        await forward_invite_code_to_peer(record)
+        record = await storage.create_invite_code(code, admin_user["id"], propagate=True)
         codes.append(record)
+    wake_resync()  # 同步由发件箱负责（写入时同一事务入队），这里只请补发循环立刻跑一轮
     return codes
 
 
@@ -457,10 +457,10 @@ async def delete_invite(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Delete a single invite code."""
-    ok = await storage.delete_invite_code(code)
+    ok = await storage.delete_invite_code(code, propagate=True)
     if not ok:
         raise HTTPException(404, "邀请码不存在")
-    await forward_invite_code_delete_to_peer(code)
+    wake_resync()
     return {"ok": True}
 
 
@@ -472,7 +472,8 @@ async def delete_used_invites(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Delete all used invite codes."""
-    count = await storage.delete_used_invites()
+    count = await storage.delete_used_invites(propagate=True)
+    wake_resync()
     return {"ok": True, "deleted": count}
 
 

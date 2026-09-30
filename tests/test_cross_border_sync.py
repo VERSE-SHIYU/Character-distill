@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from conftest import PG_ENV
-from storage.postgres_store import PostgresStore
 
 # 这三条要真 PG：断言的是**表里那一行**还在不在，而 `get_pending_delete_propagations`
 # 只看得见 `synced = 0` 的行 —— 用它当仪器的话，「行被删掉」与「行被标成 synced=1」
@@ -200,9 +198,9 @@ async def test_forward_card_to_peer_connection_error(monkeypatch):
     assert ok is False
 
 
-# ── forward_delete_to_peer tests ────────────────────────────────────────
+# ── forward_outbox_to_peer tests ────────────────────────────────────────
 
-async def test_forward_delete_to_peer_logs_status_on_non_200(monkeypatch, caplog):
+async def test_forward_outbox_to_peer_logs_status_on_non_200(monkeypatch, caplog):
     """对端回非 200 时，日志里必须留下 op_type / target_id / 状态码。
 
     只返回 False 而不留痕的话，线上「删不掉、也传不出去」这件事在日志里完全不可见 ——
@@ -211,13 +209,13 @@ async def test_forward_delete_to_peer_logs_status_on_non_200(monkeypatch, caplog
     断言走 `caplog` 而不是 stdout（spec-119）：这条要求的意义正是「面板上看得见」，
     而容器 stdout 到不了面板。
     """
-    from cross_border_sync import forward_delete_to_peer
+    from cross_border_sync import forward_outbox_to_peer
 
     monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
     caplog.set_level(logging.ERROR)
     _peer(monkeypatch, status=503)
 
-    ok = await forward_delete_to_peer("card_delete", "card-xyz", "", MagicMock())
+    ok = await forward_outbox_to_peer("card_delete", "card-xyz", "")
 
     assert ok is False
     out = "\n".join(r.getMessage() for r in caplog.records)
@@ -226,15 +224,15 @@ async def test_forward_delete_to_peer_logs_status_on_non_200(monkeypatch, caplog
     assert "503" in out, f"日志里没有状态码：{out!r}"
 
 
-async def test_forward_delete_to_peer_logs_exception(monkeypatch, caplog):
+async def test_forward_outbox_to_peer_logs_exception(monkeypatch, caplog):
     """连不上对端时，同样要留下 op_type / target_id（异常本身另附）。"""
-    from cross_border_sync import forward_delete_to_peer
+    from cross_border_sync import forward_outbox_to_peer
 
     monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
     caplog.set_level(logging.ERROR)
     _peer(monkeypatch, error=RuntimeError("boom-unreachable"))
 
-    ok = await forward_delete_to_peer("user_purge", "usr-abc", "", MagicMock())
+    ok = await forward_outbox_to_peer("user_purge", "usr-abc", "")
 
     assert ok is False
     out = "\n".join(r.getMessage() for r in caplog.records)
@@ -245,20 +243,9 @@ async def test_forward_delete_to_peer_logs_exception(monkeypatch, caplog):
 
 # ── _resync_once：一轮补发的边界 ─────────────────────────────────────────
 
-def _dsn() -> str:
-    return os.environ["DATABASE_URL"]
-
-
 @pytest.fixture
-async def pg_store():
-    store = PostgresStore(_dsn())
-    await store._ensure_initialized()
-    async with await store._connect() as conn:
-        await conn.execute("DELETE FROM cross_border_delete_outbox")
-    yield store
-    async with await store._connect() as conn:
-        await conn.execute("DELETE FROM cross_border_delete_outbox")
-    await store.close()
+def pg_store(outbox_store):
+    return outbox_store
 
 
 async def _outbox_row(store, row_id: int):
@@ -283,7 +270,7 @@ async def test_delete_resync_removes_row_after_ack(pg_store, monkeypatch):
     monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
     row_id = await _seed_one(pg_store)
 
-    with patch("cross_border_sync.forward_delete_to_peer", AsyncMock(return_value=True)):
+    with patch("cross_border_sync.forward_outbox_to_peer", AsyncMock(return_value=True)):
         await _resync_once(pg_store)
 
     assert await _outbox_row(pg_store, row_id) is None, (
@@ -299,7 +286,7 @@ async def test_delete_resync_keeps_row_without_ack(pg_store, monkeypatch):
     monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
     row_id = await _seed_one(pg_store, "user_purge", "usr-1")
 
-    with patch("cross_border_sync.forward_delete_to_peer", AsyncMock(return_value=False)):
+    with patch("cross_border_sync.forward_outbox_to_peer", AsyncMock(return_value=False)):
         await _resync_once(pg_store)
 
     row = await _outbox_row(pg_store, row_id)
@@ -317,7 +304,7 @@ async def test_delete_resync_survives_card_query_failure(pg_store, monkeypatch):
 
     with patch.object(pg_store, "get_unsynced_cross_border_cards_unscoped",
                       AsyncMock(side_effect=RuntimeError("card query boom"))), \
-            patch("cross_border_sync.forward_delete_to_peer", AsyncMock(return_value=True)):
+            patch("cross_border_sync.forward_outbox_to_peer", AsyncMock(return_value=True)):
         await _resync_once(pg_store)
 
     assert await _outbox_row(pg_store, row_id) is None, (

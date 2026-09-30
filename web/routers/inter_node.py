@@ -173,7 +173,7 @@ async def receive_invite_code(
     if existing:
         return {"ok": True, "duplicate": True}
 
-    await storage.create_invite_code(code, created_by)
+    await storage.create_invite_code(code, created_by, propagate=False)  # 从对端来的，不回传
 
     return {"ok": True}
 
@@ -194,9 +194,26 @@ async def receive_invite_code_delete(
     if not code:
         raise HTTPException(400, "Missing required field: code")
 
-    await storage.delete_invite_code(code)
+    await storage.delete_invite_code(code, propagate=False)  # 从对端来的，不回传
 
     return {"ok": True}
+
+
+@router.post("/invite-code/used")
+async def receive_invite_code_used(
+    request: Request,
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """对端通知某个邀请码已被使用（隐私政策 3.2(4)：只同步「已使用」，不含使用者身份）。
+
+    Idempotent：码已被使用（或本机没有这个码）照样回 200 —— 对端发件箱据此删掉这一行。
+    """
+    payload = await _verified_payload(request, storage)
+    code = str(payload.get("code", ""))
+    if not code:
+        raise HTTPException(400, "Missing required field: code")
+    marked = await storage.mark_invite_used_from_peer(code)
+    return {"ok": True, "marked": marked}
 
 
 @router.post("/user/purge")

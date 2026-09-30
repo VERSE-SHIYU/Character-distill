@@ -21,6 +21,10 @@ def _rebuild_store_error(op: str, message: str) -> "StoreError":
     return obj
 
 
+class InviteCodeUnavailable(ValueError):
+    """注册时邀请码不存在或已被占用。建用户与占码在同一事务里，抛它时用户也不会留下。"""
+
+
 class StoreError(RuntimeError):
     """store 层的**可辨失败语义** —— 「查询/写入失败」，与「无数据」互斥。
 
@@ -527,9 +531,12 @@ class StorageBase(ABC):
     async def create_user(
         self, id: str, username: str, password_hash: str,
         *,
-        email: str = "", home_region: str = "",
+        email: str = "", home_region: str = "", invite_code: str = "",
     ) -> dict:
         """Create a new user.
+
+        同一事务里还做两件事：①给 `invite_code` 占位（未被用过才占得到，否则抛
+        `InviteCodeUnavailable`、整笔回滚）；②往跨境发件箱写「用户资料」（及「邀请码已使用」）。
 
         ``email`` / ``home_region`` 是 keyword-only：两者都是 str 且相邻，按位置传
         错位不会报错 —— ``home_region`` 的值会静默落进 ``email``。本条约束的由来是
@@ -606,28 +613,33 @@ class StorageBase(ABC):
         """Get all card IDs owned by a user (for Mem0 cleanup)."""
 
     @abstractmethod
-    async def create_invite_code(self, code: str, created_by: str) -> dict:
-        """Create an invite code."""
+    async def create_invite_code(self, code: str, created_by: str, *, propagate: bool) -> dict:
+        """Create an invite code. `propagate=True` 时同一事务写发件箱（本机生成的码）；
+        从对端收到的码传 False，否则会回传给对端。"""
 
     @abstractmethod
     async def get_invite_code(self, code: str) -> dict | None:
         """Get an invite code record by code string."""
 
     @abstractmethod
-    async def use_invite_code(self, code: str, used_by: str) -> None:
-        """Mark an invite code as used by a user."""
+    async def mark_invite_used_from_peer(self, code: str) -> bool:
+        """对端通知「这个码已被使用」：未被使用才标记（`used_by='peer'`），返回是否标了。不入发件箱。"""
 
     @abstractmethod
     async def list_invite_codes(self) -> list[dict]:
         """List all invite codes."""
 
     @abstractmethod
-    async def delete_invite_code(self, code: str) -> bool:
-        """Delete a single invite code by its code string."""
+    async def delete_invite_code(self, code: str, *, propagate: bool) -> bool:
+        """Delete a single invite code. `propagate=True` 且确有删除时同一事务写发件箱。"""
 
     @abstractmethod
-    async def delete_used_invites(self) -> int:
-        """Delete all used invite codes, return count deleted."""
+    async def delete_used_invites(self, *, propagate: bool) -> int:
+        """Delete all used invite codes, return count deleted（`propagate=True` 时逐个入发件箱）。"""
+
+    @abstractmethod
+    async def update_user_avatar(self, user_id: str, avatar_data: str) -> None:
+        """Store base64 avatar；同一事务把最新的用户资料写进发件箱（同一用户只留最新一条）。"""
 
     @abstractmethod
     async def save_refresh_token(self, token_hash: str, user_id: str, expires_at: str, replaced_by: str = "") -> None:

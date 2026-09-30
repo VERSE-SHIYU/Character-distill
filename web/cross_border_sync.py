@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import peer_client
@@ -85,73 +86,50 @@ async def forward_card_to_peer(card: dict, storage: StorageBase) -> bool:
                           what=f"card card_id={card.get('id')}", level=logging.WARNING)
 
 
-_ENDPOINT_MAP: dict[str, str] = {
+#: 发件箱的操作类型 → 对端接口。前三类是删除同步（请求体是 {op_type, target_id, payload}，
+#: payload 为空串）；后四类的请求体就是入队时写好的 payload（JSON）。
+_OUTBOX_ENDPOINTS: dict[str, str] = {
     "card_delete": "/api/inter-node/card/delete",
     "dm_retract": "/api/inter-node/dm/retract",
     "user_purge": "/api/inter-node/user/purge",
+    "invite_create": "/api/inter-node/invite-code/receive",
+    "invite_delete": "/api/inter-node/invite-code/delete",
+    "invite_used": "/api/inter-node/invite-code/used",
+    "user_profile": "/api/inter-node/user/sync",
 }
+_LEGACY_DELETE_OPS = frozenset({"card_delete", "dm_retract", "user_purge"})
 
 
-async def forward_delete_to_peer(op_type: str, target_id: str, payload: str, storage: StorageBase) -> bool:
-    """Forward a delete/retract/purge intent to the peer node.
+def _ordering_key(op_type: str, target_id: str) -> tuple[str, str]:
+    """同一个键的记录必须按写入顺序送达。邀请码的新增 / 已使用 / 删除共用一个键
+    （同一个码），其余各自独立。"""
+    if op_type.startswith("invite_"):
+        return ("invite", target_id)
+    return (op_type, target_id)
 
-    The op_type determines the endpoint (see `_ENDPOINT_MAP`). Returns True if the
-    peer acknowledged (HTTP 200); the resync loop removes the outbox row on True.
-    Every failure path logs op_type / target_id plus the status code or the exception.
+
+async def forward_outbox_to_peer(op_type: str, target_id: str, payload: str) -> bool:
+    """发件箱的一行 → 对端。返回对端是否确认（HTTP 200）；失败记 ERROR，带状态码或异常。
+
+    不记 payload 本身（邀请码是凭据）。
     """
-    if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
+    if not peer_client.peer_url():
         return False
-    endpoint = _ENDPOINT_MAP.get(op_type)
+    endpoint = _OUTBOX_ENDPOINTS.get(op_type)
     if not endpoint:
-        logger.error("Unknown delete op_type: %s", op_type)
+        logger.error("Unknown outbox op_type: %s", op_type)
         return False
-    body = {"op_type": op_type, "target_id": target_id, "payload": payload}
-    return await _forward(endpoint, body, what=f"op_type={op_type} target_id={target_id}",
-                          level=logging.ERROR)
-
-
-async def forward_invite_code_to_peer(record: dict) -> bool:
-    """Forward a newly created invite code. Best-effort, **no retry**."""
-    if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
-        return False
-    payload = {
-        "code": str(record.get("code", "")),
-        "created_by": str(record.get("created_by", "")),
-    }
-    # 不记 code 本身（邀请码是凭据），用 created_by 定位是哪一次
-    return await _forward("/api/inter-node/invite-code/receive", payload,
-                          what=f"invite-code (no retry) created_by={record.get('created_by')}",
-                          level=logging.ERROR)
-
-
-async def forward_invite_code_delete_to_peer(code: str) -> bool:
-    """Forward an invite-code delete. Best-effort, **no retry**."""
-    if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
-        return False
-    # 不记 code 本身（邀请码是凭据）：这条也无重试，对端会一直留着这个码
-    return await _forward("/api/inter-node/invite-code/delete", {"code": code},
-                          what="invite-code delete (no retry)", level=logging.ERROR)
-
-
-async def forward_user_profile_to_peer(user_id: str, username: str, home_region: str, avatar_data: str = "") -> bool:
-    """Forward a user profile to the peer node (lightweight stub sync). Best-effort, no retry.
-
-    A previous version of this docstring said the profile would be synced when
-    the first DM exchange happens.  That is not true: the peer's
-    ``/api/inter-node/dm/receive`` only inserts the message and never writes the
-    user row.  So once this forward fails, the peer stays without the profile
-    until some other explicit forward succeeds.
-    """
-    if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
-        return False
-    payload = {
-        "id": user_id,
-        "username": username,
-        "home_region": home_region,
-        "avatar_data": avatar_data,
-    }
-    return await _forward("/api/inter-node/user/sync", payload,
-                          what=f"user-profile (no retry) user_id={user_id}", level=logging.ERROR)
+    if op_type in _LEGACY_DELETE_OPS:
+        body = {"op_type": op_type, "target_id": target_id, "payload": payload}
+        what = f"op_type={op_type} target_id={target_id}"
+    else:
+        try:
+            body = json.loads(payload)
+        except ValueError:
+            logger.error("Outbox payload is not JSON: op_type=%s", op_type)
+            return False
+        what = f"op_type={op_type}" + ("" if op_type.startswith("invite_") else f" target_id={target_id}")
+    return await _forward(endpoint, body, what=what, level=logging.ERROR)
 
 
 async def _resync_once(storage: StorageBase) -> None:
@@ -194,27 +172,51 @@ async def _resync_once(storage: StorageBase) -> None:
                 ):
                     await storage.mark_card_synced(card["id"])
 
-    # ── Delete propagation resync ──
+    # ── Outbox resync（删除同步 + 邀请码 + 用户资料）──
     try:
         pending = await storage.get_pending_delete_propagations(limit=100)
     except Exception as exc:
-        logger.error("Delete outbox query failed: %s", exc, exc_info=True)
+        logger.error("Outbox query failed: %s", exc, exc_info=True)
     else:
+        blocked: set[tuple[str, str]] = set()
         for row in pending:
-            ok = await forward_delete_to_peer(
-                row["op_type"], row["target_id"], row.get("payload", ""), storage,
+            key = _ordering_key(row["op_type"], row["target_id"])
+            if key in blocked:
+                continue  # 同一个键前面那条这轮没送到：后面的不许越过它先送
+            ok = await forward_outbox_to_peer(
+                row["op_type"], row["target_id"], row.get("payload", "") or "",
             )
-            if ok:
-                async with nonfatal(
-                    "cross_border_resync", f"remove delete propagation {row['id']}",
-                ):
-                    await storage.remove_delete_propagation(row["id"])
+            if not ok:
+                blocked.add(key)
+                continue
+            async with nonfatal(
+                "cross_border_resync", f"remove outbox row {row['id']}",
+            ):
+                await storage.remove_delete_propagation(row["id"])
+
+
+_wake: asyncio.Event | None = None
+
+
+def wake_resync() -> None:
+    """请补发循环立刻跑一轮（刚写了发件箱的路由调用）。循环没在跑（单节点 / 测试）时什么都不做。
+
+    发送仍只由循环这一处做：路由不自己发，避免两处同时发同一行。
+    """
+    if _wake is not None:
+        _wake.set()
 
 
 async def _cross_border_resync_loop() -> None:
-    """Retry cross-border sync every 60 seconds — one `_resync_once` per tick."""
+    """每 60 秒补发一轮；有路由调了 `wake_resync()` 就提前跑。"""
+    global _wake
+    _wake = asyncio.Event()
     while True:
-        await asyncio.sleep(60)
+        try:
+            await asyncio.wait_for(_wake.wait(), timeout=60)
+        except asyncio.TimeoutError:
+            pass
+        _wake.clear()
 
         from deps import get_storage
 

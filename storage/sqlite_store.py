@@ -24,7 +24,7 @@ except ModuleNotFoundError:
     aiosqlite = None  # type: ignore[assignment]
 
 from core.roles import ROLES
-from .base import StorageBase, StoreError
+from .base import InviteCodeUnavailable, StorageBase, StoreError
 from .secret_box import decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(__name__)
@@ -563,6 +563,15 @@ _COMMENT_LIKE_TABLES: dict[str, tuple[str, str]] = {
     "post": ("post_comments", "post_comment_likes"),
     "card": ("card_comments", "card_comment_likes"),
 }
+
+
+async def _outbox_put(conn, op_type: str, target_id: str, payload: dict, *, replace: bool = False) -> None:
+    """跨境发件箱写一条（PG 侧同名函数的孪生；SQLite 只保证接口能跑）。"""
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
+    await conn.execute(
+        f"{verb} INTO cross_border_delete_outbox (op_type, target_id, payload) VALUES (?, ?, ?)",
+        (op_type, target_id, body))
 
 
 class SQLiteStore(StorageBase):
@@ -2800,8 +2809,8 @@ class SQLiteStore(StorageBase):
         return "\n".join(lines)
 
     async def create_user(self, id: str, username: str, password_hash: str, *,
-                          email: str = "", home_region: str = "") -> dict:
-        """Create a new user. Raises on duplicate username."""
+                          email: str = "", home_region: str = "", invite_code: str = "") -> dict:
+        """Create a new user. Raises on duplicate username / unavailable invite code."""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
@@ -2812,8 +2821,21 @@ class SQLiteStore(StorageBase):
                     "INSERT INTO user_secrets (user_id, password_hash) VALUES (?, ?)",
                     (id, password_hash),
                 )
+                if invite_code:
+                    cursor = await conn.execute(
+                        "UPDATE invite_codes SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL",
+                        (id, datetime.now(timezone.utc).isoformat(), invite_code),
+                    )
+                    if cursor.rowcount == 0:
+                        raise InviteCodeUnavailable("邀请码无效或已被使用")
+                    await _outbox_put(conn, "invite_used", invite_code, {"code": invite_code})
+                await _outbox_put(conn, "user_profile", id, {
+                    "id": id, "username": username, "home_region": home_region, "avatar_data": ""},
+                    replace=True)
                 await conn.commit()
                 return await self.get_user_by_username(username) or {}
+        except InviteCodeUnavailable:
+            raise
         except Exception as exc:
             if "UNIQUE constraint" in str(exc):
                 raise ValueError("用户名已存在") from exc
@@ -3289,13 +3311,20 @@ class SQLiteStore(StorageBase):
             raise
 
     async def update_user_avatar(self, user_id: str, avatar_data: str) -> None:
-        """Store base64 avatar for a user."""
+        """Store base64 avatar for a user（同一事务把最新资料写进发件箱）。"""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
                     "UPDATE users SET avatar_data = ? WHERE id = ?",
                     (avatar_data, user_id),
                 )
+                cursor = await conn.execute(
+                    "SELECT id, username, home_region FROM users WHERE id = ?", (user_id,))
+                row = await cursor.fetchone()
+                if row is not None:
+                    await _outbox_put(conn, "user_profile", user_id, {
+                        "id": row[0], "username": row[1], "home_region": row[2] or "",
+                        "avatar_data": avatar_data or ""}, replace=True)
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Update user avatar failed: {exc}")
@@ -3418,7 +3447,7 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Record user consent failed: {exc}")
             raise StoreError("record_user_consent", exc) from exc
 
-    async def create_invite_code(self, code: str, created_by: str) -> dict:
+    async def create_invite_code(self, code: str, created_by: str, *, propagate: bool) -> dict:
         import uuid as _uuid
         cid = _uuid.uuid4().hex[:16]
         try:
@@ -3427,6 +3456,8 @@ class SQLiteStore(StorageBase):
                     "INSERT INTO invite_codes (id, code, created_by) VALUES (?, ?, ?)",
                     (cid, code, created_by),
                 )
+                if propagate:
+                    await _outbox_put(conn, "invite_create", code, {"code": code, "created_by": created_by})
                 await conn.commit()
             return await self.get_invite_code(code) or {}
         except Exception as exc:
@@ -3446,17 +3477,17 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get invite code failed: {exc}")
             raise
 
-    async def use_invite_code(self, code: str, used_by: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+    async def mark_invite_used_from_peer(self, code: str) -> bool:
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE invite_codes SET used_by = ?, used_at = ? WHERE code = ?",
-                    (used_by, now, code),
+                cursor = await conn.execute(
+                    "UPDATE invite_codes SET used_by = 'peer', used_at = ? WHERE code = ? AND used_by IS NULL",
+                    (datetime.now(timezone.utc).isoformat(), code),
                 )
                 await conn.commit()
+            return cursor.rowcount > 0
         except Exception as exc:
-            print(f"[SQLiteStore] Use invite code failed: {exc}")
+            print(f"[SQLiteStore] Mark invite used from peer failed: {exc}")
             raise
 
     async def list_invite_codes(self) -> list[dict]:
@@ -3471,26 +3502,32 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] List invite codes failed: {exc}")
             raise
 
-    async def delete_invite_code(self, code: str) -> bool:
+    async def delete_invite_code(self, code: str, *, propagate: bool) -> bool:
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     "DELETE FROM invite_codes WHERE code = ?", (code,)
                 )
+                deleted = cursor.rowcount > 0
+                if deleted and propagate:
+                    await _outbox_put(conn, "invite_delete", code, {"code": code})
                 await conn.commit()
-                return cursor.rowcount > 0
+                return deleted
         except Exception as exc:
             print(f"[SQLiteStore] Delete invite code failed: {exc}")
             raise
 
-    async def delete_used_invites(self) -> int:
+    async def delete_used_invites(self, *, propagate: bool) -> int:
         try:
             async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    "DELETE FROM invite_codes WHERE used_by IS NOT NULL"
-                )
+                cursor = await conn.execute("SELECT code FROM invite_codes WHERE used_by IS NOT NULL")
+                codes = [r[0] for r in await cursor.fetchall()]
+                await conn.execute("DELETE FROM invite_codes WHERE used_by IS NOT NULL")
+                if propagate:
+                    for c in codes:
+                        await _outbox_put(conn, "invite_delete", c, {"code": c})
                 await conn.commit()
-                return cursor.rowcount
+                return len(codes)
         except Exception as exc:
             print(f"[SQLiteStore] Delete used invites failed: {exc}")
             raise
@@ -5499,7 +5536,7 @@ class SQLiteStore(StorageBase):
                     """SELECT id, op_type, target_id, payload, created_at
                        FROM cross_border_delete_outbox
                        WHERE synced = 0
-                       ORDER BY created_at ASC
+                       ORDER BY id ASC
                        LIMIT ?""",
                     (limit,),
                 )

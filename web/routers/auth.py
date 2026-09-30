@@ -24,6 +24,8 @@ from adapters.llm_adapter import default_model, llm_error_payload
 from core import roles
 from core.email_service import send_verification_code
 from core.node import node_region
+from cross_border_sync import wake_resync
+from storage.base import InviteCodeUnavailable
 from core.nonfatal import nonfatal
 from deps import get_config, get_storage, refresh_user_llm
 from storage.base import StorageBase
@@ -406,7 +408,8 @@ async def register(
         if admin_seed and inv == admin_seed:
             existing_codes = await storage.list_invite_codes()
             if not existing_codes:
-                await storage.create_invite_code(admin_seed, "system")
+                # 两台各自按同一个环境变量自建种子码，不互相同步
+                await storage.create_invite_code(admin_seed, "system", propagate=False)
 
         invite = await storage.get_invite_code(inv)
         if not invite:
@@ -435,18 +438,18 @@ async def register(
     user_id = uuid.uuid4().hex[:16]
     password_hash = password_hasher.hash(req.password)
     home_region = node_region()
-    user = await storage.create_user(
-        user_id, username, password_hash, email=email, home_region=home_region,
-    )
-    if inv:
-        await storage.use_invite_code(inv, user["id"])
-
-    # Best-effort sync profile to peer node
+    # 建用户、占邀请码、把资料写进跨境发件箱：同一个事务（存储层保证）。
+    # 上面对邀请码与用户名的检查只为给出友好提示；并发时以这里的事务结果为准。
     try:
-        from cross_border_sync import forward_user_profile_to_peer
-        await forward_user_profile_to_peer(user["id"], user.get("username", ""), home_region, user.get("avatar_data", ""))
-    except Exception as exc:
-        logger.error("Forward user profile to peer failed: %s", exc, exc_info=True)
+        user = await storage.create_user(
+            user_id, username, password_hash, email=email, home_region=home_region,
+            invite_code=inv,
+        )
+    except InviteCodeUnavailable:
+        raise HTTPException(400, "邀请码已被使用")
+    except ValueError:
+        raise HTTPException(409, "用户名已存在")
+    wake_resync()
 
     # Record consent
     try:

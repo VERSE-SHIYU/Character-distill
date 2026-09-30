@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""注册后把用户资料同步给对端（spec fix-register-profile-sync）。
+"""注册后把用户资料同步给对端（spec fix-register-profile-sync；发送改走跨境发件箱后仍锁同一条线上缺陷）。
 
 缺陷：注册路由把函数 `node_region`（而不是它的返回值）当所属地域传给了
 `forward_user_profile_to_peer`，签名序列化请求体时抛 `TypeError`，被路由的 try/except
-吞成一行错误日志 —— 资料一次都没发出去。
+吞成一行错误日志 —— 资料一次都没发出去。发件箱之后注册只入队，由补发循环发送，
+本测试走「注册 → 跑一轮补发」这条真实路径，断言对端收到、地域是字符串。
 
 对端用 httpx 自带的 MockTransport 扮演，记录收到的请求；业务写入走真 PG。
 """
@@ -17,11 +18,10 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from conftest import PG_ENV, TEST_DATABASE_URL
+from conftest import PG_ENV
 from core.node import node_region
 from deps import get_storage
 from routers.auth import router as auth_router
-from storage.postgres_store import PostgresStore
 
 pytestmark = PG_ENV.skipif("注册资料同步用例")
 
@@ -31,11 +31,8 @@ def _uid(prefix: str) -> str:
 
 
 @pytest.fixture
-async def store():
-    s = PostgresStore(TEST_DATABASE_URL)
-    await s._ensure_initialized()
-    yield s
-    await s.close()
+def store(outbox_store):
+    return outbox_store
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +44,7 @@ def _env(monkeypatch):
     monkeypatch.setenv("PEER_NODE_URL", "https://peer-node")
 
 
-async def test_registration_sends_the_profile_with_a_string_region(store, monkeypatch, caplog):
+async def test_registration_delivers_the_profile_with_a_string_region(store, monkeypatch, caplog):
     from legal_versions import CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION
 
     app = FastAPI()
@@ -65,7 +62,7 @@ async def test_registration_sends_the_profile_with_a_string_region(store, monkey
     monkeypatch.setattr(httpx, "AsyncClient", _peer)
 
     code = _uid("c")
-    await store.create_invite_code(code, "admin1")
+    await store.create_invite_code(code, "admin1", propagate=False)
     name = _uid("n")
     caplog.set_level(logging.ERROR)
     async with client:
@@ -75,6 +72,9 @@ async def test_registration_sends_the_profile_with_a_string_region(store, monkey
             "agreed_privacy_version": CURRENT_PRIVACY_VERSION,
         })
     assert r.status_code == 200, r.text
+
+    from cross_border_sync import _resync_once
+    await _resync_once(store)
 
     sent = [json.loads(q.content) for q in seen if q.url.path == "/api/inter-node/user/sync"]
     assert len(sent) == 1, (

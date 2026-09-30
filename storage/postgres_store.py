@@ -13,7 +13,7 @@ from typing import Any
 import asyncpg  # type: ignore[import-not-found]
 
 from core.roles import ROLES
-from .base import StorageBase, StoreError
+from .base import InviteCodeUnavailable, StorageBase, StoreError
 from .migration_ledger import file_sha256, pending_files
 from .pg_identity_sync import align_identity_sequences
 from .secret_box import decrypt_secret, encrypt_secret
@@ -119,6 +119,33 @@ class _PoolContext:
                     # 最坏情况是 socket 随对象被 GC 收掉）；上抛仍会顶替调用方的真异常。
                     logger.warning("Terminate connection failed: %s", term_exc, exc_info=True)
             self.conn = None
+
+
+async def _outbox_put(conn, op_type: str, target_id: str, payload: dict, *, replace: bool = False) -> None:
+    """跨境发件箱写一条（调用方负责把它放进业务写入的同一个事务）。
+
+    内容在**写入时**就定好（事务发件箱的标准写法），发送时原样发出。`replace=True` 用于
+    「只有最新状态有意义」的类型（用户资料）：同一目标还没发出的那条被新内容覆盖。
+    """
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if replace:
+        await conn.execute(
+            """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (op_type, target_id) DO UPDATE SET payload = EXCLUDED.payload""",
+            op_type, target_id, body)
+    else:
+        await conn.execute(
+            """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (op_type, target_id) DO NOTHING""",
+            op_type, target_id, body)
+
+
+def _profile_payload(user_id: str, username: str, home_region: str, avatar_data: str) -> dict:
+    """隐私政策 3.2(1)：公开资料只同步用户名、头像、所属地域（不含昵称、注册时间）。"""
+    return {"id": user_id, "username": username, "home_region": home_region,
+            "avatar_data": avatar_data or ""}
 
 
 class PostgresStore(StorageBase):
@@ -2190,8 +2217,12 @@ class PostgresStore(StorageBase):
     # ── Users ──────────────────────────────────────────────────────
 
     async def create_user(self, id: str, username: str, password_hash: str, *,
-                          email: str = "", home_region: str = "") -> dict:
-        """Create a new user. Raises on duplicate username."""
+                          email: str = "", home_region: str = "", invite_code: str = "") -> dict:
+        """Create a new user. Raises on duplicate username / unavailable invite code.
+
+        建用户、占邀请码、写跨境发件箱在**同一个事务**里：码被别人抢先占了就整笔回滚，
+        不会出现「用户建好了、码却没占到」或「占了码、资料却没进发件箱」。
+        """
         try:
             async with await self._connect() as conn:
                 async with conn.transaction():
@@ -2203,7 +2234,21 @@ class PostgresStore(StorageBase):
                         "INSERT INTO user_secrets (user_id, password_hash) VALUES ($1, $2)",
                         id, password_hash,
                     )
+                    if invite_code:
+                        claimed = await conn.fetchval(
+                            """UPDATE invite_codes SET used_by = $1, used_at = $2
+                               WHERE code = $3 AND used_by IS NULL RETURNING code""",
+                            id, datetime.now(timezone.utc).isoformat(), invite_code,
+                        )
+                        if claimed is None:
+                            raise InviteCodeUnavailable("邀请码无效或已被使用")
+                        # 隐私政策 3.2(4)：只同步「已使用」，不含使用者身份
+                        await _outbox_put(conn, "invite_used", invite_code, {"code": invite_code})
+                    await _outbox_put(conn, "user_profile", id,
+                                      _profile_payload(id, username, home_region, ""), replace=True)
                 return await self.get_user_by_username(username) or {}
+        except InviteCodeUnavailable:
+            raise
         except asyncpg.IntegrityConstraintViolationError as exc:
             raise ValueError("用户名已存在") from exc
         except Exception as exc:
@@ -2650,13 +2695,21 @@ class PostgresStore(StorageBase):
             raise
 
     async def update_user_avatar(self, user_id: str, avatar_data: str) -> None:
-        """Store base64 avatar for a user."""
+        """Store base64 avatar for a user（同一事务把最新资料写进发件箱）。"""
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE users SET avatar_data = $1 WHERE id = $2",
-                    avatar_data, user_id,
-                )
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        """UPDATE users SET avatar_data = $1 WHERE id = $2
+                           RETURNING id, username, home_region""",
+                        avatar_data, user_id,
+                    )
+                    if row is not None:
+                        await _outbox_put(
+                            conn, "user_profile", user_id,
+                            _profile_payload(row["id"], row["username"], row["home_region"] or "",
+                                             avatar_data),
+                            replace=True)
         except Exception as exc:
             print(f"[PostgresStore] Update user avatar failed: {exc}")
             raise
@@ -2769,15 +2822,19 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Record user consent failed: {exc}")
             raise StoreError("record_user_consent", exc) from exc
 
-    async def create_invite_code(self, code: str, created_by: str) -> dict:
+    async def create_invite_code(self, code: str, created_by: str, *, propagate: bool) -> dict:
         import uuid as _uuid
         cid = _uuid.uuid4().hex[:16]
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "INSERT INTO invite_codes (id, code, created_by) VALUES ($1, $2, $3)",
-                    cid, code, created_by,
-                )
+                async with conn.transaction():
+                    await conn.execute(
+                        "INSERT INTO invite_codes (id, code, created_by) VALUES ($1, $2, $3)",
+                        cid, code, created_by,
+                    )
+                    if propagate:
+                        await _outbox_put(conn, "invite_create", code,
+                                          {"code": code, "created_by": created_by})
             return await self.get_invite_code(code) or {}
         except Exception as exc:
             print(f"[PostgresStore] Create invite code failed: {exc}")
@@ -2795,16 +2852,17 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get invite code failed: {exc}")
             raise
 
-    async def use_invite_code(self, code: str, used_by: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+    async def mark_invite_used_from_peer(self, code: str) -> bool:
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE invite_codes SET used_by = $1, used_at = $2 WHERE code = $3",
-                    used_by, now, code,
+                tag = await conn.execute(
+                    """UPDATE invite_codes SET used_by = 'peer', used_at = $1
+                       WHERE code = $2 AND used_by IS NULL""",
+                    datetime.now(timezone.utc).isoformat(), code,
                 )
+            return self._parse_rowcount(tag) > 0
         except Exception as exc:
-            print(f"[PostgresStore] Use invite code failed: {exc}")
+            print(f"[PostgresStore] Mark invite used from peer failed: {exc}")
             raise
 
     async def list_invite_codes(self) -> list[dict]:
@@ -2818,24 +2876,32 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] List invite codes failed: {exc}")
             raise
 
-    async def delete_invite_code(self, code: str) -> bool:
+    async def delete_invite_code(self, code: str, *, propagate: bool) -> bool:
         try:
             async with await self._connect() as conn:
-                tag = await conn.execute(
-                    "DELETE FROM invite_codes WHERE code = $1", code,
-                )
-                return self._parse_rowcount(tag) > 0
+                async with conn.transaction():
+                    tag = await conn.execute(
+                        "DELETE FROM invite_codes WHERE code = $1", code,
+                    )
+                    deleted = self._parse_rowcount(tag) > 0
+                    if deleted and propagate:
+                        await _outbox_put(conn, "invite_delete", code, {"code": code})
+                return deleted
         except Exception as exc:
             print(f"[PostgresStore] Delete invite code failed: {exc}")
             raise
 
-    async def delete_used_invites(self) -> int:
+    async def delete_used_invites(self, *, propagate: bool) -> int:
         try:
             async with await self._connect() as conn:
-                tag = await conn.execute(
-                    "DELETE FROM invite_codes WHERE used_by IS NOT NULL"
-                )
-                return self._parse_rowcount(tag)
+                async with conn.transaction():
+                    rows = await conn.fetch(
+                        "DELETE FROM invite_codes WHERE used_by IS NOT NULL RETURNING code"
+                    )
+                    if propagate:
+                        for r in rows:
+                            await _outbox_put(conn, "invite_delete", r["code"], {"code": r["code"]})
+                return len(rows)
         except Exception as exc:
             print(f"[PostgresStore] Delete used invites failed: {exc}")
             raise
@@ -4681,7 +4747,7 @@ class PostgresStore(StorageBase):
                     """SELECT id, op_type, target_id, payload, created_at
                        FROM cross_border_delete_outbox
                        WHERE synced = 0
-                       ORDER BY created_at ASC
+                       ORDER BY id ASC
                        LIMIT $1""",
                     limit,
                 )
