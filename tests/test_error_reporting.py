@@ -177,10 +177,8 @@ def test_startup_failure_is_reported_before_the_client_closes(recorder, monkeypa
     def _boom() -> None:
         raise RuntimeError(STARTUP_MARKER)
 
-    # 只留一个**会抛**的校验项，就落在上报之后几步的位置上（lifespan 里的顺序）：
-    # fernet 与 inter-node 的校验关掉，让 jwt 那一处成为唯一的失败点。
-    monkeypatch.setattr(server_mod, "validate_fernet_key", lambda: None)
-    monkeypatch.setattr(server_mod, "validate_jwt_secret", _boom)
+    # 让启动校验成为唯一的失败点，它落在上报之后几步的位置上（lifespan 里的顺序）。
+    monkeypatch.setattr(server_mod, "validate_config", _boom)
 
     class _App:
         state = type("S", (), {"limiter": object()})()

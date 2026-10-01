@@ -407,3 +407,139 @@ async def test_delete_requeues_after_ack_and_restore(pg_card, pg_store):
 
     assert len(await _queued_card_deletes(pg_store)) == 1, (
         "恢复后再删除，这条删除没能重新入队 —— 对端会一直留着这张已删的卡")
+
+
+# ── _resync_once：节点级失败一轮只报一次（docs/specs/inter-node-peer-host.md，S5）──
+
+def _queue(dms: int, cards: int, outbox: int, *, op_type: str = "card_delete") -> MagicMock:
+    """三段各排若干行的假存储。行内容只要够组请求体。"""
+    from core.node import node_region
+
+    storage = MagicMock()
+    storage.get_unsynced_cross_border_messages_unscoped = AsyncMock(return_value=[
+        {"id": f"m{i}", "sender_id": "a", "receiver_id": "b", "content": "x",
+         "created_at": "2026-10-01"} for i in range(dms)
+    ])
+    storage.get_unsynced_cross_border_cards_unscoped = AsyncMock(return_value=[
+        {"id": f"c{i}", "user_id": "u"} for i in range(cards)
+    ])
+    storage.get_pending_delete_propagations = AsyncMock(return_value=[
+        {"id": i, "op_type": op_type, "target_id": f"t{i}", "payload": ""}
+        for i in range(outbox)
+    ])
+    storage.get_user_by_id = AsyncMock(return_value={
+        "id": "u", "username": "u", "home_region": node_region(), "avatar_data": "",
+    })
+    storage.mark_message_synced = AsyncMock()
+    storage.mark_card_synced = AsyncMock()
+    storage.remove_delete_propagation = AsyncMock()
+    return storage
+
+
+def _records(caplog, text: str) -> list:
+    return [r for r in caplog.records if text in r.getMessage()]
+
+
+#: 每段各自作为「第一个失败」的那一段：确认三段（及资料行）都把轮状态传到了 `_forward`。
+_SHAPES = {
+    "dm-first": dict(dms=3, cards=2, outbox=2),
+    "card-first": dict(dms=0, cards=2, outbox=2),
+    "outbox-first": dict(dms=0, cards=0, outbox=2),
+    "profile-first": dict(dms=0, cards=0, outbox=2, op_type="user_profile"),
+}
+
+
+@pytest.mark.parametrize("shape", list(_SHAPES))
+@pytest.mark.parametrize("url,status,error", [
+    ("https://sg-node", None, "connect"),
+    ("https://sg-node", None, "timeout"),
+    ("https://sg-node", 401, None),
+    ("https://sg-node", 403, None),
+    ("https://sg-node", 502, None),
+    ("https://sg-node", 503, None),
+    ("https://sg-node", 504, None),
+    ("http://sg-node", 200, None),         # PeerNotSecure：本次事故的形态
+])
+async def test_resync_node_level_failure_stops_round_and_logs_once(
+    monkeypatch, caplog, url, status, error, shape,
+):
+    import httpx
+
+    from cross_border_sync import _resync_once
+
+    monkeypatch.setenv("PEER_NODE_URL", url)
+    caplog.set_level(logging.WARNING)
+    exc = {"connect": httpx.ConnectError("refused"),
+           "timeout": httpx.ReadTimeout("slow")}.get(error)
+    seen = _peer(monkeypatch, status=status or 200, error=exc)
+    storage = _queue(**_SHAPES[shape])
+
+    await _resync_once(storage)
+
+    expected_sent = 0 if url.startswith("http://") else 1
+    assert len(seen) == expected_sent, f"节点级失败后还在发：发了 {len(seen)} 条"
+    assert len(_records(caplog, "Peer unreachable")) == 1
+    assert _records(caplog, "Peer forward") == [], "节点级失败不应逐条记"
+    assert _records(caplog, "Peer unreachable")[0].levelno == logging.ERROR
+    storage.mark_message_synced.assert_not_awaited()
+    storage.mark_card_synced.assert_not_awaited()
+    storage.remove_delete_propagation.assert_not_awaited()
+    # 失败之后不再为后续行读属主 / 资料：只有「第一个失败的就是要读的那一行」时读 1 次
+    reads_first = shape in ("card-first", "profile-first")
+    assert storage.get_user_by_id.await_count == (1 if reads_first else 0)
+
+
+@pytest.mark.parametrize("status", [400, 404, 409, 500])
+async def test_resync_row_level_status_keeps_per_row(monkeypatch, caplog, status):
+    """非节点级状态码仍逐行发、逐行记；本轮不停。"""
+    from cross_border_sync import _resync_once
+
+    monkeypatch.setenv("PEER_NODE_URL", "https://sg-node")
+    caplog.set_level(logging.WARNING)
+    seen = _peer(monkeypatch, status=status)
+
+    await _resync_once(_queue(dms=3, cards=2, outbox=2))
+
+    assert len(seen) == 7
+    assert len(_records(caplog, "Peer forward rejected")) == 7
+    assert _records(caplog, "Peer unreachable") == []
+
+
+async def test_resync_next_round_retries_after_node_level_failure(monkeypatch, caplog):
+    """上一轮停下不影响下一轮：行还在队里，下一轮照常从头发。"""
+    import httpx
+
+    from cross_border_sync import _resync_once
+
+    monkeypatch.setenv("PEER_NODE_URL", "https://sg-node")
+    caplog.set_level(logging.WARNING)
+    seen = _peer(monkeypatch, error=httpx.ConnectError("refused"))
+    storage = _queue(dms=3, cards=0, outbox=0)
+
+    await _resync_once(storage)
+    await _resync_once(storage)
+
+    assert len(seen) == 2
+    assert len(_records(caplog, "Peer unreachable")) == 2
+
+
+@pytest.mark.parametrize("status,error", [(401, None), (None, "connect")])
+async def test_direct_forward_outside_round_unchanged(monkeypatch, caplog, status, error):
+    """路由里的即时转发不在轮内：节点级失败照旧逐条记（message.py / market.py 两处调用）。"""
+    import httpx
+
+    from cross_border_sync import forward_dm_to_peer
+
+    monkeypatch.setenv("PEER_NODE_URL", "https://sg-node")
+    caplog.set_level(logging.WARNING)
+    _peer(monkeypatch, status=status or 200,
+          error=httpx.ConnectError("refused") if error else None)
+
+    ok = await forward_dm_to_peer(
+        {"id": "m1", "sender_id": "a", "receiver_id": "b", "content": "x",
+         "created_at": "2026-10-01"}, MagicMock(),
+    )
+
+    assert ok is False
+    assert len(_records(caplog, "Peer forward")) == 1
+    assert _records(caplog, "Peer unreachable") == []

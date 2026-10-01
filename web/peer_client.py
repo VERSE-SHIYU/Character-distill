@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import json
 import os
+from urllib.parse import urlsplit
 
 import httpx
 
-from inter_node_auth import create_auth_header, sign_request_v2, sign_version
+from inter_node_auth import create_auth_header, self_host, sign_request_v2, sign_version
 
 TIMEOUT_S = 10
 
@@ -35,6 +36,34 @@ def peer_url() -> str:
     return os.getenv("PEER_NODE_URL", "").rstrip("/")
 
 
+def _require_https(base: str) -> None:
+    if not base.lower().startswith("https://"):
+        scheme = base.split("://", 1)[0] if "://" in base else "(无协议)"
+        raise PeerNotSecure(f"PEER_NODE_URL 必须是 https://（当前协议：{scheme}）")
+
+
+def validate_peer_node_url() -> None:
+    """启动校验（见 `config_check`）。未配置 = 单节点，放行；配了对端则：
+
+      1. 必须是 https，且有主机名；
+      2. 必须同时配置 `INTER_NODE_SELF_HOST`（本节点专属域名），否则第 3 条无从核对；
+      3. 对端主机名不能等于本节点专属域名。主域名走 GeoDNS、两台各自解析到自己，
+         两台都填主域名正是这条要拦的错误：请求会发回本机。
+    """
+    base = peer_url()
+    if not base:
+        return
+    _require_https(base)
+    host = urlsplit(base).hostname  # 已转小写
+    if not host:
+        raise RuntimeError("PEER_NODE_URL 缺主机名：应为 https://<对端节点专属域名>")
+    own = self_host().split(":")[0]  # self_host() 已转小写
+    if not own:
+        raise RuntimeError("配置了 PEER_NODE_URL 就必须配置 INTER_NODE_SELF_HOST（本节点专属域名）")
+    if host == own:
+        raise RuntimeError(f"PEER_NODE_URL 的主机名 {host} 等于 INTER_NODE_SELF_HOST：对端地址指向了本节点")
+
+
 def _client(timeout: float) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=timeout)
 
@@ -44,8 +73,7 @@ def build_request(path: str, payload: dict) -> httpx.Request:
     base = peer_url()
     if not base:
         raise PeerNotConfigured("PEER_NODE_URL 未配置")
-    if not base.lower().startswith("https://"):
-        raise PeerNotSecure("PEER_NODE_URL 必须是 https://")
+    _require_https(base)
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
     request = httpx.Request(
         "POST", f"{base}{path}", content=body, headers={"Content-Type": "application/json"},

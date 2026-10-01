@@ -10,6 +10,8 @@ import asyncio
 import json
 import logging
 
+import httpx
+
 import peer_client
 from core.nonfatal import nonfatal
 from core.node import node_region
@@ -17,29 +19,58 @@ from storage.base import USER_PROFILE_OP, StorageBase
 
 logger = logging.getLogger(__name__)
 
+#: 节点级失败的状态码：整台对端不认本机（401 验签 / 403 白名单）或整台不可用（502-504 网关）。
+#: 其余非 200 当作「这一行」的问题，逐行记。
+_NODE_LEVEL_STATUS = frozenset({401, 403, 502, 503, 504})
 
-async def _forward(path: str, payload: dict, *, what: str, level: int) -> bool:
+
+class _Round:
+    """一轮补发的状态：记下本轮第一次节点级失败。由 `_resync_once` 建、显式往下传。"""
+
+    __slots__ = ("failure",)
+
+    def __init__(self) -> None:
+        self.failure: str | None = None
+
+
+async def _forward(path: str, payload: dict, *, what: str, level: int,
+                   rnd: _Round | None = None) -> bool:
     """发一条，返回对端是否确认（HTTP 200）。失败按 `level` 记一条，带状态码或异常。
 
     `what` 是调用方给的定位信息（id 之类），**不许放凭据**（邀请码本身就是凭据）。
     未配置对端（单节点部署）静默返回 False —— 那不是失败。
+
+    `rnd` 不为 None（补发轮内）时，节点级失败（配置不安全、网络不通、`_NODE_LEVEL_STATUS`）
+    不逐条记，记进 `rnd` 由 `_resync_once` 收尾报一条：那是「整台对端这轮不可达」，
+    不是「这一行失败」。路由里的即时转发不传 `rnd`，行为不变。
     """
     try:
         resp = await peer_client.post_to_peer(path, payload)
     except peer_client.PeerNotConfigured:
+        return False
+    except (peer_client.PeerNotSecure, httpx.TransportError) as exc:
+        if rnd is not None:
+            rnd.failure = f"{what} path={path} error={exc!r}"
+            return False
+        logger.log(level, "Peer forward failed: %s path=%s error=%r", what, path, exc,
+                   exc_info=True)
         return False
     except Exception as exc:
         logger.log(level, "Peer forward failed: %s path=%s error=%r", what, path, exc,
                    exc_info=True)
         return False
     if resp.status_code != 200:
+        if rnd is not None and resp.status_code in _NODE_LEVEL_STATUS:
+            rnd.failure = f"{what} path={path} status={resp.status_code}"
+            return False
         logger.log(level, "Peer forward rejected: %s path=%s status=%s", what, path,
                    resp.status_code)
         return False
     return True
 
 
-async def forward_dm_to_peer(msg: dict, storage: StorageBase) -> bool:
+async def forward_dm_to_peer(msg: dict, storage: StorageBase, *,
+                             rnd: _Round | None = None) -> bool:
     """Forward one DM to the peer. Caller marks it synced on True; resync retries on False."""
     if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
         return False
@@ -51,10 +82,11 @@ async def forward_dm_to_peer(msg: dict, storage: StorageBase) -> bool:
         "created_at": str(msg["created_at"]),
     }
     return await _forward("/api/inter-node/dm/receive", payload,
-                          what=f"dm msg_id={msg.get('id')}", level=logging.WARNING)
+                          what=f"dm msg_id={msg.get('id')}", level=logging.WARNING, rnd=rnd)
 
 
-async def forward_card_to_peer(card: dict, storage: StorageBase) -> bool:
+async def forward_card_to_peer(card: dict, storage: StorageBase, *,
+                               rnd: _Round | None = None) -> bool:
     """Forward one public card to the peer. Resync retries on False."""
     if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
         return False
@@ -84,7 +116,7 @@ async def forward_card_to_peer(card: dict, storage: StorageBase) -> bool:
         "created_at": str(card.get("created_at", "")),
     }
     return await _forward("/api/inter-node/card/receive", payload,
-                          what=f"card card_id={card.get('id')}", level=logging.WARNING)
+                          what=f"card card_id={card.get('id')}", level=logging.WARNING, rnd=rnd)
 
 
 #: 发件箱的操作类型 → 对端接口。前三类是删除同步（请求体是 {op_type, target_id, payload}，
@@ -109,7 +141,8 @@ def _ordering_key(op_type: str, target_id: str) -> tuple[str, str]:
     return (op_type, target_id)
 
 
-async def forward_outbox_to_peer(op_type: str, target_id: str, payload: str) -> bool:
+async def forward_outbox_to_peer(op_type: str, target_id: str, payload: str, *,
+                                 rnd: _Round | None = None) -> bool:
     """发件箱的一行 → 对端。返回对端是否确认（HTTP 200）；失败记 ERROR，带状态码或异常。
 
     不记 payload 本身（邀请码是凭据）。
@@ -130,10 +163,11 @@ async def forward_outbox_to_peer(op_type: str, target_id: str, payload: str) -> 
             logger.error("Outbox payload is not JSON: op_type=%s", op_type)
             return False
         what = f"op_type={op_type}"  # 不带 target_id：邀请码的 target_id 就是码本身（凭据）
-    return await _forward(endpoint, body, what=what, level=logging.ERROR)
+    return await _forward(endpoint, body, what=what, level=logging.ERROR, rnd=rnd)
 
 
-async def forward_user_profile_to_peer(user_id: str, storage: StorageBase) -> bool:
+async def forward_user_profile_to_peer(user_id: str, storage: StorageBase, *,
+                                       rnd: _Round | None = None) -> bool:
     """Send one `user_profile` outbox row: read the user's current profile, POST it.
 
     Returns True when the row is finished and may be removed: the peer
@@ -169,14 +203,16 @@ async def forward_user_profile_to_peer(user_id: str, storage: StorageBase) -> bo
         "home_region": user["home_region"],
         "avatar_data": user.get("avatar_data") or "",
     }
-    return await _forward("/api/inter-node/user/sync", body, what=what, level=logging.ERROR)
+    return await _forward("/api/inter-node/user/sync", body, what=what, level=logging.ERROR,
+                          rnd=rnd)
 
 
-async def _forward_outbox_row(row: dict, storage: StorageBase) -> bool:
+async def _forward_outbox_row(row: dict, storage: StorageBase, rnd: _Round) -> bool:
     """Route one outbox row to its sender by op_type."""
     if row["op_type"] == USER_PROFILE_OP:
-        return await forward_user_profile_to_peer(row["target_id"], storage)
-    return await forward_outbox_to_peer(row["op_type"], row["target_id"], row.get("payload") or "")
+        return await forward_user_profile_to_peer(row["target_id"], storage, rnd=rnd)
+    return await forward_outbox_to_peer(row["op_type"], row["target_id"],
+                                        row.get("payload") or "", rnd=rnd)
 
 
 async def _resync_once(storage: StorageBase) -> None:
@@ -186,10 +222,15 @@ async def _resync_once(storage: StorageBase) -> None:
     failing does not cancel the others.  DM/card rows get a `synced` flag;
     outbox rows are **removed** once the peer acknowledges them.
 
+    A node-level peer failure (see `_forward`) is different: the whole peer is
+    unreachable this round, so every section stops sending at the first one and
+    the round logs **one** ERROR.  Unsent rows stay queued for the next round.
+
     Silent no-op when PEER_NODE_URL is unset (single-node deployment).
     """
     if not peer_client.peer_url():
         return
+    rnd = _Round()
 
     # ── DM resync ──
     try:
@@ -198,7 +239,9 @@ async def _resync_once(storage: StorageBase) -> None:
         logger.error("DM query failed: %s", exc, exc_info=True)
     else:
         for msg in msgs:
-            ok = await forward_dm_to_peer(msg, storage)
+            if rnd.failure is not None:
+                break
+            ok = await forward_dm_to_peer(msg, storage, rnd=rnd)
             if ok:
                 async with nonfatal(
                     "cross_border_resync", f"mark DM synced for {msg['id']}",
@@ -212,7 +255,9 @@ async def _resync_once(storage: StorageBase) -> None:
         logger.error("Card query failed: %s", exc, exc_info=True)
     else:
         for card in cards:
-            ok = await forward_card_to_peer(card, storage)
+            if rnd.failure is not None:
+                break
+            ok = await forward_card_to_peer(card, storage, rnd=rnd)
             if ok:
                 async with nonfatal(
                     "cross_border_resync", f"mark card synced for {card['id']}",
@@ -227,10 +272,12 @@ async def _resync_once(storage: StorageBase) -> None:
     else:
         blocked: set[tuple[str, str]] = set()
         for row in pending:
+            if rnd.failure is not None:
+                break
             key = _ordering_key(row["op_type"], row["target_id"])
             if key in blocked:
                 continue  # 同一个键前面那条这轮没送到：后面的不许越过它先送
-            ok = await _forward_outbox_row(row, storage)
+            ok = await _forward_outbox_row(row, storage, rnd)
             if not ok:
                 blocked.add(key)
                 continue
@@ -239,6 +286,9 @@ async def _resync_once(storage: StorageBase) -> None:
             ):
                 # 按「发出时的 payload」删：资料行发送途中被换了版本戳就留到下一轮
                 await storage.remove_delete_propagation(row["id"], row.get("payload"))
+
+    if rnd.failure is not None:
+        logger.error("Peer unreachable, resync round stopped: %s", rnd.failure)
 
 
 _wake: asyncio.Event | None = None
