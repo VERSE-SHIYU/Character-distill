@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from conftest import PG_ENV
+from cross_border_sync import ForwardResult
 
 # 这三条要真 PG：断言的是**表里那一行**还在不在，而 `get_pending_delete_propagations`
 # 只看得见 `synced = 0` 的行 —— 用它当仪器的话，「行被删掉」与「行被标成 synced=1」
@@ -57,13 +59,13 @@ def _json(request) -> dict:
     return json.loads(request.content)
 
 
-@pytest.mark.parametrize("status_code,expected_marked", [
-    (200, True),
-    (401, False),
-    (500, False),
+@pytest.mark.parametrize("status_code,expected", [
+    (200, ForwardResult.DELIVERED),
+    (401, ForwardResult.PEER_DOWN),
+    (500, ForwardResult.FAILED),
 ])
-async def test_forward_dm_to_peer(monkeypatch, status_code, expected_marked):
-    """forward_dm_to_peer returns True only on 200, and caller marks synced."""
+async def test_forward_dm_to_peer(monkeypatch, status_code, expected):
+    """forward_dm_to_peer returns DELIVERED only on 200."""
     from cross_border_sync import forward_dm_to_peer
 
     monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
@@ -76,9 +78,9 @@ async def test_forward_dm_to_peer(monkeypatch, status_code, expected_marked):
         "content": "hello",
         "created_at": "2026-06-26 08:00:00",
     }
-    ok = await forward_dm_to_peer(msg, MagicMock())
+    result, _reason = await forward_dm_to_peer(msg, MagicMock())
 
-    assert ok is expected_marked
+    assert result is expected
     assert len(seen) == 1
     assert seen[0].url.path == "/api/inter-node/dm/receive"
     assert _json(seen[0]) == msg
@@ -86,24 +88,24 @@ async def test_forward_dm_to_peer(monkeypatch, status_code, expected_marked):
 
 
 async def test_forward_dm_to_peer_no_peer_url():
-    """No PEER_NODE_URL => no-op, returns False."""
+    """No PEER_NODE_URL => no-op, returns FAILED."""
     from cross_border_sync import forward_dm_to_peer
 
-    ok = await forward_dm_to_peer({"id": "x"}, MagicMock())
-    assert ok is False
+    result, _reason = await forward_dm_to_peer({"id": "x"}, MagicMock())
+    assert result is ForwardResult.FAILED
 
 
 async def test_forward_dm_to_peer_empty_peer_url(monkeypatch):
-    """Empty PEER_NODE_URL => no-op, returns False."""
+    """Empty PEER_NODE_URL => no-op, returns FAILED."""
     from cross_border_sync import forward_dm_to_peer
 
     monkeypatch.setenv("PEER_NODE_URL", "")
-    ok = await forward_dm_to_peer({"id": "x"}, MagicMock())
-    assert ok is False
+    result, _reason = await forward_dm_to_peer({"id": "x"}, MagicMock())
+    assert result is ForwardResult.FAILED
 
 
 async def test_forward_dm_to_peer_connection_error(monkeypatch):
-    """Connection error => returns False (message not lost)."""
+    """Connection error => returns PEER_DOWN (message not lost)."""
     import httpx
 
     from cross_border_sync import forward_dm_to_peer
@@ -117,8 +119,8 @@ async def test_forward_dm_to_peer_connection_error(monkeypatch):
         "content": "hello",
         "created_at": "2026-06-26 08:00:00",
     }
-    ok = await forward_dm_to_peer(msg, MagicMock())
-    assert ok is False
+    result, _reason = await forward_dm_to_peer(msg, MagicMock())
+    assert result is ForwardResult.PEER_DOWN
 
 
 # ── forward_card_to_peer tests ──────────────────────────────────────────
@@ -136,13 +138,13 @@ CARD_FIXTURE = {
 }
 
 
-@pytest.mark.parametrize("status_code,expected_marked", [
-    (200, True),
-    (401, False),
-    (500, False),
+@pytest.mark.parametrize("status_code,expected", [
+    (200, ForwardResult.DELIVERED),
+    (401, ForwardResult.PEER_DOWN),
+    (500, ForwardResult.FAILED),
 ])
-async def test_forward_card_to_peer(monkeypatch, status_code, expected_marked):
-    """forward_card_to_peer returns True only on 200."""
+async def test_forward_card_to_peer(monkeypatch, status_code, expected):
+    """forward_card_to_peer returns DELIVERED only on 200."""
     from cross_border_sync import forward_card_to_peer
 
     monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
@@ -150,9 +152,9 @@ async def test_forward_card_to_peer(monkeypatch, status_code, expected_marked):
 
     storage = MagicMock()
     storage.get_user_by_id = AsyncMock(return_value={"home_region": "sg"})
-    ok = await forward_card_to_peer(CARD_FIXTURE, storage)
+    result, _reason = await forward_card_to_peer(CARD_FIXTURE, storage)
 
-    assert ok is expected_marked
+    assert result is expected
     assert len(seen) == 1
     assert seen[0].url.path == "/api/inter-node/card/receive"
     body = _json(seen[0])
@@ -168,24 +170,24 @@ async def test_forward_card_to_peer(monkeypatch, status_code, expected_marked):
 
 
 async def test_forward_card_to_peer_no_peer_url():
-    """No PEER_NODE_URL => no-op, returns False."""
+    """No PEER_NODE_URL => no-op, returns FAILED."""
     from cross_border_sync import forward_card_to_peer
 
-    ok = await forward_card_to_peer(CARD_FIXTURE, MagicMock())
-    assert ok is False
+    result, _reason = await forward_card_to_peer(CARD_FIXTURE, MagicMock())
+    assert result is ForwardResult.FAILED
 
 
 async def test_forward_card_to_peer_empty_peer_url(monkeypatch):
-    """Empty PEER_NODE_URL => no-op, returns False."""
+    """Empty PEER_NODE_URL => no-op, returns FAILED."""
     from cross_border_sync import forward_card_to_peer
 
     monkeypatch.setenv("PEER_NODE_URL", "")
-    ok = await forward_card_to_peer(CARD_FIXTURE, MagicMock())
-    assert ok is False
+    result, _reason = await forward_card_to_peer(CARD_FIXTURE, MagicMock())
+    assert result is ForwardResult.FAILED
 
 
 async def test_forward_card_to_peer_connection_error(monkeypatch):
-    """Connection error => returns False (card not lost)."""
+    """Connection error => returns PEER_DOWN (card not lost)."""
     import httpx
 
     from cross_border_sync import forward_card_to_peer
@@ -194,8 +196,8 @@ async def test_forward_card_to_peer_connection_error(monkeypatch):
     _peer(monkeypatch, error=httpx.ConnectError("down"))
     storage = MagicMock()
     storage.get_user_by_id = AsyncMock(return_value=None)
-    ok = await forward_card_to_peer(CARD_FIXTURE, storage)
-    assert ok is False
+    result, _reason = await forward_card_to_peer(CARD_FIXTURE, storage)
+    assert result is ForwardResult.PEER_DOWN
 
 
 # ── forward_outbox_to_peer tests ────────────────────────────────────────
@@ -213,15 +215,15 @@ async def test_forward_outbox_to_peer_logs_status_on_non_200(monkeypatch, caplog
 
     monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
     caplog.set_level(logging.ERROR)
-    _peer(monkeypatch, status=503)
+    _peer(monkeypatch, status=500)
 
-    ok = await forward_outbox_to_peer("card_delete", "card-xyz", "")
+    result, _reason = await forward_outbox_to_peer("card_delete", "card-xyz", "")
 
-    assert ok is False
+    assert result is ForwardResult.FAILED
     out = "\n".join(r.getMessage() for r in caplog.records)
     assert "card_delete" in out, f"日志里没有 op_type：{out!r}"
     assert "card-xyz" in out, f"日志里没有 target_id：{out!r}"
-    assert "503" in out, f"日志里没有状态码：{out!r}"
+    assert "500" in out, f"日志里没有状态码：{out!r}"
 
 
 async def test_forward_outbox_to_peer_logs_exception(monkeypatch, caplog):
@@ -232,9 +234,9 @@ async def test_forward_outbox_to_peer_logs_exception(monkeypatch, caplog):
     caplog.set_level(logging.ERROR)
     _peer(monkeypatch, error=RuntimeError("boom-unreachable"))
 
-    ok = await forward_outbox_to_peer("user_purge", "usr-abc", "")
+    result, _reason = await forward_outbox_to_peer("user_purge", "usr-abc", "")
 
-    assert ok is False
+    assert result is ForwardResult.FAILED
     out = "\n".join(r.getMessage() for r in caplog.records)
     assert "user_purge" in out, f"日志里没有 op_type：{out!r}"
     assert "usr-abc" in out, f"日志里没有 target_id：{out!r}"
@@ -270,7 +272,8 @@ async def test_delete_resync_removes_row_after_ack(pg_store, monkeypatch):
     monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
     row_id = await _seed_one(pg_store)
 
-    with patch("cross_border_sync.forward_outbox_to_peer", AsyncMock(return_value=True)):
+    with patch("cross_border_sync.forward_outbox_to_peer",
+               AsyncMock(return_value=(ForwardResult.DELIVERED, ""))):
         await _resync_once(pg_store)
 
     assert await _outbox_row(pg_store, row_id) is None, (
@@ -286,7 +289,8 @@ async def test_delete_resync_keeps_row_without_ack(pg_store, monkeypatch):
     monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
     row_id = await _seed_one(pg_store, "user_purge", "usr-1")
 
-    with patch("cross_border_sync.forward_outbox_to_peer", AsyncMock(return_value=False)):
+    with patch("cross_border_sync.forward_outbox_to_peer",
+               AsyncMock(return_value=(ForwardResult.FAILED, "nope"))):
         await _resync_once(pg_store)
 
     row = await _outbox_row(pg_store, row_id)
@@ -304,7 +308,8 @@ async def test_delete_resync_survives_card_query_failure(pg_store, monkeypatch):
 
     with patch.object(pg_store, "get_unsynced_cross_border_cards_unscoped",
                       AsyncMock(side_effect=RuntimeError("card query boom"))), \
-            patch("cross_border_sync.forward_outbox_to_peer", AsyncMock(return_value=True)):
+            patch("cross_border_sync.forward_outbox_to_peer",
+                  AsyncMock(return_value=(ForwardResult.DELIVERED, ""))):
         await _resync_once(pg_store)
 
     assert await _outbox_row(pg_store, row_id) is None, (
@@ -407,3 +412,188 @@ async def test_delete_requeues_after_ack_and_restore(pg_card, pg_store):
 
     assert len(await _queued_card_deletes(pg_store)) == 1, (
         "恢复后再删除，这条删除没能重新入队 —— 对端会一直留着这张已删的卡")
+
+
+# ── 补发中止（spec peer-config-guard 设计 B）────────────────────────
+
+def _peer_decide(monkeypatch, decide):
+    """对端：按请求路径/内容决定回什么状态码（或抛异常）。返回收到的请求列表。"""
+    import httpx
+
+    import peer_client
+
+    seen: list[httpx.Request] = []
+
+    def _handler(request):
+        seen.append(request)
+        result = decide(request)
+        if isinstance(result, Exception):
+            raise result
+        return httpx.Response(result)
+
+    monkeypatch.setattr(
+        peer_client, "_client",
+        lambda timeout: httpx.AsyncClient(transport=httpx.MockTransport(_handler), timeout=timeout),
+    )
+    return seen
+
+
+@_pg
+async def test_resync_peer_down_aborts_round_once(pg_store, monkeypatch, caplog):
+    """DM 段第一行就对端不可用（503）→ 整轮中止：只发 1 次、1 条 ERROR、行全保留、后两段不发。"""
+    from cross_border_sync import _resync_once
+
+    tag = f"abort-{uuid.uuid4().hex[:8]}"
+    async with await pg_store._connect() as conn:
+        await conn.execute(
+            """INSERT INTO direct_messages (id, sender_id, receiver_id, content, cross_border_synced)
+               SELECT $1 || g::text, $2, $3, 'hello', 0
+               FROM generate_series(1, 100) AS g""",
+            tag + "-", "user_a", "user_b",
+        )
+    try:
+        monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
+        caplog.set_level(logging.ERROR)
+        seen = _peer(monkeypatch, status=503)
+
+        await _resync_once(pg_store)
+
+        assert len(seen) == 1, f"对端不可用应只发 1 次就中止，实发 {len(seen)} 次"
+        aborted = [r.getMessage() for r in caplog.records if "resync round aborted" in r.getMessage()]
+        assert len(aborted) == 1, f"应只记 1 条中止 ERROR：{[r.getMessage() for r in caplog.records]}"
+        assert "section=dm" in aborted[0], f"中止日志要带段名：{aborted[0]!r}"
+        async with await pg_store._connect() as conn:
+            n = await conn.fetchval(
+                "SELECT COUNT(*) FROM direct_messages WHERE cross_border_synced = 0 AND id LIKE $1",
+                tag + "%")
+        assert n == 100, f"DM 行全保留（synced=0），实得 {n}"
+    finally:
+        async with await pg_store._connect() as conn:
+            await conn.execute("DELETE FROM direct_messages WHERE id LIKE $1", tag + "%")
+
+
+@_pg
+async def test_resync_peer_down_in_outbox_keeps_delivered(pg_store, monkeypatch, caplog):
+    """发件箱段对端不可用 → 前段已送达的照常标记、发件箱行保留、1 条 ERROR。"""
+    from cross_border_sync import _resync_once
+
+    tag = f"keep-{uuid.uuid4().hex[:8]}"
+    dm_id = tag
+    async with await pg_store._connect() as conn:
+        await conn.execute(
+            """INSERT INTO direct_messages (id, sender_id, receiver_id, content, cross_border_synced)
+               VALUES ($1, 'user_a', 'user_b', 'hello', 0)""",
+            dm_id,
+        )
+        await conn.execute(
+            """INSERT INTO cross_border_outbox (op_type, target_id, payload, synced)
+               VALUES ('card_delete', $1, '', 0)""",
+            tag,
+        )
+    try:
+        monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
+        caplog.set_level(logging.ERROR)
+
+        def _decide(request):
+            return 200 if request.url.path.endswith("/dm/receive") else 503
+
+        _peer_decide(monkeypatch, _decide)
+
+        await _resync_once(pg_store)
+
+        async with await pg_store._connect() as conn:
+            dm = await conn.fetchval(
+                "SELECT cross_border_synced FROM direct_messages WHERE id = $1", dm_id)
+            out = await conn.fetchval(
+                "SELECT COUNT(*) FROM cross_border_outbox")
+        assert dm == 1, "DM 已送达要标记 synced"
+        assert out == 1, "发件箱行（对端不可用）必须保留"
+        aborted = [r.getMessage() for r in caplog.records if "resync round aborted" in r.getMessage()]
+        assert len(aborted) == 1, f"应只记 1 条中止 ERROR：{[r.getMessage() for r in caplog.records]}"
+    finally:
+        async with await pg_store._connect() as conn:
+            await conn.execute("DELETE FROM direct_messages WHERE id = $1", dm_id)
+
+
+@_pg
+async def test_resync_row_failure_continues(pg_store, monkeypatch):
+    """单行 400（FAILED）只影响那一行，继续下一行。"""
+    from cross_border_sync import _resync_once
+
+    await pg_store.enqueue_delete_propagation("card_delete", "card-1")
+    await pg_store.enqueue_delete_propagation("card_delete", "card-2")
+
+    monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
+
+    def _decide(request):
+        body = json.loads(request.content)
+        return 400 if body.get("target_id") == "card-1" else 200
+
+    seen = _peer_decide(monkeypatch, _decide)
+
+    await _resync_once(pg_store)
+
+    assert len(seen) == 2, f"单行失败要继续下一行，实发 {len(seen)} 次"
+    async with await pg_store._connect() as conn:
+        rows = await conn.fetch("SELECT target_id, synced FROM cross_border_outbox ORDER BY id")
+    by_target = {r["target_id"]: r["synced"] for r in rows}
+    assert by_target.get("card-1") == 0, "400 那行要保留"
+    assert "card-2" not in by_target, "200 那行要删掉"
+
+
+async def test_dm_send_peer_down_warns_and_succeeds(outbox_store, monkeypatch, caplog):
+    """即时私信对端不可用（PEER_DOWN）→ 请求照常成功、不标已同步、记一条 WARNING。"""
+    import httpx
+
+    import limiter as L
+    import peer_client
+    from deps import get_storage
+    from fastapi import FastAPI
+    from routers import message as M
+    from routers.auth import get_current_user
+
+    store = outbox_store
+    tag = uuid.uuid4().hex[:8]
+    sender = await store.create_user(f"s-{tag}", f"send-{tag}", "x", home_region="sg-singapore")
+    receiver = await store.create_user(f"r-{tag}", f"recv-{tag}", "x", home_region="cn-shenzhen")
+    await store.grant_cross_border_consent(sender["id"], "cn-shenzhen", "direct_message")
+
+    app = FastAPI()
+    app.include_router(M.router)
+    app.dependency_overrides[get_storage] = lambda: store
+
+    async def _live():
+        return await store.get_user_by_id(sender["id"])
+
+    app.dependency_overrides[get_current_user] = _live
+    monkeypatch.setattr(L.limiter, "enabled", False)
+
+    monkeypatch.setenv("PEER_NODE_URL", "https://sg-node:7860")
+    caplog.set_level(logging.WARNING)
+
+    def _handler(request):
+        raise httpx.ConnectError("down", request=request)
+
+    monkeypatch.setattr(
+        peer_client, "_client",
+        lambda timeout: httpx.AsyncClient(transport=httpx.MockTransport(_handler), timeout=timeout),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="https://t"
+    ) as c:
+        r = await c.post("/api/messages/send",
+                         json={"receiver_id": receiver["id"], "content": "hi"})
+
+    assert r.status_code == 200, r.text
+    try:
+        async with await store._connect() as conn:
+            synced = await conn.fetchval(
+                "SELECT cross_border_synced FROM direct_messages WHERE sender_id = $1",
+                sender["id"])
+        assert synced == 0, "对端不可用时不该标已同步"
+        warns = [rec.getMessage() for rec in caplog.records if rec.levelno >= logging.WARNING]
+        assert any("Peer unavailable" in m for m in warns), f"要记 WARNING：{warns}"
+    finally:
+        async with await store._connect() as conn:
+            await conn.execute("DELETE FROM direct_messages WHERE sender_id = $1", sender["id"])

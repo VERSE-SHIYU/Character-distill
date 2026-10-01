@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from core.nonfatal import nonfatal
-from cross_border_sync import forward_dm_to_peer
+from cross_border_sync import ForwardResult, forward_dm_to_peer
 from deps import get_storage
 from limiter import limiter
 from storage.base import StorageBase
@@ -114,10 +114,12 @@ async def send_message(
         )
 
         # Forward to peer node (shared function, single source of truth for signing)
-        ok = await forward_dm_to_peer(msg, storage)
-        if ok:
+        result, reason = await forward_dm_to_peer(msg, storage)
+        if result is ForwardResult.DELIVERED:
             async with nonfatal("message", f"mark synced for {msg['id']}"):
                 await storage.mark_message_synced(msg["id"])
+        elif result is ForwardResult.PEER_DOWN:
+            logger.warning("Peer unavailable for immediate DM: msg_id=%s reason=%s", msg["id"], reason)
 
         return {"message": msg}
 
