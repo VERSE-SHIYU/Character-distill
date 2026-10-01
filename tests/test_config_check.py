@@ -1,7 +1,7 @@
 """启动配置校验 `web/config_check.py`：lifespan 与部署前置门共用的那一处。
 
 lifespan 接线由 test_error_reporting::test_startup_failure_is_reported_before_the_client_closes 覆盖
-（它让 `validate_config` 抛错并断言启动失败）。
+（它让 `validate_config` 抛错并断言启动失败）；「校验先于存储」由本文件末尾的用例覆盖。
 """
 
 from __future__ import annotations
@@ -110,3 +110,29 @@ def test_validate_config_runs_every_validator(monkeypatch):
     monkeypatch.setattr("config_check.VALIDATORS", tuple(lambda i=i: calls.append(i) for i in range(3)))
     validate_config()
     assert calls == [0, 1, 2]
+
+
+# ── lifespan：校验先于任何存储访问 ───────────────────────────────────────
+
+def test_lifespan_validates_before_touching_storage(monkeypatch):
+    """配置校验必须在第一次取存储之前失败：迁移是首次取存储时懒执行的，
+    校验晚了，库已被迁移，回滚到 PREV_SHA 就不再安全（031 改过表名）。"""
+    import deps
+    import server
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("PEER_NODE_URL", "http://sg.bookecho-shiyu.cn")
+    monkeypatch.setenv("INTER_NODE_SELF_HOST", "sz.bookecho-shiyu.cn")
+    touched: list[int] = []
+
+    def _get_storage():
+        touched.append(1)
+        raise AssertionError("get_storage 在配置校验之前被调用")
+
+    monkeypatch.setattr(server, "get_storage", _get_storage)
+    monkeypatch.setattr(deps, "get_storage", _get_storage)
+
+    with pytest.raises(PeerNotSecure):
+        with TestClient(server.app):
+            pass
+    assert touched == [], "配置校验晚于存储访问"
