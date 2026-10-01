@@ -114,12 +114,13 @@ async def send_message(
         )
 
         # Forward to peer node (shared function, single source of truth for signing)
-        result, reason, _path = await forward_dm_to_peer(msg, storage)
-        if result is ForwardResult.DELIVERED:
+        outcome = await forward_dm_to_peer(msg, storage)
+        if outcome.result is ForwardResult.DELIVERED:
             async with nonfatal("message", f"mark synced for {msg['id']}"):
                 await storage.mark_message_synced(msg["id"])
-        elif result is ForwardResult.PEER_DOWN:
-            logger.warning("Peer unavailable for immediate DM: msg_id=%s reason=%s", msg["id"], reason)
+        elif outcome.result is ForwardResult.PEER_DOWN:
+            logger.warning("Peer unavailable for immediate DM: msg_id=%s reason=%s",
+                           msg["id"], outcome.reason)
 
         return {"message": msg}
 

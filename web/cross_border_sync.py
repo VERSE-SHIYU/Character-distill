@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 from enum import Enum
+from typing import NamedTuple
 
 import httpx
 
@@ -27,6 +28,17 @@ class ForwardResult(Enum):
     DELIVERED = "delivered"   # 已送达
     FAILED = "failed"         # 没送达，保留该行继续下一行
     PEER_DOWN = "peer_down"   # 对端整体不可用，整轮中止
+
+
+class ForwardOutcome(NamedTuple):
+    """一次转发的结局：结果、原因、对端路径。
+
+    仍是普通元组，可以照旧解包；原因不可放凭据（邀请码本身就是凭据）。
+    """
+
+    result: ForwardResult
+    reason: str
+    path: str
 
 
 _PEER_DOWN_STATUSES = frozenset({401, 403, 429, 502, 503, 504})
@@ -51,7 +63,7 @@ def _abort_resync(section: str, path: str, reason: str) -> None:
                  section, path, reason)
 
 
-async def _forward(path: str, payload: dict, *, what: str, level: int) -> tuple[ForwardResult, str, str]:
+async def _forward(path: str, payload: dict, *, what: str, level: int) -> ForwardOutcome:
     """发一条，返回 (结果, 原因, path)。只对 FAILED 按 `level` 记一条日志；PEER_DOWN 交给调用方。
 
     `what` 是调用方给的定位信息（id 之类），**不许放凭据**（邀请码本身就是凭据）。
@@ -68,13 +80,13 @@ async def _forward(path: str, payload: dict, *, what: str, level: int) -> tuple[
     if result is ForwardResult.FAILED:
         logger.log(level, "Peer forward failed: %s path=%s reason=%s", what, path, reason,
                    exc_info=(exc is not None))
-    return result, reason, path
+    return ForwardOutcome(result, reason, path)
 
 
-async def forward_dm_to_peer(msg: dict, storage: StorageBase) -> tuple[ForwardResult, str, str]:
+async def forward_dm_to_peer(msg: dict, storage: StorageBase) -> ForwardOutcome:
     """Forward one DM to the peer. Caller marks it synced on DELIVERED."""
     if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
-        return ForwardResult.FAILED, "未配置对端（单节点）", ""
+        return ForwardOutcome(ForwardResult.FAILED, "未配置对端（单节点）", "")
     payload = {
         "id": msg["id"],
         "sender_id": msg["sender_id"],
@@ -86,10 +98,10 @@ async def forward_dm_to_peer(msg: dict, storage: StorageBase) -> tuple[ForwardRe
                           what=f"dm msg_id={msg.get('id')}", level=logging.WARNING)
 
 
-async def forward_card_to_peer(card: dict, storage: StorageBase) -> tuple[ForwardResult, str, str]:
+async def forward_card_to_peer(card: dict, storage: StorageBase) -> ForwardOutcome:
     """Forward one public card to the peer."""
     if not peer_client.peer_url():  # 单节点部署：什么都不做（先判，不白组请求体）
-        return ForwardResult.FAILED, "未配置对端（单节点）", ""
+        return ForwardOutcome(ForwardResult.FAILED, "未配置对端（单节点）", "")
     # origin_region = sender's home_region
     origin_region = ""
     try:
@@ -141,14 +153,14 @@ def _ordering_key(op_type: str, target_id: str) -> tuple[str, str]:
     return (op_type, target_id)
 
 
-async def forward_outbox_to_peer(op_type: str, target_id: str, payload: str) -> tuple[ForwardResult, str, str]:
+async def forward_outbox_to_peer(op_type: str, target_id: str, payload: str) -> ForwardOutcome:
     """发件箱的一行 → 对端。不记 payload 本身（邀请码是凭据）。"""
     if not peer_client.peer_url():
-        return ForwardResult.FAILED, "未配置对端（单节点）", ""
+        return ForwardOutcome(ForwardResult.FAILED, "未配置对端（单节点）", "")
     endpoint = _OUTBOX_ENDPOINTS.get(op_type)
     if not endpoint:
         logger.error("Unknown outbox op_type: %s", op_type)
-        return ForwardResult.FAILED, f"未知 op_type={op_type}", ""
+        return ForwardOutcome(ForwardResult.FAILED, f"未知 op_type={op_type}", "")
     if op_type in _LEGACY_DELETE_OPS:
         body = {"op_type": op_type, "target_id": target_id, "payload": payload}
         what = f"op_type={op_type} target_id={target_id}"
@@ -157,12 +169,12 @@ async def forward_outbox_to_peer(op_type: str, target_id: str, payload: str) -> 
             body = json.loads(payload)
         except ValueError:
             logger.error("Outbox payload is not JSON: op_type=%s", op_type)
-            return ForwardResult.FAILED, "payload 非 JSON", ""
+            return ForwardOutcome(ForwardResult.FAILED, "payload 非 JSON", "")
         what = f"op_type={op_type}"  # 不带 target_id：邀请码的 target_id 就是码本身（凭据）
     return await _forward(endpoint, body, what=what, level=logging.ERROR)
 
 
-async def forward_user_profile_to_peer(user_id: str, storage: StorageBase) -> tuple[ForwardResult, str, str]:
+async def forward_user_profile_to_peer(user_id: str, storage: StorageBase) -> ForwardOutcome:
     """Send one `user_profile` outbox row: read the user's current profile, POST it.
 
     Returns DELIVERED when the row is finished and may be removed: the peer
@@ -177,20 +189,20 @@ async def forward_user_profile_to_peer(user_id: str, storage: StorageBase) -> tu
     Only 3.2(1) fields go out: id / username / home_region / avatar_data.
     """
     if not peer_client.peer_url():
-        return ForwardResult.FAILED, "未配置对端（单节点）", ""
+        return ForwardOutcome(ForwardResult.FAILED, "未配置对端（单节点）", "")
     what = f"op_type={USER_PROFILE_OP} target_id={user_id}"
     try:
         user = await storage.get_user_by_id(user_id)
     except Exception as exc:
         logger.error("Outbox profile read failed: %s error=%r", what, exc, exc_info=True)
-        return ForwardResult.FAILED, repr(exc), ""
+        return ForwardOutcome(ForwardResult.FAILED, repr(exc), "")
     if user is None:
         logger.info("Outbox profile dropped, user no longer exists: %s", what)
-        return ForwardResult.DELIVERED, "用户不存在", ""
+        return ForwardOutcome(ForwardResult.DELIVERED, "用户不存在", "")
     if user.get("home_region") != node_region():
         logger.info("Outbox profile dropped, user homed on %s not here: %s",
                     user.get("home_region"), what)
-        return ForwardResult.DELIVERED, "用户归属对端", ""
+        return ForwardOutcome(ForwardResult.DELIVERED, "用户归属对端", "")
 
     body = {
         "id": user["id"],
@@ -201,7 +213,7 @@ async def forward_user_profile_to_peer(user_id: str, storage: StorageBase) -> tu
     return await _forward("/api/inter-node/user/sync", body, what=what, level=logging.ERROR)
 
 
-async def _forward_outbox_row(row: dict, storage: StorageBase) -> tuple[ForwardResult, str, str]:
+async def _forward_outbox_row(row: dict, storage: StorageBase) -> ForwardOutcome:
     """Route one outbox row to its sender by op_type."""
     if row["op_type"] == USER_PROFILE_OP:
         return await forward_user_profile_to_peer(row["target_id"], storage)
@@ -224,11 +236,11 @@ async def _resync_once(storage: StorageBase) -> None:
         logger.error("DM query failed: %s", exc, exc_info=True)
     else:
         for msg in msgs:
-            result, reason, path = await forward_dm_to_peer(msg, storage)
-            if result is ForwardResult.PEER_DOWN:
-                _abort_resync("dm", path, reason)
+            outcome = await forward_dm_to_peer(msg, storage)
+            if outcome.result is ForwardResult.PEER_DOWN:
+                _abort_resync("dm", outcome.path, outcome.reason)
                 return
-            if result is ForwardResult.DELIVERED:
+            if outcome.result is ForwardResult.DELIVERED:
                 async with nonfatal(
                     "cross_border_resync", f"mark DM synced for {msg['id']}",
                 ):
@@ -241,11 +253,11 @@ async def _resync_once(storage: StorageBase) -> None:
         logger.error("Card query failed: %s", exc, exc_info=True)
     else:
         for card in cards:
-            result, reason, path = await forward_card_to_peer(card, storage)
-            if result is ForwardResult.PEER_DOWN:
-                _abort_resync("card", path, reason)
+            outcome = await forward_card_to_peer(card, storage)
+            if outcome.result is ForwardResult.PEER_DOWN:
+                _abort_resync("card", outcome.path, outcome.reason)
                 return
-            if result is ForwardResult.DELIVERED:
+            if outcome.result is ForwardResult.DELIVERED:
                 async with nonfatal(
                     "cross_border_resync", f"mark card synced for {card['id']}",
                 ):
@@ -262,11 +274,11 @@ async def _resync_once(storage: StorageBase) -> None:
             key = _ordering_key(row["op_type"], row["target_id"])
             if key in blocked:
                 continue  # 同一个键前面那条这轮没送到：后面的不许越过它先送
-            result, reason, path = await _forward_outbox_row(row, storage)
-            if result is ForwardResult.PEER_DOWN:
-                _abort_resync("outbox", path, reason)
+            outcome = await _forward_outbox_row(row, storage)
+            if outcome.result is ForwardResult.PEER_DOWN:
+                _abort_resync("outbox", outcome.path, outcome.reason)
                 return
-            if result is not ForwardResult.DELIVERED:
+            if outcome.result is not ForwardResult.DELIVERED:
                 blocked.add(key)
                 continue
             async with nonfatal(

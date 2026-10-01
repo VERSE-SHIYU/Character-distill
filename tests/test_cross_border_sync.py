@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from conftest import PG_ENV
-from cross_border_sync import ForwardResult
+from cross_border_sync import ForwardOutcome, ForwardResult
 
 # 这三条要真 PG：断言的是**表里那一行**还在不在，而 `get_pending_delete_propagations`
 # 只看得见 `synced = 0` 的行 —— 用它当仪器的话，「行被删掉」与「行被标成 synced=1」
@@ -292,7 +292,7 @@ async def test_delete_resync_removes_row_after_ack(pg_store, monkeypatch):
     row_id = await _seed_one(pg_store)
 
     with patch("cross_border_sync.forward_outbox_to_peer",
-               AsyncMock(return_value=(ForwardResult.DELIVERED, "", ""))):
+               AsyncMock(return_value=ForwardOutcome(ForwardResult.DELIVERED, "", ""))):
         await _resync_once(pg_store)
 
     assert await _outbox_row(pg_store, row_id) is None, (
@@ -309,7 +309,7 @@ async def test_delete_resync_keeps_row_without_ack(pg_store, monkeypatch):
     row_id = await _seed_one(pg_store, "user_purge", "usr-1")
 
     with patch("cross_border_sync.forward_outbox_to_peer",
-               AsyncMock(return_value=(ForwardResult.FAILED, "nope", ""))):
+               AsyncMock(return_value=ForwardOutcome(ForwardResult.FAILED, "nope", ""))):
         await _resync_once(pg_store)
 
     row = await _outbox_row(pg_store, row_id)
@@ -328,7 +328,7 @@ async def test_delete_resync_survives_card_query_failure(pg_store, monkeypatch):
     with patch.object(pg_store, "get_unsynced_cross_border_cards_unscoped",
                       AsyncMock(side_effect=RuntimeError("card query boom"))), \
             patch("cross_border_sync.forward_outbox_to_peer",
-                  AsyncMock(return_value=(ForwardResult.DELIVERED, "", ""))):
+                  AsyncMock(return_value=ForwardOutcome(ForwardResult.DELIVERED, "", ""))):
         await _resync_once(pg_store)
 
     assert await _outbox_row(pg_store, row_id) is None, (
