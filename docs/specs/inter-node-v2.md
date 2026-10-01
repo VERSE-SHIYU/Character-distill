@@ -172,3 +172,26 @@ Shiyu 定：补「节点间传输经 TLS 加密」。已并入本段设计与步
 
 ### 2026-09-30 参考实现改为分支提交
 参考补丁文件已删除，理由同 `admin-peer-disable.md` 同日补充。本段代码是分支 `feat/cross-border-outbox` 上的提交 `feat(inter-node): https transport and RFC 9421 request signatures`，前一个提交是方案甲。「S0」里核对补丁文件、`git apply --check` 两步不再适用；上线前的证书核查照旧。
+
+### 2026-10-01 前置核查结果与方案 A
+
+**结论**：
+- 原「运维前置核查」和上线步骤 1a 不成立：主域名 bookecho-shiyu.cn 按线路分流，两台各自解析到本机（SZ→47.107.42.111、SG→43.134.55.201），对端 IP 无证书。改用节点专属域名 sz./sg.。
+- 1b 那一行的回滚不成立：迁移 `storage/migrations_pg/031_rename_outbox.sql` 把 `cross_border_delete_outbox` 改名为 `cross_border_outbox`（基线 origin/main `3923a247`）；上一版代码（`3923a247^1`）在 `storage/postgres_store.py` 写的还是旧表名 `cross_border_delete_outbox`（行 131、527、1197、1229、1255、2948、4656、4671、4691、4736）。
+- SG 不自己续签：SG 无 acme.sh、无 ssl-renew.timer（`systemctl cat` 报 No files、journal 空、/opt/ssl-renew 只有 notify.sh），证书由 SZ 的 acme-deploy 第 9 步经 `ssh ssl-deploy@43.134.55.201` 的 ingest+deploy 推送；SG 上 timer「inactive」是设计如此，不是故障。
+- acme.sh 的 `--issue` 只签发、不安装；要部署必须走 `--renew`（或定时任务的 `--cron`）。实测 `--issue --force` 只签出 5-SAN 证书但不触发 install/reload，改跑 `--renew --force` 才完成 install + acme-deploy + 推 SG。
+
+**第 1 步（只读核查）**：
+- PEER_NODE_URL 两台都是明文 http：SZ `http://43.134.55.201`、SG `http://47.107.42.111`；镜像同为 `3923a2479d74d7d987152f2ad59ce387ebfe9038`；30 分钟 PeerNotSecure/forward rejected 计数 SZ 990、SG 1890。
+- 改前证书 SAN bookecho/www/errors，notAfter Dec 24 2026，指纹 `68:33:C2:DE…6A:33`，两台相同。
+
+**第 2 步（证书管道）**：
+- acme.sh --list：bookecho-shiyu.cn / ec-256 / SAN www,errors / LetsEncrypt。
+- SZ acme-deploy（/opt/ssl-renew/acme-deploy）参数全从 /etc/ssl-renew/config 读；step9 `tar current | ssh -i $SG_KEY ssl-deploy@$SG_HOST` ingest+deploy，失败只 WARN、不影响本机。
+
+**第 3 步（加 sz./sg. SAN 并部署）**：
+- 签发配置：dns_tencent（DNS-01）、ec-256、ReloadCmd=/opt/ssl-renew/acme-deploy、安装到 /etc/ssl-renew/staging/。
+- 部署后新证书：SAN 5 个（bookecho/www/errors/sz/sg），notAfter Dec 30 2026，指纹 `EC:E7:80:62…FC:08:36`，两台相同（≠旧 68:33）；staging、线上卷、新证书三处指纹一致。
+- 健康检查：SZ bookecho 200、errors 200；SG bookecho 200。
+- 双向 https 前置核查（--resolve 钉对端 IP，无 -k、无签名）：SZ→SG `401 1.10s`、SG→SZ `401 1.06s`，均远小于 10s。
+- 权威 DNS `dig @save.dnspod.net sz./sg. A` 两台为空 —— 记录不在 DNSPod 解析区（权威侧为空，不是传播延迟）；记录补上、权威侧返回对应 IP 后，再把 PEER_NODE_URL 切成 https。
