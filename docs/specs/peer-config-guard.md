@@ -130,3 +130,7 @@ skill：实现阶段用 `tdd`（每个提交先红后绿）；审计阶段用 `c
 3. 报告第 4 步（两台 `.env` 切 https）的状态：未完成可以先编码，但不合并。
 
 ## 补充
+### 2026-10-01 实现偏差
+- `forward_*` 返回 `(ForwardResult, 原因, path)`：原因用于路由和中止日志，`path` 供 `_abort_resync` 记录。
+- 中止日志不带 `exc_info`：原因里已有 `repr(exc)`（含异常类型与消息），不必再带堆栈。
+- `INTER_NODE_SELF_HOST` 不去端口：约定只填裸域名（`sz./sg.bookecho-shiyu.cn`），启动校验不 strip 端口。

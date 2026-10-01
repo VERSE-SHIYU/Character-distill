@@ -40,11 +40,12 @@ class PeerConfigError(RuntimeError):
 
 
 def peer_url() -> str:
-    return os.getenv("PEER_NODE_URL", "").rstrip("/")
+    """规范化的对端 base（`https://host[:port]`）；未配置（strip 后为空）返回空串。"""
+    return _parse_peer_url() or ""
 
 
 def _parse_peer_url() -> str | None:
-    """解析并校验 `PEER_NODE_URL`。返回规范 base（`https://host[:port]`）；空 → None（单节点）；无效 → `PeerConfigError`。"""
+    """解析并校验 `PEER_NODE_URL`（全文件唯一读取处）。返回规范 base；空 → None（单节点）；无效 → `PeerConfigError`。"""
     raw = os.getenv("PEER_NODE_URL", "").strip()
     if not raw:
         return None

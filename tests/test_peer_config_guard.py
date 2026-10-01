@@ -64,13 +64,14 @@ def test_startup_rejects_bad_peer_config_before_storage(monkeypatch):
     _set_env(monkeypatch, peer_url="http://sg.bookecho-shiyu.cn",
              self_host="sz.bookecho-shiyu.cn", secret=SECRET)
 
-    touched: dict[str, bool] = {}
+    called: list[int] = []
 
-    async def _reconcile():
-        touched["storage"] = True
+    def _get_storage():
+        called.append(1)
+        raise AssertionError("get_storage 在校验之前被调用")
 
-    monkeypatch.setattr(server, "_reconcile_distill_tasks", _reconcile)
+    monkeypatch.setattr(server, "get_storage", _get_storage)
     with pytest.raises(peer_client.PeerConfigError):
         with TestClient(server.app):
             pass
-    assert "storage" not in touched, "校验晚于存储初始化：回滚到 PREV_SHA 前库已被迁移"
+    assert called == [], "校验晚于存储初始化：回滚到 PREV_SHA 前库已被迁移"

@@ -114,7 +114,7 @@ async def send_message(
         )
 
         # Forward to peer node (shared function, single source of truth for signing)
-        result, reason = await forward_dm_to_peer(msg, storage)
+        result, reason, _path = await forward_dm_to_peer(msg, storage)
         if result is ForwardResult.DELIVERED:
             async with nonfatal("message", f"mark synced for {msg['id']}"):
                 await storage.mark_message_synced(msg["id"])
