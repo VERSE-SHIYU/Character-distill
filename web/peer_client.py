@@ -35,6 +35,19 @@ def peer_url() -> str:
     return os.getenv("PEER_NODE_URL", "").rstrip("/")
 
 
+def _require_https(base: str) -> None:
+    if not base.lower().startswith("https://"):
+        scheme = base.split("://", 1)[0] if "://" in base else "(无协议)"
+        raise PeerNotSecure(f"PEER_NODE_URL 必须是 https://（当前协议：{scheme}）")
+
+
+def validate_peer_node_url() -> None:
+    """启动校验（见 `config_check`）：配了对端就必须是 https；未配置 = 单节点，放行。"""
+    base = peer_url()
+    if base:
+        _require_https(base)
+
+
 def _client(timeout: float) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=timeout)
 
@@ -44,8 +57,7 @@ def build_request(path: str, payload: dict) -> httpx.Request:
     base = peer_url()
     if not base:
         raise PeerNotConfigured("PEER_NODE_URL 未配置")
-    if not base.lower().startswith("https://"):
-        raise PeerNotSecure("PEER_NODE_URL 必须是 https://")
+    _require_https(base)
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
     request = httpx.Request(
         "POST", f"{base}{path}", content=body, headers={"Content-Type": "application/json"},

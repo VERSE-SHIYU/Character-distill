@@ -64,10 +64,8 @@ from routers.auth import (
     Verdict,
     get_jwt_secret,
     resolve_request_identity,
-    validate_fernet_key,
-    validate_jwt_secret,
 )
-from inter_node_auth import validate_inter_node_secret
+from config_check import validate_config
 from routers.admin import require_admin, router as admin_router
 from cross_border_sync import _cross_border_resync_loop
 from deps import get_config, get_llm, get_storage, reset_llm_and_dependents, _session_cleanup_loop
@@ -106,7 +104,7 @@ async def _lifespan(app: FastAPI):
         # 上报接在第一位：它不发 LLM 调用，放在门之前不破坏下面那条不变量；放最前是为了
         # 收到**启动期自身**抛出的错 —— 排在后面的装配项一旦在启动时炸，这条出口还没接上。
         #
-        # 唯一一处 `push` 而不是 `callback`：回调拿不到正在冒出的异常，`validate_*` 一抛
+        # 唯一一处 `push` 而不是 `callback`：回调拿不到正在冒出的异常，`validate_config` 一抛
         # 就变成「先 flush + close，异常这才冒出去」，这条出口的唯一目的正好落空（见
         # `core/error_reporting._ReportingExit`）。
         stack.push(init_error_reporting())
@@ -118,9 +116,7 @@ async def _lifespan(app: FastAPI):
         # 不启 app 的代码（适配器单测、脚本）凭空被门管住 —— 序依赖随之而来（谁先 import
         # 决定谁被拦）。注册是**装配**这件事的一部分，就写在装配处。
         stack.callback(install_llm_gate(app))
-        validate_fernet_key()
-        validate_jwt_secret()
-        validate_inter_node_secret()
+        validate_config()
         stack.callback(install_stdout_logging())
         # 两个出口同一个装配处：stdout「推给 docker logs」、告警「推去邮箱」。
         # `ALERT_EMAIL` 未配置时不安装告警，只记一条 WARNING（见 core/alerting）。

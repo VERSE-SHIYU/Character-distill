@@ -666,9 +666,7 @@ def test_C9_shutdown_backfills_the_queues(flaky, owner, monkeypatch):
 
     # 关掉启动期的凭据校验与守卫装配：本用例测的是**退出**那一段，且要能在没有
     # `.env` / `config.yaml` 的机器上跑绿。
-    monkeypatch.setattr(server_mod, "validate_fernet_key", lambda: None)
-    monkeypatch.setattr(server_mod, "validate_jwt_secret", lambda: None)
-    monkeypatch.setattr(server_mod, "validate_inter_node_secret", lambda: None)
+    monkeypatch.setattr(server_mod, "validate_config", lambda: None)
     # 两个都返回空撤销：装配本体现在把返回值交给 ExitStack 当撤销用，返回 `None`
     # 会在关停时炸成 `'NoneType' object is not callable`。
     monkeypatch.setattr(server_mod, "install_llm_gate", lambda app: (lambda: None))
@@ -731,9 +729,7 @@ def test_C10_shutdown_logs_queued_messages_that_are_lost(flaky, owner, monkeypat
 
     # 关掉启动期的凭据校验与守卫装配：本用例测的是**退出**那一段，且要能在没有
     # `.env` / `config.yaml` 的机器上跑绿。
-    monkeypatch.setattr(server_mod, "validate_fernet_key", lambda: None)
-    monkeypatch.setattr(server_mod, "validate_jwt_secret", lambda: None)
-    monkeypatch.setattr(server_mod, "validate_inter_node_secret", lambda: None)
+    monkeypatch.setattr(server_mod, "validate_config", lambda: None)
     # 两个都返回空撤销：装配本体现在把返回值交给 ExitStack 当撤销用，返回 `None`
     # 会在关停时炸成 `'NoneType' object is not callable`。
     monkeypatch.setattr(server_mod, "install_llm_gate", lambda app: (lambda: None))
