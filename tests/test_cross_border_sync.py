@@ -455,6 +455,7 @@ _SHAPES = {
     ("https://sg-node", None, "timeout"),
     ("https://sg-node", 401, None),
     ("https://sg-node", 403, None),
+    ("https://sg-node", 429, None),
     ("https://sg-node", 502, None),
     ("https://sg-node", 503, None),
     ("https://sg-node", 504, None),

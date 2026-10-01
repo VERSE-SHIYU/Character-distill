@@ -19,9 +19,10 @@ from storage.base import USER_PROFILE_OP, StorageBase
 
 logger = logging.getLogger(__name__)
 
-#: 节点级失败的状态码：整台对端不认本机（401 验签 / 403 白名单）或整台不可用（502-504 网关）。
+#: 节点级失败的状态码：整台对端不认本机（401 验签 / 403 白名单）、限流本机（429：
+#: `nginx/cc.lua` 按来源 IP 限，对端 IP 被限就是整台都发不过去）或整台不可用（502-504 网关）。
 #: 其余非 200 当作「这一行」的问题，逐行记。
-_NODE_LEVEL_STATUS = frozenset({401, 403, 502, 503, 504})
+_NODE_LEVEL_STATUS = frozenset({401, 403, 429, 502, 503, 504})
 
 
 class _Round:

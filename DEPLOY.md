@@ -32,8 +32,12 @@
 | 域名 | `bookecho-shiyu.cn` / `www.bookecho-shiyu.cn` |
 | 深圳源站（默认/境内线路） | `47.107.42.111`（阿里云） |
 | 新加坡源站（境外线路） | `43.134.55.201`（腾讯云） |
+| 节点专属域名（SZ） | `sz.bookecho-shiyu.cn` → `47.107.42.111` |
+| 节点专属域名（SG） | `sg.bookecho-shiyu.cn` → `43.134.55.201` |
 | SSH 管理来源 | `1.144.109.101`（堪培拉，**动态IP，变更后需在安全组更新**） |
-| 证书 | 阿里云 DigiCert DV，含两域名，**有效期至 2026-08-30，到期前需重签部署到两地** |
+| 证书 | Let's Encrypt（ec-256），SAN：`bookecho-shiyu.cn` / `www` / `errors` / `sz` / `sg`；SZ 自动续签并推送到 SG（见 §4） |
+
+> 节点间通信只用 `sz.`/`sg.` 两个专属域名（只配默认线路、证书 SAN 已包含）；不能用主域名。
 
 ---
 
@@ -161,17 +165,15 @@ ${VAR} → deploy.yml 顶层 env 的 ${{ vars.VAR }}
 > 改完仓库变量后**重新跑一次 deploy（`both`）** 即生效：`compose up -d` 检测到容器
 > 环境变化会重建 app 容器，不需要手动 `restart`，也不需要登服务器。
 
-## 4. SSL 证书（两台都装同一套）
+## 4. SSL 证书（SZ 签发，自动推送 SG）
 
-```bash
-# 阿里云证书下载（nginx 格式）后得到 bookecho-shiyu.cn.pem 和 .key
-mkdir -p /etc/ssl/certs /etc/ssl/private
-# bookecho-shiyu.cn.pem → /etc/ssl/certs/fullchain.pem
-# bookecho-shiyu.cn.key → /etc/ssl/private/privkey.pem
-chmod 600 /etc/ssl/private/privkey.pem
-```
+- 签发：SZ 上的 acme.sh，DNS-01（`dns_tencent`），ec-256；`acme.sh --list` 可查当前域名。
+- 续签：`ssl-renew.timer` → `acme.sh --cron` → ReloadCmd `/opt/ssl-renew/acme-deploy`（参数在 `/etc/ssl-renew/config`）：装到本机证书卷、重载 nginx，再经 `ssh ssl-deploy@43.134.55.201` 推送 SG（推送失败只 WARN，不影响 SZ）。
+- SG 没有 acme.sh、没有 timer —— 设计如此，不是故障。
+- 加 / 改域名：`--issue` 只签发不安装，必须接着 `acme.sh --renew --force` 才会走 acme-deploy、推 SG。
+- 验收：两台 `openssl s_client -connect 127.0.0.1:443 -servername <域名> </dev/null | openssl x509 -noout -ext subjectAltName -enddate -fingerprint`，SAN 与指纹两台一致。
 
-> ⚠️ 证书 2026-08-30 到期。到期前在阿里云重新签发，重新下载部署到**两台**，并 `docker compose restart nginx`。建议设置日历提醒。
+> 事实来源：`docs/specs/inter-node-v2.md`「2026-10-01 前置核查结果与方案 A」（服务器实测）。
 
 ## 5. 启动
 

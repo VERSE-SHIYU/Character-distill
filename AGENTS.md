@@ -4,8 +4,9 @@
 
 双区独立部署，各自独立 PostgreSQL（无主从同步），各备各的。
 
-- **SZ（深圳）**：`ssh admin@47.107.42.111`，项目路径 `/opt/character-distill`，异地备份目标 = 阿里云 OSS
-- **SG（新加坡）**：`ssh ubuntu@43.134.55.201`，项目路径 `/home/ubuntu/Character-distill`，异地备份目标 = 腾讯云 COS
+- **SZ（深圳）**：`ssh admin@47.107.42.111`，项目路径 `/opt/character-distill`，异地备份目标 = 阿里云 OSS，节点专属域名 `sz.bookecho-shiyu.cn`
+- **SG（新加坡）**：`ssh ubuntu@43.134.55.201`，项目路径 `/home/ubuntu/Character-distill`，异地备份目标 = 腾讯云 COS，节点专属域名 `sg.bookecho-shiyu.cn`
+- 节点间通信只用 `sz.bookecho-shiyu.cn` / `sg.bookecho-shiyu.cn`（只配默认线路、证书 SAN 已包含）；不能用主域名 `bookecho-shiyu.cn`——它按线路分流，两台各自解析回本机
 - Compose 文件：两台都是 `docker-compose.prod.yml`（**不是**默认 `docker-compose.yml`）。所有 `docker compose` 命令必须带 `-f docker-compose.prod.yml`，否则报 "no configuration file provided"
 - 镜像：`ghcr.io/verse-shiyu/character-distill-app` 和 `ghcr.io/verse-shiyu/character-distill-nginx`，tag = commit_sha（40 位 hex）。另有浮动 `latest` tag（指向旧版，清理时忽略，勿删）
 
