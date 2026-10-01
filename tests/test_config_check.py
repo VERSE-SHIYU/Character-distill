@@ -23,13 +23,41 @@ _REPO = Path(__file__).resolve().parent.parent
 
 # ── PEER_NODE_URL ────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("url", [None, "", "https://peer-node", "HTTPS://Peer-Node:7860/"])
-def test_peer_url_allowed(monkeypatch, url):
-    if url is None:
-        monkeypatch.delenv("PEER_NODE_URL", raising=False)
-    else:
+@pytest.fixture(autouse=True)
+def _clean_peer_env(monkeypatch):
+    monkeypatch.delenv("PEER_NODE_URL", raising=False)
+    monkeypatch.delenv("INTER_NODE_SELF_HOST", raising=False)
+
+
+@pytest.mark.parametrize("url, own", [
+    (None, None),                                         # 单节点
+    ("", "sz.bookecho-shiyu.cn"),                         # 显式留空 = 单节点
+    ("https://sg.bookecho-shiyu.cn", "sz.bookecho-shiyu.cn"),
+    ("HTTPS://SG.bookecho-shiyu.cn:443/", "SZ.bookecho-shiyu.cn"),
+])
+def test_peer_url_allowed(monkeypatch, url, own):
+    if url is not None:
         monkeypatch.setenv("PEER_NODE_URL", url)
+    if own is not None:
+        monkeypatch.setenv("INTER_NODE_SELF_HOST", own)
     validate_peer_node_url()
+
+
+@pytest.mark.parametrize("url, own, needle", [
+    ("https:///api", "sz.bookecho-shiyu.cn", "主机名"),
+    ("https://sg.bookecho-shiyu.cn", None, "INTER_NODE_SELF_HOST"),
+    ("https://sg.bookecho-shiyu.cn", "  ", "INTER_NODE_SELF_HOST"),
+    # 两台都填 GeoDNS 主域名：请求发回本机
+    ("https://bookecho-shiyu.cn", "bookecho-shiyu.cn", "本节点"),
+    ("https://Bookecho-Shiyu.cn:443", "bookecho-shiyu.cn", "本节点"),
+    ("https://sz.bookecho-shiyu.cn", "sz.bookecho-shiyu.cn:443", "本节点"),
+])
+def test_peer_url_rejected_host(monkeypatch, url, own, needle):
+    monkeypatch.setenv("PEER_NODE_URL", url)
+    if own is not None:
+        monkeypatch.setenv("INTER_NODE_SELF_HOST", own)
+    with pytest.raises(RuntimeError, match=needle):
+        validate_peer_node_url()
 
 
 @pytest.mark.parametrize("url, scheme", [("http://peer-node", "http"), ("peer-node:7860", "(无协议)")])
@@ -47,13 +75,14 @@ def test_peer_url_is_registered():
 
 def _cli(peer_url: str) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if k not in ("FERNET_KEY", "INTER_NODE_SECRET")}
-    env.update(JWT_SECRET="j" * 32, PEER_NODE_URL=peer_url)
+    env.update(JWT_SECRET="j" * 32, PEER_NODE_URL=peer_url,
+               INTER_NODE_SELF_HOST="sz.bookecho-shiyu.cn")
     return subprocess.run([sys.executable, "-m", "web.config_check"], cwd=_REPO, env=env,
                           capture_output=True, text=True, timeout=60)
 
 
 def test_cli_passes_on_valid_config():
-    proc = _cli("https://peer-node")
+    proc = _cli("https://sg.bookecho-shiyu.cn")
     assert proc.returncode == 0, proc.stderr
 
 
