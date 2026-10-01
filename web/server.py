@@ -68,6 +68,7 @@ from routers.auth import (
     validate_jwt_secret,
 )
 from inter_node_auth import validate_inter_node_secret
+from peer_client import validate_peer_config
 from routers.admin import require_admin, router as admin_router
 from cross_border_sync import _cross_border_resync_loop
 from deps import get_config, get_llm, get_storage, reset_llm_and_dependents, _session_cleanup_loop
@@ -121,6 +122,7 @@ async def _lifespan(app: FastAPI):
         validate_fernet_key()
         validate_jwt_secret()
         validate_inter_node_secret()
+        validate_peer_config()
         stack.callback(install_stdout_logging())
         # 两个出口同一个装配处：stdout「推给 docker logs」、告警「推去邮箱」。
         # `ALERT_EMAIL` 未配置时不安装告警，只记一条 WARNING（见 core/alerting）。

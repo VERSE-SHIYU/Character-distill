@@ -121,7 +121,7 @@ def test_sender_version_switch(monkeypatch):
 
 def test_sender_refuses_plain_http(monkeypatch):
     monkeypatch.setenv("PEER_NODE_URL", "http://peer-node")
-    with pytest.raises(peer_client.PeerNotSecure):
+    with pytest.raises(peer_client.PeerConfigError):
         peer_client.build_request(READ_PATH, {"a": 1})
 
 
