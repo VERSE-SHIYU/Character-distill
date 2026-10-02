@@ -586,10 +586,11 @@ class StorageBase(ABC):
     async def get_remote_user_profile(self, id: str) -> dict | None:
         """Get a remote user profile by ID."""
 
-    # ── 账号目录（只 PG 实现）────────────────────────────────────────────────
+    # ── 账号目录 / 公开作品目录（只 PG 实现）────────────────────────────────
     #
-    # 本地用户 ∪ 对端地区用户（`remote_user_profiles`）合成的「本节点看得见的所有账号」。
-    # 合并规则只写在 `PostgresStore` 的 `_PUBLIC_ACCOUNTS` 一处。
+    # 账号目录：本地用户 ∪ 对端地区用户（`remote_user_profiles`）。
+    # 公开作品目录：本地公开存活卡 ∪ 对端同步来的公开卡（`remote_cards`）。
+    # 合并规则各只写在 `PostgresStore` 的 `_PUBLIC_ACCOUNTS` / `_PUBLIC_CARDS` 一处。
     #
     # 这几个方法**有意不设为抽象**：SQLite 自 2026-09-24 冻结、计划退役（AGENTS.md「存储改动
     # 只保证 PG」），不为它新增实现。基类缺省直接抛错，SQLite 上调用会立刻、明确地失败，
@@ -611,6 +612,16 @@ class StorageBase(ABC):
         Same keys as `get_public_account`.
         """
         raise NotImplementedError(f"{type(self).__name__}: 账号目录只在 PG 上实现")
+
+    async def get_public_card(self, card_id: str) -> dict | None:
+        """One public card visible on this node, local or peer, by id.
+
+        Keys: id, name, card_json, avatar_data, user_id, text_id (None for peer
+        cards — their text lives in the peer database), market_description,
+        market_tags, created_at, is_remote (bool), origin_region ('' when local).
+        None when the id is no live public card here.
+        """
+        raise NotImplementedError(f"{type(self).__name__}: 公开作品目录只在 PG 上实现")
 
     async def get_remote_user_cards(self, user_id: str) -> list[dict]:
         """List the synced public cards of a peer-region user, newest first."""

@@ -172,6 +172,31 @@ _PUBLIC_ACCOUNTS = """
 """
 _ACCOUNT_COLS = "id, username, nickname, avatar_data, home_region, is_disabled, is_remote"
 
+# ── 公开作品目录 ────────────────────────────────────────────────────────────
+#
+# 「本节点看得见的所有公开卡」只在这里合成：本地 `cards` 里公开且未删的 ∪ 对端同步来的
+# `remote_cards`（隐私政策 3.2(2)）。按 id 取公开卡（fork 的来源、对端卡的详情）一律
+# `FROM ({_PUBLIC_CARDS}) pc`。
+#
+# 合并规则：同 id 两边都有 → 只取本地；对端卡的 `text_id` 为 NULL（它关联的文本在对端库，
+# 本库没有）；`is_remote` 标来源，`origin_region` 只对对端卡有值；`created_at` 对端取作品
+# 在源节点的创建时间。
+_PUBLIC_CARDS = """
+    SELECT c.id, c.name, c.card_json, COALESCE(c.avatar_data, '') AS avatar_data,
+           c.user_id, c.text_id, COALESCE(c.market_description, '') AS market_description,
+           COALESCE(c.market_tags, '') AS market_tags, c.created_at::text AS created_at,
+           FALSE AS is_remote, '' AS origin_region
+    FROM cards c
+    WHERE c.visibility = 'public' AND c.deleted_at IS NULL
+    UNION ALL
+    SELECT rc.id, rc.name, rc.card_json, COALESCE(rc.avatar_data, '') AS avatar_data,
+           rc.user_id, NULL AS text_id, COALESCE(rc.market_description, '') AS market_description,
+           COALESCE(rc.market_tags, '') AS market_tags, rc.origin_created_at::text AS created_at,
+           TRUE AS is_remote, rc.origin_region
+    FROM remote_cards rc
+    WHERE NOT EXISTS (SELECT 1 FROM cards l WHERE l.id = rc.id)
+"""
+
 # 对端角色卡的作者：`remote_cards` 只存作者 id，名字 / 头像经 `remote_user_profiles` 取。
 # 凡是展示对端卡的查询都用这两段，不再写死 `'' AS author_name`。资料未同步到时为空串，
 # 与本地卡 `LEFT JOIN users` 的缺省同一口径。用法：remote_cards 的别名必须是 `rc`。
@@ -733,7 +758,11 @@ class PostgresStore(StorageBase):
             raise
 
     async def get_card_detail(self, card_id: str, user_id: str) -> dict | None:
-        """Get card detail with author info — works for both market and non-market cards."""
+        """Card detail with author info: the viewer's own cards (any visibility), any
+        live public local card, or a peer-region card from the public card directory.
+
+        Someone else's private card is None — same as absent (no id probing).
+        """
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
@@ -747,8 +776,9 @@ class PostgresStore(StorageBase):
                         FROM cards c
                         LEFT JOIN users u ON u.id = c.user_id
                         LEFT JOIN texts t ON t.id = c.text_id
-                        WHERE c.id = $1 AND c.deleted_at IS NULL""",
-                    card_id,
+                        WHERE c.id = $1 AND c.deleted_at IS NULL
+                          AND (c.visibility = 'public' OR c.user_id = $2)""",
+                    card_id, user_id,
                 )
                 card = self._row_to_dict(row)
                 if card:
@@ -758,7 +788,13 @@ class PostgresStore(StorageBase):
                     )
                     card["liked_by_me"] = like_row is not None
                     card["is_market_card"] = card["visibility"] == "public"
-                return card
+                    card["is_remote"] = False
+                    return card
+            # 本地没有（或是他人的私密卡）→ 对端卡（经公开作品目录）
+            remote = await self.get_public_card(card_id)
+            if remote is None or not remote["is_remote"]:
+                return None
+            return await self._remote_card_detail(remote)
         except Exception as exc:
             print(f"[PostgresStore] Get card detail failed: {exc}")
             raise StoreError("get_card_detail", exc) from exc
@@ -792,21 +828,11 @@ class PostgresStore(StorageBase):
                     card["origin_region"] = ""
                     return card
 
-            # Fallback: check remote_cards
-            remote = await self._get_remote_card(card_id)
-            if remote:
-                remote["is_remote"] = True
-                remote["liked_by_me"] = False
-                owner = await self.get_public_account(remote["user_id"]) or {}
-                remote["author_name"] = owner.get("username") or ""
-                remote["author_avatar"] = owner.get("avatar_data") or ""
-                remote["text_title"] = ""
-                remote["comment_count"] = 0
-                remote["forked_from"] = ""
-                remote["likes"] = 0
-                remote["publish_message"] = ""
-                remote["created_at"] = remote.get("origin_created_at", "")
-            return remote
+            # 本地没有 → 对端卡（经公开作品目录）
+            remote = await self.get_public_card(card_id)
+            if remote is None or not remote["is_remote"]:
+                return None
+            return await self._remote_card_detail(remote)
         except Exception as exc:
             print(f"[PostgresStore] Get market card detail failed: {exc}")
             raise StoreError("get_market_card_detail", exc) from exc
@@ -1141,26 +1167,22 @@ class PostgresStore(StorageBase):
             raise StoreError("global_search", exc) from exc
 
     async def fork_card(self, card_id: str, new_id: str, new_user_id: str, new_text_id: str = "") -> dict | None:
-        """Deep copy a public card for a new user. Returns the new card dict."""
-        original = await self.get_card_unscoped(card_id)
-        if not original:
-            return None
-        try:
-            async with await self._connect() as conn:
-                row = await conn.fetchrow(
-                    "SELECT visibility FROM cards WHERE id = $1 AND deleted_at IS NULL", card_id,
-                )
-                if not row or row[0] != "public":
-                    return None
-        except Exception as exc:
-            print(f"[PostgresStore] Fork card visibility check failed: {exc}")
-            raise StoreError("fork_card", exc) from exc
+        """Deep copy a public card — local or from the peer region — for a new user.
 
+        The source is resolved through the public card directory (`get_public_card`),
+        so a peer card synced into `remote_cards` forks exactly like a local one: the
+        copy is the forker's own private card with `forked_from` = the source id.
+        Returns the new card dict, or None when the id is no live public card here.
+        """
+        source = await self.get_public_card(card_id)
+        if source is None:
+            return None
         try:
             # `''` 与 NULL 都是「不关联文本」，统一成 NULL；传 None 表示沿用原卡的关联。
             # `''` 留着会**插不进去** —— 它不指向任何 texts.id，FK 直接拒（缺陷 78 的同一根因，
-            # 前端 AuthorPage 送的就是 `text_id: ''`，这条路此前是 500）。
-            text_id = (original.get("text_id") or None) if new_text_id is None \
+            # 前端 AuthorPage 送的就是 `text_id: ''`，这条路此前是 500）。对端卡的 text_id 在
+            # 目录里恒为 NULL（文本在对端库），沿用即「不关联」。
+            text_id = (source["text_id"] or None) if new_text_id is None \
                 else (new_text_id or None)
             async with await self._connect() as conn:
                 # `IS NOT DISTINCT FROM` 而非 `=`：text_id 可空，`= NULL` 恒不成立，会让独立卡
@@ -1171,15 +1193,14 @@ class PostgresStore(StorageBase):
                     card_id, new_user_id, text_id,
                 )
                 if existing:
-                    return await self.get_card_unscoped(existing[0])
+                    return await self.get_card_owned(existing[0], new_user_id)
                 await conn.execute(
                     """INSERT INTO cards (id, text_id, name, card_json, user_id, avatar_data, forked_from, visibility)
                        VALUES ($1, $2, $3, $4, $5, $6, $7, 'private')""",
-                    new_id, text_id, original["name"],
-                    original.get("card_json", "{}"), new_user_id,
-                    await self.get_card_avatar_unscoped(card_id) or "", card_id,
+                    new_id, text_id, source["name"], source["card_json"] or "{}",
+                    new_user_id, source["avatar_data"], card_id,
                 )
-            return await self.get_card_unscoped(new_id)
+            return await self.get_card_owned(new_id, new_user_id)
         except Exception as exc:
             print(f"[PostgresStore] Fork card failed: {exc}")
             raise
@@ -4686,6 +4707,38 @@ class PostgresStore(StorageBase):
         except Exception as exc:
             print(f"[PostgresStore] Get public account failed: {exc}")
             raise StoreError("get_public_account", exc) from exc
+
+    async def get_public_card(self, card_id: str) -> dict | None:
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    f"SELECT * FROM ({_PUBLIC_CARDS}) pc WHERE pc.id = $1", card_id)
+            if row is None:
+                return None
+            card = dict(row)
+            card["is_remote"] = bool(card["is_remote"])
+            return card
+        except Exception as exc:
+            print(f"[PostgresStore] Get public card failed: {exc}")
+            raise StoreError("get_public_card", exc) from exc
+
+    async def _remote_card_detail(self, card: dict) -> dict:
+        """详情页的对端卡形状 —— 两个详情读（`get_card_detail` / `get_market_card_detail`）
+        共用这一处。互动数据（赞、评论、版本）在对端库，按「无」给出；作者经账号目录取。"""
+        owner = await self.get_public_account(card["user_id"]) or {}
+        return {
+            **card,
+            "author_name": owner.get("username") or "",
+            "author_avatar": owner.get("avatar_data") or "",
+            "visibility": "public",
+            "is_market_card": True,
+            "liked_by_me": False,
+            "likes": 0,
+            "comment_count": 0,
+            "text_title": "",
+            "forked_from": "",
+            "publish_message": "",
+        }
 
     async def search_discoverable_accounts(self, keyword: str, limit: int) -> list[dict]:
         like = f"%{keyword}%"

@@ -37,6 +37,9 @@ export default function MarketCardDetail() {
   const currentTextId = useAppStore((s) => s.currentTextId)
 
   const [card, setCard] = useState(null)
+  // 卡能力（local / remote）由后端 `card_visibility` 决定；缺省全关。属主、写权限、管理员
+  // 这些「谁在看」的判断照旧在下面与能力组合。
+  const caps = card?.capabilities ?? {}
   const [loading, setLoading] = useState(true)
   const [comments, setComments] = useState([])
   const [commentsLoading, setCommentsLoading] = useState(false)
@@ -528,7 +531,7 @@ export default function MarketCardDetail() {
               <button type="button" className="btn-icon" onClick={() => { navigator.clipboard.writeText(window.location.href) }} title="复制链接">
                 <Share size={16} />
               </button>
-              {canWrite && card.user_id !== authUser?.id && authUser?.id && (
+              {canWrite && caps.report && card.user_id !== authUser?.id && authUser?.id && (
                 <button type="button" className="btn-icon" onClick={() => setShowReportCardModal(true)} title="举报">
                   <Flag size={16} />
                 </button>
@@ -538,7 +541,7 @@ export default function MarketCardDetail() {
                   <Edit size={16} />
                 </button>
               )}
-              {canWrite && (isAdmin(authUser) || card.user_id === authUser?.id) && (
+              {canWrite && caps.moderate && (isAdmin(authUser) || card.user_id === authUser?.id) && (
                 <button type="button" className="btn-icon danger" onClick={() => setDeleteConfirmId(card.id)} title="删除">
                   <Trash2 size={16} />
                 </button>
@@ -642,7 +645,7 @@ export default function MarketCardDetail() {
 
             {/* Stats + use button */}
             <div className="market-detail-stats">
-              {canWrite && isMarketCard && (
+              {canWrite && isMarketCard && caps.like && (
                 <button
                   type="button"
                   className={`market-detail-like-btn${liked ? ' liked' : ''}`}
@@ -651,10 +654,10 @@ export default function MarketCardDetail() {
                   {liked ? <Heart size={16} fill="currentColor" /> : <Heart size={16} />} <span className="market-detail-stat-num">{likes}</span>
                 </button>
               )}
-              {isMarketCard && <span className="market-detail-comment-count"><MessageSquare size={16} /> <span className="market-detail-stat-num">{comments.length}</span></span>}
+              {isMarketCard && caps.comment && <span className="market-detail-comment-count"><MessageSquare size={16} /> <span className="market-detail-stat-num">{comments.length}</span></span>}
             </div>
             {isMarketCard ? (
-              canWrite && (
+              canWrite && caps.fork && (
                 <button type="button" className="btn-primary market-detail-use-btn" onClick={handleFork} disabled={forking}>
                   {forking ? '添加中…' : '使用角色'}
                 </button>
@@ -757,17 +760,19 @@ export default function MarketCardDetail() {
               )}
             </div>
 
-            {isMarketCard && (<>
+            {isMarketCard && caps.comment && (<>
             <div className="market-detail-tabs">
               <button type="button" className={`market-detail-tab${activeTab === 'detail' ? ' active' : ''}`} onClick={() => setActiveTab('detail')}>
                 <MessageSquare size={14} /> 评论 ({comments.length})
               </button>
+              {caps.history && (<>
               <button type="button" className={`market-detail-tab${activeTab === 'versions' ? ' active' : ''}`} onClick={() => setActiveTab('versions')}>
                 <Clipboard size={14} /> 版本历史
               </button>
               <button type="button" className={`market-detail-tab${activeTab === 'forks' ? ' active' : ''}`} onClick={() => setActiveTab('forks')}>
                 <Sprout size={14} /> 衍生角色
               </button>
+              </>)}
             </div>
 
             {activeTab === 'detail' && <div className="market-detail-comments">
@@ -903,7 +908,7 @@ export default function MarketCardDetail() {
       </div>
 
       {/* Fixed bottom: comment input */}
-      {canWrite && (
+      {canWrite && caps.comment && (
         <div className="market-detail-fixed-input">
           <div className="market-detail-comment-emoji-wrap" ref={commentEmojiRef}>
             <button

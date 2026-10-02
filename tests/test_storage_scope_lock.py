@@ -60,9 +60,8 @@ UNSCOPED_ALLOWLIST = {
     "storage/postgres_store.py:update_card":
         "同上（PG 实现）",
     "storage/sqlite_store.py:fork_card":
-        "深拷贝源卡是**他人**的公开卡（fork 的语义就是复制别人的），身份过滤会把源卡滤没",
-    "storage/postgres_store.py:fork_card":
-        "同上（PG 实现）",
+        "深拷贝源卡是**他人**的公开卡（fork 的语义就是复制别人的），身份过滤会把源卡滤没"
+        "（PG 实现改经公开作品目录 get_public_card 取源卡，不再用 *_unscoped）",
     "mcp_server/server.py:_toolkit_for":
         "MCP stdio 通道无身份语境：进程级服务，按 card_id 路由，可服务任意已蒸馏卡",
     "mcp_server/client_demo.py:_case_a_routing_isolation":
@@ -585,6 +584,7 @@ PG_ONLY_METHODS = {
     "search_discoverable_accounts": "账号目录按名搜索，只 PG 实现 —— 禁用账号的排除在库里做，LIMIT 才准",
     "get_remote_user_cards": "对端用户的已同步公开卡，只 PG 实现",
     "upsert_remote_account": "同步接收端一次写入资料 + 账号状态，只 PG 实现",
+    "get_public_card": "公开作品目录（本地公开卡 ∪ 对端 remote_cards）按 id 读，只 PG 实现 —— fork 来源与对端卡详情",
 }
 
 
