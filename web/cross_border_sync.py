@@ -180,7 +180,8 @@ async def forward_user_profile_to_peer(user_id: str, storage: StorageBase, *,
 
     The profile is read at send time, not stored in the row, so a round always
     sends the latest version; see `USER_PROFILE_OP` for the version stamp.
-    Only 3.2(1) fields go out: id / username / home_region / avatar_data.
+    Only 3.2(1) fields go out: id / username / home_region / avatar_data, plus
+    the account status `is_disabled` (so the peer hides a disabled user).
     """
     if not peer_client.peer_url():
         return False
@@ -203,6 +204,7 @@ async def forward_user_profile_to_peer(user_id: str, storage: StorageBase, *,
         "username": user.get("username", ""),
         "home_region": user["home_region"],
         "avatar_data": user.get("avatar_data") or "",
+        "is_disabled": bool(user.get("is_disabled")),
     }
     return await _forward("/api/inter-node/user/sync", body, what=what, level=logging.ERROR,
                           rnd=rnd)

@@ -5,6 +5,7 @@ import useSwipeBack from '../hooks/useSwipeBack'
 import useCanWrite from '../hooks/useCanWrite'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
+import RegionTag from './common/RegionTag'
 import { MessageSquare, Theater, Book, Lock, Close, Heart } from './common/Icon'
 import PostCard from './common/PostCard'
 import Loading from './common/Loading'
@@ -13,6 +14,12 @@ import ConfirmModal from './common/ConfirmModal'
 import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
+
+// 能力缺省全关：数据到达前、或后端少给了某个键时，宁可少渲染也不越权渲染。
+const NO_CAPABILITIES = Object.freeze({
+  message: false, follow: false, fork: false, cards: false,
+  stats: false, bookshelf: false, posts: false, presence: false,
+})
 
 export default function AuthorPage({ embedded = false }) {
   const canWrite = useCanWrite()
@@ -49,6 +56,10 @@ export default function AuthorPage({ embedded = false }) {
   const [authorOnline, setAuthorOnline] = useState(null) // null=loading, true, false
   const [authorLastActive, setAuthorLastActive] = useState('')
   const [authorPresenceHidden, setAuthorPresenceHidden] = useState(false)
+  // 视图（self / local / remote / disabled）与能力表都由后端 `account_visibility` 决定，
+  // 本页只按能力渲染，不自己从「对端」「禁用」推规则。
+  const [view, setAccountView] = useState('local')
+  const [caps, setCaps] = useState(NO_CAPABILITIES)
 
   // Posts
   const [posts, setPosts] = useState([])
@@ -96,6 +107,8 @@ export default function AuthorPage({ embedded = false }) {
         setFollowingCount(data.following_count || 0)
         setStatsVisible(data.stats_visible !== false)
         setAuthorOnline(data.online)
+        setAccountView(data.view)
+        setCaps({ ...NO_CAPABILITIES, ...data.capabilities })
         setAuthorLastActive(data.last_active_at || '')
         setAuthorPresenceHidden(data.presence_hidden || false)
       } catch (err) {
@@ -245,14 +258,18 @@ export default function AuthorPage({ embedded = false }) {
                 <div className="author-hero-text">
                   <h2 className="author-name">
                     {displayName(author)}
-                    {!authorPresenceHidden && authorOnline !== null && (
+                    {view === 'remote' && <RegionTag style={{ marginLeft: 8 }} />}
+                    {caps.presence && !authorPresenceHidden && authorOnline !== null && (
                       <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 8, color: authorOnline ? 'var(--success)' : 'var(--text-dim)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                         <span style={{ width: 6, height: 6, borderRadius: '50%', background: authorOnline ? 'var(--success)' : 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
                         {authorOnline ? '在线' : formatChatTime(authorLastActive)}
                       </span>
                     )}
                   </h2>
-                  <div className="author-stats">
+                  {view === 'disabled' && (
+                    <p className="author-stats-hidden" role="status">该账号已被封禁，内容无法查看</p>
+                  )}
+                  {caps.stats && <div className="author-stats">
                     {statsVisible ? (<>
                       <button type="button" className="stat-btn" onClick={toggleFollowers}><strong>{followersCount}</strong> 粉丝</button>
                       <button type="button" className="stat-btn" onClick={toggleFollowing}><strong>{followingCount}</strong> 关注</button>
@@ -261,7 +278,7 @@ export default function AuthorPage({ embedded = false }) {
                     </>) : (
                       <span className="author-stats-hidden">统计数据已隐藏</span>
                     )}
-                  </div>
+                  </div>}
                   {/* Followers/Following modals — rendered at overlay level */}
                   {showFollowers && (
                     <div className="stat-follow-modal-overlay" onClick={() => setShowFollowers(false)}>
@@ -357,8 +374,7 @@ export default function AuthorPage({ embedded = false }) {
                     </div>
                   )}
                 </div>
-                {!isOwnProfile && (
-                  <>
+                {caps.message && (
                     <button
                       type="button"
                       className="btn-ghost"
@@ -367,7 +383,8 @@ export default function AuthorPage({ embedded = false }) {
                     >
                       发私信
                     </button>
-                    {canWrite && (
+                )}
+                {canWrite && caps.follow && (
                       <button
                         type="button"
                         className={`btn-primary${isFollowing ? ' btn-secondary' : ''}`}
@@ -375,13 +392,11 @@ export default function AuthorPage({ embedded = false }) {
                       >
                         {isFollowing ? '已关注' : '关注'}
                       </button>
-                    )}
-                  </>
                 )}
               </div>
 
               {/* ── Section 2: Bookshelf ── */}
-              <div className="author-section">
+              {caps.bookshelf && <div className="author-section">
                 <h3 className="author-section-title"><Book size={16} /> 书架 ({texts.length})</h3>
                 {texts.length === 0 ? (
                   <p style={{ color: 'var(--text-dim)', fontSize: 13, textAlign: 'center', padding: 20 }}>
@@ -402,10 +417,10 @@ export default function AuthorPage({ embedded = false }) {
                     </button>
                   ))
                 )}
-              </div>
+              </div>}
 
               {/* ── Section 3: Posts ── */}
-              <div className="author-section">
+              {caps.posts && <div className="author-section">
                 <h3 className="author-section-title"><MessageSquare size={14} /> 动态</h3>
 
                 {postsLoading ? (
@@ -426,10 +441,10 @@ export default function AuthorPage({ embedded = false }) {
                     ))}
                   </div>
                 )}
-              </div>
+              </div>}
 
               {/* ── Section 4: Public cards ── */}
-              <div className="author-section">
+              {caps.cards && <div className="author-section">
                 <h3 className="author-section-title"><Theater size={16} /> 公开角色 ({cards.length})</h3>
                 {cards.length === 0 ? (
                   <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 40 }}>暂无公开角色</p>
@@ -449,7 +464,7 @@ export default function AuthorPage({ embedded = false }) {
                           )}
                           <div className="author-char-footer">
                             <span className="author-char-likes"><Heart size={12} /> {card.likes || 0}</span>
-                            {canWrite && (
+                            {canWrite && caps.fork && (
                               <button type="button" className="btn-primary btn-sm" onClick={async () => {
                                 const res = await fetchWithTimeout(`/api/market/${card.id}/fork`, {
                                   method: 'POST',
@@ -468,7 +483,7 @@ export default function AuthorPage({ embedded = false }) {
                     })}
                   </div>
                 )}
-              </div>
+              </div>}
 
         </>
       ) : (

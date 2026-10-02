@@ -120,7 +120,9 @@ async def test_registration_queues_and_the_loop_sends_the_profile(store, monkeyp
 
     got = peer.for_user(uid)
     assert len(got) == 1, f"资料没发出去；日志：{[x.getMessage() for x in caplog.records]}"
-    assert got[0] == {"id": uid, "username": name, "home_region": _HERE, "avatar_data": ""}
+    # 字段集就是隐私政策 3.2(1) 的清单（含账号状态）；多一个、少一个都要先改政策。
+    assert got[0] == {"id": uid, "username": name, "home_region": _HERE, "avatar_data": "",
+                      "is_disabled": False}
     assert await _profile_rows(store, uid) == [], "对端已确认，这一行必须删掉"
 
 
@@ -260,3 +262,47 @@ async def test_signing_failure_keeps_the_row_and_the_loop_alive(store, monkeypat
         raise AssertionError(f"签名失败把补发循环带停了：{exc!r}") from exc
     assert len(await _profile_rows(store, uid)) == 1
     assert any("cannot sign" in x.getMessage() for x in caplog.records)
+
+
+# ── 账号状态随资料发出（spec cross-region-user-search，方案 A）─────────────────
+
+_MIGRATION_034 = (Path(__file__).resolve().parents[1]
+                  / "storage/migrations_pg/034_remote_profile_disabled.sql")
+
+
+async def test_disable_and_enable_requeue_and_send_the_status(store, monkeypatch):
+    uid = await _new_user(store)
+    peer = Peer(monkeypatch)
+    await _resync_once(store)                        # 注册那一行先发掉
+    await store.set_user_disabled(uid, True)
+    assert len(await _profile_rows(store, uid)) == 1, "禁用没有入队"
+    await _resync_once(store)
+    await store.set_user_disabled(uid, False)
+    await _resync_once(store)
+    assert [b["is_disabled"] for b in peer.for_user(uid)] == [False, True, False]
+
+
+async def test_disable_unknown_user_queues_nothing(store):
+    ghost = _uid("u")
+    with pytest.raises(ValueError):
+        await store.set_user_disabled(ghost, True)
+    assert await _profile_rows(store, ghost) == [], "不存在的用户不该入队"
+
+
+async def test_ban_requeues_the_profile(store):
+    uid = await _new_user(store)
+    async with await store._connect() as conn:
+        await conn.execute("DELETE FROM cross_border_outbox")
+    await store.ban_user_and_contents(uid, "admin1")
+    assert len(await _profile_rows(store, uid)) == 1, "封禁没有入队"
+
+
+async def test_034_backfill_queues_disabled_users_only(store):
+    off = await _new_user(store)
+    on = await _new_user(store)
+    async with await store._connect() as conn:
+        await conn.execute("UPDATE users SET is_disabled = 1 WHERE id = $1", off)
+        await conn.execute("DELETE FROM cross_border_outbox")   # 模拟存量：从没入过队
+        await conn.execute(_MIGRATION_034.read_text(encoding="utf-8"))
+    assert len(await _profile_rows(store, off)) == 1, "已禁用用户没被 034 入队"
+    assert await _profile_rows(store, on) == [], "034 不该碰正常用户"
