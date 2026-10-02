@@ -192,4 +192,13 @@ cd web/frontend && npx eslint . -c eslint.ci.config.js --quiet && npm test
 
 ## 补充
 
-（空）
+- **2026-10-02：S0 复核暴露第 16 条约束（本 spec 漏列）** —— `tests/test_storage_scope_lock.py:579`
+  `test_scan_coverage_pg_has_no_read_primitive_absent_from_sqlite` 硬性要求两后端公开方法集镜像
+  （只许 PG 多一个 `close`），与「只实现 PG、不碰 SQLite」的设计直接冲突。该锁写于 `ed1d2ead`
+  （2026-09-13），早于 PG-only 政策 `77f0179d`（2026-09-24）11 天，已过期。本 spec 的约束表与
+  测试清单都只覆盖了 `test_storage_contract_shape.py`（它允许 PG 覆写非抽象方法），因而漏掉；
+  本地「受影响文件全绿」在 CI 全量里必红。
+  **Shiyu 拍板 2026-10-02：改锁** —— 按该文件既有 allowlist 形态新增 `PG_ONLY_METHODS` 登记表
+  （逐条理由 + `test_pg_only_registry_has_no_stale_entries` 自清），断言改为
+  `pg_only <= {"close"} | set(PG_ONLY_METHODS)`。对应测试即上述两条，变异 A（漏登记）/ B（登记了
+  非 PG 独有的项）均已实跑打红。

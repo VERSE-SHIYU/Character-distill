@@ -576,22 +576,51 @@ def test_admin_management_primitives_are_called_only_from_admin():
     )
 
 
+#: PG 独有的公开方法 —— 与 `close` 同类：两后端**有意**的不镜像，逐条登记理由。
+#: 判据：AGENTS.md「存储改动只保证 PG」（2026-09-24 起）—— SQLite 冻结、不再测试、计划退役，
+#: 新的存储能力只落 PG。本锁的「镜像」要求写于 2026-09-13，早于该政策 11 天，故对这类方法
+#: 从「禁止」改为「登记」。名单自清见 test_pg_only_registry_has_no_stale_entries。
+PG_ONLY_METHODS = {
+    "get_public_account": "账号目录（本地 users ∪ 对端 remote_user_profiles）按 id 读，只 PG 实现",
+    "search_discoverable_accounts": "账号目录按名搜索，只 PG 实现 —— 禁用账号的排除在库里做，LIMIT 才准",
+    "get_remote_user_cards": "对端用户的已同步公开卡，只 PG 实现",
+    "upsert_remote_account": "同步接收端一次写入资料 + 账号状态，只 PG 实现",
+}
+
+
+def _public_methods(path: pathlib.Path, cls_name: str) -> set[str]:
+    """`cls_name` 类里不以 `_` 开头的（异步）方法名。"""
+    tree = _parse(path)
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == cls_name)
+    return {f.name for f in cls.body
+            if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and not f.name.startswith("_")}
+
+
+def _pg_only_methods() -> set[str]:
+    """PG 实现有、SQLite 实现没有的公开方法。"""
+    return (_public_methods(REPO_ROOT / _BACKENDS[1][0], _BACKENDS[1][1])
+            - _public_methods(REPO_ROOT / _BACKENDS[0][0], _BACKENDS[0][1]))
+
+
 def test_scan_coverage_pg_has_no_read_primitive_absent_from_sqlite():
-    """两后端公开方法集必须镜像（PG 只多一个 `close`）。
+    """两后端公开方法集必须镜像 —— 除 `close` 与 `PG_ONLY_METHODS` 里逐条登记的有意例外。
 
     SQL 事实锁现在已经**同时扫两后端**（`_BACKENDS`），所以 PG 独有的读原语不再靠这条兜 ——
     这条守的是另一件事：**方法集镜像**本身。锁只关心「读属主表且未收窄」的方法，PG 独有的
     写方法 / 不读属主表的方法它看不见；两后端漂移出这类方法时由这条红。"""
-    def _public(path: pathlib.Path, cls_name: str) -> set[str]:
-        tree = _parse(path)
-        cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == cls_name)
-        return {f.name for f in cls.body
-                if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and not f.name.startswith("_")}
-
-    sqlite_pub = _public(REPO_ROOT / _BACKENDS[0][0], _BACKENDS[0][1])
-    pg_only = _public(REPO_ROOT / _BACKENDS[1][0], _BACKENDS[1][1]) - sqlite_pub
-    assert pg_only <= {"close"}, (
-        f"postgres_store 有 sqlite 没有的公开方法：{sorted(pg_only - {'close'})}。"
+    pg_only = _pg_only_methods()
+    allowed = {"close"} | set(PG_ONLY_METHODS)
+    assert pg_only <= allowed, (
+        f"postgres_store 有 sqlite 没有的公开方法：{sorted(pg_only - allowed)}。"
         "两后端应镜像（同一 StorageBase 契约）—— 按 sqlite 侧同形补齐；"
-        "若它是 PG 独有的读原语，还要确认 SQL 事实锁扫得到（锁已同时扫两后端）。"
+        "若它确是有意的 PG 独有能力（AGENTS.md「存储改动只保证 PG」），"
+        "登记进 PG_ONLY_METHODS 并写明理由。"
+    )
+
+
+def test_pg_only_registry_has_no_stale_entries():
+    """名单自清：已补齐到 SQLite / 改名 / 已删的条目必须出册，否则这条红。"""
+    stale = set(PG_ONLY_METHODS) - _pg_only_methods()
+    assert stale == set(), (
+        f"PG_ONLY_METHODS 里的条目已不再 PG 独有（已补齐 / 改名 / 已删），请删除：{sorted(stale)}"
     )
