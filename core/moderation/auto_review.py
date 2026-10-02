@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from adapters.llm_adapter import LLMAdapter
+from core.llm_json import loads_llm_json
 from core.utils import try_record_usage
 
 logger = logging.getLogger(__name__)
@@ -48,8 +49,7 @@ async def auto_review_card(card_json: dict[str, Any], llm: LLMAdapter | None,
     try:
         result = await llm.achat(_REVIEW_SYSTEM_PROMPT, [{"role": "user", "content": review_text}])
         try_record_usage(storage, llm, action="moderation_card_review", source="auto_review")
-        import json as _json
-        parsed = _json.loads(result.strip())
+        parsed = loads_llm_json(result)
         return {
             "pass": bool(parsed.get("pass", True)),
             "reason": str(parsed.get("reason", "")),
@@ -80,17 +80,17 @@ async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None,
     """Two-channel publish review: content (fail-open) + injection (fail-to-flag).
 
     ``llm`` is **required**; 由调用方注入（core 不反向 import 解析出口）。调用方
-    解析不到 LLM 时传 None，走下面的注入通道转人工分支 —— 那条分支是设计的一部分
-    （发布审核宁可转人工，也不能静默放行）。
+    解析不到 LLM 时传 None，注入通道落成 ``error=True`` —— 绝不伪装成「审过且通过」。
+    出错之后怎么处理是调用方的策略（发布路径见 ``core.moderation.publish_review``）。
 
     Returns::
 
         {"content":  {"pass": bool, "reason": str},            # errors => pass (fail-open, unchanged)
-         "injection": {"pass": bool, "reason": str, "error": bool}}  # errors => error=True (flag to manual queue)
+         "injection": {"pass": bool, "reason": str, "error": bool}}  # errors => error=True (surfaced, never a silent pass)
 
     The content channel keeps the historical fail-open behavior; the injection
-    channel must NOT fail open (a silent bypass would void the defense), so any
-    failure is surfaced as ``error`` for the caller to route to a human queue.
+    channel must NOT report a failure as a pass (a silent bypass would void the
+    defense), so any failure is surfaced as ``error`` for the caller's policy.
     """
     if llm is None:
         return {
@@ -102,9 +102,7 @@ async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None,
     try:
         result = await llm.achat(_SPLIT_REVIEW_SYSTEM_PROMPT, [{"role": "user", "content": review_text}])
         try_record_usage(storage, llm, action="moderation_publish_review", source="auto_review")
-        import json as _json
-
-        parsed = _json.loads(result.strip())
+        parsed = loads_llm_json(result)
         return {
             "content": {
                 "pass": bool(parsed.get("content_pass", True)),
@@ -117,7 +115,7 @@ async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None,
             },
         }
     except Exception as exc:
-        logger.warning("Split review failed (content fail-open, injection flagged): %s", exc, exc_info=True)
+        logger.warning("Split review failed (content fail-open, injection error surfaced): %s", exc, exc_info=True)
         return {
             "content": {"pass": True, "reason": ""},
             "injection": {"pass": False, "reason": f"审核调用失败：{exc}", "error": True},
