@@ -21,6 +21,19 @@ const CARD = {
     background: '深夜电台的主播，声音低沉温暖。',
     first_message: '夜已深，还没睡吗？',
     relationships: [{ target: '林晚', relation: '多年听众', attitude: '感激' }],
+    // 弧线：一条变化轴 + 带心态名的阶段（arc-behaviors-s1 的新形态）
+    character_arc: {
+      axis: '从自我怀疑到平静自持',
+      phases: [
+        { label: '自我怀疑', state: '入行头几年，总觉得自己的声音不够好' },
+        { label: '平静自持', state: '如今，能在深夜稳稳接住每一个来电' },
+      ],
+    },
+    // 情境→行为：贯穿全书、各阶段都成立的两种做法
+    situation_behaviors: [
+      { situation: '来电者情绪激动', behavior: '先不打断，等对方说完再轻轻接一句', source_quote: '慢慢来，我在听' },
+      { situation: '被人质疑专业性', behavior: '不辩解，照旧把当天的节目播完' },
+    ],
   }),
 }
 
@@ -221,11 +234,69 @@ async function runEmptyState(fail) {
   await browser.close()
 }
 
+// arc-behaviors-s1：详情页的「角色弧线（变化轴 + 阶段）」与「情境→行为」两节，以及编辑弹窗的三张对象列表。
+// 只出两张截图供人看；断言只锁「这几节确实渲染了」。
+async function runArcBehaviorShots(fail) {
+  const { browser, page, errors } = await openApp({ width: 1280, height: 900 })
+  await login(page, { settleMs: 1200 })
+  await seed(page)
+  await page.waitForSelector('.card-arc-list', { timeout: 10000 })
+  await page.waitForSelector('.card-behavior-list', { timeout: 10000 })
+  await page.evaluate(() => {
+    const el = document.querySelector('.card-arc-axis') || document.querySelector('.card-arc-list')
+    el.scrollIntoView({ block: 'start' })
+  })
+  await page.waitForTimeout(400)
+  const d = await page.evaluate(() => ({
+    axis: document.querySelector('.card-arc-axis')?.textContent || null,
+    phases: [...document.querySelectorAll('.card-arc-item .card-arc-text')].map((e) => e.textContent),
+    behaviors: document.querySelectorAll('.card-behavior-item').length,
+    quotes: document.querySelectorAll('.card-behavior-quote').length,
+  }))
+  console.log('ARC-BEHAVIORS-DETAIL', JSON.stringify(d))
+  if (!d.axis) fail.push('详情页缺变化轴')
+  if (d.phases.length !== 2) fail.push('详情页阶段应 2 个: ' + d.phases.length)
+  if (d.behaviors !== 2) fail.push('详情页行为条目应 2 条: ' + d.behaviors)
+  if (d.quotes !== 1) fail.push('详情页原文摘录应 1 条（第二条无摘录）: ' + d.quotes)
+  await shot(page, 'arc-behaviors-detail.png')
+  if (errors.length) fail.push('详情 pageErrors: ' + JSON.stringify(errors))
+  await browser.close()
+
+  // 编辑弹窗：视口放高，三张对象列表（弧线阶段 / 情境→行为 / 人物关系）能同框
+  const { browser: b2, page: p2, errors: e2 } = await openApp({ width: 1280, height: 2400 })
+  await login(p2, { settleMs: 1200 })
+  await seed(p2)
+  await p2.locator('.card-footer button', { hasText: '编辑' }).click()
+  await p2.waitForSelector('.modal-card.edit-card-modal', { timeout: 10000 })
+  await p2.evaluate(() => {
+    const legend = [...document.querySelectorAll('.edit-card-modal legend')]
+      .find((l) => l.textContent.includes('角色弧线 · 阶段'))
+    const scroll = document.querySelector('.edit-form-scroll')
+    if (legend && scroll) {
+      scroll.scrollTop = legend.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop - 10
+    }
+  })
+  await p2.waitForTimeout(400)
+  const m = await p2.evaluate(() => ({
+    tables: [...document.querySelectorAll('.edit-card-modal legend')].map((l) => l.textContent),
+    rows: document.querySelectorAll('.edit-card-modal .edit-rel-row').length,
+  }))
+  console.log('EDIT-MODAL', JSON.stringify(m))
+  for (const want of ['角色弧线 · 阶段', '情境→行为', '人物关系']) {
+    if (!m.tables.some((t) => t.includes(want))) fail.push('编辑弹窗缺表: ' + want)
+  }
+  if (m.rows !== 5) fail.push('编辑弹窗行数应 5（2 阶段 + 2 行为 + 1 关系）: ' + m.rows)
+  await shot(p2, 'arc-behaviors-edit-modal.png')
+  if (e2.length) fail.push('弹窗 pageErrors: ' + JSON.stringify(e2))
+  await b2.close()
+}
+
 ;(async () => {
   const fail = []
   await runDesktop(fail)
   await runMobile(fail)
   await runEmptyState(fail)
+  await runArcBehaviorShots(fail)
   console.log(fail.length ? '✗ FAIL\n - ' + fail.join('\n - ') : '✓ PASS')
   process.exit(fail.length ? 1 : 0)
 })().catch((e) => { console.error(e); process.exit(1) })

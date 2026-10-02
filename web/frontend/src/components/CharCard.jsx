@@ -6,6 +6,8 @@ import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import TraitList from './common/TraitList'
+import ArcList from './common/ArcList'
+import BehaviorList from './common/BehaviorList'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import useCanWrite from '../hooks/useCanWrite'
 import ErrorBox from './common/ErrorBox'
@@ -830,16 +832,15 @@ function CardDetail({ card, textId, goBack }) {
         )}
 
         {/* Character arc */}
-        {data.character_arc?.length > 0 && (
+        {data.character_arc?.phases?.length > 0 && (
           <CardSection label="角色弧线">
-            <ol className="card-arc-list">
-              {data.character_arc.map((s, i) => (
-                <li key={i} className="card-arc-item">
-                  <span className="card-arc-index">{i + 1}</span>
-                  <span className="card-arc-text">{s}</span>
-                </li>
-              ))}
-            </ol>
+            <ArcList arc={data.character_arc} />
+          </CardSection>
+        )}
+
+        {data.situation_behaviors?.length > 0 && (
+          <CardSection label="情境→行为">
+            <BehaviorList items={data.situation_behaviors} />
           </CardSection>
         )}
 

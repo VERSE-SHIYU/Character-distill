@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Close } from './common/Icon'
 import ErrorBox from './common/ErrorBox'
+import ObjectListField from './common/ObjectListField'
+import { withRowKeys, cleanRows } from '../utils/objectRows'
 
 function splitLines(val) {
   return (Array.isArray(val) ? val.join('\n') : val || '')
@@ -25,11 +26,27 @@ const LIMITS = {
   first_message: { max: 300 },
   emotional_patterns: { max: 550, maxLines: 6, perLine: 70 },
   decision_style: { max: 180 },
-  character_arc: { max: 700, maxLines: 5, perLine: 100 },
+  arc_axis: { max: 40 },
   dialogue_examples: { max: 600 },
 }
 
-const REL_LIMITS = { target: 20, relation: 20, attitude: 50, maxCount: 8 }
+// 三张对象列表的列定义与条数上限。上限只管「还能不能再加」（见 ObjectListField）。
+const REL_MAX = 8
+const REL_COLUMNS = [
+  { key: 'target', placeholder: '对方名字', maxLength: 20 },
+  { key: 'relation', placeholder: '关系', maxLength: 20 },
+  { key: 'attitude', placeholder: '态度', maxLength: 50 },
+]
+const ARC_MAX = 5
+const ARC_COLUMNS = [
+  { key: 'label', placeholder: '心态/立场', maxLength: 8 },
+  { key: 'state', placeholder: '这一阶段的状态（句首点明故事时期）', maxLength: 100, flex: 3 },
+]
+const BEHAVIOR_MAX = 15
+const BEHAVIOR_COLUMNS = [
+  { key: 'situation', placeholder: '遇到什么情境', maxLength: 40 },
+  { key: 'behavior', placeholder: '具体怎么做', maxLength: 80, flex: 2 },
+]
 
 export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, editName = false }) {
   const style = data.speaking_style || {}
@@ -39,6 +56,8 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [relationships, setRelationships] = useState([])
+  const [arcPhases, setArcPhases] = useState([])
+  const [behaviors, setBehaviors] = useState([])
 
   // lazy init on open
   if (isOpen && Object.keys(form).length === 0) {
@@ -58,28 +77,18 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
       first_message: data.first_message || '',
       emotional_patterns: splitLines(data.emotional_patterns),
       decision_style: data.decision_style || '',
-      character_arc: splitLines(data.character_arc),
+      arc_axis: data.character_arc?.axis || '',
       dialogue_examples: Array.isArray(data.dialogue_examples)
         ? data.dialogue_examples.join('\n\n')
         : (data.dialogue_examples || ''),
     }
     setForm(init)
-    setRelationships(rels.map((r, i) => ({ ...r, _key: i })))
+    setRelationships(withRowKeys(rels))
+    setArcPhases(withRowKeys(data.character_arc?.phases))
+    setBehaviors(withRowKeys(data.situation_behaviors))
   }
 
   const update = (field, value) => setForm((f) => ({ ...f, [field]: value }))
-
-  const addRelationship = () => {
-    setRelationships((rs) => [...rs, { target: '', relation: '', attitude: '', _key: Date.now() }])
-  }
-
-  const updateRel = (idx, field, value) => {
-    setRelationships((rs) => rs.map((r, i) => i === idx ? { ...r, [field]: value } : r))
-  }
-
-  const removeRel = (idx) => {
-    setRelationships((rs) => rs.filter((_, i) => i !== idx))
-  }
 
   const FIELD_LABELS = {
     personality_traits: '性格特征',
@@ -89,7 +98,6 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
     key_memories: '关键记忆',
     inner_tensions: '内在矛盾',
     emotional_patterns: '情感模式',
-    character_arc: '角色弧线',
   }
 
   const handleSave = async () => {
@@ -101,7 +109,6 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
       { field: 'key_memories', lines: form.key_memories.split('\n').filter(Boolean) },
       { field: 'inner_tensions', lines: form.inner_tensions.split('\n').filter(Boolean) },
       { field: 'emotional_patterns', lines: form.emotional_patterns.split('\n').filter(Boolean) },
-      { field: 'character_arc', lines: form.character_arc.split('\n').filter(Boolean) },
     ]
     for (const { field, lines } of checks) {
       const limit = LIMITS[field]
@@ -118,8 +125,8 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
         }
       }
     }
-    if (relationships.length > REL_LIMITS.maxCount) {
-      alert(`人物关系最多 ${REL_LIMITS.maxCount} 条`)
+    if (relationships.length > REL_MAX) {
+      alert(`人物关系最多 ${REL_MAX} 条`)
       return
     }
     const cardJson = {
@@ -142,8 +149,9 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
       first_message: form.first_message,
       emotional_patterns: joinLines(form.emotional_patterns),
       decision_style: form.decision_style,
-      character_arc: joinLines(form.character_arc),
-      relationships: relationships.map(({ _key, ...r }) => r),
+      character_arc: { axis: form.arc_axis.trim(), phases: cleanRows(arcPhases, ARC_COLUMNS) },
+      situation_behaviors: cleanRows(behaviors, BEHAVIOR_COLUMNS),
+      relationships: cleanRows(relationships, REL_COLUMNS),
       dialogue_examples: joinLines(form.dialogue_examples.replace(/\n\n+/g, '\n\n')),
     }
     setSaving(true)
@@ -229,27 +237,17 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
             <textarea className="modal-textarea" rows={2} value={form.decision_style} onChange={(e) => update('decision_style', e.target.value)} maxLength={LIMITS.decision_style.max} />
           </Field>
 
-          <Field label="角色弧线（每行一个阶段，描述成长变化）" mono field="character_arc" value={form.character_arc}>
-            <textarea className="modal-textarea" rows={3} value={form.character_arc} onChange={(e) => update('character_arc', e.target.value)} maxLength={LIMITS.character_arc.max} placeholder="从冷漠到学会信任&#10;从逃避责任到主动担当" />
+          <Field label="角色弧线 · 变化轴（一句「从…到…」）" mono field="arc_axis" value={form.arc_axis}>
+            <input className="modal-input" value={form.arc_axis} onChange={(e) => update('arc_axis', e.target.value)} maxLength={LIMITS.arc_axis.max} placeholder="从冷漠到学会信任" />
           </Field>
+          <ObjectListField legend="角色弧线 · 阶段（按故事顺序）" rows={arcPhases} onChange={setArcPhases} columns={ARC_COLUMNS} maxCount={ARC_MAX} addLabel="+ 添加阶段" />
+          <ObjectListField legend="情境→行为（各阶段都成立的做法）" rows={behaviors} onChange={setBehaviors} columns={BEHAVIOR_COLUMNS} maxCount={BEHAVIOR_MAX} addLabel="+ 添加一条" />
 
           <Field label="对话示例（每组间空行分隔）" mono field="dialogue_examples" value={form.dialogue_examples}>
             <textarea className="modal-textarea" rows={4} value={form.dialogue_examples} onChange={(e) => update('dialogue_examples', e.target.value)} maxLength={LIMITS.dialogue_examples.max} placeholder="对方：xxx&#10;角色：xxx&#10;&#10;对方：xxx&#10;角色：xxx" />
           </Field>
 
-          {/* Relationships */}
-          <fieldset className="edit-fieldset">
-            <legend className="modal-label">人物关系</legend>
-            {relationships.map((r, i) => (
-              <div key={r._key} className="edit-rel-row">
-                <input className="modal-input edit-rel-input" placeholder="对方名字" value={r.target} onChange={(e) => updateRel(i, 'target', e.target.value)} maxLength={REL_LIMITS.target} />
-                <input className="modal-input edit-rel-input" placeholder="关系" value={r.relation} onChange={(e) => updateRel(i, 'relation', e.target.value)} maxLength={REL_LIMITS.relation} />
-                <input className="modal-input edit-rel-input" placeholder="态度" value={r.attitude} onChange={(e) => updateRel(i, 'attitude', e.target.value)} maxLength={REL_LIMITS.attitude} />
-                <button type="button" className="btn-secondary edit-rel-del" onClick={() => removeRel(i)}><Close size={12} /></button>
-              </div>
-            ))}
-            <button type="button" className="btn-secondary mt-6" onClick={addRelationship} disabled={relationships.length >= REL_LIMITS.maxCount}>+ 添加关系</button>
-          </fieldset>
+          <ObjectListField legend="人物关系" rows={relationships} onChange={setRelationships} columns={REL_COLUMNS} maxCount={REL_MAX} addLabel="+ 添加关系" />
         </div>
 
         <div className="modal-actions">

@@ -811,6 +811,7 @@ _FORMAT_GROUP_MARKERS = (
     ("G3", '"speaking_style"'),
     ("G4", '"key_memories"'),
     ("G5", '"relationships"'),
+    ("G6", '"situation_behaviors"'),
 )
 _FORMAT_GROUP_ORDER = [g for g, _ in _FORMAT_GROUP_MARKERS]
 
@@ -839,7 +840,9 @@ _SAMPLE_FIELD_VALUES = {
     "relationships": [{"target": "某人", "relation": "朋友", "attitude": "亲近",
                        "note": "认识很久的朋友"}],
     "key_memories": ["关键经历"],
-    "character_arc": ["阶段一"],
+    "character_arc": {"axis": "从甲到乙", "phases": [{"label": "阶段一", "state": "开头时的状态"}]},
+    "situation_behaviors": [{"situation": "被人质疑", "behavior": "先反问再解释",
+                             "source_quote": ""}],
     "psyche": {"openness": 3, "conscientiousness": 3, "extraversion": 3,
                "agreeableness": 3, "neuroticism": 3, "affinity_baseline": 50,
                "volatility": "适中", "grudge_inertia": "一般",

@@ -4,6 +4,8 @@ import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import { likeComment } from '../api/comments'
 import Avatar from './common/Avatar'
 import TraitList from './common/TraitList'
+import ArcList from './common/ArcList'
+import BehaviorList from './common/BehaviorList'
 import useIsMobile from '../hooks/useIsMobile'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
@@ -745,17 +747,17 @@ export default function MarketCardDetail() {
                 </div>
               )}
 
-              {cardData.character_arc?.length > 0 && (
+              {cardData.character_arc?.phases?.length > 0 && (
                 <div className={`card-section card-section--wide${isMobile && collapsedSections.has('arc') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('arc')}>
                   <h3>角色弧线</h3>
-                  <ol className="card-arc-list">
-                    {cardData.character_arc.map((s, i) => (
-                      <li key={i} className="card-arc-item">
-                        <span className="card-arc-index">{i + 1}</span>
-                        <span className="card-arc-text">{s}</span>
-                      </li>
-                    ))}
-                  </ol>
+                  <ArcList arc={cardData.character_arc} />
+                </div>
+              )}
+
+              {cardData.situation_behaviors?.length > 0 && (
+                <div className={`card-section card-section--wide${isMobile && collapsedSections.has('behaviors') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('behaviors')}>
+                  <h3>情境→行为</h3>
+                  <BehaviorList items={cardData.situation_behaviors} />
                 </div>
               )}
             </div>

@@ -66,6 +66,37 @@ class PsycheProfile(BaseModel):
     soft_spots: list[str] = []       # 软肋：戳中会心软的点
 
 
+class ArcPhase(BaseModel):
+    """弧线上的一个阶段。"""
+    label: str = ""   # 这一阶段的心态/立场（≤8 字）；旧卡转来的为空
+    state: str = ""   # 这一阶段的状态，一句话，句首点明对应的故事时期
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_legacy_string(cls, value: Any) -> Any:
+        """旧卡的阶段是一句字符串 → 当作没有 label 的 state。"""
+        return {"state": value} if isinstance(value, str) else value
+
+
+class CharacterArc(BaseModel):
+    """角色弧线：一条变化轴 + 按故事顺序排列的阶段（「变的部分」）。"""
+    axis: str = ""                   # 这条弧线变的是什么，一句「从…到…」；旧卡为空
+    phases: list[ArcPhase] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_legacy_list(cls, value: Any) -> Any:
+        """旧卡的弧线是阶段列表 → 当作没有 axis 的 phases。"""
+        return {"phases": value} if isinstance(value, list) else value
+
+
+class SituationBehavior(BaseModel):
+    """情境→行为：贯穿全书、各阶段都成立的做法（「不变的部分」）。"""
+    situation: str           # 一类情境（不是某一章的某件事）
+    behavior: str            # 此人在这类情境下的具体做法
+    source_quote: str = ""   # 原文摘录，只用于展示；落卡前核对，查不到即清空
+
+
 class CharacterCard(BaseModel):
     """角色卡——蒸馏引擎的唯一输出格式"""
     name: str
@@ -81,7 +112,8 @@ class CharacterCard(BaseModel):
     dialogue_examples: list[str] = []   # 2-3轮原文对话示例，体现角色说话风格
     emotional_patterns: list[str] = []  # 情感模式：什么情况下会生气/开心/沉默/逃避
     decision_style: str = ""            # 决策风格：冲动型/谨慎型/情感驱动/逻辑驱动
-    character_arc: list[str] = []       # 角色弧线：故事中经历的成长变化阶段，每阶段一句话
+    character_arc: CharacterArc = CharacterArc()  # 角色弧线：变化轴 + 阶段
+    situation_behaviors: list[SituationBehavior] = []  # 情境→行为：各阶段都成立的做法
     tags: list[str] = []                # AI 自动打的分类标签（蒸馏时填充）
     psyche: PsycheProfile = PsycheProfile()
     cognitive: CognitiveProfile = CognitiveProfile()  # 认知/语言画像
@@ -103,6 +135,8 @@ FORMAT_GROUPS: dict[str, tuple[str, ...]] = {
     # 拆开后关系再长也只挤自己那一组。
     "G4": ("key_memories", "character_arc", "psyche"),
     "G5": ("relationships",),
+    # 情境→行为单独成组，理由同 G5：条数随角色增长，不挤其他组的输出上限。
+    "G6": ("situation_behaviors",),
 }
 
 # 后置步骤产出的字段（_auto_tag / _generate_awakening / 挑选对话示例），不进分组。
