@@ -3303,28 +3303,6 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get review logs failed: {exc}")
             raise StoreError("get_review_logs", exc) from exc
 
-    async def get_latest_review_log_owned(self, card_id: str, user_id: str) -> dict | None:
-        """Return the most recent review_log row for a card the caller owns.
-
-        Ownership is filtered in SQL (JOIN cards, WHERE c.user_id = $2) — the only
-        caller is the publish pre-flight (market._publish_preflight), which runs on
-        the caller's own card. Returns None for "absent" and "not yours" alike.
-        """
-        try:
-            async with await self._connect() as conn:
-                row = await conn.fetchrow(
-                    """SELECT r.id, r.card_id, r.user_id, r.result, r.reason, r.created_at
-                       FROM review_log r
-                       JOIN cards c ON c.id = r.card_id
-                       WHERE r.card_id = $1 AND c.user_id = $2
-                       ORDER BY r.id DESC LIMIT 1""",
-                    card_id, user_id,
-                )
-            return self._list_rows([row])[0] if row else None
-        except Exception as exc:
-            print(f"[PostgresStore] Get latest review log failed: {exc}")
-            raise StoreError("get_latest_review_log_owned", exc) from exc
-
     # ---- Usage stats ----
 
     async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False, chunk_count: int | None = None) -> None:

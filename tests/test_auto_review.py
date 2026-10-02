@@ -188,6 +188,21 @@ class TestAutoReviewSplit:
         assert result["content"]["pass"] is True
         assert result["injection"]["error"] is True
 
+    @pytest.mark.parametrize("reply", [
+        '```json\n{"content_pass": true, "content_reason": "", "injection_pass": true, "injection_reason": ""}\n```',
+        '审核结果如下：{"content_pass": true, "content_reason": "", "injection_pass": true, "injection_reason": "",}',
+    ])
+    async def test_fenced_or_wrapped_json_is_a_real_verdict(self, reply):
+        """模型包围栏 / 带前后缀 / 尾逗号 —— 是正常判定，不能落成「审核出错」。
+
+        经 `core.llm_json` 与蒸馏共用同一个解析器；换回裸 `json.loads` 即红。
+        """
+        mock_llm = AsyncMock()
+        mock_llm.achat.return_value = reply
+        result = await auto_review_split({"name": "测试"}, llm=mock_llm)
+        assert result["injection"]["error"] is False
+        assert result["injection"]["pass"] is True
+
     async def test_llm_none_flags_injection(self):
         # 不需要隔离 `deps.get_llm`：注入已经是必填参数，core 不会去取全局 LLM。
         result = await auto_review_split({"name": "测试"}, llm=None)

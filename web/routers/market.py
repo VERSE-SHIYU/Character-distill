@@ -437,65 +437,21 @@ def _card_json_obj(card: dict) -> dict:
     return cj if isinstance(cj, dict) else {}
 
 
-async def _publish_preflight(card: dict, user: dict, storage: StorageBase) -> tuple[str, str]:
-    """Market publish pre-screen shared by POST and PUT.
+async def _publish_preflight(card: dict, user: dict, storage: StorageBase) -> None:
+    """Publish pre-screen shared by POST and PUT: review, record, enforce.
 
-    Returns ``(result, reason)`` where result ∈ pass/reject/flag/gate and writes
-    review_log rows for reject/flag outcomes (never for gate — that just re-raises
-    the existing pending-review state). Layer counters are kept separate:
-    keyword pre-screen (2.2) and the LLM injection dimension (2.5) are logged
-    with distinct ``[keyword-pregate]`` / ``[publish-injection]`` reason prefixes
-    so their contributions can be tallied independently.
+    Policy lives in ``core.moderation.publish_review``; this only maps its
+    verdict onto HTTP (reject → 400) and writes the one review_log row the
+    admin reviews from.
     """
-    from core.moderation.auto_review import _flatten_card, auto_review_split
-    from core.moderation.decision_engine import DecisionEngine
-    from core.moderation.keyword_filter import KeywordFilter
-    from core.moderation.preprocessor import TextPreprocessor
+    from core.moderation.publish_review import review_for_publish
     from storage.base import new_review_id
 
-    card_id = card["id"]
-    card_json = _card_json_obj(card)
-
-    # 0) Pending-review gate (2.6): a distill-time flag holds the card out of the
-    #    market until an admin writes a pass row. Checked before any LLM spend.
-    latest = await storage.get_latest_review_log_owned(card_id, user["id"])
-    if latest and latest.get("result") == "flag":
-        return "gate", ""
-
-    # 1) Keyword pre-screen (2.2). Content-safety blocklist only; an injection with
-    #    zero flagged words passes this layer by design — the LLM dimension below
-    #    is the actual injection defense. Counted separately, never merged.
-    text = _flatten_card(card_json)
-    kw_score, kw_tags = KeywordFilter().match(TextPreprocessor().process(text))
-    decision = DecisionEngine().decide(kw_score, None, None)
-    if decision.decision == "block":
-        print(f"[market-pregate] keyword block: {kw_tags}")
-        await storage.save_review_log(new_review_id(), card_id, user["id"], "reject", f"[keyword-pregate] {','.join(kw_tags)}")
-        return "reject", f"内容含违禁关键词：{','.join(kw_tags)}"
-    if decision.decision == "flag":
-        print(f"[market-pregate] keyword flag: {kw_tags}")
-        await storage.save_review_log(new_review_id(), card_id, user["id"], "flag", f"[keyword-pregate] {','.join(kw_tags)}")
-        return "flag", "内容含敏感词，已提交人工审核"
-
-    # 2) LLM two-channel review (2.5). Content fails open (unchanged);
-    #    injection failure is routed to the manual queue, never silently passed.
-    #    实例走全局工厂 `get_llm()`（§2.8 的唯一构造出口）；未配置 key 时它返回 None，
-    #    由 `auto_review_split` 的注入通道落成 `error=True` → 下面那条转人工分支。
-    review = await auto_review_split(card_json, get_llm(), storage=storage)
-    if review["injection"].get("error"):
-        reason = f"[publish-injection] 审核调用失败：{review['injection'].get('reason', '')}"
-        print(f"[market-pregate] injection review error → flag: {reason}")
-        await storage.save_review_log(new_review_id(), card_id, user["id"], "flag", reason[:300])
-        return "flag", "审核服务异常，已提交人工复核"
-    if not review["injection"].get("pass"):
-        reason = f"[publish-injection] {review['injection'].get('reason', '')}"
-        await storage.save_review_log(new_review_id(), card_id, user["id"], "reject", reason[:300])
-        return "reject", f"内容审核未通过：检测到指令性/越权内容（{review['injection'].get('reason', '')}）"
-    if not review["content"].get("pass"):
-        reason = str(review["content"].get("reason", ""))
-        await storage.save_review_log(new_review_id(), card_id, user["id"], "reject", reason[:300])
-        return "reject", f"发布失败：内容审核未通过 — {reason}"
-    return "pass", ""
+    verdict = await review_for_publish(_card_json_obj(card), get_llm(), storage=storage)
+    await storage.save_review_log(new_review_id(), card["id"], user["id"],
+                                  verdict.outcome.value, verdict.log_reason)
+    if not verdict.allowed:
+        raise HTTPException(400, verdict.user_message)
 
 
 @router.post("/{card_id}/publish")
@@ -513,29 +469,9 @@ async def publish_card(
     if not card:
         raise HTTPException(404, "Card not found")
 
-    # Publish pre-screen: pending-review gate (2.6) + keyword pre-screen (2.2)
-    # + two-channel LLM review (2.5). Unexpected failure routes to a human queue
-    # (fail-to-flag) instead of publishing unreviewed content.
-    try:
-        outcome, reason = await _publish_preflight(card, user, storage)
-    except Exception as exc:
-        logger.error("[market-pregate] preflight crashed → flag: %s", exc, exc_info=True)
-        from storage.base import new_review_id as _rid
-        try:
-            await storage.save_review_log(_rid(), card_id, user["id"], "flag", f"[publish-injection] 审核异常：{exc}"[:300])
-        except Exception as exc:
-            # 已经对用户说了「已转人工复核」，复核记录却没落库 —— 队列里根本没这条，
-            # 用户被误导、审计链断掉，且不会自愈。故记 ERROR（会发告警邮件）。
-            logger.error("Market: review log write failed for card %s: %s", card_id, exc,
-                         exc_info=True)
-        raise HTTPException(403, "审核服务异常，该卡片已转人工复核")
-    if outcome == "reject":
-        raise HTTPException(400, reason)
-    if outcome in ("flag", "gate"):
-        raise HTTPException(403, "该角色卡已提交人工复核，审核通过后方可发布")
-    # outcome == pass → record the pass decision (historical behavior)
-    from storage.base import new_review_id as _rid
-    await storage.save_review_log(_rid(), card_id, user["id"], "pass", "")
+    # A crash in the pre-screen is a bug, not a verdict: it propagates to the
+    # unified exit (500 + traced ERROR log) and nothing is published.
+    await _publish_preflight(card, user, storage)
 
     card_json_str = card.get("card_json", "{}")
     if isinstance(card_json_str, dict):
@@ -595,13 +531,9 @@ async def update_published_card(
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
     if not card:
         raise HTTPException(404, "Card not found")
-    # Same pre-screen as first-time publish: gate + keyword + two-channel review,
+    # Same pre-screen as first-time publish: keyword + two-channel review,
     # applied to the *incoming* payload (that is the untrusted content being pushed).
-    outcome, reason = await _publish_preflight({**card, "card_json": body.card_json}, user, storage)
-    if outcome == "reject":
-        raise HTTPException(400, reason)
-    if outcome in ("flag", "gate"):
-        raise HTTPException(403, "该角色卡已提交人工复核，审核通过后方可更新")
+    await _publish_preflight({**card, "card_json": body.card_json}, user, storage)
     old_json = card.get("card_json", "{}")
     if isinstance(old_json, dict):
         old_json = json.dumps(old_json, ensure_ascii=False)
