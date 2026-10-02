@@ -3882,6 +3882,16 @@ label[for] {
   margin-bottom: 8px;
 }
 
+/* 阶段文字 + 该阶段的做法列表。是 flex 子项，min-width: 0 的理由同 .card-arc-text。 */
+.card-arc-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.card-arc-body .card-behavior-list {
+  margin-top: 6px;
+}
+
 .card-arc-label {
   color: var(--text);
   font-weight: 600;

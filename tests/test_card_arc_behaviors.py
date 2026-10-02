@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """角色弧线（变化轴 + 阶段）与情境→行为条目：卡片数据层的契约。
 
-spec：docs/specs/arc-behaviors-s1.md。两块数据各管各的 —— 弧线记「变的部分」，
-情境→行为记「各阶段都成立的部分」，彼此不引用。
+spec：docs/specs/arc-behaviors-s1.md。做法挂在哪里就是它的适用范围：阶段下的只在
+那个阶段成立，卡片顶层的从头到尾都成立。
 """
 from core.card_quotes import retract_unverified
 from core.distiller import DISTILL_PROMPT_AFTER_NAME, format_prompt_after
@@ -18,8 +18,11 @@ def test_legacy_string_list_arc_becomes_unlabeled_phases():
         ("", "起初冷漠"), ("", "学会信任")]
 
 
-def test_object_arc_keeps_axis_and_labels():
-    arc = {"axis": "从桀骜到担当", "phases": [{"label": "桀骜不服", "state": "大闹天宫前后，动辄动手"}]}
+def test_object_arc_keeps_axis_labels_and_phase_behaviors():
+    arc = {"axis": "从桀骜到担当", "phases": [{
+        "label": "桀骜不服", "state": "大闹天宫前后，动辄动手",
+        "behaviors": [{"situation": "被人轻视", "behavior": "当场动手", "source_quote": ""}],
+    }]}
     card = CharacterCard.model_validate({"name": "x", "character_arc": arc})
     assert card.character_arc.model_dump() == arc
 
@@ -35,26 +38,21 @@ def test_dump_roundtrip_is_stable_and_canonicalizes_legacy_arc():
     legacy = {"name": "x", "character_arc": ["a"],
               "situation_behaviors": [{"situation": "s", "behavior": "b"}]}
     once = CharacterCard.model_validate(legacy).model_dump()
-    assert once["character_arc"] == {"axis": "", "phases": [{"label": "", "state": "a"}]}
+    assert once["character_arc"] == {"axis": "", "phases": [{"label": "", "state": "a", "behaviors": []}]}
     assert once["situation_behaviors"] == [{"situation": "s", "behavior": "b", "source_quote": ""}]
     assert CharacterCard.model_validate(once).model_dump() == once
 
 
 # ── 提示词片段归属 ────────────────────────────────────────────────────
 
-def test_g6_prompt_carries_behaviors_only():
+def test_g6_prompt_carries_arc_and_behaviors_together():
+    """做法要归到阶段下面：弧线与情境→行为必须在同一组（同一次调用）里产出。"""
     g6, g4 = format_prompt_after("G6"), format_prompt_after("G4")
-    assert "O. 情境→行为" in g6 and '"situation_behaviors"' in g6
-    assert "situation_behaviors 的每个元素是【对象】" in g6
-    assert "O. 情境→行为" not in g4 and '"situation_behaviors"' not in g4
-    assert '"character_arc"' not in g6
-
-
-def test_g4_prompt_asks_for_axis_and_labeled_phases():
-    g4 = format_prompt_after("G4")
-    assert "L. 角色弧线" in g4
-    assert '"axis"' in g4 and '"phases"' in g4 and '"label"' in g4 and '"state"' in g4
-    assert "character_arc 是【对象】" in g4
+    assert "L. 角色弧线" in g6 and "O. 情境→行为" in g6
+    assert '"axis"' in g6 and '"phases"' in g6 and '"behaviors"' in g6 and '"situation_behaviors"' in g6
+    assert "character_arc 是【对象】" in g6 and "situation_behaviors 的每个元素是【对象】" in g6
+    assert "L. 角色弧线" not in g4 and "O. 情境→行为" not in g4
+    assert '"character_arc"' not in g4 and '"situation_behaviors"' not in g4
 
 
 def test_full_prompt_carries_both():
@@ -109,3 +107,17 @@ def test_several_unverified_catchphrases_are_all_removed():
     assert new.speaking_style.catchphrases == ["你老慢慢说"]
     assert {r["quote"] for r in retracted} == {"无事忙", "阿弥陀佛保佑"}
     assert {r["field"] for r in retracted} == {"speaking_style.catchphrases"}
+
+
+def test_phase_behaviors_go_through_the_same_checks():
+    """阶段下的做法与顶层的走同一套核对：摘录查不到清空，引号里查不到的去引号。"""
+    card = CharacterCard.model_validate({"name": "刘姥姥", "character_arc": {"phases": [{
+        "label": "初来乍到", "state": "头一回进府",
+        "behaviors": [{"situation": "被人取笑", "behavior": "说“我老婆子没见过世面”来自嘲",
+                       "source_quote": "她拍着大腿哈哈大笑"}],
+    }]}})
+    new, _ = retract_unverified(card, SOURCE)
+    row = new.character_arc.phases[0].behaviors[0]
+    assert row.source_quote == ""
+    assert row.behavior == "说我老婆子没见过世面来自嘲"
+

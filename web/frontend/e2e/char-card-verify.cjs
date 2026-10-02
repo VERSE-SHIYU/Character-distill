@@ -25,11 +25,16 @@ const CARD = {
     character_arc: {
       axis: '从自我怀疑到平静自持',
       phases: [
-        { label: '自我怀疑', state: '入行头几年，总觉得自己的声音不够好' },
+        {
+          label: '自我怀疑',
+          state: '入行头几年，总觉得自己的声音不够好',
+          // 只在这一阶段成立的做法，显示在该阶段下面
+          behaviors: [{ situation: '听众夸她', behavior: '连忙岔开话题，把功劳推给导播' }],
+        },
         { label: '平静自持', state: '如今，能在深夜稳稳接住每一个来电' },
       ],
     },
-    // 情境→行为：贯穿全书、各阶段都成立的两种做法
+    // 情境→行为：从头到尾都成立的两种做法
     situation_behaviors: [
       { situation: '来电者情绪激动', behavior: '先不打断，等对方说完再轻轻接一句', source_quote: '慢慢来，我在听' },
       { situation: '被人质疑专业性', behavior: '不辩解，照旧把当天的节目播完' },
@@ -256,7 +261,7 @@ async function runArcBehaviorShots(fail) {
   console.log('ARC-BEHAVIORS-DETAIL', JSON.stringify(d))
   if (!d.axis) fail.push('详情页缺变化轴')
   if (d.phases.length !== 2) fail.push('详情页阶段应 2 个: ' + d.phases.length)
-  if (d.behaviors !== 2) fail.push('详情页行为条目应 2 条: ' + d.behaviors)
+  if (d.behaviors !== 3) fail.push('详情页行为条目应 3 条（阶段下 1 + 通用 2）: ' + d.behaviors)
   if (d.quotes !== 1) fail.push('详情页原文摘录应 1 条（第二条无摘录）: ' + d.quotes)
   await shot(page, 'arc-behaviors-detail.png')
   if (errors.length) fail.push('详情 pageErrors: ' + JSON.stringify(errors))
@@ -285,7 +290,7 @@ async function runArcBehaviorShots(fail) {
   for (const want of ['角色弧线 · 阶段', '情境→行为', '人物关系']) {
     if (!m.tables.some((t) => t.includes(want))) fail.push('编辑弹窗缺表: ' + want)
   }
-  if (m.rows !== 5) fail.push('编辑弹窗行数应 5（2 阶段 + 2 行为 + 1 关系）: ' + m.rows)
+  if (m.rows !== 6) fail.push('编辑弹窗行数应 6（2 阶段 + 1 阶段做法 + 2 通用做法 + 1 关系）: ' + m.rows)
   await shot(p2, 'arc-behaviors-edit-modal.png')
   if (e2.length) fail.push('弹窗 pageErrors: ' + JSON.stringify(e2))
   await b2.close()

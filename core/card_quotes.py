@@ -36,6 +36,7 @@ VERIFIED_FIELDS: tuple[str, ...] = (
     "speaking_style.sentence_pattern",
     "relationships[].attitude",
     "situation_behaviors[].behavior",
+    "character_arc.phases[].behaviors[].behavior",
 )
 
 # 整个值就声明「是原文」的字段（同样的路径形状）。**唯一出处**。对不上没有可保留的部分：
@@ -43,6 +44,7 @@ VERIFIED_FIELDS: tuple[str, ...] = (
 VERBATIM_FIELDS: tuple[str, ...] = (
     "speaking_style.catchphrases[]",
     "situation_behaviors[].source_quote",
+    "character_arc.phases[].behaviors[].source_quote",
 )
 
 

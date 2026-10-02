@@ -42,7 +42,8 @@ const ARC_COLUMNS = [
   { key: 'label', placeholder: '心态/立场', maxLength: 8 },
   { key: 'state', placeholder: '这一阶段的状态（句首点明故事时期）', maxLength: 100, flex: 3 },
 ]
-const BEHAVIOR_MAX = 15
+const BEHAVIOR_MAX = 12        // 从头到尾都成立的做法
+const PHASE_BEHAVIOR_MAX = 6   // 每个阶段专属的做法
 const BEHAVIOR_COLUMNS = [
   { key: 'situation', placeholder: '遇到什么情境', maxLength: 40 },
   { key: 'behavior', placeholder: '具体怎么做', maxLength: 80, flex: 2 },
@@ -84,7 +85,7 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
     }
     setForm(init)
     setRelationships(withRowKeys(rels))
-    setArcPhases(withRowKeys(data.character_arc?.phases))
+    setArcPhases(withRowKeys(data.character_arc?.phases).map((p) => ({ ...p, behaviors: withRowKeys(p.behaviors) })))
     setBehaviors(withRowKeys(data.situation_behaviors))
   }
 
@@ -149,7 +150,11 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
       first_message: form.first_message,
       emotional_patterns: joinLines(form.emotional_patterns),
       decision_style: form.decision_style,
-      character_arc: { axis: form.arc_axis.trim(), phases: cleanRows(arcPhases, ARC_COLUMNS) },
+      character_arc: {
+        axis: form.arc_axis.trim(),
+        phases: cleanRows(arcPhases, ARC_COLUMNS)
+          .map((p) => ({ ...p, behaviors: cleanRows(p.behaviors || [], BEHAVIOR_COLUMNS) })),
+      },
       situation_behaviors: cleanRows(behaviors, BEHAVIOR_COLUMNS),
       relationships: cleanRows(relationships, REL_COLUMNS),
       dialogue_examples: joinLines(form.dialogue_examples.replace(/\n\n+/g, '\n\n')),
@@ -241,7 +246,18 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
             <input className="modal-input" value={form.arc_axis} onChange={(e) => update('arc_axis', e.target.value)} maxLength={LIMITS.arc_axis.max} placeholder="从冷漠到学会信任" />
           </Field>
           <ObjectListField legend="角色弧线 · 阶段（按故事顺序）" rows={arcPhases} onChange={setArcPhases} columns={ARC_COLUMNS} maxCount={ARC_MAX} addLabel="+ 添加阶段" />
-          <ObjectListField legend="情境→行为（各阶段都成立的做法）" rows={behaviors} onChange={setBehaviors} columns={BEHAVIOR_COLUMNS} maxCount={BEHAVIOR_MAX} addLabel="+ 添加一条" />
+          {arcPhases.map((p, i) => (
+            <ObjectListField
+              key={p._key}
+              legend={`第 ${i + 1} 阶段${p.label ? `「${p.label}」` : ''}的做法（只在这一阶段成立）`}
+              rows={p.behaviors || []}
+              onChange={(rows) => setArcPhases((ps) => ps.map((q) => (q._key === p._key ? { ...q, behaviors: rows } : q)))}
+              columns={BEHAVIOR_COLUMNS}
+              maxCount={PHASE_BEHAVIOR_MAX}
+              addLabel="+ 添加阶段做法"
+            />
+          ))}
+          <ObjectListField legend="情境→行为（从头到尾都成立的做法）" rows={behaviors} onChange={setBehaviors} columns={BEHAVIOR_COLUMNS} maxCount={BEHAVIOR_MAX} addLabel="+ 添加一条" />
 
           <Field label="对话示例（每组间空行分隔）" mono field="dialogue_examples" value={form.dialogue_examples}>
             <textarea className="modal-textarea" rows={4} value={form.dialogue_examples} onChange={(e) => update('dialogue_examples', e.target.value)} maxLength={LIMITS.dialogue_examples.max} placeholder="对方：xxx&#10;角色：xxx&#10;&#10;对方：xxx&#10;角色：xxx" />

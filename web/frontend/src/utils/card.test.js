@@ -57,11 +57,6 @@ describe('parseCardJson 弧线归一（旧卡字符串数组 → { axis, phases 
     expect('character_arc' in c).toBe(false)
   })
 
-  it('阶段里混着字符串与对象（编辑保存前的过渡形态）也归一', () => {
-    const c = parseCardJson({ card_json: { character_arc: { axis: 'x', phases: ['旧', { label: 'L' }] } } })
-    expect(c.character_arc).toEqual({ axis: 'x', phases: [{ label: '', state: '旧' }, { label: 'L', state: '' }] })
-  })
-
   it('归一不改动传入的 card_json', () => {
     const card = { card_json: { character_arc: ['a'] } }
     parseCardJson(card)

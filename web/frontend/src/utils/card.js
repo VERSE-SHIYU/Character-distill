@@ -6,20 +6,11 @@ function normalizeIdentity(identity) {
     : (typeof identity.description === 'string' ? identity.description : '')
 }
 
-// character_arc 两种来源形态：旧卡是字符串数组（每阶段一句），新卡是 { axis, phases: [{ label, state }] }。
-// 全站只认后一种 —— 在这里归一一次，渲染与编辑都不再判形态。缺失（null/undefined）与已是
-// 规范形态的原样返回（同一引用），调用方据此判断「没动过，不必拷贝」。
+// character_arc 的旧形态是字符串数组（每阶段一句）；现在是 { axis, phases: [{ label, state, behaviors }] }。
+// 全站只认后一种 —— 在这里把旧形态转一次，渲染与编辑都不再判形态。不是数组的原样返回。
 export function normalizeArc(arc) {
-  if (arc == null) return arc
-  const isPhase = (p) => p !== null && typeof p === 'object'
-  if (!Array.isArray(arc) && typeof arc === 'object' && Array.isArray(arc.phases) && arc.phases.every(isPhase)) return arc
-  const phases = Array.isArray(arc) ? arc : (Array.isArray(arc.phases) ? arc.phases : [])
-  return {
-    axis: !Array.isArray(arc) && typeof arc.axis === 'string' ? arc.axis : '',
-    phases: phases.map((p) => (isPhase(p)
-      ? { label: p.label || '', state: p.state || '' }
-      : { label: '', state: String(p ?? '') })),
-  }
+  if (!Array.isArray(arc)) return arc
+  return { axis: '', phases: arc.map((s) => ({ label: '', state: String(s) })) }
 }
 
 export function parseCardJson(card) {

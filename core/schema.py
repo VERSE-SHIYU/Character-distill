@@ -66,10 +66,22 @@ class PsycheProfile(BaseModel):
     soft_spots: list[str] = []       # 软肋：戳中会心软的点
 
 
+class SituationBehavior(BaseModel):
+    """情境→行为：此人遇到某类情境时的具体做法。
+
+    挂在哪里就是它的适用范围：阶段下的（`ArcPhase.behaviors`）只在那个阶段成立，
+    卡片顶层的（`CharacterCard.situation_behaviors`）从头到尾都成立。
+    """
+    situation: str           # 一类情境（不是某一章的某件事）
+    behavior: str            # 此人在这类情境下的具体做法
+    source_quote: str = ""   # 原文摘录，只用于展示；落卡前核对，查不到即清空
+
+
 class ArcPhase(BaseModel):
     """弧线上的一个阶段。"""
     label: str = ""   # 这一阶段的心态/立场（≤8 字）；旧卡转来的为空
     state: str = ""   # 这一阶段的状态，一句话，句首点明对应的故事时期
+    behaviors: list[SituationBehavior] = []   # 只在这一阶段成立的做法
 
     @model_validator(mode="before")
     @classmethod
@@ -90,13 +102,6 @@ class CharacterArc(BaseModel):
         return {"phases": value} if isinstance(value, list) else value
 
 
-class SituationBehavior(BaseModel):
-    """情境→行为：贯穿全书、各阶段都成立的做法（「不变的部分」）。"""
-    situation: str           # 一类情境（不是某一章的某件事）
-    behavior: str            # 此人在这类情境下的具体做法
-    source_quote: str = ""   # 原文摘录，只用于展示；落卡前核对，查不到即清空
-
-
 class CharacterCard(BaseModel):
     """角色卡——蒸馏引擎的唯一输出格式"""
     name: str
@@ -113,7 +118,7 @@ class CharacterCard(BaseModel):
     emotional_patterns: list[str] = []  # 情感模式：什么情况下会生气/开心/沉默/逃避
     decision_style: str = ""            # 决策风格：冲动型/谨慎型/情感驱动/逻辑驱动
     character_arc: CharacterArc = CharacterArc()  # 角色弧线：变化轴 + 阶段
-    situation_behaviors: list[SituationBehavior] = []  # 情境→行为：各阶段都成立的做法
+    situation_behaviors: list[SituationBehavior] = []  # 情境→行为：从头到尾都成立的做法
     tags: list[str] = []                # AI 自动打的分类标签（蒸馏时填充）
     psyche: PsycheProfile = PsycheProfile()
     cognitive: CognitiveProfile = CognitiveProfile()  # 认知/语言画像
@@ -133,10 +138,11 @@ FORMAT_GROUPS: dict[str, tuple[str, ...]] = {
     # relationships 从 G4 拆出来单独成组：关系条数随登场人数增长（宝玉这种主角几十
     # 条），与其余字段同组会把这组的输出顶到 token 上限；分组之间各给各的上限，
     # 拆开后关系再长也只挤自己那一组。
-    "G4": ("key_memories", "character_arc", "psyche"),
+    "G4": ("key_memories", "psyche"),
     "G5": ("relationships",),
-    # 情境→行为单独成组，理由同 G5：条数随角色增长，不挤其他组的输出上限。
-    "G6": ("situation_behaviors",),
+    # 弧线与情境→行为同组：做法要归到阶段下面，阶段和做法必须在同一次调用里产出。
+    # 单独成组的理由同 G5：条数随角色增长，不挤其他组的输出上限。
+    "G6": ("character_arc", "situation_behaviors"),
 }
 
 # 后置步骤产出的字段（_auto_tag / _generate_awakening / 挑选对话示例），不进分组。
