@@ -150,6 +150,38 @@ async def _enqueue_profile_sync(conn: asyncpg.Connection, user_id: str) -> None:
     )
 
 
+# ── 账号目录 ────────────────────────────────────────────────────────────────
+#
+# 一个账号要么在 `users`（本地注册），要么只以 `remote_user_profiles` 存在（对端地区用户，
+# 隐私政策 3.2(1) 同步来的公开资料）。「本节点看得见的所有账号」只在这里合成，凡是按 id /
+# 按名字找账号的读取都 `FROM ({_PUBLIC_ACCOUNTS}) a`，不再各处手写「先查本地再查对端」。
+#
+# 合并规则：同 id 两边都有（演示账号两地镜像）→ 只取本地；对端无昵称（同步不带）→ 空串；
+# `is_remote` 标来源；`is_disabled` 两边同口径（0 / 1）。
+_PUBLIC_ACCOUNTS = """
+    SELECT u.id, u.username, COALESCE(u.nickname, '') AS nickname,
+           COALESCE(u.avatar_data, '') AS avatar_data, u.home_region,
+           u.is_disabled, FALSE AS is_remote
+    FROM users u
+    UNION ALL
+    SELECT r.id, r.username, '' AS nickname,
+           COALESCE(r.avatar_data, '') AS avatar_data, r.home_region,
+           r.is_disabled, TRUE AS is_remote
+    FROM remote_user_profiles r
+    WHERE NOT EXISTS (SELECT 1 FROM users l WHERE l.id = r.id)
+"""
+_ACCOUNT_COLS = "id, username, nickname, avatar_data, home_region, is_disabled, is_remote"
+
+# 对端角色卡的作者：`remote_cards` 只存作者 id，名字 / 头像经 `remote_user_profiles` 取。
+# 凡是展示对端卡的查询都用这两段，不再写死 `'' AS author_name`。资料未同步到时为空串，
+# 与本地卡 `LEFT JOIN users` 的缺省同一口径。用法：remote_cards 的别名必须是 `rc`。
+REMOTE_CARD_AUTHOR_JOIN = "LEFT JOIN remote_user_profiles rup ON rup.id = rc.user_id"
+REMOTE_CARD_AUTHOR_COLS = (
+    "COALESCE(rup.username, '') AS author_name, "
+    "COALESCE(rup.avatar_data, '') AS author_avatar"
+)
+
+
 class PostgresStore(StorageBase):
     """Asynchronous storage implementation based on PostgreSQL via asyncpg."""
 
@@ -765,8 +797,9 @@ class PostgresStore(StorageBase):
             if remote:
                 remote["is_remote"] = True
                 remote["liked_by_me"] = False
-                remote["author_name"] = ""
-                remote["author_avatar"] = ""
+                owner = await self.get_public_account(remote["user_id"]) or {}
+                remote["author_name"] = owner.get("username") or ""
+                remote["author_avatar"] = owner.get("avatar_data") or ""
                 remote["text_title"] = ""
                 remote["comment_count"] = 0
                 remote["forked_from"] = ""
@@ -918,9 +951,10 @@ class PostgresStore(StorageBase):
                                      '' AS forked_from, 0 AS likes,
                                      COALESCE(rc.origin_created_at::timestamptz, NULL::timestamptz) AS created_at,
                                      rc.market_description, rc.market_tags,
-                                     '' AS author_name, '' AS author_avatar, '' AS text_title,
+                                     {REMOTE_CARD_AUTHOR_COLS}, '' AS text_title,
                                      0 AS comment_count, 1 AS is_remote, rc.origin_region
                               FROM remote_cards rc
+                              {REMOTE_CARD_AUTHOR_JOIN}
                               WHERE rc.market_tags LIKE $2
                             ) combined
                             ORDER BY {order}
@@ -954,9 +988,10 @@ class PostgresStore(StorageBase):
                                      '' AS forked_from, 0 AS likes,
                                      COALESCE(rc.origin_created_at::timestamptz, NULL::timestamptz) AS created_at,
                                      rc.market_description, rc.market_tags,
-                                     '' AS author_name, '' AS author_avatar, '' AS text_title,
+                                     {REMOTE_CARD_AUTHOR_COLS}, '' AS text_title,
                                      0 AS comment_count, 1 AS is_remote, rc.origin_region
                               FROM remote_cards rc
+                              {REMOTE_CARD_AUTHOR_JOIN}
                             ) combined
                             ORDER BY {order}
                             LIMIT $1 OFFSET $2""",
@@ -1000,7 +1035,7 @@ class PostgresStore(StorageBase):
             pattern = f"%{keyword}%"
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    """SELECT id, name, card_json, user_id, avatar_data,
+                    f"""SELECT id, name, card_json, user_id, avatar_data,
                               forked_from, likes, created_at,
                               market_description, market_tags,
                               author_name, author_avatar, text_title,
@@ -1025,9 +1060,10 @@ class PostgresStore(StorageBase):
                                  '' AS forked_from, 0 AS likes,
                                  COALESCE(rc.origin_created_at::timestamptz, NULL::timestamptz) AS created_at,
                                  rc.market_description, rc.market_tags,
-                                 '' AS author_name, '' AS author_avatar, '' AS text_title,
+                                 {REMOTE_CARD_AUTHOR_COLS}, '' AS text_title,
                                  0 AS comment_count, 1 AS is_remote, rc.origin_region
                           FROM remote_cards rc
+                          {REMOTE_CARD_AUTHOR_JOIN}
                           WHERE rc.name LIKE $2
                         ) combined
                         ORDER BY likes DESC, created_at DESC
@@ -1058,12 +1094,16 @@ class PostgresStore(StorageBase):
             raise StoreError("search_public_cards_total", exc) from exc
 
     async def global_search(self, keyword: str, user_id: str = "") -> dict:
-        """Search cards, texts, users by keyword. Returns max 5 per type."""
+        """Search cards, texts, users by keyword. Returns max 5 per type.
+
+        Users come from the account directory (`search_discoverable_accounts`),
+        so peer-region users are included and each carries `is_remote`.
+        """
         like = f"%{keyword}%"
         try:
             async with await self._connect() as conn:
                 cards_local = await conn.fetch(
-                    """SELECT id, name, card_json, avatar_data, author_name
+                    f"""SELECT id, name, card_json, avatar_data, author_name
                         FROM (
                           (SELECT c.id, c.name, c.card_json, c.avatar_data,
                                   COALESCE(u.username, '') AS author_name
@@ -1074,9 +1114,11 @@ class PostgresStore(StorageBase):
                            ORDER BY c.likes DESC
                            LIMIT 5)
                           UNION ALL
-                          (SELECT id, name, card_json, avatar_data, '' AS author_name
-                           FROM remote_cards
-                           WHERE name ILIKE $2
+                          (SELECT rc.id, rc.name, rc.card_json, rc.avatar_data,
+                                  COALESCE(rup.username, '') AS author_name
+                           FROM remote_cards rc
+                           {REMOTE_CARD_AUTHOR_JOIN}
+                           WHERE rc.name ILIKE $2
                            LIMIT 5)
                         ) combined LIMIT 5""",
                     like, like,
@@ -1085,23 +1127,14 @@ class PostgresStore(StorageBase):
                 texts_rows = await conn.fetch(
                     """SELECT id, title, filename, char_count
                        FROM texts
-                       WHERE user_id = $1 AND (title LIKE $2 OR filename LIKE $2)
+                       WHERE user_id = $1 AND (title ILIKE $2 OR filename ILIKE $2)
                        ORDER BY created_at DESC
                        LIMIT 5""",
                     user_id, like,
                 )
                 texts = self._list_rows(texts_rows)
 
-                users_rows = await conn.fetch(
-                    """SELECT id, username, nickname, avatar_data
-                       FROM users
-                       WHERE (username ILIKE $1 OR nickname ILIKE $1) AND is_disabled = 0
-                       ORDER BY username
-                       LIMIT 5""",
-                    like,
-                )
-                users = self._list_rows(users_rows)
-
+            users = await self.search_discoverable_accounts(keyword, 5)
             return {"cards": cards, "texts": texts, "users": users}
         except Exception as exc:
             print(f"[PostgresStore] Global search failed: {exc}")
@@ -2570,10 +2603,13 @@ class PostgresStore(StorageBase):
     async def set_user_disabled(self, user_id: str, is_disabled: bool) -> None:
         try:
             async with await self._connect() as conn:
-                tag = await conn.execute(
-                    "UPDATE users SET is_disabled = $1 WHERE id = $2", int(is_disabled), user_id)
-            if self._parse_rowcount(tag) == 0:
-                raise ValueError(f"用户不存在：{user_id}")
+                async with conn.transaction():
+                    tag = await conn.execute(
+                        "UPDATE users SET is_disabled = $1 WHERE id = $2", int(is_disabled), user_id)
+                    if self._parse_rowcount(tag) == 0:
+                        raise ValueError(f"用户不存在：{user_id}")
+                    # 账号状态随资料发给对端（远端资料的 is_disabled），同一事务入队。
+                    await _enqueue_profile_sync(conn, user_id)
         except ValueError:
             raise
         except Exception as exc:
@@ -3094,6 +3130,7 @@ class PostgresStore(StorageBase):
                     if self._parse_rowcount(tag) == 0:
                         # 在事务内抛：后两条写一条都不落。
                         raise ValueError(f"用户不存在：{user_id}")
+                    await _enqueue_profile_sync(conn, user_id)
                     tag = await conn.execute("DELETE FROM user_posts WHERE user_id = $1", user_id)
                     counts["posts_deleted"] = self._parse_rowcount(tag)
                     tag = await conn.execute(
@@ -4653,21 +4690,80 @@ class PostgresStore(StorageBase):
 
     # ── Remote user profiles (cross-border user stubs) ──────
 
+    @staticmethod
+    def _account(row) -> dict | None:
+        if row is None:
+            return None
+        acc = dict(row)
+        acc["is_disabled"] = bool(acc["is_disabled"])
+        acc["is_remote"] = bool(acc["is_remote"])
+        return acc
+
+    async def get_public_account(self, id: str) -> dict | None:
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    f"SELECT {_ACCOUNT_COLS} FROM ({_PUBLIC_ACCOUNTS}) a WHERE id = $1", id)
+            return self._account(row)
+        except Exception as exc:
+            print(f"[PostgresStore] Get public account failed: {exc}")
+            raise StoreError("get_public_account", exc) from exc
+
+    async def search_discoverable_accounts(self, keyword: str, limit: int) -> list[dict]:
+        like = f"%{keyword}%"
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    f"""SELECT {_ACCOUNT_COLS} FROM ({_PUBLIC_ACCOUNTS}) a
+                        WHERE is_disabled = 0 AND (username ILIKE $1 OR nickname ILIKE $1)
+                        ORDER BY username LIMIT $2""",
+                    like, limit,
+                )
+            return [self._account(r) for r in rows]
+        except Exception as exc:
+            print(f"[PostgresStore] Search accounts failed: {exc}")
+            raise StoreError("search_discoverable_accounts", exc) from exc
+
+    async def get_remote_user_cards(self, user_id: str) -> list[dict]:
+        """List a peer-node user's synced public cards, newest first."""
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """SELECT id, name, card_json, avatar_data, market_description,
+                              market_tags, origin_created_at AS created_at
+                       FROM remote_cards WHERE user_id = $1
+                       ORDER BY origin_created_at DESC""",
+                    user_id,
+                )
+            return self._list_rows(rows)
+        except Exception as exc:
+            print(f"[PostgresStore] Get remote user cards failed: {exc}")
+            raise StoreError("get_remote_user_cards", exc) from exc
+
     async def upsert_remote_user_profile(self, id: str, username: str, home_region: str, avatar_data: str = "") -> None:
-        """Create or update a remote user profile (received from peer node)."""
+        """Create or update a remote user profile (received from peer node).
+
+        Status-less form of `upsert_remote_account`: a profile that carries no
+        status is an active account (same default as the sync receiver).
+        """
+        await self.upsert_remote_account(id, username, home_region, avatar_data, is_disabled=False)
+
+    async def upsert_remote_account(self, id: str, username: str, home_region: str,
+                                    avatar_data: str, *, is_disabled: bool) -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    """INSERT INTO remote_user_profiles (id, username, home_region, avatar_data)
-                       VALUES ($1, $2, $3, $4)
+                    """INSERT INTO remote_user_profiles (id, username, home_region, avatar_data, is_disabled)
+                       VALUES ($1, $2, $3, $4, $5)
                        ON CONFLICT (id) DO UPDATE SET
                          username = EXCLUDED.username,
                          home_region = EXCLUDED.home_region,
-                         avatar_data = EXCLUDED.avatar_data""",
-                    id, username, home_region, avatar_data,
+                         avatar_data = EXCLUDED.avatar_data,
+                         is_disabled = EXCLUDED.is_disabled""",
+                    id, username, home_region, avatar_data, int(is_disabled),
                 )
         except Exception as exc:
-            print(f"[PostgresStore] Upsert remote user profile failed: {exc}")
+            print(f"[PostgresStore] Upsert remote account failed: {exc}")
             raise
 
     async def get_remote_user_profile(self, id: str) -> dict | None:
@@ -4791,6 +4887,10 @@ class PostgresStore(StorageBase):
                     user_id,
                 )
                 counts["direct_messages"] = result
+                result = await conn.execute(
+                    "DELETE FROM remote_user_profiles WHERE id = $1", user_id,
+                )
+                counts["remote_user_profiles"] = result
             return counts
         except Exception as exc:
             print(f"[PostgresStore] Purge remote user data failed: {exc}")

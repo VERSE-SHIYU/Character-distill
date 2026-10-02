@@ -586,6 +586,45 @@ class StorageBase(ABC):
     async def get_remote_user_profile(self, id: str) -> dict | None:
         """Get a remote user profile by ID."""
 
+    # ── 账号目录（只 PG 实现）────────────────────────────────────────────────
+    #
+    # 本地用户 ∪ 对端地区用户（`remote_user_profiles`）合成的「本节点看得见的所有账号」。
+    # 合并规则只写在 `PostgresStore` 的 `_PUBLIC_ACCOUNTS` 一处。
+    #
+    # 这几个方法**有意不设为抽象**：SQLite 自 2026-09-24 冻结、计划退役（AGENTS.md「存储改动
+    # 只保证 PG」），不为它新增实现。基类缺省直接抛错，SQLite 上调用会立刻、明确地失败，
+    # 而不是给出一个半套语义。契约锁（tests/test_storage_contract_shape.py）照样逐格比对
+    # PG 覆写的签名。
+
+    async def get_public_account(self, id: str) -> dict | None:
+        """One account visible on this node, local or peer, by id.
+
+        Keys: id, username, nickname, avatar_data, home_region,
+        is_disabled (bool), is_remote (bool). None when unknown.
+        """
+        raise NotImplementedError(f"{type(self).__name__}: 账号目录只在 PG 上实现")
+
+    async def search_discoverable_accounts(self, keyword: str, limit: int) -> list[dict]:
+        """Accounts a user may find by search: substring of username or nickname,
+        case-insensitive, disabled accounts excluded, ordered by username.
+
+        Same keys as `get_public_account`.
+        """
+        raise NotImplementedError(f"{type(self).__name__}: 账号目录只在 PG 上实现")
+
+    async def get_remote_user_cards(self, user_id: str) -> list[dict]:
+        """List the synced public cards of a peer-region user, newest first."""
+        raise NotImplementedError(f"{type(self).__name__}: 账号目录只在 PG 上实现")
+
+    async def upsert_remote_account(self, id: str, username: str, home_region: str,
+                                    avatar_data: str, *, is_disabled: bool) -> None:
+        """Store a peer user's synced profile *and* account status in one write.
+
+        Supersedes `upsert_remote_user_profile` for the sync receiver: status must
+        be overwritten on every sync, or an unban would never reach this node.
+        """
+        raise NotImplementedError(f"{type(self).__name__}: 账号目录只在 PG 上实现")
+
     @abstractmethod
     async def set_user_role(self, user_id: str, role: str) -> None:
         """Set a user's role. Role must be one of `core.roles.ROLES`; unknown id raises."""

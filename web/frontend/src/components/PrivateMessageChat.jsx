@@ -7,6 +7,7 @@ import { formatChatTime } from '../utils/time'
 import SplitOrFullscreen from './common/SplitOrFullscreen'
 import ChatHistoryPanel from './common/ChatHistoryPanel'
 import Avatar from './common/Avatar'
+import RegionTag from './common/RegionTag'
 import {
   ArrowLeft, Clock, MessageCircle, Heart, Check, Shield, RefreshCw, AlertTriangle, MessageSquare, Wifi,
 } from './common/Icon'
@@ -466,7 +467,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                       </div>
                     )}
                   </div>
-                  {isCrossRegion && <span className="dm-peer-tag" data-shed="1">跨区</span>}
+                  {isCrossRegion && <RegionTag data-shed="1" />}
                 </div>
                 <div className="dm-header-actions">
                   {canShowInnerVoice && (

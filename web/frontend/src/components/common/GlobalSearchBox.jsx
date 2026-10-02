@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import useAppStore from '../../store/useAppStore'
 import { globalSearch } from '../../api/client'
 import Avatar from './Avatar'
+import RegionTag from './RegionTag'
 import { Book, Search } from './Icon'
 import { displayName } from '../../utils/displayName'
 
@@ -23,7 +24,11 @@ export default function GlobalSearchBox({ className = '' }) {
         const data = await globalSearch(val.trim())
         setSearchResults(data)
         setSearchOpen(true)
-      } catch {}
+      } catch {
+        // 失败要说出来：吞掉会让「请求失败」看起来和「没有结果」一样（下拉框干脆不出现）。
+        setSearchResults({ failed: true })
+        setSearchOpen(true)
+      }
     }, 300)
   }
 
@@ -71,7 +76,9 @@ export default function GlobalSearchBox({ className = '' }) {
       </div>
       {searchOpen && searchResults && (
         <div className="sidebar-search-dropdown">
-          {searchResults.cards?.length === 0 && searchResults.texts?.length === 0 && searchResults.users?.length === 0 ? (
+          {searchResults.failed ? (
+            <div className="sidebar-search-empty" role="alert">搜索失败，请稍后重试</div>
+          ) : searchResults.cards?.length === 0 && searchResults.texts?.length === 0 && searchResults.users?.length === 0 ? (
             <div className="sidebar-search-empty">未找到相关内容</div>
           ) : (
             <>
@@ -110,7 +117,10 @@ export default function GlobalSearchBox({ className = '' }) {
                       <Avatar name={displayName(u) || '?'} size={28} src={u.avatar_data} />
                       <div className="sidebar-search-item-text">
                         <span className="sidebar-search-item-name">{displayName(u)}</span>
-                        <span className="sidebar-search-item-sub">@{u.username}</span>
+                        <span className="sidebar-search-item-sub">
+                          @{u.username}
+                          {u.is_remote && <RegionTag style={{ marginLeft: 6 }} />}
+                        </span>
                       </div>
                     </button>
                   ))}

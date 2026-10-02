@@ -153,6 +153,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "096_comment_likes.sql",
     "097_inter_node_nonces.sql",
     "098_rename_outbox.sql",
+    # 099：PG 034 新增列的孪生（AGENTS.md「SQLite 冻结」的唯一例外：只补列，不补代码）。
+    "099_remote_profile_disabled.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py

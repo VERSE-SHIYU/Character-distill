@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from core import roles
 from core.authz import fetch_for_actor
 from core.schema import PRESET_TAGS
+from account_visibility import AccountView, identity, page_meta, view_of
 from cross_border_sync import forward_card_to_peer
 from deps import get_llm, get_storage
 from geo_guard import ip_location
@@ -216,11 +217,25 @@ async def get_author(
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
-    """Get author profile and their public data."""
-    author = await storage.get_user_by_id(user_id)
-    if not author:
+    """Get an account's page: local, peer-region or disabled.
+
+    Which view and what it may show is decided by `account_visibility` alone;
+    the response carries `view` + `capabilities` for the client to render from.
+    """
+    account = await storage.get_public_account(user_id)
+    if account is None:
         raise HTTPException(404, "用户不存在")
-    is_self = user_id == user["id"]
+    view = view_of(account, user["id"])
+    if view is AccountView.DISABLED:
+        return {"author": identity(account, view), "cards": [], **page_meta(view)}
+    if view is AccountView.REMOTE:
+        return {"author": identity(account, view),
+                "cards": await storage.get_remote_user_cards(user_id), **page_meta(view)}
+
+    is_self = view is AccountView.SELF
+    author = await storage.get_user_by_id(user_id)
+    if not author:   # 两次读之间被删
+        raise HTTPException(404, "用户不存在")
     cards = await storage.get_author_cards(user_id, include_private=is_self)
     following_ids = await storage.get_following(user["id"])
     target_following = await storage.get_following(user_id)
@@ -267,6 +282,7 @@ async def get_author(
         "online": online,
         "last_active_at": last_active_at,
         "presence_hidden": not can_see,
+        **page_meta(view),
     }
 
 

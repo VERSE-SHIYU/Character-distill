@@ -270,11 +270,14 @@ async def receive_user_sync(
     username = str(payload.get("username", ""))
     home_region = str(payload.get("home_region", ""))
     avatar_data = str(payload.get("avatar_data", ""))
+    # 缺省 False：滚动发布期间旧版发送方不带这个字段，按「正常」处理。
+    is_disabled = payload.get("is_disabled", False) is True
 
     if not user_id or not username:
         raise HTTPException(400, "Missing required fields: id, username")
 
-    await storage.upsert_remote_user_profile(user_id, username, home_region, avatar_data)
+    await storage.upsert_remote_account(user_id, username, home_region, avatar_data,
+                                        is_disabled=is_disabled)
 
     return {"ok": True, "user_id": user_id}
 
