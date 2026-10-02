@@ -370,7 +370,12 @@ describe('市场页：游客点不了赞、写不了评论、用不了角色', (
 })
 
 describe('市场卡详情：游客没有点赞 / 使用 / 评论输入 / 作者操作', () => {
-  const CARD = { id: 'm1', user_id: 'u1', name: '角色甲', card_json: '{"name":"角色甲"}', visibility: 'public', likes: 3 }
+  // 详情接口恒带卡能力（web/card_visibility.py）；本地卡全开 —— 本组测的是游客 / 用户之分
+  const CARD = {
+    id: 'm1', user_id: 'u1', name: '角色甲', card_json: '{"name":"角色甲"}', visibility: 'public', likes: 3,
+    view: 'local',
+    capabilities: { fork: true, like: true, comment: true, history: true, report: true, moderate: true },
+  }
 
   const renderDetail = async (role) => {
     mutate({ currentMarketCardId: 'm1' })

@@ -16,6 +16,7 @@ from core import roles
 from core.authz import fetch_for_actor
 from core.schema import PRESET_TAGS
 from account_visibility import AccountView, identity, page_meta, view_of
+from card_visibility import page_meta as card_page_meta
 from cross_border_sync import forward_card_to_peer
 from deps import get_llm, get_storage
 from geo_guard import ip_location
@@ -413,7 +414,7 @@ async def get_card_detail(
     card = await storage.get_market_card_detail(card_id, user.get("id", ""))
     if not card:
         raise HTTPException(404, "角色不存在或未公开")
-    return card
+    return {**card, **card_page_meta(card)}
 
 
 @router.get("/card/{card_id}/book-versions")

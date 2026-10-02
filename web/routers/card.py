@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from card_visibility import page_meta as card_page_meta
 from core.trash_service import hard_delete, restore, soft_delete
 from deps import get_storage
 from limiter import limiter
@@ -123,7 +124,7 @@ async def get_card_detail(
     card = await storage.get_card_detail(card_id, user["id"])
     if not card:
         raise HTTPException(404, "角色不存在")
-    return card
+    return {**card, **card_page_meta(card)}
 
 
 @router.get("/{card_id}")
