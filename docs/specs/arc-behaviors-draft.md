@@ -141,12 +141,12 @@ E1–E3 的 LLM 打桩方式照 `tests/test_distiller_routing.py` 现成写法�
 
 ## 5. 变异清单（执行方逐条跑，每条必须让所列测试变红；有存活的停下报告）
 
-说明：按本次分工（Shiyu 2026-10-03 同意），变异由执行方在本地跑、我审计结果，而不是由我在发 spec 前预跑。我在沙箱里只验证了 §4 之外的现有测试与一次手工分发；M1–M12 尚未实跑。
+驱动脚本：`tests/perf/card_draft_mutations.py`（照 tests/perf 既有约定：先验基线全绿才开跑、锚点恰一命中、逐字节还原并核 sha256）。我已在沙箱 PG 16 上实跑，结果见 §8；执行方 S0 复跑一遍核对，不必另找漏洞。
 
 | 编号 | 变异 | 应红 |
 |---|---|---|
 | M1 | `card_from_draft`：`len(valid) == count` → `len(valid) >= 1` | U2、E1 |
-| M2 | 删掉 `if not valid: continue` | U4 |
+| M2 | warning 条件去掉 `or not valid`（空数组不再告警） | U4 |
 | M3 | 范围判断 `1 <= p <= count` → `0 <= p <= count` | U3 |
 | M4 | 删掉 warning 那一行 | U3、U4 |
 | M5 | routers/distill.py:507 改回 `CharacterCard.model_validate(data)` | R1、S1 |
@@ -182,13 +182,22 @@ cd web/frontend; npm test
 
 三张卡的 `character_arc` 与 `situation_behaviors` 原样贴进 §8。G1–G5 全过才开 PR；不过就停下报告，**不自行改提示词**（属于设计问题）。
 
-## 8. 进度（执行方追加）
+## 8. 进度
 
-- [ ] 交接：`Test-Path docs/specs/arc-behaviors-draft.md` 为 True；`git log -1` 为 `7f1d10c8`（或其后继）
-- [ ] S0：C1–C10 逐条复核；附录 A 重跑比对
-- [ ] §4 新测试：`5b2e1c62` 上红（贴输出）/ 本分支绿（贴输出）
-- [ ] §5 变异 M1–M12 逐条结果
-- [ ] §6 受影响测试 + `npm test` 结果
+**我已完成（沙箱，PG 16 @ 55432，提交见分支历史）**
+
+- [x] §4 新测试已写：`tests/test_card_draft.py`（21 条）+ `tests/test_distill_task_api.py::TestDraftConversion`（2 条）。路由两条用内存 `_FakeStore`，不碰 SQLite；P1 连 PG。
+- [x] 先红后绿：在 `5b2e1c62` 上收集即失败（`ModuleNotFoundError: core.card_draft`）；在本分支上全绿。
+- [x] §6 受影响测试 + 新测试：**258 passed**（基线 235 + 新增 23）。
+- [x] §5 变异 M1–M12：**全部被打红**，还原后 4 个文件 sha256 与开跑前一致。首轮 M2（删掉 `if not valid: continue`）存活 —— 证明那两行是多余分支（`valid` 为空时既到不了顶层也挂不到阶段，本来就整条撤回），已删掉，M2 改为打 warning 条件。
+- [x] 前端未改动（`git diff 5b2e1c62 -- web/frontend` 为空），`npm test` 未在沙箱跑，由执行方跑。
+
+**执行方待做**
+
+- [ ] 交接：`Test-Path docs/specs/arc-behaviors-draft.md` 为 True；`git log --oneline -3` 与远端分支一致
+- [ ] S0：C1–C10 逐条复核；附录 A 重跑比对（行号以本分支最新提交为准，若与附录有出入，逐条写明）
+- [ ] §6 受影响测试（应为 258 passed）+ `npm test`
+- [ ] 复跑 `python tests/perf/card_draft_mutations.py`，贴结论行
 - [ ] §7 小样三张卡与 G1–G5 判定
 - [ ] 推分支，分支 CI 号
 

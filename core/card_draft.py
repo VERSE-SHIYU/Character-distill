@@ -83,8 +83,7 @@ def card_from_draft(data: Any) -> CharacterCard:
         if len(valid) != len(set(row.phases)) or not valid:
             logger.warning("[card_draft] 做法的阶段编号不合法（共 %d 个阶段）%s：%s",
                            count, row.phases, row.situation)
-        if not valid:
-            continue
+        # 编号全部作废时 valid 为空：既到不了顶层（count > 0），也挂不到任何阶段 —— 整条撤回。
         if len(valid) == count:
             general.append(behavior)
         else:

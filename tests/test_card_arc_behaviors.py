@@ -53,7 +53,7 @@ def test_g6_prompt_carries_arc_and_behaviors_together():
     g6, g4 = format_prompt_after("G6"), format_prompt_after("G4")
     assert "L. 角色弧线" in g6 and "O. 情境→行为" in g6
     assert '"axis"' in g6 and '"phases"' in g6 and '"situation_behaviors"' in g6
-    assert '"behaviors"' not in g6
+    assert '"behaviors"' not in g6 and '"phases": [1, 2]' in g6
     assert "character_arc 是【对象】" in g6 and "situation_behaviors 的每个元素是【对象】" in g6
     assert "L. 角色弧线" not in g4 and "O. 情境→行为" not in g4
     assert '"character_arc"' not in g4 and '"situation_behaviors"' not in g4

@@ -1,0 +1,284 @@
+# -*- coding: utf-8 -*-
+"""模型输出契约（草稿）→ 存卡：分发、各入口接线、唯一出口、PG 往返。
+
+spec：docs/specs/arc-behaviors-draft.md §4。路由两个消费点（R1/R2）在
+tests/test_distill_task_api.py 的 `TestDraftConversion`。
+"""
+import copy
+import json
+import logging
+import re
+import uuid
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+from pydantic import ValidationError
+
+from core.card_draft import CardDraft, card_from_draft, draft_schema
+from core.distiller import DistillError, Distiller
+from core.schema import FORMAT_GROUPS, CharacterCard
+
+REPO = Path(__file__).resolve().parent.parent
+
+# 孔乙己：两个阶段。A 只在阶段 1，B 两个阶段都有，C 只在阶段 2。
+KONG_DRAFT = {
+    "name": "孔乙己",
+    "character_arc": {"axis": "从死要面子到不再分辩", "phases": [
+        {"label": "死要面子", "state": "断腿之前，常来店里喝酒"},
+        {"label": "不再分辩", "state": "被打折腿之后，坐着用手走来"},
+    ]},
+    "situation_behaviors": [
+        {"situation": "被人当众取笑", "behavior": "涨红了脸争辩", "source_quote": "", "phases": [1]},
+        {"situation": "讨酒", "behavior": "排出九文大钱", "source_quote": "", "phases": [1, 2]},
+        {"situation": "被问腿怎么断的", "behavior": "低声说跌断，不再分辩", "source_quote": "", "phases": [2]},
+    ],
+}
+_A = {"situation": "被人当众取笑", "behavior": "涨红了脸争辩", "source_quote": ""}
+_B = {"situation": "讨酒", "behavior": "排出九文大钱", "source_quote": ""}
+_C = {"situation": "被问腿怎么断的", "behavior": "低声说跌断，不再分辩", "source_quote": ""}
+
+
+def _assert_kong(card: CharacterCard) -> None:
+    """KONG_CARD：顶层只有 B；阶段 1 只有 A；阶段 2 只有 C；任何做法里没有 phases。"""
+    dump = card.model_dump()
+    assert dump["situation_behaviors"] == [_B]
+    assert [p["behaviors"] for p in dump["character_arc"]["phases"]] == [[_A], [_C]]
+    assert [p["label"] for p in dump["character_arc"]["phases"]] == ["死要面子", "不再分辩"]
+
+
+def _draft(behaviors, phases=2):
+    d = copy.deepcopy(KONG_DRAFT)
+    d["character_arc"]["phases"] = [{"label": f"阶段{i}", "state": f"时期{i}"} for i in range(1, phases + 1)]
+    d["situation_behaviors"] = behaviors
+    return d
+
+
+def _row(phases, situation="s"):
+    return {"situation": situation, "behavior": "b", "source_quote": "", "phases": phases}
+
+
+# ── 4.1 单元 ──────────────────────────────────────────────────────────
+
+def test_u1_tagged_in_every_phase_goes_top_level():
+    card = card_from_draft(_draft([_row([1, 2])]))
+    assert len(card.situation_behaviors) == 1
+    assert all(p.behaviors == [] for p in card.character_arc.phases)
+
+
+def test_u2_tagged_in_some_phases_goes_under_them_in_order():
+    card = card_from_draft(_draft([_row([2], "x"), _row([2], "y")], phases=3))
+    assert card.situation_behaviors == []
+    assert [b.situation for b in card.character_arc.phases[1].behaviors] == ["x", "y"]
+    assert card.character_arc.phases[0].behaviors == card.character_arc.phases[2].behaviors == []
+
+
+def test_u3_out_of_range_numbers_are_dropped_with_a_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
+        card = card_from_draft(_draft([_row([1, 9])]))
+    assert [len(p.behaviors) for p in card.character_arc.phases] == [1, 0]
+    assert sum("阶段编号不合法" in r.getMessage() for r in caplog.records) == 1
+
+
+@pytest.mark.parametrize("phases", [[], [0], [3, 9]])
+def test_u4_no_valid_number_retracts_the_row_with_a_warning(caplog, phases):
+    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
+        card = card_from_draft(_draft([_row(phases)]))
+    assert card.situation_behaviors == []
+    assert all(p.behaviors == [] for p in card.character_arc.phases)
+    assert sum("阶段编号不合法" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_u5_card_without_phases_keeps_everything_top_level(caplog):
+    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
+        card = card_from_draft(_draft([_row([1]), _row([])], phases=0))
+    assert len(card.situation_behaviors) == 2
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("arc", [[], ["起初冷漠", "学会信任"]])
+def test_u6_legacy_arc_shapes_still_convert(arc):
+    card = card_from_draft({"name": "x", "character_arc": arc})
+    assert [p.state for p in card.character_arc.phases] == arc
+
+
+def test_u7_wrong_shape_raises_validation_error():
+    with pytest.raises(ValidationError):
+        card_from_draft({"name": "x", "situation_behaviors": "不是列表"})
+
+
+def test_u8_schema_sent_to_the_model_is_the_draft():
+    full, g6 = draft_schema(), draft_schema("G6")
+    assert full["title"] == "CharacterCard"
+    assert "phases" in full["$defs"]["DraftBehavior"]["properties"]
+    assert "behaviors" not in full["$defs"]["PhaseState"]["properties"]
+    for group, fields in FORMAT_GROUPS.items():
+        assert set(draft_schema(group)["properties"]) == set(fields), group
+    assert g6["properties"]["situation_behaviors"]["items"]["$ref"].endswith("/DraftBehavior")
+
+
+def test_u9_stored_card_has_no_phase_tags_and_round_trips():
+    dump = card_from_draft(KONG_DRAFT).model_dump()
+    rows = dump["situation_behaviors"] + [b for p in dump["character_arc"]["phases"] for b in p["behaviors"]]
+    assert rows and all("phases" not in b for b in rows)
+    assert CharacterCard.model_validate(dump).model_dump() == dump
+
+
+def test_kong_draft_converts_to_kong_card():
+    _assert_kong(card_from_draft(KONG_DRAFT))
+
+
+# ── 4.2 调用点矩阵：distiller 五个入口 ────────────────────────────────
+
+_TEXT = "AB" * 5000          # 分片阈值 3000 → 4 片（≤80，走单次合并）
+_USAGE = {"prompt_tokens": 1, "completion_tokens": 1}
+
+
+def _distiller(monkeypatch, *, chunked: bool) -> Distiller:
+    """真 Distiller；LLM 打桩。`chunked` 决定走分片还是一次读完。"""
+    monkeypatch.setattr("core.distiller.try_record_usage", lambda **kw: None)
+
+    async def _close():
+        return None
+
+    async def _map(system, messages, max_tokens=None, client=None, **kw):
+        return ("片段分析", _USAGE)
+
+    client = MagicMock()
+    client.close = _close
+    llm = MagicMock()
+    llm.last_usage = None
+    llm.model = "m"
+    llm._make_async_client = MagicMock(return_value=client)
+    llm.async_chat = _map
+    d = Distiller(llm=llm, config_path=None)
+    d._chunk_size = 3000
+    d._longctx_threshold = 0 if chunked else 10 ** 9
+    return d
+
+
+def _reply(monkeypatch, d: Distiller, payload) -> None:
+    """同步入口的格式化调用一律回 `payload`（模型原文）。"""
+    text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+    monkeypatch.setattr(d, "_chat_accounted", lambda *a, **kw: (text, False))
+    monkeypatch.setattr(d, "_do_reduce", lambda *a, **kw: "合并档案")
+
+
+_BAD = {"name": "孔乙己", "situation_behaviors": "不是列表"}
+
+
+class TestEntries:
+    def test_distill_sync(self, monkeypatch):
+        d = _distiller(monkeypatch, chunked=False)
+        _reply(monkeypatch, d, KONG_DRAFT)
+        _assert_kong(d.distill("孔乙己来了", "孔乙己"))
+        _reply(monkeypatch, d, _BAD)
+        with pytest.raises(DistillError):
+            d.distill("孔乙己来了", "孔乙己")
+
+    def test_longcontext_sync(self, monkeypatch):
+        d = _distiller(monkeypatch, chunked=False)
+        _reply(monkeypatch, d, KONG_DRAFT)
+        _assert_kong(d.distill_incremental(_TEXT, "AB"))
+        _reply(monkeypatch, d, _BAD)
+        with pytest.raises(DistillError):
+            d.distill_incremental(_TEXT, "AB")
+
+    def test_incremental_format_sync(self, monkeypatch):
+        d = _distiller(monkeypatch, chunked=True)
+        _reply(monkeypatch, d, KONG_DRAFT)
+        _assert_kong(d.distill_incremental(_TEXT, "AB"))
+        _reply(monkeypatch, d, _BAD)
+        with pytest.raises(DistillError):
+            d.distill_incremental(_TEXT, "AB")
+
+    def test_stream_longcontext_yields_draft(self, monkeypatch):
+        d = _distiller(monkeypatch, chunked=False)
+        body = json.dumps(KONG_DRAFT, ensure_ascii=False)
+
+        def _stream(system, messages, max_tokens=None, **kw):
+            for i in range(0, len(body), 50):
+                yield body[i:i + 50]
+            return _USAGE
+
+        d._llm.chat_stream_long = _stream
+        out = "".join(p for p in d.distill_incremental_stream(_TEXT, "AB") if isinstance(p, str))
+        assert json.loads(out) == KONG_DRAFT          # 原样交出草稿，phases 未被转换
+        _assert_kong(card_from_draft(json.loads(out)))
+
+    @staticmethod
+    def _grouped(monkeypatch, draft):
+        """每组回本组全部字段（缺的用草稿默认值补齐），同 test_distiller_routing 的按组回包。"""
+        d = _distiller(monkeypatch, chunked=True)
+        draft = {**CardDraft(name=draft["name"]).model_dump(), **draft}
+
+        def _stream(system, messages, max_tokens=None, **kw):
+            if "你正在整合关于" in system:
+                yield "合并结果"
+                return _USAGE
+            group = re.search(r"CharacterCard\[(G\d)\]", system).group(1)
+            yield json.dumps({k: draft[k] for k in FORMAT_GROUPS[group]}, ensure_ascii=False)
+            return _USAGE
+
+        d._llm.chat_stream_long = _stream
+        return list(d.distill_incremental_stream(_TEXT, "AB"))
+
+    def test_stream_grouped_yields_draft(self, monkeypatch):
+        pieces = self._grouped(monkeypatch, KONG_DRAFT)
+        out = [p for p in pieces if isinstance(p, str)]
+        assert len(out) == 1
+        draft = json.loads(out[0])
+        assert draft["situation_behaviors"] == KONG_DRAFT["situation_behaviors"]
+        assert CardDraft.model_validate(draft)
+        _assert_kong(card_from_draft(draft))
+
+        bad = self._grouped(monkeypatch, _BAD)
+        assert not [p for p in bad if isinstance(p, str)]
+        assert any(isinstance(p, dict) and "error" in p for p in bad)
+
+
+# ── 4.3 结构：两处唯一出处 ─────────────────────────────────────────────
+
+def _code_lines(path: Path):
+    """去掉 # 注释后的行；docstring 里的提及不带括号，不影响下面的匹配。"""
+    for no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        yield no, line.split("#", 1)[0]
+
+
+def _calls(pattern: str) -> dict[str, int]:
+    found: dict[str, int] = {}
+    for root in ("core", "web"):
+        for path in (REPO / root).rglob("*.py"):
+            for _, code in _code_lines(path):
+                if re.search(pattern, code) and not re.search(r"\bdef\s", code):
+                    rel = path.relative_to(REPO).as_posix()
+                    found[rel] = found.get(rel, 0) + 1
+    return found
+
+
+def test_s1_schema_for_the_model_has_one_source():
+    assert _calls(r"model_json_schema\(") == {"core/card_draft.py": 1}
+
+
+def test_s1_model_output_becomes_a_card_only_through_card_from_draft():
+    assert _calls(r"\bcard_from_draft\(") == {"core/distiller.py": 3, "web/routers/distill.py": 2}
+
+
+# ── 4.3 PG 往返 ───────────────────────────────────────────────────────
+
+async def test_p1_converted_card_round_trips_through_postgres():
+    from conftest import TEST_DATABASE_URL
+    from storage.postgres_store import PostgresStore
+
+    store = PostgresStore(TEST_DATABASE_URL)
+    await store._ensure_initialized()
+    try:
+        card = card_from_draft(KONG_DRAFT)
+        tag = uuid.uuid4().hex[:12]
+        user = await store.create_user(f"u_{tag}", f"n_{tag}", "x")
+        text = await store.save_text(f"t_{tag}", "f.txt", "正文", user_id=user["id"])
+        saved = await store.save_card(f"c_{tag}", text["id"], card.name, card.model_dump_json(), user["id"])
+        row = await store.get_card_unscoped(saved["id"])
+        assert CharacterCard.model_validate_json(row["card_json"]) == card
+    finally:
+        await store.close()
