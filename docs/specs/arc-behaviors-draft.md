@@ -41,6 +41,38 @@ C8. 旧形态容错（弧线为字符串列表 / 阶段为字符串）移到共�
 
 C9. Pydantic 版本 `2.13.5`（`requirements.txt:259`）。
 
+C10. 环境冲突：测试库由 `docker-compose.test.yml` 起，端口 55432、库名 `charsim_test`、项目名 `character-distill-test`（顶层 `name:` 让它与 `docker-compose.local.yml` 的 `cd-role-postgres-1` 不撞名，见该文件第 13–17 行）。数据目录是 tmpfs，容器一停即清空。执行方起库前先 `docker ps` 确认 55432 没有被别的容器占用，占用就停下报告，不要去停别人的容器。
+
+### 2.1 路径机制表（通道 × 执行上下文 × 守它的测试）
+
+本次只改「模型输出 → 卡」这一步，不改任何线程、协程、计时、记账；表里列出每条通道上这一步跑在哪里，确认转换函数是纯计算（无 IO、无 loop 依赖），放在哪个上下文里都成立。
+
+| 通道 | 转换发生处 | 执行上下文 | 守它的测试 |
+|---|---|---|---|
+| `/start` 后台任务 | routers/distill.py:507 | `C.ctx_thread` 派生的同步线程（:869） | R1 |
+| `/run_stream` | routers/distill.py:1126 | 请求 loop 上的 async 生成器（流由 `asyncio.to_thread(_next_piece)` 驱动，:1085；转换本身在 loop 上同步执行，纯计算、无 IO） | R2 |
+| 流式·一次读完 | 不转换，交草稿 | 同上两条的驱动方 | E4 |
+| 流式·分组 | 不转换，`CardDraft.model_validate` 后交草稿（:2535） | 各组在 `C.ctx_thread` 线程里生成（:2515），合并与校验在生成器所在线程 | E5 |
+| 同步三入口 | distiller.py:1491 / 1598 / 2201 | 调用方线程（生产无调用方，见 C4） | E1–E3 |
+
+### 2.2 规模表
+
+| 数据 | 上限与来源 | 展示/处理策略 |
+|---|---|---|
+| 阶段数 | 提示词「通常 2-3 个、最多 4 个」（distiller.py 维度 L）；schema 不设硬上限 | 前端 `common/ArcList` 原样列出（本次不改） |
+| 做法条数 | 提示词「6-12 条」（维度 O）；schema 不设硬上限 | 分发后挂在阶段下或顶层，前端 `common/BehaviorList` 原样列出（本次不改） |
+| 每条的 `phases` | 元素须在 1..阶段数；去重后计数 | 越界撤回 + warning（D4）；全阶段 → 顶层 |
+| G6 组输出 | 与其他组同用 `CARD_MAX_TOKENS` 档（distiller.py 分组格式化），本次不改 | 草稿比旧形态每条做法多一个短数组，阶段下少一层嵌套，总量相当 |
+
+### 2.3 出处对照表
+
+| 依据 | 条目 | 本 spec 对应 |
+|---|---|---|
+| Pydantic 文档 Validators（[v2.9 concepts/validators](https://pydantic.dev/docs/validation/2.9/concepts/validators/)），本仓锁定 2.13.5 | before 校验器在内部解析之前运行，用于输入形态归一 | C8（`PhaseState` / `ArcAxis` 的旧形态容错） |
+| 结构化输出的通行做法：交给模型的 Pydantic 模型即输出契约，字段名、描述、类型本身就在引导模型（[Stop Parsing JSON by Hand, DEV](https://dev.to/klement_gunndu/stop-parsing-json-by-hand-structured-llm-outputs-with-pydantic-1pg0)） | 发给模型的结构与模型被要求写的形态必须是同一个模型 | D2、D3、C1、U8 |
+| 本仓先例 `core/card_quotes.py` 的 `retract_unverified` | 模型输出对不上：撤回 + warning，卡照常落 | D4、U3、U4 |
+| 本仓先例 `core/distiller.py` 的 `finalize_card`（「三条产卡通道各接一次 → 合成一个入口」） | 同一件事只有一个出口，避免某条通道漏掉一步而成品看不出来 | D3、S1 |
+
 全量扫描命令与输出（第一个提交上运行）：
 
 ```
@@ -109,6 +141,8 @@ E1–E3 的 LLM 打桩方式照 `tests/test_distiller_routing.py` 现成写法�
 
 ## 5. 变异清单（执行方逐条跑，每条必须让所列测试变红；有存活的停下报告）
 
+说明：按本次分工（Shiyu 2026-10-03 同意），变异由执行方在本地跑、我审计结果，而不是由我在发 spec 前预跑。我在沙箱里只验证了 §4 之外的现有测试与一次手工分发；M1–M12 尚未实跑。
+
 | 编号 | 变异 | 应红 |
 |---|---|---|
 | M1 | `card_from_draft`：`len(valid) == count` → `len(valid) >= 1` | U2、E1 |
@@ -150,7 +184,8 @@ cd web/frontend; npm test
 
 ## 8. 进度（执行方追加）
 
-- [ ] S0：C1–C9 逐条复核；附录 A 重跑比对
+- [ ] 交接：`Test-Path docs/specs/arc-behaviors-draft.md` 为 True；`git log -1` 为 `7f1d10c8`（或其后继）
+- [ ] S0：C1–C10 逐条复核；附录 A 重跑比对
 - [ ] §4 新测试：`5b2e1c62` 上红（贴输出）/ 本分支绿（贴输出）
 - [ ] §5 变异 M1–M12 逐条结果
 - [ ] §6 受影响测试 + `npm test` 结果
