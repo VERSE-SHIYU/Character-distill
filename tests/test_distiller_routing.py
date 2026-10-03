@@ -783,11 +783,12 @@ class TestFormatFieldGroups:
                 assert not overlap, f"第 {i} 桶与第 {j} 桶重叠：{sorted(overlap)}"
 
     def test_group_schema_is_scoped_to_the_group(self):
-        """组提示词带的子 schema 只列本组字段（由 CharacterCard 取，不手写）。"""
-        from core.schema import FORMAT_GROUPS, CharacterCard, format_group_schema
+        """组提示词带的子 schema 只列本组字段（由模型输出契约 CardDraft 取，不手写）。"""
+        from core.card_draft import draft_schema
+        from core.schema import FORMAT_GROUPS
 
         for group, fields in FORMAT_GROUPS.items():
-            sub = format_group_schema(group)
+            sub = draft_schema(group)
             assert set(sub["properties"]) == set(fields), group
             assert set(sub.get("required", ())) <= set(fields), group
             # 嵌套模型定义必须带上，否则 $ref 解析不了

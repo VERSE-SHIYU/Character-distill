@@ -50,7 +50,8 @@ from core.roster_aggregate import (
     tally_judge_samples,
     usable_alias,
 )
-from core.schema import CharacterCard, FORMAT_GROUPS, PRESET_TAGS, format_group_schema
+from core.card_draft import CardDraft, card_from_draft, draft_schema
+from core.schema import CharacterCard, FORMAT_GROUPS, PRESET_TAGS
 from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
 from core import telemetry as T  # OTel 埋点
 from core import concurrency as C  # 派生与上下文传播
@@ -185,7 +186,7 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
         '   - phases：按故事顺序排列。只在心态或立场确实变了的地方分段，通常2-3个、最多4个；同一种心态下的不同场景不算新阶段。每个阶段都必须是此人还在场、还能与人交谈的时期，死亡、失踪、离场不单列为阶段。\n'
         '   - label：这一阶段的心态或立场（≤8字，如「隐忍不发」），不要写事件或结局（如「被逐出师门」「死去」）。\n'
         '   - state：一句话。句首用书里的具体事件或时段点明这是什么时候（如「被逐出师门之后」），不要写「前期」「中期」「后期」；再写此时的心态与行事方式。\n'
-        '   - behaviors（每阶段2-4条）：只在这一阶段成立的做法，写法同维度 O。同一类情境在不同阶段做法不同的，在各自阶段下分别写一条。'
+        '   - 阶段按 phases 的顺序从 1 开始编号，维度 O 用这个编号。'
     ),
     ("G3",
         'N. 认知/语言画像：基于原文中角色的实际话语和行为，判断以下四项：\n'
@@ -195,10 +196,11 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
         '   - vocabulary_level（用词层次）：粗白（市井/底层）/日常（普通人）/文雅（读书人/官员）/书面（学者/文人）。从原文用词直接判断。'
     ),
     ("G6",
-        'O. 情境→行为：此人遇到某类情境时会怎么做。先判断这个做法是不是从头到尾都成立：只在某个阶段成立的，写进维度 L 那个阶段的 behaviors；从头到尾都成立的，才写进 situation_behaviors（0-8条，没有就输出空数组，不要硬凑）。两处合计 6-12 条。\n'
+        'O. 情境→行为：此人遇到某类情境时会怎么做，全部写进 situation_behaviors（6-12条），每条只写一次。\n'
         '   - situation：把情境抽象成一类（如「被人当众质疑」「有人向他求助」），不带人名、地名和只发生一次的细节。\n'
         '   - behavior：具体做法（说什么、做什么、怎么应对），≤60字，不要写形容词；负面做法（算计、欺骗、自私、记仇）照原文如实写，不美化、不改成直接发火。\n'
-        '   - source_quote：从原文原样复制一小段（10-40字）体现这个做法；找不到逐字原文就留空字符串。'
+        '   - source_quote：从原文原样复制一小段（10-40字）体现这个做法；找不到逐字原文就留空字符串。\n'
+        '   - phases：原文里此人在哪几个阶段这样做过，填维度 L 的阶段编号（如 [1, 2]）。只填原文里确实这样做过的阶段，不要因为性格没变就把其余阶段也填上。同一类情境在不同阶段做法不同的，分成两条，各标各的阶段。维度 L 的 phases 为空时，phases 写空数组 []。'
     ),
 )
 _FORMAT_DIM_M = (
@@ -243,12 +245,12 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("character_arc",
         '  "character_arc": {\n'
         '    "axis": "从…到…",\n'
-        '    "phases": [{"label": "阶段心态", "state": "故事时期，此时的心态与行事方式", "behaviors": [{"situation": "一类情境", "behavior": "具体做法", "source_quote": "原文摘录"}]}]\n'
+        '    "phases": [{"label": "阶段心态", "state": "故事时期，此时的心态与行事方式"}]\n'
         '  }'
     ),
     ("situation_behaviors",
         '  "situation_behaviors": [\n'
-        '    {"situation": "一类情境", "behavior": "具体做法", "source_quote": "原文摘录"}\n'
+        '    {"situation": "一类情境", "behavior": "具体做法", "source_quote": "原文摘录", "phases": [1, 2]}\n'
         '  ]'
     ),
     ("psyche",
@@ -279,8 +281,8 @@ _FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
     ("G4", '- psyche 是必需嵌套对象，triggers 和 soft_spots 放在 psyche 内部，不在顶层'),
     (None, '- 数组字段的元素形态按模板来：模板里写成【一句字符串】的，就输出一句字符串，不要改成对象'),
     ("G5", '- relationships 的每个元素是【对象】，含 target/relation/attitude/note 四个字段'),
-    ("G6", '- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state/behaviors'),
-    ("G6", '- behaviors 与 situation_behaviors 的每个元素是【对象】，含 situation/behavior/source_quote'),
+    ("G6", '- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state'),
+    ("G6", '- situation_behaviors 的每个元素是【对象】，含 situation/behavior/source_quote/phases；phases 是整数数组'),
     ("G4", '- 数字字段（openness/conscientiousness 等）输出整数，不要加引号'),
     (None, '- 所有字段必须按此模板输出，不要添加自定义字段'),
 )
@@ -1466,7 +1468,7 @@ class Distiller:
         对于长文本，推荐使用 ``distill_incremental``。
         """
         try:
-            schema_obj = CharacterCard.model_json_schema()
+            schema_obj = draft_schema()
             schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
         except (TypeError, ValueError) as exc:
             print(f"生成 CharacterCard JSON Schema 失败：{exc}")
@@ -1486,7 +1488,7 @@ class Distiller:
             action_label="distill", upstream_truncated=upstream_truncated,
         )
         try:
-            return CharacterCard.model_validate(data)
+            return card_from_draft(data)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
@@ -1497,7 +1499,7 @@ class Distiller:
         对于长文本，推荐使用 ``distill_incremental_stream``。
         """
         try:
-            schema_obj = CharacterCard.model_json_schema()
+            schema_obj = draft_schema()
             schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
         except (TypeError, ValueError) as exc:
             print(f"生成 CharacterCard JSON Schema 失败：{exc}")
@@ -1567,7 +1569,7 @@ class Distiller:
         """
         try:
             schema_str = json.dumps(
-                CharacterCard.model_json_schema(), ensure_ascii=False, indent=2)
+                draft_schema(), ensure_ascii=False, indent=2)
         except (TypeError, ValueError) as exc:
             print(f"生成 CharacterCard JSON Schema 失败：{exc}")
             raise
@@ -1593,7 +1595,7 @@ class Distiller:
             action_label="distill_longcontext", upstream_truncated=upstream_truncated,
         )
         try:
-            return CharacterCard.model_validate(data)
+            return card_from_draft(data)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
@@ -2173,7 +2175,7 @@ class Distiller:
 
         # Phase 3: Format — produce CharacterCard JSON
         try:
-            schema_obj = CharacterCard.model_json_schema()
+            schema_obj = draft_schema()
             schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
         except (TypeError, ValueError) as exc:
             print(f"生成 CharacterCard JSON Schema 失败：{exc}")
@@ -2196,7 +2198,7 @@ class Distiller:
             action_label="distill_format", upstream_truncated=upstream_truncated,
         )
         try:
-            card = CharacterCard.model_validate(data)
+            card = card_from_draft(data)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
@@ -2471,8 +2473,9 @@ class Distiller:
         # 每组是一次长输出（共享前缀 + 组片段 + 该组子 schema），组数固定 4、彼此独立，
         # 故并行发；组内仍串行。串行的代价是「最慢一组的耗时」而不是「4 组之和」。
         # 4 条线程各走 `_chat_accounted(stream=True)`，用量各记各的（`_collect_stream`
-        # 在发起调用的那一级记账）。合并 → `CharacterCard.model_validate` → **一个**
-        # json.dumps 字符串 yield（两条消费路径都从累加串里 parse，见 web/routers/distill.py）。
+        # 在发起调用的那一级记账）。合并 → 按草稿校验（`CardDraft.model_validate`）→ **一个**
+        # 草稿的 json.dumps 字符串 yield：本生成器的每条路径都交出草稿，转成卡只在消费方
+        # 调 `card_from_draft` 一处（两条消费路径都从累加串里 parse，见 web/routers/distill.py）。
         # 任一组失败或校验不过：上屏 error 帧，不拼半张卡。
         yield {"status": "formatting"}
 
@@ -2481,7 +2484,7 @@ class Distiller:
         def _format_one_group(group: str) -> None:
             try:
                 sub_schema = json.dumps(
-                    format_group_schema(group), ensure_ascii=False, indent=2
+                    draft_schema(group), ensure_ascii=False, indent=2
                 )
                 system_prompt = (
                     DISTILL_PROMPT_BEFORE_NAME + character_name
@@ -2529,7 +2532,7 @@ class Distiller:
         for group in FORMAT_GROUPS:      # 按 FORMAT_GROUPS 的顺序合并，与完成次序无关
             merged.update(group_data[group])
         try:
-            card = CharacterCard.model_validate(merged)
+            draft = CardDraft.model_validate(merged)
         except ValidationError as exc:
             # 模块 logger，不是 print：print 只进容器 stdout（不进日志面板、不发告警），
             # 而这条上屏的是用户可见的报错帧 —— 服务端这一半必须留痕（spec-119 口径）。
@@ -2537,4 +2540,4 @@ class Distiller:
             yield {"error": user_facing_error(exc)}
             return
 
-        yield json.dumps(card.model_dump(), ensure_ascii=False)
+        yield json.dumps(draft.model_dump(), ensure_ascii=False)
