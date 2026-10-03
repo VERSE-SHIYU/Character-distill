@@ -13,9 +13,11 @@
 
 判据（与 spec §7 同号）：
   G1 日志里「做法的阶段编号不合法」出现 0 次（给了 --log 才判）
-  G2 做法总数 ≥ 3
-  G3 --forbid-late 的词不出现在「最后阶段 ∪ 顶层」的做法里，且出现在更早的某个阶段里
-     （只判「没出现」会把「模型干脆没写这条」误判成通过）
+  G2 做法条数 ≥ 3（按 situation 去重：标了几个阶段的同一条只算一次）
+  G3 早期做法没漏到后面：更早阶段里含 --forbid-late 词的那几条做法，它们的 situation
+     不出现在「最后阶段 ∪ 顶层」里；且更早阶段里确实有这样的做法（否则「模型没写这条」
+     会被误判成通过）。按 situation 认条目而不是按词搜后面的阶段 —— 后期做法常写成
+     「不再争辩」，按词搜会误报。
   G4 --expect-phases 0：没有阶段，做法全在顶层
   G5 同一处（每个阶段、顶层各算一处）没有两条相同 situation
   G6 --expect-phases N+：阶段数 ≥ N，且至少一个阶段下挂着只属于它的做法
@@ -52,15 +54,16 @@ def check(card: dict, expect: str, forbid_late: list[str], log: str | None) -> l
         out.append(("G1", n == 0, f"warning {n} 次"))
 
     total = sum(len(rows) for _, rows in buckets)
-    out.append(("G2", total >= 3, f"做法共 {total} 条"))
+    unique = len({r.get("situation") for _, rows in buckets for r in rows})
+    out.append(("G2", unique >= 3, f"做法 {unique} 条（按 situation 去重）"))
 
     if forbid_late:
-        late = top + (phases[-1].get("behaviors", []) if phases else [])
-        early = [r for p in phases[:-1] for r in p.get("behaviors", [])]
-        hit_late = [w for w in forbid_late if any(w in _text(r) for r in late)]
-        hit_early = [w for w in forbid_late if any(w in _text(r) for r in early)]
-        out.append(("G3", not hit_late and bool(hit_early),
-                    f"最后阶段∪顶层命中 {hit_late or '无'}；更早阶段命中 {hit_early or '无'}"))
+        late = {r.get("situation") for r in top + (phases[-1].get("behaviors", []) if phases else [])}
+        early = [r for p in phases[:-1] for r in p.get("behaviors", [])
+                 if any(w in _text(r) for w in forbid_late)]
+        leaked = sorted({r.get("situation") for r in early} & late)
+        out.append(("G3", bool(early) and not leaked,
+                    f"更早阶段含 {forbid_late} 的做法 {len(early)} 条；漏到最后阶段∪顶层的 {leaked or '无'}"))
 
     dup = [name for name, rows in buckets
            if len({r.get('situation') for r in rows}) != len(rows)]
