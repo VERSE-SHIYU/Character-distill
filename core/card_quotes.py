@@ -35,6 +35,16 @@ VERIFIED_FIELDS: tuple[str, ...] = (
     "cognitive.speech_style",
     "speaking_style.sentence_pattern",
     "relationships[].attitude",
+    "situation_behaviors[].behavior",
+    "character_arc.phases[].behaviors[].behavior",
+)
+
+# 整个值就声明「是原文」的字段（同样的路径形状）。**唯一出处**。对不上没有可保留的部分：
+# 列表元素整条删（口癖）；对象里的键清成空串、对象本身留下（摘录没了，条目还在）。
+VERBATIM_FIELDS: tuple[str, ...] = (
+    "speaking_style.catchphrases[]",
+    "situation_behaviors[].source_quote",
+    "character_arc.phases[].behaviors[].source_quote",
 )
 
 
@@ -63,15 +73,36 @@ def _descend(node: Any, segs: list[str], label: str, out: list) -> None:
         out.append((f"{prefix}{seg}", node, seg))
 
 
+def _slots(card: dict, paths: tuple[str, ...]) -> list[tuple[str, Any, Any]]:
+    out: list[tuple[str, Any, Any]] = []
+    for path in paths:
+        _descend(card, path.split("."), "", out)
+    return out
+
+
 def verified_slots(card: dict) -> list[tuple[str, Any, Any]]:
     """核对清单里的槽位：`(字段路径, 容器, 键)`，`容器[键]` 可直接读改。
 
     公开给验收脚本，让产品与验收读**同一份** `VERIFIED_FIELDS`（各写一份必漂）。
     """
-    out: list[tuple[str, Any, Any]] = []
-    for path in VERIFIED_FIELDS:
-        _descend(card, path.split("."), "", out)
-    return out
+    return _slots(card, VERIFIED_FIELDS)
+
+
+def _retract_unverified_verbatim(dump: dict, source_norm: str, retracted: list[dict]) -> None:
+    """`VERBATIM_FIELDS` 里对不上原文的值：列表元素删掉，对象里的键清空。
+
+    倒序处理：删列表元素不会挪动还没处理的下标。空值不算撤回（本来就没有摘录）。
+    """
+    for label, parent, key in reversed(_slots(dump, VERBATIM_FIELDS)):
+        value = parent[key]
+        if not value or verbatim_in_normalized(source_norm, value):
+            continue
+        field = label.rsplit("[", 1)[0] if isinstance(parent, list) else label
+        retracted.append({"field": field, "quote": value})
+        if isinstance(parent, list):
+            del parent[key]
+        else:
+            parent[key] = ""
 
 
 def _strip_unverified_quotes(text: str, source_norm: str, label: str,
@@ -115,15 +146,7 @@ def retract_unverified(card: CharacterCard, content: str) -> tuple[CharacterCard
             if new != text:
                 parent[key] = new
 
-    style = dump.get("speaking_style")
-    if isinstance(style, dict):
-        kept = []
-        for cp in style.get("catchphrases") or []:
-            if verbatim_in_normalized(source_norm, cp):
-                kept.append(cp)
-            else:
-                retracted.append({"field": "speaking_style.catchphrases", "quote": cp})
-        style["catchphrases"] = kept
+    _retract_unverified_verbatim(dump, source_norm, retracted)
 
     for r in retracted:
         logger.warning("[card_quotes] 撤回查不到的引文 %s：%s", r["field"], r["quote"])

@@ -783,11 +783,12 @@ class TestFormatFieldGroups:
                 assert not overlap, f"第 {i} 桶与第 {j} 桶重叠：{sorted(overlap)}"
 
     def test_group_schema_is_scoped_to_the_group(self):
-        """组提示词带的子 schema 只列本组字段（由 CharacterCard 取，不手写）。"""
-        from core.schema import FORMAT_GROUPS, CharacterCard, format_group_schema
+        """组提示词带的子 schema 只列本组字段（由模型输出契约 CardDraft 取，不手写）。"""
+        from core.card_draft import draft_schema
+        from core.schema import FORMAT_GROUPS
 
         for group, fields in FORMAT_GROUPS.items():
-            sub = format_group_schema(group)
+            sub = draft_schema(group)
             assert set(sub["properties"]) == set(fields), group
             assert set(sub.get("required", ())) <= set(fields), group
             # 嵌套模型定义必须带上，否则 $ref 解析不了
@@ -811,6 +812,7 @@ _FORMAT_GROUP_MARKERS = (
     ("G3", '"speaking_style"'),
     ("G4", '"key_memories"'),
     ("G5", '"relationships"'),
+    ("G6", '"situation_behaviors"'),
 )
 _FORMAT_GROUP_ORDER = [g for g, _ in _FORMAT_GROUP_MARKERS]
 
@@ -839,7 +841,9 @@ _SAMPLE_FIELD_VALUES = {
     "relationships": [{"target": "某人", "relation": "朋友", "attitude": "亲近",
                        "note": "认识很久的朋友"}],
     "key_memories": ["关键经历"],
-    "character_arc": ["阶段一"],
+    "character_arc": {"axis": "从甲到乙", "phases": [{"label": "阶段一", "state": "开头时的状态"}]},
+    "situation_behaviors": [{"situation": "被人质疑", "behavior": "先反问再解释",
+                             "source_quote": ""}],
     "psyche": {"openness": 3, "conscientiousness": 3, "extraversion": 3,
                "agreeableness": 3, "neuroticism": 3, "affinity_baseline": 50,
                "volatility": "适中", "grudge_inertia": "一般",

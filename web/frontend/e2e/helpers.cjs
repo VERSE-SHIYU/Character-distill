@@ -8,7 +8,8 @@ const path = require('path')
 const fs = require('fs')
 
 // 本地测试专用账号（Character-distill 项目红线：只允许操作 testadmin，绝不碰真实用户）
-const BASE = 'http://localhost:7861'
+// 默认打 docker 栈（host 7861）；E2E_BASE 可指向 vite dev server（改了前端、镜像还是旧的时）
+const BASE = process.env.E2E_BASE || 'http://localhost:7861'
 const TEST_USER = 'testadmin'
 const SHELL_SELECTOR = '.mobile-tabbar, [class*="shell"]'
 const LOGIN_TIMEOUT = 15000

@@ -1300,3 +1300,4 @@ class TestHStatusAffordances:
             client = _build_client(store, user_id)
             body = client.get(f"/api/distill/task/{task_id}").json()
             assert body["done"] is expect_done, f"{status} → done 应为 {expect_done}"
+

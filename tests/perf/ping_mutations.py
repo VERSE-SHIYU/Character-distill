@@ -44,8 +44,6 @@ green 是假绿（§四：判据在空转），记成 RED 又冤枉了变异。�
 from __future__ import annotations
 
 import argparse
-import hashlib
-import os
 import pathlib
 import re
 import sys
@@ -62,7 +60,7 @@ sys.path.insert(0, str(PERF_DIR))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import lock_coverage  # noqa: E402  —— 判档与产物写入的唯一一份实现（三个驱动共用）
-import route_facts_mutations as framework  # noqa: E402  —— 执行框架的唯一一份实现
+import mutation_framework as framework  # noqa: E402  —— 执行框架的唯一一份实现
 
 SQLITE = ROOT / "storage" / "sqlite_store.py"
 BASE = ROOT / "storage" / "base.py"
@@ -306,80 +304,21 @@ def main() -> int:
     if not _count_gate():
         return 2
 
-    baseline = {p: p.read_bytes() for p in TARGETS}
-
     print("== 先验基线 ==")
     bad_baseline = _baseline_gate()
     if bad_baseline:
         return lock_coverage.refuse_on_baseline(bad_baseline)
 
-    mismatches: list[str] = []
-    domain = lock_coverage.domain_of(GROUPS)
-    hits: dict[str, list[str]] = {}
-    skipped: list[str] = []
     wanted = [x.strip() for x in args.group.upper().split(",") if x.strip()]
-    for name in [g for g in wanted if g in GROUPS]:
-        print(f"\n===== {name} 组 =====")
-        for item in GROUPS[name]:
-            label, target, edits, expect = item[:4]
-            marker = item[4] if len(item) > 4 else None
-            framework._apply(edits)
-            summary, keep, lines, problems = framework._run(target)
-            got = lock_coverage.outcome(summary)
-            framework._restore(baseline)
-            # 只留落在覆盖域里的行：本驱动的靶子就是那个锁文件，别处（stdlib / 被测模块）的帧不算。
-            hits[label] = sorted(l for l in lines if l.rsplit(":", 1)[0] in set(domain))
-            if problems:
-                mismatches.append(f"{label}：{'；'.join(problems)}")
-            if got == lock_coverage.RUNAWAY:
-                # 跑不起来与绿必须分开：判据根本没执行时，「绿」是把没跑当成通过。
-                mismatches.append(
-                    f"{label}：{lock_coverage.RUNAWAY} —— 判据没跑起来，这条变异无法验证")
-                print(f"\n### {label}   期望={expect}  实得={got}（不计红绿）")
-                for k in keep:
-                    print("   ", k)
-                print("   >>", summary)
-                continue
-            if got == "本环境不适用":
-                ident = _ID_RE.search(label).group(0)
-                if ident not in _MAY_SKIP:
-                    mismatches.append(
-                        f"{label}：判据被 skip 了（该编号未登记为「本环境不适用」）")
-                # 走了 skip 的条目从覆盖域里摘出去：它一条判别器都没撞到，留着会被元锁
-                # 记成「空转变异」—— 而它红/绿/空转在这台机器上根本无从谈起（见模块 docstring）。
-                hits.pop(label, None)
-                skipped.append(label)
-                print(f"\n### {label}   期望={expect}  实得={got}（不计红绿）")
-                print("   >>", summary)
-                continue
-            if got != expect:
-                mismatches.append(f"{label}：期望 {expect} 实得 {got}")
-            if marker and not any(marker in k for k in keep):
-                mismatches.append(f"{label}：红源里没有 {marker!r}（红的不是那条断言）")
-            print(f"\n### {label}   期望={expect}  实得={got}")
-            for k in keep:
-                print("   ", k)
-            print("   >>", summary)
+    items = [item for name in wanted if name in GROUPS for item in GROUPS[name]]
 
-    print("\n== 还原核对（sha256 逐字节）==")
-    for p in TARGETS:
-        got = hashlib.sha256(p.read_bytes()).hexdigest()
-        same = got == hashlib.sha256(baseline[p]).hexdigest()
-        if not same:
-            mismatches.append(f"{p.name} 还原后 sha256 不符")
-        print(f"  {str(p.relative_to(ROOT)):38s} {same}  {got[:16]}")
+    # `may_skip` 收的是**标签**（不是编号）—— 从 `_MAY_SKIP` 的编号集合反查两条完整标签。
+    may_skip = {item[0] for item in items
+                if _ID_RE.search(item[0]).group(0) in _MAY_SKIP}
 
-    print("\n== 结论 ==")
-    if mismatches:
-        for m in mismatches:
-            print("  MISMATCH", m)
-        print("  矩阵有 mismatch —— 产物**不写**（写下去等于把没核对过的红源入库）。")
-        return 1
-    lock_coverage.write_artifact(ARTIFACT, "tests/perf/ping_mutations.py",
-                                 domain, hits, skipped, root=ROOT)
-    print(f"  全部符合预期。产物已写：{ARTIFACT.relative_to(ROOT).as_posix()}")
-    print("  （覆盖闭合由 tests/test_lock_coverage.py 核：判别器集合 == 被撞集合）")
-    return 0
+    return framework.run_matrix(
+        items, domain=lock_coverage.domain_of(GROUPS), targets=TARGETS, artifact=ARTIFACT,
+        driver_rel="tests/perf/ping_mutations.py", may_skip=may_skip)
 
 
 if __name__ == "__main__":

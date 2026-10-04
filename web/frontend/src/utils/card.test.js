@@ -32,3 +32,34 @@ describe('parseCardJson identity normalization', () => {
     expect(card.card_json.identity).toEqual({ name: 'B', description: 'y' })
   })
 })
+
+describe('parseCardJson 弧线归一（旧卡字符串数组 → { axis, phases }）', () => {
+  it('旧卡：字符串数组变成没有 label 的阶段', () => {
+    const c = parseCardJson({ card_json: { name: 'A', character_arc: ['起初冷漠', '学会信任'] } })
+    expect(c.character_arc).toEqual({
+      axis: '',
+      phases: [{ label: '', state: '起初冷漠' }, { label: '', state: '学会信任' }],
+    })
+  })
+
+  it('新卡：规范形态原样返回，不拷贝', () => {
+    const arc = { axis: '从桀骜到担当', phases: [{ label: '桀骜不服', state: '大闹天宫前后' }] }
+    const cardJson = { name: 'A', character_arc: arc }
+    const c = parseCardJson({ card_json: cardJson })
+    expect(c).toBe(cardJson)
+    expect(c.character_arc).toBe(arc)
+  })
+
+  it('没有弧线：保持缺失，不补空对象、不拷贝', () => {
+    const cardJson = { name: 'A' }
+    const c = parseCardJson({ card_json: cardJson })
+    expect(c).toBe(cardJson)
+    expect('character_arc' in c).toBe(false)
+  })
+
+  it('归一不改动传入的 card_json', () => {
+    const card = { card_json: { character_arc: ['a'] } }
+    parseCardJson(card)
+    expect(card.card_json.character_arc).toEqual(['a'])
+  })
+})

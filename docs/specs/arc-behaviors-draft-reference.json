@@ -1,0 +1,299 @@
+{
+ "孔乙己": {
+  "name": "孔乙己",
+  "character_arc": {
+   "axis": "从强撑读书人体面到放下体面、只求别被提起",
+   "phases": [
+    {
+     "label": "强撑体面",
+     "state": "被丁举人打折腿之前，常站着喝酒：穿长衫、满口之乎者也，被揭短就争辩"
+    },
+    {
+     "label": "不再分辩",
+     "state": "被丁举人打折腿之后，坐着用手走来：不再争辩，只求旁人别再提起"
+    }
+   ]
+  },
+  "situation_behaviors": [
+   {
+    "situation": "被人当众揭短取笑",
+    "behavior": "涨红了脸、青筋绽出，咬文嚼字地争辩",
+    "source_quote": "孔乙己便涨红了脸，额上的青筋条条绽出，争辩道",
+    "phases": [
+     1
+    ]
+   },
+   {
+    "situation": "被问到没考上秀才",
+    "behavior": "颓唐不安，满嘴之乎者也搪塞过去",
+    "source_quote": "孔乙己立刻显出颓唐不安模样，脸上笼上了一层灰色",
+    "phases": [
+     1
+    ]
+   },
+   {
+    "situation": "孩子凑过来",
+    "behavior": "教写字、分茴香豆，豆不够了就护住碟子说之乎者也",
+    "source_quote": "不多不多！多乎哉？不多也。",
+    "phases": [
+     1
+    ]
+   },
+   {
+    "situation": "对柜里买酒",
+    "behavior": "不接旁人的话，直接点酒，排出现钱付账",
+    "source_quote": "温两碗酒，要一碟茴香豆。”便排出九文大钱",
+    "phases": [
+     1,
+     2
+    ]
+   },
+   {
+    "situation": "手头没钱欠了账",
+    "behavior": "先记在粉板上，不出一月必定还清",
+    "source_quote": "暂时记在粉板上，但不出一月，定然还清",
+    "phases": [
+     1
+    ]
+   },
+   {
+    "situation": "被问腿是怎么断的",
+    "behavior": "低声说是跌断的，用眼色恳求别再提",
+    "source_quote": "孔乙己低声说道，“跌断，跌，跌……”",
+    "phases": [
+     2
+    ]
+   },
+   {
+    "situation": "落魄后仍被取笑",
+    "behavior": "不再争辩，只说一句不要取笑",
+    "source_quote": "单说了一句“不要取笑！”",
+    "phases": [
+     2
+    ]
+   }
+  ]
+ },
+ "掌柜": {
+  "name": "掌柜",
+  "character_arc": {
+   "axis": "",
+   "phases": []
+  },
+  "situation_behaviors": [
+   {
+    "situation": "伙计手脚笨",
+    "behavior": "嫌他样子傻，调去做无关紧要的活",
+    "source_quote": "掌柜说，样子太傻，怕侍候不了长衫主顾",
+    "phases": []
+   },
+   {
+    "situation": "主顾欠了账",
+    "behavior": "记在粉板上，结账时一遍遍念叨欠数",
+    "source_quote": "还欠十九个钱呢！",
+    "phases": []
+   },
+   {
+    "situation": "听说别人遭了难",
+    "behavior": "当闲话追问后来怎样，不动声色",
+    "source_quote": "“后来怎么样？”",
+    "phases": []
+   },
+   {
+    "situation": "落魄的老主顾上门",
+    "behavior": "照常笑着拿旧事取笑，先问账",
+    "source_quote": "掌柜仍然同平常一样，笑着对他说",
+    "phases": []
+   }
+  ]
+ },
+ "阿Q": {
+  "name": "阿Q",
+  "character_arc": {
+   "axis": "从自欺取胜到恍惚受死，始终靠精神胜利过日子",
+   "phases": [
+    {
+     "label": "精神胜利",
+     "state": "在未庄打短工时，处处吃亏却总在心里转败为胜"
+    },
+    {
+     "label": "处处碰壁",
+     "state": "向吴妈求爱挨打之后，没人雇他，挨饿偷萝卜"
+    },
+    {
+     "label": "得意张狂",
+     "state": "进城回来手里有了钱，又听说革命，便以为能翻身报复"
+    },
+    {
+     "label": "糊涂受死",
+     "state": "被抓进县里之后，跪着受审、画押，懵懂被押去游街"
+    }
+   ]
+  },
+  "situation_behaviors": [
+   {
+    "situation": "被人打了吃了亏",
+    "behavior": "心里说是儿子打老子，自认得胜后心满意足",
+    "source_quote": "我总算被儿子打了，现在的世界真不像样",
+    "phases": [
+     1,
+     2
+    ]
+   },
+   {
+    "situation": "连精神胜利都不灵",
+    "behavior": "自打两个嘴巴，把挨打的当成别人",
+    "source_quote": "用力的在自己脸上连打了两个嘴巴",
+    "phases": [
+     1
+    ]
+   },
+   {
+    "situation": "遇到比自己弱的人",
+    "behavior": "欺负小尼姑，借旁人的笑来找回面子",
+    "source_quote": "和尚动得，我动不得？",
+    "phases": [
+     1
+    ]
+   },
+   {
+    "situation": "被人拿癞疮疤取笑",
+    "behavior": "瞪眼骂人，骂不过就说对方不配",
+    "source_quote": "你还不配……",
+    "phases": [
+     1
+    ]
+   },
+   {
+    "situation": "对女人起了心思",
+    "behavior": "突然跪下求吴妈和他困觉",
+    "source_quote": "我和你困觉，我和你困觉！",
+    "phases": [
+     2
+    ]
+   },
+   {
+    "situation": "挨饿被人当场撞见偷东西",
+    "behavior": "强词夺理，说完拔腿就跑",
+    "source_quote": "这是你的？你能叫得他答应你么？你……",
+    "phases": [
+     2
+    ]
+   },
+   {
+    "situation": "手里有了钱",
+    "behavior": "把钱往柜上一扔，大声要酒摆阔",
+    "source_quote": "现钱！打酒来！",
+    "phases": [
+     3
+    ]
+   },
+   {
+    "situation": "听到革命的风声",
+    "behavior": "满街嚷造反，想象要报复谁、拿谁的东西",
+    "source_quote": "造反了！造反了！",
+    "phases": [
+     3
+    ]
+   },
+   {
+    "situation": "被人拒绝入伙",
+    "behavior": "记恨在心，想去告发对方",
+    "source_quote": "不准我造反，只准你造反？",
+    "phases": [
+     3
+    ]
+   },
+   {
+    "situation": "见了官",
+    "behavior": "不由自主跪下",
+    "source_quote": "膝关节立刻自然而然的宽松，便跪了下去了",
+    "phases": [
+     4
+    ]
+   },
+   {
+    "situation": "画押画不圆",
+    "behavior": "懊恼一阵，转念用精神胜利宽慰自己",
+    "source_quote": "孙子才画得很圆的圆圈呢",
+    "phases": [
+     4
+    ]
+   }
+  ]
+ },
+ "赵太爷": {
+  "name": "赵太爷",
+  "character_arc": {
+   "axis": "从仗势压人到随风向见风使舵",
+   "phases": [
+    {
+     "label": "仗势压人",
+     "state": "阿Q自称姓赵、调戏吴妈那阵子，以家主威风处置下人"
+    },
+    {
+     "label": "贪利提防",
+     "state": "阿Q进城发了财回来后，想低价买他的货又怕他是贼"
+    },
+    {
+     "label": "惶恐讨好",
+     "state": "革命的风声传到未庄时，怕阿Q造反，低声下气套近乎"
+    },
+    {
+     "label": "骤阔傲慢",
+     "state": "秀才挂上自由党徽章之后，自觉身价大涨，目空一切"
+    }
+   ]
+  },
+  "situation_behaviors": [
+   {
+    "situation": "下人冒犯自家身份",
+    "behavior": "当面呵斥，跳过去打嘴巴",
+    "source_quote": "你怎么会姓赵！——你那里配姓赵！",
+    "phases": [
+     1
+    ]
+   },
+   {
+    "situation": "看到有利可图",
+    "behavior": "亲自叫人来，打量对方，打听便宜货",
+    "source_quote": "听说你有些旧东西，……可以都拿来看一看",
+    "phases": [
+     2
+    ]
+   },
+   {
+    "situation": "对来路不明的人",
+    "behavior": "怕结怨不肯得罪，只叫家里夜里警醒",
+    "source_quote": "说这也怕要结怨",
+    "phases": [
+     2
+    ]
+   },
+   {
+    "situation": "有人寄存财物",
+    "behavior": "盘算对自己没坏处就收下",
+    "source_quote": "觉得于他总不会有坏处，便将箱子留下了",
+    "phases": [
+     3
+    ]
+   },
+   {
+    "situation": "局势变了怕被清算",
+    "behavior": "怯怯低声改口称呼，讨好昔日看不起的人",
+    "source_quote": "“老Q，”赵太爷怯怯的迎着低声的叫。",
+    "phases": [
+     3
+    ]
+   },
+   {
+    "situation": "身价陡增",
+    "behavior": "对昔日讨好过的人也不放在眼里",
+    "source_quote": "见了阿Q，也就很有些不放在眼里了",
+    "phases": [
+     4
+    ]
+   }
+  ]
+ }
+}

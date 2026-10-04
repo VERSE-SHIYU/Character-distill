@@ -53,11 +53,9 @@ test_auth_param_used.py` 即可复原当时那次绿；V4/V7 是留在树里的*
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import pathlib
 import re
-import subprocess
 import sys
 
 # 断言文案是中文，子进程与本进程都过一遍 UTF-8 —— 否则 Windows 控制台的 GBK 会在
@@ -84,7 +82,9 @@ TM = ROOT / "core" / "text_manager.py"                      # T 组的靶子（�
 TARGETS = (RF, TF, RP, TP, AUTH, L5, VOICE, MEM, TEXT, TM)
 
 sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(ROOT / "tests" / "perf"))
 import lock_coverage  # noqa: E402  —— 帧解析与产物写入的唯一一份实现
+import mutation_framework as framework  # noqa: E402  —— 执行原语的唯一一份实现
 
 ARTIFACT = pathlib.Path(__file__).resolve().parent / "route_facts_red_lines.json"
 
@@ -626,97 +626,14 @@ GROUPS = {"F": F_GROUP + F3_GROUP, "R": R_GROUP, "X": X_GROUP, "V": V_GROUP,
 
 
 # ── 执行 ───────────────────────────────────────────────────────────────────
+# 执行原语（`_hidden` / `_TOUCHED` / `_apply` / `_restore` / `_run` / `_run_py`）已移到
+# `mutation_framework.py` —— 五个驱动共用那一份，本文件不再自备（spec §3 收口）。
 
 
-def _hidden(path: pathlib.Path) -> pathlib.Path:
-    return path.with_name(path.name + ".hidden")
-
-
-# 本次变异动过的 .py：仓内相对 posix 路径 → **变异前**的源文本。`_run` 用它把红行号搬回
-# 变异前的坐标系（见 `lock_coverage.realign_hits`）。`hide` 不记 —— 移走的文件运行时一条
-# 判别器都不剩，红不可能落在里面。
-_TOUCHED: dict[str, str] = {}
-
-
-def _apply(edits):
-    for kind, path, payload in edits:
-        if kind != "hide" and path.suffix == ".py":
-            _TOUCHED.setdefault(path.resolve().relative_to(ROOT).as_posix(),
-                                path.read_text(encoding="utf-8"))
-        if kind == "append":
-            path.write_text(path.read_text(encoding="utf-8") + payload, encoding="utf-8")
-        elif kind == "write":
-            path.write_text(payload, encoding="utf-8")
-        elif kind == "hide":
-            path.rename(_hidden(path))
-        elif kind == "repl":
-            src = path.read_text(encoding="utf-8")
-            for old, new in payload:
-                hits = src.count(old)
-                assert hits == 1, f"锚点在 {path.name} 命中 {hits} 次（应恰 1）：{old[:70]!r}"
-                src = src.replace(old, new)
-            path.write_text(src, encoding="utf-8")
-        else:
-            raise ValueError(f"未知动作 {kind}")
-
-
-def _restore(baseline):
-    for p, b in baseline.items():
-        hid = _hidden(p)
-        if hid.exists():
-            hid.unlink()
-        p.write_bytes(b)
-    _TOUCHED.clear()
-
-
-def _run(target: str) -> tuple[str, list[str], set[str], list[str]]:
-    """跑一条靶子，回（结论行, 红源摘要, 红在**变异前**坐标系的哪一行, 搬移不动的说明）。
-
-    第一个返回值是汇总行，**不是判档** —— 判档由 `lock_coverage.outcome` 一处做。拿不到汇总行
-    时回 `lock_coverage.RUNAWAY` 并把退出码与尾部输出塞进红源摘要：跑不起来与全绿必须分开，
-    否则「判据根本没执行」会一路读成「符合预期」（实测本机 7 条变异全是这样假绿的）。
-
-    第三个返回值必须用 `--tb=long`：`--tb=line` 给的是**最深帧**，经由抛错包装的分支会全部
-    塌成包装里那条 `raise`（实测同一个锁文件的 24 个调用点在 `--tb=line` 下都打印同一行），
-    覆盖闭合就无从谈起。`--tb=long` 的帧头是 `路径:行号:`，由 `lock_coverage.red_lines` 解析。
-
-    **这个解析漂移时是响的，不是哑的**：pytest 若改了帧格式，解析得空集 → 覆盖闭合当场红。
-
-    解析出来的行号是**变异后**那次运行的行号，而判别器集合算在**变异前**的文件上。变异只要往
-    靶子文件里插/删一行，插点之后的判别器行号就整体平移（实测 G-17/G-19 各差 1 行）——
-    故这里搬回变异前的坐标系再交出去，搬不动就报出来。
-    """
-    r = subprocess.run(
-        [sys.executable, "-m", "pytest", target, "-q", "-p", "no:cacheprovider", "--tb=long"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(ROOT),
-        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
-    out = r.stdout + r.stderr
-    keep = [ln.strip()[:300] for ln in out.splitlines()
-            if ln.strip().startswith(("FAILED", "ERROR")) or "AssertionError" in ln]
-    summary = next((ln.strip() for ln in out.splitlines()
-                    if ("passed" in ln or "failed" in ln or "error" in ln) and " in " in ln), None)
-    if summary is None:
-        # 拿不到汇总行 = 这一跑里 pytest 没能把判据跑完（子进程崩了、import 期就死）。
-        # 记成 green 就是「两种成因共用一个信号」：跑不起来与全部通过长得一样。
-        keep.append(f"[退出码 {r.returncode}] 拿不到汇总行 —— 这条判据根本没跑起来")
-        keep += [ln.strip()[:300] for ln in out.splitlines() if ln.strip()][-2:]
-        summary = lock_coverage.RUNAWAY
-    raw = lock_coverage.red_lines(out, ROOT)
-    mutated = {rel: (ROOT / rel).read_text(encoding="utf-8")
-               for rel in _TOUCHED if (ROOT / rel).exists()}
-    lines, problems = lock_coverage.realign_hits(_TOUCHED, mutated, raw)
-    if lines != raw:
-        print(f"   [坐标] 变异后的红行号 → 变异前的行号：{sorted(raw)} → {sorted(lines)}")
-    return summary, keep, lines, problems
-
-
-def _run_py(code: str) -> tuple[str, list[str]]:
-    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", cwd=str(ROOT),
-                       env={**os.environ, "PYTHONIOENCODING": "utf-8"})
-    out = r.stdout + r.stderr
-    bad = [ln.strip()[:300] for ln in out.splitlines() if "Error" in ln or "assert" in ln]
-    return ("OK" if r.returncode == 0 else f"退出码 {r.returncode}"), bad
+def _order_swap_target():
+    """I-3 的 `_ORDER_SWAP`：包成 `run_matrix` 认的可调用靶子（判档原样采用）。"""
+    summary, keep = framework._run_py(_ORDER_SWAP_CODE)
+    return ("OK" if summary == "OK" else "FAIL"), keep, set(), []
 
 
 def _baseline_gate() -> dict[str, str]:
@@ -728,7 +645,7 @@ def _baseline_gate() -> dict[str, str]:
     bad: dict[str, str] = {}
     for target in ("tests/test_route_facts.py", "tests/test_policy_table.py",
                    "tests/test_auth_param_used.py", "tests/test_text_failure_messages.py"):
-        summary, _, _, _ = _run(target)
+        summary, _, _, _ = framework._run(target)
         print(f"  基线 {target:44s} {summary}")
         cause = lock_coverage.baseline_verdict(summary)
         if cause:
@@ -794,8 +711,6 @@ def main() -> int:
     if not _count_gate():
         return 2
 
-    baseline = {p: p.read_bytes() for p in TARGETS}
-
     print("== 先验基线 ==")
     bad_baseline = _baseline_gate()
     if bad_baseline:
@@ -805,83 +720,22 @@ def main() -> int:
     if "X" in groups and not _alias_gate():
         return 2
 
-    mismatches: list[str] = []
-    domain = lock_coverage.domain_of(GROUPS)
-    hits: dict[str, list[str]] = {}
-    controls: list[str] = []
-    skipped: list[str] = []
+    # `RED-container`（F-3）的红不红是框架版本的函数，本地跑不出来 —— 默认预筛掉，原样记进
+    # 产物的 `skipped`（用 `--with-container` 才跑）。这条预筛由驱动做，框架只收这份清单。
+    items = []
+    pre_skipped = []
     for name in groups:
-        print(f"\n===== {name} 组 =====")
         for item in GROUPS[name]:
-            label, target, edits, expect = item[:4]
-            marker = item[4] if len(item) > 4 else None
-            if expect == "RED-container" and not args.with_container:
-                skipped.append(label)
-                print(f"\n### {label}\n    （跳过：红不红是框架版本的函数，本地跑不出红。"
-                      "用 --with-container 在上锁版本里复跑）")
+            if item[3] == "RED-container" and not args.with_container:
+                pre_skipped.append(item[0])
                 continue
-            _apply(edits)
-            if target == _ORDER_SWAP:
-                summary, keep = _run_py(_ORDER_SWAP_CODE)
-                got = "OK" if summary == "OK" else "FAIL"
-                lines: set[str] = set()
-            else:
-                summary, keep, lines, problems = _run(target)
-                got = lock_coverage.outcome(summary)
-                if problems:
-                    mismatches.append(f"{label}：{'；'.join(problems)}")
-            _restore(baseline)
-            # **期望红的进 `hits`，期望绿/OK（红源天生为空）的进 `controls`。** 一条
-            # 「期望绿」的变异（X-5 / V2 / V4 / V7 / V10 / I-3）证的是「判据退回去，同一条
-            # 变异就红了」—— 它红源为空**正是它要证的事**。混进 hits 会被元锁记成「空转变异
-            # （红了但没撞到判据）」：反证与空转共用一个信号，又一次同型（见
-            # lock_coverage.write_artifact）。
-            want = {"RED": "RED", "RED-container": "RED", "OK": "OK"}.get(expect, "green")
-            if want == "RED":
-                # 只留落在覆盖域里的行：本驱动的靶子文件就是域，别处（stdlib / 宿主脚本）
-                # 的帧不算。
-                hits[label] = sorted(l for l in lines if l.rsplit(":", 1)[0] in set(domain))
-            else:
-                controls.append(label)
-            if got == lock_coverage.RUNAWAY:
-                # 不记绿也不记红：这一跑里判据根本没执行，红源与覆盖都无从谈起。
-                mismatches.append(
-                    f"{label}：{lock_coverage.RUNAWAY} —— 判据没跑起来，这条变异无法验证"
-                    "（既不是绿也不是红；修好 import/runtime 再跑）")
-            elif got != want:
-                mismatches.append(f"{label}：期望 {want} 实得 {got}")
-            # marker 可为单个串或一串（一条变异可能同时该红两条断言，如 F-11）——
-            # 全部命中才算符合，缺一即记 mismatch。跑不起来时红源本来就不存在，跳过。
-            marks = (marker,) if isinstance(marker, str) else (marker or ())
-            missing = [m for m in marks if not any(m in k for k in keep)] if got != lock_coverage.RUNAWAY else []
-            if missing:
-                mismatches.append(f"{label}：红源里没有 {missing!r}（红的不是那条断言）")
-            print(f"\n### {label}   期望={want}  实得={got}")
-            for k in keep:
-                print("   ", k)
-            print("   >>", summary)
+            if item[1] == _ORDER_SWAP:           # I-3 的口子：包成可调用靶子
+                item = (item[0], _order_swap_target, *item[2:])
+            items.append(item)
 
-    print("\n== 还原核对（sha256 逐字节）==")
-    for p in TARGETS:
-        got = hashlib.sha256(p.read_bytes()).hexdigest()
-        same = got == hashlib.sha256(baseline[p]).hexdigest()
-        if not same:
-            mismatches.append(f"{p.name} 还原后 sha256 不符")
-        if _hidden(p).exists():
-            mismatches.append(f"{_hidden(p).name} 残留在树里（移走的文件没还原）")
-        print(f"  {str(p.relative_to(ROOT)):38s} {same}  {got[:16]}")
-
-    print("\n== 结论 ==")
-    if mismatches:
-        for m in mismatches:
-            print("  MISMATCH", m)
-        print("  矩阵有 mismatch —— 产物**不写**（写下去等于把没核对过的红源入库）。")
-        return 1
-    lock_coverage.write_artifact(ARTIFACT, "tests/perf/route_facts_mutations.py",
-                                 domain, hits, skipped, controls, root=ROOT)
-    print(f"  全部符合预期。产物已写：{ARTIFACT.relative_to(ROOT).as_posix()}")
-    print("  （覆盖闭合由 tests/test_lock_coverage.py 核：判别器集合 == 被撞集合）")
-    return 0
+    return framework.run_matrix(
+        items, domain=lock_coverage.domain_of(GROUPS), targets=TARGETS, artifact=ARTIFACT,
+        driver_rel="tests/perf/route_facts_mutations.py", pre_skipped=tuple(pre_skipped))
 
 
 if __name__ == "__main__":

@@ -66,6 +66,54 @@ class PsycheProfile(BaseModel):
     soft_spots: list[str] = []       # 软肋：戳中会心软的点
 
 
+class SituationBehavior(BaseModel):
+    """情境→行为：此人遇到某类情境时的具体做法。
+
+    挂在哪里就是它的适用范围：阶段下的（`ArcPhase.behaviors`）只在那个阶段成立，
+    卡片顶层的（`CharacterCard.situation_behaviors`）从头到尾都成立。挂到哪里不由模型
+    选，由 `core.card_draft.card_from_draft` 按模型标的阶段分发。
+    """
+    situation: str           # 一类情境（不是某一章的某件事）
+    behavior: str            # 此人在这类情境下的具体做法
+    source_quote: str = ""   # 原文摘录，只用于展示；落卡前核对，查不到即清空
+
+
+# 弧线的两层各有一个「共用的底」：存卡（`ArcPhase` / `CharacterArc`）与给模型的草稿
+# （`core.card_draft.DraftArc`）只差阶段下挂不挂做法，其余字段与旧形态的容错都在底上，
+# 两边写一次。docstring 会进发给模型的 JSON 结构，只写给模型看的话。
+class PhaseState(BaseModel):
+    """弧线上的一个阶段：是什么时候、什么心态。"""
+    label: str = ""   # 这一阶段的心态/立场（≤8 字）；旧卡转来的为空
+    state: str = ""   # 这一阶段的状态，一句话，句首点明对应的故事时期
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_legacy_string(cls, value: Any) -> Any:
+        """旧卡的阶段是一句字符串 → 当作没有 label 的 state。"""
+        return {"state": value} if isinstance(value, str) else value
+
+
+class ArcPhase(PhaseState):
+    """弧线上的一个阶段。"""
+    behaviors: list[SituationBehavior] = []   # 只在这一阶段成立的做法
+
+
+class ArcAxis(BaseModel):
+    """角色弧线的变化轴；阶段列表由子类按各自的阶段形态声明。"""
+    axis: str = ""                   # 这条弧线变的是什么，一句「从…到…」；旧卡为空
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_legacy_list(cls, value: Any) -> Any:
+        """旧卡的弧线是阶段列表 → 当作没有 axis 的 phases。"""
+        return {"phases": value} if isinstance(value, list) else value
+
+
+class CharacterArc(ArcAxis):
+    """角色弧线：一条变化轴 + 按故事顺序排列的阶段（「变的部分」）。"""
+    phases: list[ArcPhase] = []
+
+
 class CharacterCard(BaseModel):
     """角色卡——蒸馏引擎的唯一输出格式"""
     name: str
@@ -81,7 +129,8 @@ class CharacterCard(BaseModel):
     dialogue_examples: list[str] = []   # 2-3轮原文对话示例，体现角色说话风格
     emotional_patterns: list[str] = []  # 情感模式：什么情况下会生气/开心/沉默/逃避
     decision_style: str = ""            # 决策风格：冲动型/谨慎型/情感驱动/逻辑驱动
-    character_arc: list[str] = []       # 角色弧线：故事中经历的成长变化阶段，每阶段一句话
+    character_arc: CharacterArc = CharacterArc()  # 角色弧线：变化轴 + 阶段
+    situation_behaviors: list[SituationBehavior] = []  # 情境→行为：从头到尾都成立的做法
     tags: list[str] = []                # AI 自动打的分类标签（蒸馏时填充）
     psyche: PsycheProfile = PsycheProfile()
     cognitive: CognitiveProfile = CognitiveProfile()  # 认知/语言画像
@@ -101,29 +150,15 @@ FORMAT_GROUPS: dict[str, tuple[str, ...]] = {
     # relationships 从 G4 拆出来单独成组：关系条数随登场人数增长（宝玉这种主角几十
     # 条），与其余字段同组会把这组的输出顶到 token 上限；分组之间各给各的上限，
     # 拆开后关系再长也只挤自己那一组。
-    "G4": ("key_memories", "character_arc", "psyche"),
+    "G4": ("key_memories", "psyche"),
     "G5": ("relationships",),
+    # 弧线与情境→行为同组：做法标的是阶段编号，阶段和做法必须在同一次调用里产出。
+    # 单独成组的理由同 G5：条数随角色增长，不挤其他组的输出上限。
+    "G6": ("character_arc", "situation_behaviors"),
 }
 
 # 后置步骤产出的字段（_auto_tag / _generate_awakening / 挑选对话示例），不进分组。
 POST_FORMAT_FIELDS: tuple[str, ...] = ("tags", "awakening_message", "dialogue_examples")
-
-
-def format_group_schema(group: str) -> dict[str, Any]:
-    """按组取 CharacterCard 的 JSON Schema 子集 —— 只留该组字段（可属性的）。
-
-    不给模型整张卡的 schema：那会让每一组都以为要输出全部字段。``$defs`` 整体带上，
-    不按引用裁剪 —— 多带的定义只是几行噪声，裁错一条就是 ``$ref`` 解析不了的硬伤。
-    """
-    full = CharacterCard.model_json_schema()
-    fields = FORMAT_GROUPS[group]
-    return {
-        "title": f"CharacterCard[{group}]",
-        "type": "object",
-        "properties": {k: v for k, v in full["properties"].items() if k in fields},
-        "required": [k for k in full.get("required", []) if k in fields],
-        "$defs": full.get("$defs", {}),
-    }
 
 
 # ── Evidence：检索来源的结构化契约 ─────────────────────────────────────
