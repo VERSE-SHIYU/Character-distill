@@ -201,7 +201,7 @@ def public_limits() -> dict               # {story_max_tokens, chat_max_chars, m
 ```powershell
 docker ps --format "{{.Names}} {{.Ports}}" | Select-String "55432"   # 有别的容器占用 55432 → 停下报告，不要停别人的容器
 docker compose -f docker-compose.test.yml up -d --wait                # 项目名 character-distill-test，tmpfs 空库
-python -m pytest -q tests/test_tokens.py tests/test_length_budget.py tests/test_error_user_facing.py tests/test_distiller_routing.py tests/test_chat.py tests/test_group_session*.py tests/test_context_engine*.py tests/test_text_failure_messages.py tests/test_card_draft.py tests/test_distill_resume.py tests/test_distill_usage_accounting.py tests/test_identify_failure_channels.py tests/test_usage_identity_context.py tests/test_lock_coverage.py
+python -m pytest -q tests/test_tokens.py tests/test_length_budget.py tests/test_error_user_facing.py tests/test_distiller_routing.py tests/test_chat.py tests/test_context_engine_evidence.py tests/test_group_members.py tests/test_agent_loop.py tests/test_text_failure_messages.py tests/test_card_draft.py tests/test_distill_resume.py tests/test_distill_usage_accounting.py tests/test_identify_failure_channels.py tests/test_usage_identity_context.py tests/test_lock_coverage.py
 python tests/perf/distill_capacity_mutations.py
 cd web/frontend; npm test
 ```
