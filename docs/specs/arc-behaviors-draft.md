@@ -604,6 +604,10 @@ cd web/frontend; npm test
 
 `--expect-phases 0` 期望掌柜无弧线、做法全在顶层。实测模型输出 `character_arc.axis = 「从逢孔乙己必取笑催账，到只剩念叨欠账、终不再提」`，分出 2 个阶段（阶段一「取笑催账」1 条、阶段二「念叨欠账」2 条），顶层另有 4 条，故 G4 不过。形态与赵太爷当初被当作「无弧线」样本、模型却分出阶段相同（§7 说明第 1 条）。§7 对掌柜只预告了 G2（条数 <3）风险，未预告会出现阶段。是否把掌柜同样改判为「有弧线」，或另换一个真无弧线样本，待 Shiyu 决定；不自行改提示词。
 
+### 9.4 分支 CI 红 —— card_draft 变异驱动缺产物
+
+CI 红：`card_draft_mutations.py` 缺 `card_draft_red_lines.json`，作者修复中。红源为 `tests/test_lock_coverage.py::test_every_mutation_driver_has_an_artifact_and_vice_versa`（「有驱动却没产物：`['card_draft']`」）——新驱动 `tests/perf/card_draft_mutations.py` 没有像 `alerting_mutations.py` 那样末尾调用 `lock_coverage.write_artifact(...)` 写产物，故元锁恒红、卡住合并门（本分支 `f81c0010` / `bbbae01d` / `98f419f5` 三次 gate 均红）。属作者疏漏，由作者修复并推送到同一分支。
+
 ### 附录 A：全量扫描输出
 
 （见下一节，由第一个提交上运行生成。）
