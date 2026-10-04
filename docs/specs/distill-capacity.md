@@ -47,7 +47,7 @@ C12. 仓库现有**三套**互不一致的 token 估算（`git grep` 全量，�
 - `core/utils.py:13-29` `_CHARS_PER_TOKEN = 1.5` 与 `estimate_usage_from_chars(prompt_chars, completion_chars)`：接口不回用量时的估算兜底（结果带 `estimated=True`），调用方 `adapters/llm_adapter.py:1124`（流式逐片累加 `completion_chars`）、`core/distiller.py:825/877/882/1900/2166`；各调用点手上都有原文（`parts`、`system/messages`、流式 `piece`）。
 - 测试引用：`tests/test_distiller_routing.py:272-416`（`_estimate_tokens`）、`tests/test_distill_usage_accounting.py:37/245/274/301`（`estimate_usage_from_chars`）。
 
-C11. 官方 tokenizer：DeepSeek API 文档附离线 tokenizer；V4 技术报告 §4.1 写明沿用 V3 tokenizer；V4.1 官方仓库（huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash）自带 tokenizer，NVIDIA 官方模型卡标词表 129,280。沙箱内用的 V3 离线 tokenizer `tokenizer.json` sha256 = `ecb6f9fc369894346f0511f4074ca75cee5cd5f3b06d02f1ba35fcd39f8e121d`。
+C11. 官方 tokenizer（2026-10-04 §7.1 核对后修正）：V4.1 官方文件与 V3 系列**文件不同**——HF `deepseek-ai/DeepSeek-V4.1-Flash` 根目录 `tokenizer.json` sha256 `c90dfa01…`（6,367,257B）；官方 V3 `621ac2e3…`、V3.1/V3.2-Exp `32b34a41…`（执行方实测）；DeepSeek 官方 GitHub `deepseek-ai/deepseek-recipe` 的 `static/tokenizers/v41/tokenizer.json`（`81f64d12…`，只改了 id 129264 图像 token）。用 V4.1 文件实测：词表含特殊 token 129,280、不含 128,000；《孔乙己》2,635 字 → **1,848** tokens（解码还原一致），《阿Q正传》22,101 字 → 15,438，120 万字网文 → 816,821，提示词（除原文）4,807 —— 与此前沙箱文件**逐个相同**：差别只在特殊 token，正文分词一致（与 V4 报告 §4.1「在 V3 基础上只加少量特殊 token」相符）。入库用 HF V4.1 官方文件。
 
 ### 2.1 路径机制表（通道 × 执行上下文 × 守它的测试）
 
@@ -225,6 +225,12 @@ cd web/frontend; npm test
 ## 9. 补充
 
 本段改动面内新发现的问题直接修并写进这里；需要拍板的停下报告，不自行记账。
+
+### 9.1 §7.1 tokenizer 来源核对结果（2026-10-04）
+
+- 执行方：V4.1 官方 `tokenizer.json` 与 C11 原期望值不一致；C11 原值来自第三方 GitHub 镜像，与官方 V3 也不一致（审计方原依据有误）。
+- 审计方用 DeepSeek 官方 GitHub `deepseek-recipe` 的 V4.1 文件重算（见 C11）：正文 token 数与此前全部相同，§0、§2.2 的数字不变；U1 期望值为《孔乙己》1,848。
+- 入库：HF V4.1 官方文件；`SOURCE.md` 记 URL、revision、下载日期、sha256、字节数，以及与 V3/V3.1/V3.2 官方文件不同、正文分词一致这一事实。
 
 ## 10. 自检表（对照 Shiyu 的标准，逐条）
 
