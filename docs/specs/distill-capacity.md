@@ -1,13 +1,13 @@
 # distill-capacity：以官方 tokenizer 精确计数决定上限与路径（单一来源）
 
-> **v2，取代本文件 v1（`5def4716`）**：v1 用「字数 × 0.72」自研估算，违反「先找现成库」；v2 改为官方 tokenizer 精确计数（Shiyu 2026-10-04 拍板）。
+> **v3，取代 v1（`5def4716`）与 v2（`0dd04e9c`/`20b5e55e`）**：v1 用「字数 × 0.72」自研估算；v2 改为官方 tokenizer 精确计数但只换了蒸馏一处；v3 按「先搜后写」把仓库里**全部三套** token 估算统一到一个计数函数（Shiyu 2026-10-04 拍板）。
 > 基线：main @ `ad3bc7e1`。分支：`feat/distill-capacity`。本文件先于实现提交供审阅；实现、测试、变异预跑后追加到 §8，补充写进 §9。末尾 §10 为对照标准的自检表。
 
 ## 0. 目的
 
 1. 小说能一次读完的上限，从「100 万字」改为**按官方 tokenizer 数出的 token 数 < 90 万**（约合 120–130 万中文字，因文本而异），覆盖 100 万字以上的长篇（例：120.1 万字的网文实测 816,821 tokens，可收）。
 2. 收下的小说**一定**走一次读完、**一定**不超窗；判断用真实 token 数，不再用系数近似。
-3. 阈值、窗口、各类上限、文件体积上限、token 计数各只有一处定义，前后端共用。
+3. 阈值、窗口、各类上限、文件体积上限各只有一处定义，前后端共用；**全仓库只有一个 token 计数函数**（现有三套系数估算全部删除）。
 4. 万一超窗，用户看到「文本过长」，而不是「请稍后重试」。
 
 ## 1. 已拍板（2026-10-04）
@@ -19,6 +19,7 @@
 | D3 | 一次读完阈值仍为 90 万 tokens，本段不动 |
 | D4 | 聊天记录仍按 200 万**字**限（产品上限，已有角色过滤，不动其流程） |
 | D5 | **token 一律用官方 tokenizer 精确计数**（现成库 `tokenizers` + DeepSeek 官方 `tokenizer.json`），删除系数估算 |
+| D6 | 统一范围：蒸馏选路径、聊天上下文预算、用量估算兜底三处现有估算（C12）全部改用同一个 `count_tokens`，不再新增第四套 |
 
 ### 1.1 方案对比（D5 的依据，按「先找现成库」）
 
@@ -40,6 +41,12 @@ C7. 思考：`adapters/llm_adapter.py:414` DeepSeek 统一 `thinking: {type: dis
 C8. 一次读完输出上限 `LONG_OUTPUT_MAX_TOKENS = 16384`（`core/distiller.py:534`）；除原文外的提示词实测 4,807 tokens。
 C9. 超窗现状：400 判确定性失败、不重试（`llm_adapter.py:242-246`）；上屏文案唯一取值处 `_upstream_user_message`（`:520-531`）只查状态码表（`:486`，无 400）→ 落通用文案「服务暂时不可用，请稍后重试」。
 C10. 人物识别按段落切片，调用数 = 片数 + 5；红楼梦 866,149 字 242 片、约 4 元 38 秒（`docs/specs/distill-longbook-blueprint.md:56`、`:306`）；不受本段影响。
+C12. 仓库现有**三套**互不一致的 token 估算（`git grep` 全量，见附录 B）：
+- `core/context_engine.py:28-30` `_count_tokens = max(1, int(len × 0.8))`：聊天上下文预算，调用方 `core/chat_engine.py:21/386/389/393/522-523`、`core/group_session.py:11/118`、`scripts/run_agent_eval.py:43/102/116/418`；
+- `core/distiller.py:1550-1552` `_estimate_tokens = int(len × 0.6)`：蒸馏选路径（C2）；
+- `core/utils.py:13-29` `_CHARS_PER_TOKEN = 1.5` 与 `estimate_usage_from_chars(prompt_chars, completion_chars)`：接口不回用量时的估算兜底（结果带 `estimated=True`），调用方 `adapters/llm_adapter.py:1124`（流式逐片累加 `completion_chars`）、`core/distiller.py:825/877/882/1900/2166`；各调用点手上都有原文（`parts`、`system/messages`、流式 `piece`）。
+- 测试引用：`tests/test_distiller_routing.py:272-416`（`_estimate_tokens`）、`tests/test_distill_usage_accounting.py:37/245/274/301`（`estimate_usage_from_chars`）。
+
 C11. 官方 tokenizer：DeepSeek API 文档附离线 tokenizer；V4 技术报告 §4.1 写明沿用 V3 tokenizer；V4.1 官方仓库（huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash）自带 tokenizer，NVIDIA 官方模型卡标词表 129,280。沙箱内用的 V3 离线 tokenizer `tokenizer.json` sha256 = `ecb6f9fc369894346f0511f4074ca75cee5cd5f3b06d02f1ba35fcd39f8e121d`。
 
 ### 2.1 路径机制表（通道 × 执行上下文 × 守它的测试）
@@ -52,6 +59,8 @@ C11. 官方 tokenizer：DeepSeek API 文档附离线 tokenizer；V4 技术报告
 | 蒸馏选路径（流式 `distill_incremental_stream`，`/start` 与 `/run_stream` 共用） | token 计数 | 后台线程 / 生成器 | 直接调用；不改心跳与超时 | R5 |
 | tokenizer 加载 | 一次（约 0.27s） | 首次使用的线程 | 惰性单例 + 锁；`Tokenizer.encode` 线程安全 | U3 |
 | 上屏文案 `_upstream_user_message` | 超窗判定 | 任意线程（纯函数） | 不改重试 | R6 |
+| 聊天上下文预算（`chat_engine`、`group_session`） | token 计数 | 聊天请求协程内同步调用 | 单条消息毫秒级，不放线程；检索块的削减循环（`chat_engine.py:389`）每轮重算一次，量级同 | R8、R9 |
+| 用量估算兜底（`llm_adapter` 流式、`distiller` 五处） | token 计数 | 调用 LLM 的线程 | 改为传原文；流式把 `piece` 累加成文本再计数 | R10 |
 | `GET /api/text/limits` | 上限 JSON | 请求协程 | 纯读常量 | R7 |
 | 前端上传校验与提示 | 上限 | 浏览器 | 只读接口返回值 | F1、F2 |
 
@@ -81,6 +90,19 @@ C11. 官方 tokenizer：DeepSeek API 文档附离线 tokenizer；V4 技术报告
 
 ## 3. 设计
 
+### 3.0 `core/tokens.py`（全仓库唯一的 token 计数）
+
+```python
+def count_tokens(text: str) -> int   # 官方 tokenizer 精确计数；惰性单例 + 锁；空串 → 0
+```
+
+- `tokenizer.json` 放 `core/assets/deepseek_tokenizer/`，同目录 `SOURCE.md` 记来源与 sha256。
+- 三处现有估算的去向：
+  - `context_engine._count_tokens` 删除，调用方（`chat_engine`、`group_session`、`scripts/run_agent_eval`）直接用 `count_tokens`。原函数的 `max(1, …)` 下限：逐个调用点核对是否依赖「至少为 1」，依赖的就在调用点写明，不在计数函数里加特例。
+  - `distiller._estimate_tokens` 删除（§3.2）。
+  - `utils.estimate_usage_from_chars` 与 `_CHARS_PER_TOKEN` 删除，换成 `estimate_usage(prompt_text, completion_text="")`：内部用 `count_tokens`，仍返回 `estimated=True`（语义不变：这是「接口没回用量」时的数，不是接口的数）。六个调用点改为传原文。
+- **已知局限**：计数用的是 DeepSeek 的 tokenizer。用户在设置页换成别家模型时，这个数对他们的模型是近似值；线上默认模型是 `deepseek-flash`，对它是精确值。
+
 ### 3.1 `core/length_budget.py`（纯常量与纯函数）
 
 ```python
@@ -91,13 +113,12 @@ CHAT_MAX_CHARS           = 2_000_000    # D4
 MAX_FILE_BYTES           = 30 * 1024 * 1024
 # 导入时断言：阈值 + PROMPT_RESERVE + LONG_OUTPUT_MAX_TOKENS < 窗口
 
-def count_tokens(text: str) -> int        # 官方 tokenizer 精确计数（惰性单例 + 锁）
 def fits_one_pass(n_tokens: int) -> bool  # n_tokens < 阈值 —— 选路径与小说上限共用这一个判断
 def check_upload(text: str, text_type: str) -> None   # 超限抛 ValueError（文案见下）；chat 按字、其余按 token
 def public_limits() -> dict               # {story_max_tokens, chat_max_chars, max_file_bytes}
 ```
 
-- `tokenizer.json` 放 `core/assets/deepseek_tokenizer/tokenizer.json`，随代码入库；来源与 sha256 写在同目录 `SOURCE.md`。
+- 计数一律调 `core.tokens.count_tokens`。
 - 小说超限文案：`文本共 {n:,} tokens，超过小说上限 {阈值:,} tokens，请分卷上传`（精确数，不换算字数）。
 
 ### 3.2 后端接线（去重，不留旧值）
@@ -142,6 +163,9 @@ def public_limits() -> dict               # {story_max_tokens, chat_max_chars, m
 | R5 流式选路径 | — | — | `test_stream_route_by_token_count` | — | — |
 | R6 超窗上屏 | — | `test_overflow_400_user_message`、`test_other_400_unchanged` | — | — | — |
 | R7 limits 接口 | — | — | — | `test_limits_endpoint` | — |
+| R8 聊天上下文预算（`chat_engine`） | — | — | — | 预算内保留的上下文条数按精确计数：`test_chat_context_budget_uses_count_tokens` | — |
+| R9 群聊预算（`group_session`） | — | — | — | `test_group_budget_uses_count_tokens` | — |
+| R10 用量估算兜底（流式 / 非流式失败 / 截断） | — | — | — | 记账载荷 `prompt_tokens`/`completion_tokens` 等于原文的精确计数且 `estimated=True`：`test_estimated_usage_counts_text`（改写 `test_distill_usage_accounting.py` 现有三条） | — |
 | F1 前端上传校验 | `TextLimits.test.jsx: rejects over max_file_bytes` | 同文件 `shows size message` | — | — | 同文件 `disables upload when limits fail` |
 | F2 前端提示文案 | — | — | — | — | 同文件 `hint built from limits` |
 
@@ -152,7 +176,7 @@ def public_limits() -> dict               # {story_max_tokens, chat_max_chars, m
 | 编号 | 断言 |
 |---|---|
 | S1 | `core/ web/routers/ web/frontend/src/` 不再出现：`* 0.6`、`1_000_000`（上传上限）、`900000`/`900_000`（`length_budget` 以外）、`30 * 1024 * 1024`（以外）、`100 * 1024 * 1024`、「100 万」；`longctx_threshold` 不再被读取 |
-| S2 | `count_tokens` 是 token 计数的唯一实现（全仓库无其他 `Tokenizer.from_file` / 系数乘法） |
+| S2 | `core.tokens.count_tokens` 是全仓库唯一的 token 计数：`core/ web/ adapters/ scripts/` 中不再出现 `_count_tokens`、`_estimate_tokens`、`_CHARS_PER_TOKEN`、`estimate_usage_from_chars`、`len(...) * 0.6/0.8`、`/ 1.5`，`Tokenizer.from_file` 只在 `core/tokens.py` |
 
 ## 5. 变异清单（实现后在 PG 上预跑，全部打红才推；驱动基于 `tests/perf/mutation_framework.py`，产物 `tests/perf/distill_capacity_red_lines.json`）
 
@@ -168,13 +192,16 @@ def public_limits() -> dict               # {story_max_tokens, chat_max_chars, m
 | M8 | 413 文案写死 | R2、S1 |
 | M9 | 前端接口失败时放行 | F1 |
 | M10 | 预算断言删掉 | U4 |
+| M11 | 聊天预算改回 `len × 0.8` | R8、S2 |
+| M12 | 用量兜底改回按字数除 1.5 | R10、S2 |
+| M13 | 流式兜底只计最后一片（不累加） | R10 |
 
 ## 6. 本地命令（只跑受影响的文件；合并门是分支 CI）
 
 ```powershell
 docker ps --format "{{.Names}} {{.Ports}}" | Select-String "55432"   # 有别的容器占用 55432 → 停下报告，不要停别人的容器
 docker compose -f docker-compose.test.yml up -d --wait                # 项目名 character-distill-test，tmpfs 空库
-python -m pytest -q tests/test_length_budget.py tests/test_error_user_facing.py tests/test_distiller_routing.py tests/test_text_failure_messages.py tests/test_card_draft.py tests/test_distill_resume.py tests/test_distill_usage_accounting.py tests/test_identify_failure_channels.py tests/test_usage_identity_context.py tests/test_lock_coverage.py
+python -m pytest -q tests/test_tokens.py tests/test_length_budget.py tests/test_error_user_facing.py tests/test_distiller_routing.py tests/test_chat.py tests/test_group_session*.py tests/test_context_engine*.py tests/test_text_failure_messages.py tests/test_card_draft.py tests/test_distill_resume.py tests/test_distill_usage_accounting.py tests/test_identify_failure_channels.py tests/test_usage_identity_context.py tests/test_lock_coverage.py
 python tests/perf/distill_capacity_mutations.py
 cd web/frontend; npm test
 ```
@@ -217,7 +244,7 @@ cd web/frontend; npm test
 | ③ 规模表 | §2.2 | ✅ |
 | ④ 调用点矩阵逐格到测试名 | §4.2 | ✅ |
 | 变异发出前先实跑 | §5（执行方实现后跑，未全红不推；Claude 审计结果） | ⏳ 实现阶段 |
-| 经验 1 复用先找现成库 | §1.1：`tokenizers` 已在锁定依赖中，零新增 | ✅ |
+| 经验 1 复用先找现成库 | §1.1：`tokenizers` 已在锁定依赖中，零新增；先搜代码库（C12）把三套现有估算统一，不新增第四套 | ✅ |
 | 经验 2 替换原生控件先列行为 | 不替换控件，只用 `disabled` 属性 | 不适用 |
 | 经验 3 行为照抄权威来源 | 超窗措辞出自官方仓库讨论；窗口出自官方模型卡 | ✅ |
 | 经验 4 事实全量现查 | 附录 A 扫描命令与原始输出 | ✅ |
@@ -226,7 +253,7 @@ cd web/frontend; npm test
 | 经验 7 交接可核对 | §8 `Test-Path` + 提交号；v2 首行标明取代 v1 | ✅ |
 | 经验 8 起环境前查冲突 | §6 首行 55432 检查、项目名、tmpfs | ✅ |
 | 不打补丁、隔离、抽象、复用 | 一个模块管所有上限；两处重复判断收一；前端两处体积常量收一；死代码 `charCountClass` 随旧上限删除 | ✅ |
-| skill 用上不过度 | Claude 实现：karpathy-guidelines；前端读 frontend-design（只取可访问性下限）；执行方只配 `@verification-before-completion` | ✅ |
+| skill 用上不过度 | 前端读过 frontend-design（只取可访问性下限）；执行方配两个：`@search-first`（实现前搜可复用的现成实现）、`@verification-before-completion`（报通过前附实际输出） | ✅ |
 
 ### 附录 A：全量扫描输出（`ad3bc7e1`）
 
@@ -299,4 +326,59 @@ tests/test_identify_failure_channels.py
 tests/test_text_failure_messages.py
 tests/test_usage_identity_context.py
 web/frontend/src/components/TextPanel.jsx
+```
+
+### 附录 B：token 估算全量扫描（`ad3bc7e1`）
+
+```
+$ git grep -n -I -i -E "tiktoken|from tokenizers|Tokenizer\.from|count_tokens|token_count|estimate_tokens|_CHARS_PER_TOKEN|estimate_usage_from_chars" -- core web adapters mcp_server scripts storage tests
+adapters/llm_adapter.py:25:from core.utils import estimate_usage_from_chars  # 字符→token 估算的唯一出口
+adapters/llm_adapter.py:1124:                usage = estimate_usage_from_chars(prompt_chars, completion_chars)
+core/chat_engine.py:21:from core.context_engine import _count_tokens
+core/chat_engine.py:386:            tok = _count_tokens(retrieval_block)
+core/chat_engine.py:389:                while _count_tokens(retrieval_block) > budget and len(parts) > 1:
+core/chat_engine.py:393:                if _count_tokens(retrieval_block) > budget:
+core/chat_engine.py:522:                _count_tokens(user_msg.get("content", ""))
+core/chat_engine.py:523:                + _count_tokens(asst_msg.get("content", ""))
+core/context_engine.py:28:def _count_tokens(text: str) -> int:
+core/context_engine.py:281:        budget -= _count_tokens(card_core) + _count_tokens(rules_block)
+core/context_engine.py:317:            allowed = min(_count_tokens(content), max_tok, budget)
+core/context_engine.py:324:        total_used = _count_tokens(result)
+core/distiller.py:55:from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
+core/distiller.py:825:                usage_action, estimate_usage_from_chars(prompt_chars, len(text)),
+core/distiller.py:877:                self._try_record_usage(action, estimate_usage_from_chars(
+core/distiller.py:882:            usage = estimate_usage_from_chars(
+core/distiller.py:1550:    def _estimate_tokens(text: str) -> int:
+core/distiller.py:1900:                usage = estimate_usage_from_chars(len(system) + len(user))
+core/distiller.py:2064:        estimated = self._estimate_tokens(text)
+core/distiller.py:2166:            compress_usage = estimate_usage_from_chars(len(compress_system) + len(compress_user))
+core/distiller.py:2249:        estimated = self._estimate_tokens(text)
+core/group_session.py:11:from core.context_engine import _count_tokens
+core/group_session.py:118:            total = sum(_count_tokens(m["content"]) for m in messages)
+core/utils.py:13:_CHARS_PER_TOKEN = 1.5
+core/utils.py:16:def estimate_usage_from_chars(prompt_chars: int, completion_chars: int = 0) -> dict:
+core/utils.py:25:        "prompt_tokens": int(prompt_chars / _CHARS_PER_TOKEN),
+core/utils.py:26:        "completion_tokens": int(completion_chars / _CHARS_PER_TOKEN),
+scripts/run_agent_eval.py:43:from core.context_engine import _count_tokens
+scripts/run_agent_eval.py:102:            self.last_sp_tokens = _count_tokens(result)
+scripts/run_agent_eval.py:116:        _count_tokens(m.get("content", ""))
+scripts/run_agent_eval.py:418:                sp_tokens=_count_tokens(legacy_sp),
+scripts/test_distill.py:21:    token_count = 0
+scripts/test_distill.py:53:            token_count += len(data.get("token", ""))
+scripts/test_distill.py:57:    print(f"Total: {elapsed:.1f}s, Chunks: {chunk_events}, Compressions: {compression_count}, Tokens: {token_count}, Errors: {len(err
+tests/test_distill_usage_accounting.py:37:from core.utils import estimate_usage_from_chars, try_record_usage
+tests/test_distill_usage_accounting.py:245:        assert payload == estimate_usage_from_chars(
+tests/test_distill_usage_accounting.py:259:        变异：把非流式截断支那条 `estimate_usage_from_chars(...)` 退回 `usage=None`
+tests/test_distill_usage_accounting.py:274:        assert payload == estimate_usage_from_chars(
+tests/test_distill_usage_accounting.py:301:        assert payload == estimate_usage_from_chars(len(SYSTEM) + len(USER)), (
+tests/test_distiller_routing.py:272:        """~4w token text → _estimate_tokens < 150000."""
+tests/test_distiller_routing.py:274:        assert Distiller._estimate_tokens(text) < 150000
+tests/test_distiller_routing.py:277:        """~20w token text → _estimate_tokens >= 150000."""
+tests/test_distiller_routing.py:279:        assert Distiller._estimate_tokens(text) >= 150000
+tests/test_distiller_routing.py:282:        assert Distiller._estimate_tokens("") == 0
+tests/test_distiller_routing.py:287:        tokens = Distiller._estimate_tokens(text)
+tests/test_distiller_routing.py:363:        with patch.object(Distiller, "_estimate_tokens", return_value=519_689):
+tests/test_distiller_routing.py:367:        with patch.object(Distiller, "_estimate_tokens", return_value=950_000):
+tests/test_distiller_routing.py:392:        with patch.object(Distiller, "_estimate_tokens", return_value=1_000):
+tests/test_distiller_routing.py:416:        with patch.object(Distiller, "_estimate_tokens", return_value=1_000):
 ```
