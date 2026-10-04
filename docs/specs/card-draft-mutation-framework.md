@@ -214,24 +214,51 @@ S1 + S3 共要把四个旧驱动各跑两遍；route_facts 最慢，可以放后
 
 ## 11. 进度（执行方追加）
 
-**Claude web 已完成（`c4a6364c`）**
+**Claude web 已完成（`c4a6364c` / `3cc07e7d` / `55146032`）**
 - [x] 测试搬迁：路由两条用例与 draft 专用桩搬进 `test_card_draft.py`（通用桩从 `test_distill_task_api` import，不复制）；G6 模板的 `"phases": [1, 2]` 拆成本文件的单独用例；删掉一条死判据（理由写在用例注释里，K3 守住它不回来）。受影响三个文件 85 passed（PG 16）。
 - [x] 附录 B 的 38 条变异在 `c4a6364c` 上逐条预跑：全部 RED，44/44 覆盖，0 空转；用这份结果模拟写出产物，`test_lock_coverage.py` 29 passed（K0）。
 - [x] pg_gate 锚点修复 `3cc07e7d`（C17）。
 - [x] 四个旧驱动在 Linux 沙箱的基准（附录 A4）：alerting / route_facts / pg_gate（修锚点后）的产物与入库逐字节相同；ping 不同，原因见第 6 节。
 
-**执行方待做**
-- [ ] S0（第 0 节）
-- [ ] S1 改动前基准
-- [ ] S2 框架 + 四个驱动 + `test_mutation_framework.py`（先红后绿，贴输出）
-- [ ] S3 改动后比对（第 6 节三项，逐驱动）
-- [ ] S4 card_draft 驱动 + 产物
-- [ ] S5 F1–F15 逐条变异结果
-- [ ] S6 第 8 节命令输出；两处文字；推分支；分支 CI 号
+**执行方已完成（基线 `55146032`；本地 Windows + PG 16 / 55432）**
+- [x] **S0 交接与前提复核**：`git merge --ff-only origin/feat/arc-behaviors-draft` → HEAD `55146032`；第 2 节 C1–C17 与第 7 节对账表逐条复核**成立**；测试库 `docker compose -f docker-compose.test.yml down` 再 `up -d --wait`，取干净空库后再开跑。
+- [x] **S1 改动前基准**：四个旧驱动各跑一遍，均 exit 0、产物已写、0 mismatch（`$TEMP/eq/before/<driver>`）。
+- [x] **S2 框架 + 四个驱动接入**：`tests/perf/mutation_framework.py`（`_apply` / `_restore` / `_run` / `_run_py` 与主循环 `run_matrix` 收口**唯一一份**）、`tests/test_mutation_framework.py`（F1–F15，17 条）。接线过程中实测 `15 passed / 2 failed` → `16 / 1` → `17 / 0`（F14 要求全部五个驱动都调 `run_matrix`，随 S4 收尾转绿）。每条的**红源**由 S5 逐条给出（见下表）。
+- [x] **S3 改动后比对（第 6 节三项，逐驱动）**：alerting / ping / pg_gate / route_facts 的 ① 退出码 ② 产物逐字节（sha256 与 before 一致）③ MISMATCH 标签集合 **三项全同**（逐驱动 0 mismatch）。
+- [x] **S4 card_draft 驱动 + 产物**：38 条变异**全 RED**、**44/44 覆盖**、**0 空转**；`tests/perf/card_draft_red_lines.json` 入库。元锁 **K0** `test_lock_coverage.py` **29 passed**；**K1–K4** 逐条施加后**红且点名**附录 A3 的行/标签（`:309` / `MX` / `:316` / `['card_draft']`），跑完还原（artifact 与 `test_card_draft.py` 逐字节回原）。
+- [x] **S5 F1–F15 逐条变异**：见下表（每条打红它**自己的**判据；变异跑完逐字节还原）。
+- [x] **S6** 第 8 节受影响的五个文件 **131 passed**；`AGENTS.md` 与 `docs/specs/arc-behaviors-draft.md` §9.4 两处文字；推分支，分支 CI 号见 §12。
+
+**S5 F 系列逐条变异结果**（变异打在 `tests/perf/mutation_framework.py`；F14/F15 打在 `alerting_mutations.py`）
+
+| # | 变异 | 结果 |
+|---|---|---|
+| F1 | `summary_of` 取第一条（`reversed` 去掉） | RED `test_summary_is_the_last_matching_line` |
+| F2 | 红源摘要去掉 `"E "` | RED `test_keep_includes_exception_lines` |
+| F3 | 主循环去掉 `finally`（异常时不还原） | RED `test_targets_are_restored_when_a_target_raises` |
+| F4a | `_restore` 不删 `_CREATED` | RED `test_written_file_is_removed_on_restore` |
+| F4b | `write` 去掉「路径不存在」断言 | RED `test_write_refuses_an_existing_path` |
+| F5 | 删空转判断 | RED `test_vacuous_red_is_a_mismatch_and_writes_no_artifact` |
+| F6 | 删编号查重 | RED `test_duplicate_labels_are_refused` |
+| F7 | marker 只按串处理 | RED `test_marker_accepts_a_string_or_a_sequence` |
+| F8a | 删 `skipped.append`（登记过的 skip 不进 skipped） | RED `test_registered_skip_goes_to_skipped` |
+| F8b | skip 一律放行（`if label not in may_skip` → `if False`） | RED `test_unregistered_skip_is_a_mismatch` |
+| F9 | 期望 green/OK 并入 hits（不再进 controls） | RED `test_expected_green_and_ok_go_to_controls` |
+| F10 | 可调用靶子也走 `outcome` | RED `test_callable_target_verdict_is_used_as_is` |
+| F11 | 丢掉 `pre_skipped` | RED `test_pre_skipped_labels_land_in_the_artifact` |
+| F12 | 跑不起来当成通过（RUNAWAY 分支 `continue`） | RED `test_runaway_is_a_mismatch` |
+| F13 | 删收尾 sha256 比对 | RED `test_unrestored_target_is_a_mismatch`（见 §12） |
+| F14 | alerting 里留一份 `def _run` | RED `test_drivers_define_no_execution_primitives` |
+| F15 | 删 alerting 的域文件门（`_domain_edits` 恒空） | RED `test_alerting_refuses_edits_on_its_domain` |
+
+15/15 变红，跑完 `mutation_framework.py` / `alerting_mutations.py` 逐字节还原（F16 即 S1/S3 的机器比对，见上）。
 
 ## 12. 补充
 
 本段改动面内新发现的问题直接修，写进这里；会撞车或需要拍板的停下报告，不自行记账。
+
+- **F13 判据自身没有分辨力（S5 当场发现、就地修）**：`test_unrestored_target_is_a_mismatch` 原用 `_callable("RED")`（红源**不落在域里**），于是**空转守卫**也记一条 mismatch —— 删掉收尾的 sha256 比对后 `rc` 仍为 1，判据对「收尾核 sha256」**毫无分辨力**（S5 实测 F13 不变红）。改法：给可调用靶子一条落入域里的红源（**不空转**），使这条唯一的 mismatch 只能来自 sha256 比对；改后 F13 变红。属本段改动面内、新写文件**自身的**判据漏洞，按本节「改动面内新发现的问题直接修」处理，不另记账。
+- **分支 CI 号**：见推送后本轮报告（gate job）。
 
 ## 附录 A —— 扫描与预跑的原始输出
 

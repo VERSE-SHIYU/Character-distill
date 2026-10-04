@@ -608,6 +608,8 @@ cd web/frontend; npm test
 
 CI 红：`card_draft_mutations.py` 缺 `card_draft_red_lines.json`，作者修复中。红源为 `tests/test_lock_coverage.py::test_every_mutation_driver_has_an_artifact_and_vice_versa`（「有驱动却没产物：`['card_draft']`」）——新驱动 `tests/perf/card_draft_mutations.py` 没有像 `alerting_mutations.py` 那样末尾调用 `lock_coverage.write_artifact(...)` 写产物，故元锁恒红、卡住合并门（本分支 `f81c0010` / `bbbae01d` / `98f419f5` 三次 gate 均红）。属作者疏漏，由作者修复并推送到同一分支。
 
+**已关闭**：`card_draft_mutations.py` 重写并接入共享执行框架 `tests/perf/mutation_framework.py`（执行原语/主循环收口一份，产物经 `run_matrix` 写出）；38 条变异全 RED、44/44 覆盖、0 空转，`tests/perf/card_draft_red_lines.json` 入库，元锁 `test_lock_coverage.py` 29 passed。收口过程见 `docs/specs/card-draft-mutation-framework.md`（§11 进度）。
+
 ### 附录 A：全量扫描输出
 
 （见下一节，由第一个提交上运行生成。）
