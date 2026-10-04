@@ -123,7 +123,10 @@ _RETRIES_LINE = "      retries: 5\n"                # G-6 / G-7：在它后面�
 _TIMEOUT_LINE = "      timeout: 5s\n"               # G-8：写成小于 PGCONNECT_TIMEOUT 的值
 _INTERVAL_LINE = "      interval: 10s\n"            # G-9：只改 local 一份
 # G-10 / G-11 打的是**消费者**（app 对 postgres 的依赖块），两份文件里形状相同。
-_DEPENDS_ON_BLOCK = "    depends_on:\n      postgres:\n        condition: service_healthy\n"
+_DEPENDS_ON_BLOCK = ("    depends_on:\n      # 属主先修好再起 app，否则 appuser 往 uploads/ 写会 [Errno 13]\n"
+                     "      data-perms:\n        condition: service_completed_successfully\n"
+                     "      postgres:\n        condition: service_healthy\n")
+_PG_DEP = "      postgres:\n        condition: service_healthy\n"
 # G-23：只改 local 的服务键名。两空格缩进的 `postgres:` 只在服务定义处出现（依赖块里是六空格）。
 # 依赖块里那一处**必须**跟着改名 —— 否则 compose 自己在求值期就报 `depends on undefined
 # service "postgres"`，红的是工具而不是本锁，那条 I1 判据根本没被走到（实测如此）。
@@ -241,13 +244,12 @@ G_GROUP = [
     # 同一个值，故两条走同一句报错。
     ("G-10 两个文件的 app 都把 depends_on 改成短式列表",
      LOCK_PATH,
-     _both(_DEPENDS_ON_BLOCK, "    depends_on:\n      - postgres\n"),
+     _both(_DEPENDS_ON_BLOCK, "    depends_on:\n      - data-perms\n      - postgres\n"),
      "RED", "condition='service_started'"),
 
     ("G-11 两个文件的 app 都把 condition 改成 service_started",
      LOCK_PATH,
-     _both(_DEPENDS_ON_BLOCK,
-           "    depends_on:\n      postgres:\n        condition: service_started\n"),
+     _both(_PG_DEP, "      postgres:\n        condition: service_started\n"),
      "RED", "condition='service_started'"),
 
     # ── I4(b)：新服务必须被复核（G-12～G-16）─────────────────────────────────
