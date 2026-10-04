@@ -73,7 +73,6 @@ G-7 用 YAML 合并键 `<<` 从顶层锚点注入 `disable: true`（原始 YAML 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import pathlib
 import re
 import sys
@@ -91,7 +90,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import compose_model  # noqa: E402  —— 只为 docker 前置门探一次可用性
 import lock_coverage  # noqa: E402  —— 帧解析与产物写入的唯一一份实现（与另两个驱动共用）
-import route_facts_mutations as framework  # noqa: E402  —— 执行框架的唯一一份实现
+import mutation_framework as framework  # noqa: E402  —— 执行框架的唯一一份实现
 
 ARTIFACT = ROOT / "tests" / "perf" / "pg_gate_red_lines.json"
 
@@ -100,9 +99,9 @@ LOCAL = ROOT / "docker-compose.local.yml"
 LOCK = ROOT / "tests" / "test_pg_gate.py"
 CM = ROOT / "tests" / "compose_model.py"
 
-# G-20 会**新建**一个文件：它不在 baseline 里，`_restore` 管不到，故单独列出来清。
+# G-20 会**新建**一个文件：它不在 baseline 里 —— 框架的 `_apply` 记下 write 新建的路径、
+# 还原时删掉（原先本文件自备一份 `_CREATED` 清单，收归框架一份）。
 _OVERRIDE = ROOT / "docker-compose.override.yml"
-_CREATED = (_OVERRIDE,)
 
 TARGETS = (PROD, LOCAL, LOCK, CM)
 
@@ -429,14 +428,6 @@ def _baseline_gate() -> dict[str, str]:
     return bad
 
 
-def _restore_all(baseline) -> None:
-    """还原既有的靶子，并清掉 G-20 新建的那个文件。"""
-    framework._restore(baseline)
-    for p in _CREATED:
-        if p.exists() and p not in baseline:
-            p.unlink()
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--group", default="G", help="要跑的组（本驱动只有 G 组）")
@@ -447,66 +438,22 @@ def main() -> int:
     if not _docker_gate():
         return 2
 
-    baseline = {p: p.read_bytes() for p in TARGETS}
-
     print("== 先验基线 ==")
     bad_baseline = _baseline_gate()
     if bad_baseline:
         return lock_coverage.refuse_on_baseline(bad_baseline)
 
-    mismatches: list[str] = []
-    domain = lock_coverage.domain_of(GROUPS)
-    hits: dict[str, list[str]] = {}
     wanted = [x.strip() for x in args.group.upper().split(",") if x.strip()]
+    items = []
     for name in [g for g in wanted if g in GROUPS]:
-        print(f"\n===== {name} 组 =====")
         for item in GROUPS[name]:
             label, target, edits, expect = item[:4]
             marker = item[4] if len(item) > 4 else None
-            framework._apply(edits)
-            summary, keep, lines, problems = framework._run(target)
-            got = lock_coverage.outcome(summary)
-            _restore_all(baseline)
-            if problems:
-                mismatches.append(f"{label}：{'；'.join(problems)}")
-            dom = set(domain)
-            hits[label] = sorted(l for l in lines if l.rsplit(":", 1)[0] in dom)
-            if got == lock_coverage.RUNAWAY:
-                mismatches.append(
-                    f"{label}：{lock_coverage.RUNAWAY} —— 判据没跑起来，这条变异无法验证"
-                    "（既不是绿也不是红；修好 import/runtime 再跑）")
-            elif got != expect:
-                mismatches.append(f"{label}：期望 {expect} 实得 {got}")
-            if marker and got != lock_coverage.RUNAWAY and not any(marker in k for k in keep):
-                mismatches.append(f"{label}：红源里没有 {marker!r}（红的不是那条断言）")
-            print(f"\n### {label}   期望={expect}  实得={got}")
-            for k in keep:
-                print("   ", k)
-            print("   >>", summary)
+            items.append((label, target, edits, expect, marker))
 
-    print("\n== 还原核对（sha256 逐字节）==")
-    for p in TARGETS:
-        got = hashlib.sha256(p.read_bytes()).hexdigest()
-        same = got == hashlib.sha256(baseline[p]).hexdigest()
-        if not same:
-            mismatches.append(f"{p.name} 还原后 sha256 不符")
-        print(f"  {str(p.relative_to(ROOT)):38s} {same}  {got[:16]}")
-    for p in _CREATED:
-        if p.exists():
-            mismatches.append(f"{p.name} 残留在树里（G-20 新建的文件没清掉）")
-        print(f"  {str(p.relative_to(ROOT)):38s} {'不存在' if not p.exists() else '仍在！'}")
-
-    print("\n== 结论 ==")
-    if mismatches:
-        for m in mismatches:
-            print("  MISMATCH", m)
-        print("  矩阵有 mismatch —— 产物**不写**（写下去等于把没核对过的红源入库）。")
-        return 1
-    lock_coverage.write_artifact(ARTIFACT, "tests/perf/pg_gate_mutations.py",
-                                 domain, hits, [], root=ROOT)
-    print(f"  全部符合预期。产物已写：{ARTIFACT.relative_to(ROOT).as_posix()}")
-    print("  （覆盖闭合由 tests/test_lock_coverage.py 核：判别器集合 == 被撞集合）")
-    return 0
+    return framework.run_matrix(
+        items, domain=lock_coverage.domain_of(GROUPS), targets=TARGETS, artifact=ARTIFACT,
+        driver_rel="tests/perf/pg_gate_mutations.py")
 
 
 if __name__ == "__main__":
