@@ -610,6 +610,14 @@ CI 红：`card_draft_mutations.py` 缺 `card_draft_red_lines.json`，作者修�
 
 **已关闭**：`card_draft_mutations.py` 重写并接入共享执行框架 `tests/perf/mutation_framework.py`（执行原语/主循环收口一份，产物经 `run_matrix` 写出）；38 条变异全 RED、44/44 覆盖、0 空转，`tests/perf/card_draft_red_lines.json` 入库，元锁 `test_lock_coverage.py` 29 passed。收口过程见 `docs/specs/card-draft-mutation-framework.md`（§11 进度）。
 
+### 9.5 变异产物在本机（Windows）重生为 CRLF —— 按内容接受，根因属改动面之外
+
+复核（`cab4f829`）跑 alerting / pg_gate 两个驱动：均 exit 0、0 mismatch，产物与入库**内容完全相同**（`git diff --ignore-cr-at-eol` 零行差异），但 `cmp` 逐字节不同（char 2 line 1）。
+
+- **根因**：`tests/lock_coverage.py` 的 `write_artifact`（约 :440）`pathlib.Path(path).write_text(..., encoding="utf-8")` **没传 `newline=""`**，Windows 文本模式把 `\n` 翻成 `\r\n`；入库 blob 是 LF（`.gitattributes` `* text=auto eol=lf`，`git add` 时归一化），故工作区重生的文件是 CRLF。
+- **判定**：**按内容接受**。`eol=lf` 保证入库一律 LF，Windows 上的 CRLF 只是工作区差异（`git checkout` 即还原为 LF）；逐字节相同只在 Linux（审计沙箱、CI）成立 —— 与 §6 第 1 条「入库产物在 Windows 上生成、环境不同本来就会不同」同源。
+- **归属**：根因在 `tests/lock_coverage.py` —— 该文件是 `card-draft-mutation-framework` spec §1 列的**禁区**（本段不改），故这是**改动面之外**的已知缺陷，另行处理。`tests/test_line_endings.py`（7 条）不覆盖 `tests/perf/*.json`，CRLF 产物不会让它变红。
+
 ### 附录 A：全量扫描输出
 
 （见下一节，由第一个提交上运行生成。）
