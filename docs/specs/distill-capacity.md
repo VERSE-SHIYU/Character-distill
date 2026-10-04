@@ -1,166 +1,231 @@
-# distill-capacity：小说上传上限由一次读完阈值推导（单一来源）
+# distill-capacity：以官方 tokenizer 精确计数决定上限与路径（单一来源）
 
-> 基线：main @ `ad3bc7e1`（PR #110 合并后）。分支：`feat/distill-capacity`。
-> 本文件先于实现提交，供 Shiyu 审阅；实现、测试、变异预跑完成后追加到 §8，补充写进 §9。
+> **v2，取代本文件 v1（`5def4716`）**：v1 用「字数 × 0.72」自研估算，违反「先找现成库」；v2 改为官方 tokenizer 精确计数（Shiyu 2026-10-04 拍板）。
+> 基线：main @ `ad3bc7e1`。分支：`feat/distill-capacity`。本文件先于实现提交供审阅；实现、测试、变异预跑后追加到 §8，补充写进 §9。末尾 §10 为对照标准的自检表。
 
 ## 0. 目的
 
-1. 小说类文本上传上限从 100 万字扩到 **1,249,999 字**，覆盖 100–125 万字的长篇（例：120.1 万字的网文）。
-2. 上限内的小说**一定**走一次读完路径、**一定**不超出模型窗口。
-3. 「上限」「阈值」「估算系数」「文件体积上限」各只有一个定义处，前后端共用，以后改一处即全改。
-4. 万一超窗，用户看到「文本过长」而不是「服务暂时不可用，请稍后重试」（重试必败）。
+1. 小说能一次读完的上限，从「100 万字」改为**按官方 tokenizer 数出的 token 数 < 90 万**（约合 120–130 万中文字，因文本而异），覆盖 100 万字以上的长篇（例：120.1 万字的网文实测 816,821 tokens，可收）。
+2. 收下的小说**一定**走一次读完、**一定**不超窗；判断用真实 token 数，不再用系数近似。
+3. 阈值、窗口、各类上限、文件体积上限、token 计数各只有一处定义，前后端共用。
+4. 万一超窗，用户看到「文本过长」，而不是「请稍后重试」。
 
 ## 1. 已拍板（2026-10-04）
 
 | # | 决定 |
 |---|---|
-| D1 | 方案 A：新建独立模块 `core/length_budget.py` 集中定义系数、阈值、估算函数、各文本类型的上限与文件体积上限；`Distiller`、`TextManager`、上传路由、前端都只从它取 |
-| D2 | 去掉配置文件对 `longctx_threshold` 的覆盖（生产两台均无 `config.yaml`，`config.example.yaml` 无此键 —— 该能力无人使用，却是上限与阈值可能对不上的唯一入口） |
-| D3 | 一次读完阈值仍为 90 万 tokens，本段不动（降不降放到证据注入那一步，V4.1 无 1M 档长上下文评测可依） |
-| D4 | 聊天记录上限仍为 200 万字（已有角色过滤，不动） |
-| D5 | 估算系数 0.6 → 0.72（依据见 §2.3） |
+| D1 | 独立模块 `core/length_budget.py` 集中定义阈值、窗口、各类上限、文件体积上限；`Distiller`、`TextManager`、上传路由、前端只从它取 |
+| D2 | 去掉配置对 `longctx_threshold` 的覆盖（生产无 `config.yaml`，C6） |
+| D3 | 一次读完阈值仍为 90 万 tokens，本段不动 |
+| D4 | 聊天记录仍按 200 万**字**限（产品上限，已有角色过滤，不动其流程） |
+| D5 | **token 一律用官方 tokenizer 精确计数**（现成库 `tokenizers` + DeepSeek 官方 `tokenizer.json`），删除系数估算 |
 
-## 2. 已查实约束（坐标均为 `ad3bc7e1`；S0 由执行方逐条复核，任一不成立即停下报告）
+### 1.1 方案对比（D5 的依据，按「先找现成库」）
 
-C1. 阈值：`core/distiller.py:597` 从配置 `distill.longctx_threshold` 读，默认 900000；比较为严格小于（`:2066`、`:2251`）。
-C2. 估算：`core/distiller.py:1550-1552` `_estimate_tokens = int(len(text) * 0.6)`；只被 `:2064`、`:2249` 两处用来选路径，不进提示词。
-C3. 上传上限两处重复：`core/text_manager.py:274-277`（文件上传）与 `:399-402`（文本上传），`chat` 200 万、其余 100 万；文案模板 `core/text_failure.py:27` `"文本超过 {limit_text} 字上限，请分卷上传"`。
-C4. 文件体积：后端 `web/routers/text.py:108` `MAX_FILE_SIZE = 30MB`，413 文案 `:156` 写死「100 万字」；前端写成 100MB，且有两处各自定义：`web/frontend/src/components/TextPanel.jsx:47`（`MAX_BYTES`）、`web/frontend/src/store/useAppStore.js:686-688`（`MAX_SIZE`）。前端放行 30–100MB 的文件后由后端 413 拒绝。
-C5. 前端字数分档写死到 100 万（`TextPanel.jsx:59-62`），上传提示写死「小说上限 100 万字 · 聊天记录上限 200 万字 · 单文件最大 100MB」（`:268`）。前端目前没有从后端取任何上限的接口。
-C6. 生产配置：两台服务器（SZ 47.107.42.111、SG 43.134.55.201）容器内均**无** `/app/config.yaml`，只有 `config.example.yaml`（2271B），两者 `grep longctx` 零命中 → 生产生效值为代码默认 900000（Shiyu 2026-10-04 实查）。
-C7. 思考：`adapters/llm_adapter.py:414` DeepSeek 方言统一传 `thinking: {type: disabled}`，推理不占窗口。
-C8. 一次读完的输出上限 `LONG_OUTPUT_MAX_TOKENS = 16384`（`core/distiller.py:534`）；除原文外的提示词（`_longcontext_prompt` 的 system + user 结构）用官方离线 tokenizer 实测 **4,807 tokens**。
-C9. 超窗现状：400 判为确定性失败、不重试（`llm_adapter.py:242-246`）；上屏文案唯一取值处 `_upstream_user_message`（`:520-531`）只按状态码查 `_UPSTREAM_USER_MESSAGES`（`:486`，无 400）→ 落通用文案「服务暂时不可用，请稍后重试」。
-C10. 人物识别不受系数影响：按段落切片逐片调用，调用数 = 片数 + 5；红楼梦 866,149 字切 242 片、识别一次约 4 元 38 秒（`docs/specs/distill-longbook-blueprint.md:56`、`:306`）；按片数线性外推，125 万字约 354 次、约 5.8 元。每本书只识别一次（按文本与版本缓存）。
+| 方案 | 做法 | 结论 |
+|---|---|---|
+| **A 官方 tokenizer（选）** | HuggingFace `tokenizers`（Apache-2.0，**已在锁定依赖里**：`requirements.txt:349` `tokenizers==0.23.2`，由 chromadb 引入）加载官方 `tokenizer.json` | 精确、零新增依赖；实测加载 0.27s、整本 120 万字编码 2.18s |
+| B 系数估算 | `len × 0.72` | 近似，靠保守系数兜余量；自研，否 |
+| C 接口返回 `prompt_tokens` | 调用后才知道 | 只能事后核对；保留为 §7 监测 |
+
+## 2. 已查实约束（坐标为 `ad3bc7e1`；S0 由执行方逐条复核，任一不成立即停下报告）
+
+C1. 阈值：`core/distiller.py:597` 读配置 `distill.longctx_threshold`，默认 900000；判断为严格小于（`:2066`、`:2251`）。
+C2. 估算：`core/distiller.py:1550-1552` `int(len(text) * 0.6)`，仅 `:2064`、`:2249` 用于选路径；聊天在估算**之后**才做角色过滤（`:2066-2069`），本段保持该顺序（D4）。
+C3. 上传上限两处重复：`core/text_manager.py:274-277`（`upload_text_from_file`，`:250`）与 `:399-402`（`upload_text`，`:392`），两者都是 `async def`；文案模板 `core/text_failure.py:27`。
+C4. 文件体积：后端 `web/routers/text.py:108` 30MB，413 文案 `:156` 写死「100 万字」；前端写成 100MB 且两处各自定义：`TextPanel.jsx:19`（`MAX_BYTES`，`:46` 用）、`useAppStore.js:686-688`（`MAX_SIZE`）。
+C5. `TextPanel.jsx:57-63` 的 `charCountClass` 写死 100 万档，**全文件无调用**（死代码）；`:268` 上传提示写死「小说上限 100 万字 · 聊天记录上限 200 万字 · 单文件最大 100MB」。前端目前没有从后端取上限的接口；现有相关测试只有 `components/__tests__/TextPanelDeleteError.test.jsx`。
+C6. 生产两台（SZ 47.107.42.111、SG 43.134.55.201）容器内均无 `/app/config.yaml`，`config.example.yaml` 中 `longctx` 零命中 → 生效值为代码默认 900000（Shiyu 实查）。
+C7. 思考：`adapters/llm_adapter.py:414` DeepSeek 统一 `thinking: {type: disabled}`，推理不占窗口。
+C8. 一次读完输出上限 `LONG_OUTPUT_MAX_TOKENS = 16384`（`core/distiller.py:534`）；除原文外的提示词实测 4,807 tokens。
+C9. 超窗现状：400 判确定性失败、不重试（`llm_adapter.py:242-246`）；上屏文案唯一取值处 `_upstream_user_message`（`:520-531`）只查状态码表（`:486`，无 400）→ 落通用文案「服务暂时不可用，请稍后重试」。
+C10. 人物识别按段落切片，调用数 = 片数 + 5；红楼梦 866,149 字 242 片、约 4 元 38 秒（`docs/specs/distill-longbook-blueprint.md:56`、`:306`）；不受本段影响。
+C11. 官方 tokenizer：DeepSeek API 文档附离线 tokenizer；V4 技术报告 §4.1 写明沿用 V3 tokenizer；V4.1 官方仓库（huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash）自带 tokenizer，NVIDIA 官方模型卡标词表 129,280。沙箱内用的 V3 离线 tokenizer `tokenizer.json` sha256 = `ecb6f9fc369894346f0511f4074ca75cee5cd5f3b06d02f1ba35fcd39f8e121d`。
 
 ### 2.1 路径机制表（通道 × 执行上下文 × 守它的测试）
 
-本段只改「数字从哪里来」与「超窗时说什么」，不改任何线程、协程、重试、计时；新模块全是纯函数和常量。
-
-| 通道 | 用到的量 | 执行上下文 | 守它的测试（§4） |
-|---|---|---|---|
-| `POST /api/text/upload`（文件） | 体积上限、按类型的字数上限 | 请求协程 → `TextManager.upload_text_from_file` | T3、T4 |
-| `POST /api/text/upload`（文本） | 按类型的字数上限 | 请求协程 → `TextManager.upload_text` | T3 |
-| 蒸馏选路径 | 估算函数、阈值 | 后台任务线程 / `/run_stream` 生成器（`distill_incremental_stream`）与同步 `distill_incremental` | T2 |
-| 上屏文案 | 超窗判定 | 任意调用线程（纯函数） | T5 |
-| 前端校验与提示 | 三个上限 | 浏览器 | T6 |
+| 通道 | 新增的量 | 执行上下文 | 前提与处理 | 守它的测试 |
+|---|---|---|---|---|
+| 文件上传 `upload_text_from_file` | token 计数、体积上限 | 请求协程 | 计数是 CPU 密集（整本约 2s），**必须 `asyncio.to_thread`**，不阻塞事件循环 | R1、R2 |
+| 文本上传 `upload_text` | 同上 | 请求协程 | 同上 | R3 |
+| 蒸馏选路径（同步 `distill_incremental`） | token 计数 | 后台线程 | 直接调用 | R4 |
+| 蒸馏选路径（流式 `distill_incremental_stream`，`/start` 与 `/run_stream` 共用） | token 计数 | 后台线程 / 生成器 | 直接调用；不改心跳与超时 | R5 |
+| tokenizer 加载 | 一次（约 0.27s） | 首次使用的线程 | 惰性单例 + 锁；`Tokenizer.encode` 线程安全 | U3 |
+| 上屏文案 `_upstream_user_message` | 超窗判定 | 任意线程（纯函数） | 不改重试 | R6 |
+| `GET /api/text/limits` | 上限 JSON | 请求协程 | 纯读常量 | R7 |
+| 前端上传校验与提示 | 上限 | 浏览器 | 只读接口返回值 | F1、F2 |
 
 ### 2.2 规模表
 
-| 量 | 值 | 来源 / 推导 |
+| 量 | 值 | 来源 |
 |---|---|---|
-| 窗口（输入 + 输出） | 1,048,576 | NVIDIA 官方 V4.1-Flash 模型卡；V4.1 技术报告：最长一百万 tokens |
-| 阈值 | 900,000 | 代码默认（C1、C6），本段不动 |
-| 系数 | 0.72 | 官方离线 tokenizer 实测：小说 0.680 / 0.699 / 0.701，聊天行格式 0.704–0.717；取上沿 |
-| 小说上限 | 1,249,999 字 | `ceil(阈值 ÷ 系数) − 1`，保证 `estimate(上限) < 阈值` 且 `estimate(上限 + 1) ≥ 阈值` |
-| 最坏总量 | ≈ 921,191 | 900,000 + 4,807（C8）+ 16,384 → 余量约 12% |
-| 聊天上限 | 2,000,000 字 | 产品上限，不由阈值推导（D4）；估算发生在角色过滤后 |
-| 文件体积 | 30MB | 后端现值（C4）；125 万汉字 UTF-8 约 3.75MB |
-| 人物识别 | 片数 + 5 次调用 | C10 |
+| 窗口（输入 + 输出） | 1,048,576 | NVIDIA 官方 V4.1-Flash 模型卡 |
+| 阈值（小说上限） | token 数 < 900,000 | 代码默认（C1、C6） |
+| 最坏总量 | 899,999 + 4,807 + 16,384 = 921,190 | 余量 127,386（约 12%）；模块导入时断言 阈值 + 提示词预留 + 输出上限 < 窗口 |
+| 约合字数（仅说明，不参与判断） | 120–130 万 | 实测：小说 0.680–0.701 token/字 |
+| 聊天上限 | 2,000,000 字 | 产品上限（D4） |
+| 文件体积 | 30MB | 后端现值（C4） |
+| 上传计数耗时 | 整本 120 万字约 2.2s | 沙箱实测；在线程里跑 |
+| 人物识别 | 片数 + 5 次 | C10 |
 
 ### 2.3 出处对照表
 
 | 依据 | 条目 | 对应 |
 |---|---|---|
-| DeepSeek-V4.1-Flash 技术报告（arXiv 2609.19969） | 支持最长一百万 tokens 上下文；长上下文评测只有 LongBench-V2 | §2.2 窗口、D3 |
-| NVIDIA 官方模型卡（build.nvidia.com/deepseek-ai/deepseek-v4.1-flash；docs.api.nvidia.com NIM 参考） | 输入 + 输出合计 1,048,576；词表大小 129,280 | §2.2 窗口、D5 |
-| DeepSeek-V4 技术报告（arXiv 2606.19348）§4.1 | 在 V3 tokenizer 上只加少量特殊 token，词表仍 128K | D5（与 V4.1 词表大小一致 → 同一 tokenizer 的间接证据） |
-| DeepSeek API 文档：Chat Completions、Thinking Mode | `deepseek-flash` 的 `thinking.type` 可为 `disabled`（不思考） | C7 |
-| DeepSeek 官方离线 tokenizer（API 文档「Token 用量」所附） | 实测比例 | §2.2 系数 |
-| deepseek-harness 讨论 #3399（官方仓库） | 生产超窗报文为 HTTP 400、`"Input token exceed the limit"`、`code: quota_limit_reached`；另有 OpenAI 兼容报文 `"maximum context length"` | §3.4 超窗判定 |
-
-**已知局限**：V4.1 沿用 V3 tokenizer 只有间接证据（词表大小一致 + Engram 沿用原设计），官方未逐字写明；对冲见 §7。
+| DeepSeek-V4.1-Flash 技术报告（arXiv 2609.19969） | 最长一百万 tokens 上下文 | §2.2 窗口 |
+| NVIDIA 官方模型卡（build.nvidia.com/deepseek-ai/deepseek-v4.1-flash；docs.api.nvidia.com NIM 参考） | 输入 + 输出合计 1,048,576；词表 129,280 | §2.2、C11 |
+| DeepSeek-V4 技术报告（arXiv 2606.19348）§4.1 | 沿用 V3 tokenizer、词表 128K | C11 |
+| DeepSeek API 文档：Chat Completions、Thinking Mode、Token 用量 | `thinking.type: disabled`；离线 tokenizer | C7、D5 |
+| huggingface/tokenizers（Apache-2.0） | `Tokenizer.from_file`、`encode` | D5、§3.1 |
+| deepseek-harness 讨论 #3399（DeepSeek 官方仓库） | 生产超窗报文：HTTP 400、`Input token exceed the limit`、`code: quota_limit_reached`；另有 `maximum context length` 措辞 | §3.4 |
 
 ## 3. 设计
 
-### 3.1 新模块 `core/length_budget.py`（纯常量与纯函数，无 IO）
+### 3.1 `core/length_budget.py`（纯常量与纯函数）
 
 ```python
-TOKENS_PER_CHAR = 0.72                 # D5
-LONGCTX_THRESHOLD_TOKENS = 900_000     # D2/D3：唯一定义处
-CHAT_MAX_CHARS = 2_000_000             # D4
-MAX_FILE_BYTES = 30 * 1024 * 1024      # C4
+CONTEXT_WINDOW_TOKENS   = 1_048_576
+LONGCTX_THRESHOLD_TOKENS = 900_000      # 唯一定义处（D2/D3）
+PROMPT_RESERVE_TOKENS    = 8_192        # ≥ 实测 4,807，留余量
+CHAT_MAX_CHARS           = 2_000_000    # D4
+MAX_FILE_BYTES           = 30 * 1024 * 1024
+# 导入时断言：阈值 + PROMPT_RESERVE + LONG_OUTPUT_MAX_TOKENS < 窗口
 
-def estimate_tokens(text: str) -> int: ...          # int(len(text) * TOKENS_PER_CHAR)
-def one_pass_max_chars() -> int: ...                 # 由阈值与系数推导：满足 estimate(n) < 阈值 的最大 n
-def max_chars(text_type: str) -> int: ...            # chat → CHAT_MAX_CHARS；其余 → one_pass_max_chars()
-def limit_label(text_type: str) -> str: ...          # 「125 万」「200 万」，由 max_chars 生成，不另写
-def public_limits() -> dict: ...                     # 给前端：{story_max_chars, chat_max_chars, max_file_bytes}
+def count_tokens(text: str) -> int        # 官方 tokenizer 精确计数（惰性单例 + 锁）
+def fits_one_pass(n_tokens: int) -> bool  # n_tokens < 阈值 —— 选路径与小说上限共用这一个判断
+def check_upload(text: str, text_type: str) -> None   # 超限抛 ValueError（文案见下）；chat 按字、其余按 token
+def public_limits() -> dict               # {story_max_tokens, chat_max_chars, max_file_bytes}
 ```
 
-`one_pass_max_chars` 用整数运算推导并在模块导入时自检一次（`estimate(n) < 阈值 ≤ estimate(n+1)`），不依赖浮点除法的边界。
+- `tokenizer.json` 放 `core/assets/deepseek_tokenizer/tokenizer.json`，随代码入库；来源与 sha256 写在同目录 `SOURCE.md`。
+- 小说超限文案：`文本共 {n:,} tokens，超过小说上限 {阈值:,} tokens，请分卷上传`（精确数，不换算字数）。
 
 ### 3.2 后端接线（去重，不留旧值）
 
-- `Distiller`：`_estimate_tokens` 删除，两处调用改用 `length_budget.estimate_tokens`；`self._longctx_threshold` 改为取 `LONGCTX_THRESHOLD_TOKENS`（保留属性名，现有测试会调小它来走分片）；删除读配置的那一行及过时注释（D2）。
-- `TextManager`：`:274-277` 与 `:399-402` 两段重复的判断收成一个私有方法 `_check_length(parsed, text_type)`，两条上传路径都调它；数值与文案取自 `length_budget`。
-- `web/routers/text.py`：`MAX_FILE_SIZE` 改为引用 `MAX_FILE_BYTES`；413 文案由 `MAX_FILE_BYTES` 与 `limit_label` 生成，不再写死数字。
-- 新增 `GET /api/text/limits` → `public_limits()`，挂在现有 `/api/text` 路由下，沿用该路由的登录依赖。
+- `Distiller`：删 `_estimate_tokens`；两处选路径改为 `fits_one_pass(count_tokens(text))`；`self._longctx_threshold` 取 `LONGCTX_THRESHOLD_TOKENS`（保留属性名，现有测试调小它走分片）；删读配置那一行与过时注释。
+- `TextManager`：两段重复判断收为私有 `_check_length`，内部 `await asyncio.to_thread(check_upload, parsed, text_type)`；两条上传路径都调它。
+- `text.py`：`MAX_FILE_SIZE` 引用 `MAX_FILE_BYTES`；413 文案由常量生成。新增 `GET /api/text/limits`，沿用该路由的登录依赖。
+- `requirements.in` 把 `tokenizers` 升为**直接依赖**（版本沿用锁定的 0.23.2，重新编译锁文件不应引入别的变化）。
 
-### 3.3 前端（单一来源 = 后端接口）
+### 3.3 前端（单一来源 = 接口）
 
-- 新增 `web/frontend/src/lib/textLimits.js`：取 `/api/text/limits` 并缓存；接口失败时**不放行、不猜数**，显示「暂时无法获取上传限制」并禁用上传按钮（不在前端再写一份数字作兜底，否则又是两个来源）。
-- `TextPanel.jsx`：`validateFile` 的体积上限、字数分档（绿/蓝/橙到小说上限，超出为红）、上传提示文案都从 `textLimits` 取；删除 `MAX_BYTES`。
-- `useAppStore.js`：`uploadText` 删除自带的 `MAX_SIZE`，体积校验只在 `TextPanel` 的 `validateFile` 做一次（同一件事一个地方）。
-
-选这个而不是「前端常量 + 跨语言对照测试」：后者仍是两份数，只是被测试盯着；接口方案只有一份。
+- 新增 `web/frontend/src/lib/textLimits.js`：取 `/api/text/limits` 并缓存；失败时禁用上传并显示「暂时无法获取上传限制」，不在前端写兜底数字。
+- `TextPanel.jsx`：`validateFile` 体积上限取接口值；`:268` 提示文案由接口值生成（小说写「按 token 计，上限 90 万 tokens」）；删除 `MAX_BYTES` 与无人调用的 `charCountClass`（C5，含旧上限）。
+- `useAppStore.js`：删除 `uploadText` 自带的 `MAX_SIZE`，体积只在 `validateFile` 校验一处。
+- 视觉：沿用现有样式与组件，不新增视觉元素（读过 `frontend-design` skill：本段只改文案与禁用态，适用的只有「可访问性下限」——禁用态用 `disabled` 属性并给出可见说明）。
 
 ### 3.4 超窗上屏（`adapters/llm_adapter.py`）
 
-- 新增纯函数 `_is_context_overflow(exc) -> bool`：状态码 400，且报文命中 §2.3 所列已知措辞（`Input token exceed the limit`、`maximum context length`、`exceeds model context limit`）之一。措辞表集中一处、附出处。
-- `_upstream_user_message` 先判它，命中则返回「文本过长，超出模型一次能处理的长度，请缩短后再试」；其余维持原逻辑。重试行为不变（400 本就确定性失败）。
-- 正常情况下这条走不到（§2.2 余量 12%）；它是系数估低时的兜底，保证用户不被引导去重试。
+- 新增纯函数 `_is_context_overflow(exc)`：状态码 400 且报文命中已知措辞（`Input token exceed the limit`、`maximum context length`、`exceeds model context limit`）。措辞表一处定义、附出处（§2.3）。
+- `_upstream_user_message` 先判它 → 「文本过长，超出模型一次能处理的长度，请缩短后再试」；其余不变。重试行为不变。
 
-## 4. 测试计划（先红后绿）
+## 4. 测试计划
 
-| 编号 | 断言 | 文件 |
-|---|---|---|
-| T1 | `one_pass_max_chars()` == 1,249,999；`estimate(n) < 阈值 ≤ estimate(n+1)`；`max_chars("chat")` == 2,000,000；`limit_label` 由 `max_chars` 生成 | `tests/test_length_budget.py`（新） |
-| T2 | 选路径：长度 = 上限 → 一次读完；= 上限 + 1 → 分片；两条入口（同步 `distill_incremental`、流式 `distill_incremental_stream`）都用同一估算 | 同上，打桩照 `tests/test_distiller_routing.py` |
-| T3 | 上传：两条路径各在「上限」通过、「上限 + 1」拒绝，文案含 `limit_label`；chat 同理 | 同上（TextManager，PG 库） |
-| T4 | 413 文案由常量生成：不含写死的「100 万」，含 30MB 与当前小说上限 | 同上（路由） |
-| T5 | `_upstream_user_message`：三种已知超窗报文 → 「文本过长」；其他 400 仍为 ""；401/402/429 不变 | `tests/test_error_user_facing.py`（追加） |
-| T6 | 前端：`textLimits` 取接口；分档以接口给的上限为界；接口失败时禁用上传；`useAppStore` 不再自带体积常量 | `web/frontend/src/components/__tests__/`（vitest，追加） |
-| S1 | 结构：`0.6`、`1_000_000`、`900000`、`30 * 1024 * 1024`、「100 万」在 `core/ web/routers/ web/frontend/src/` 中不再出现；`longctx_threshold` 不再被读取 | `tests/test_length_budget.py` |
+### 4.1 单元
 
-## 5. 变异清单（实现后在 PG 上预跑，全部打红才推）
+| 编号 | 断言 |
+|---|---|
+| U1 | `count_tokens` 与官方 tokenizer 直接编码结果一致（孔乙己公版样本固定期望值） |
+| U2 | `fits_one_pass(899_999)` 真、`(900_000)` 假 |
+| U3 | tokenizer 只加载一次（多线程并发首调用） |
+| U4 | 导入时预算断言成立；把预留调到使总和 ≥ 窗口时断言失败 |
+| U5 | `public_limits()` 三个字段等于模块常量 |
+
+### 4.2 调用点矩阵（行 = 调用点，列 = 可观测输出，格内 = 测试名）
+
+| 调用点 \ 输出 | 收 / 拒 | 拒绝文案 | 选的路径 | 响应 JSON | 界面状态 |
+|---|---|---|---|---|---|
+| R1 文件上传·小说 | `test_file_upload_story_boundary` | `test_file_upload_story_message` | — | — | — |
+| R2 文件上传·体积 413 | `test_file_upload_size_413` | `test_413_message_from_constants` | — | — | — |
+| R3 文本上传·小说 / 聊天 | `test_text_upload_story_boundary`、`test_text_upload_chat_boundary` | `test_text_upload_story_message` | — | — | — |
+| R4 同步选路径 | — | — | `test_sync_route_by_token_count` | — | — |
+| R5 流式选路径 | — | — | `test_stream_route_by_token_count` | — | — |
+| R6 超窗上屏 | — | `test_overflow_400_user_message`、`test_other_400_unchanged` | — | — | — |
+| R7 limits 接口 | — | — | — | `test_limits_endpoint` | — |
+| F1 前端上传校验 | `TextLimits.test.jsx: rejects over max_file_bytes` | 同文件 `shows size message` | — | — | 同文件 `disables upload when limits fail` |
+| F2 前端提示文案 | — | — | — | — | 同文件 `hint built from limits` |
+
+边界用例按真实规模复刻关系：小说边界用「token 数 = 阈值 − 1 / = 阈值」（打桩 `count_tokens` 返回指定值，不造百万字文本）；计数本身的正确性由 U1 用公版《孔乙己》验证（受版权保护的长篇不入库）。
+
+### 4.3 结构锁
+
+| 编号 | 断言 |
+|---|---|
+| S1 | `core/ web/routers/ web/frontend/src/` 不再出现：`* 0.6`、`1_000_000`（上传上限）、`900000`/`900_000`（`length_budget` 以外）、`30 * 1024 * 1024`（以外）、`100 * 1024 * 1024`、「100 万」；`longctx_threshold` 不再被读取 |
+| S2 | `count_tokens` 是 token 计数的唯一实现（全仓库无其他 `Tokenizer.from_file` / 系数乘法） |
+
+## 5. 变异清单（实现后在 PG 上预跑，全部打红才推；驱动基于 `tests/perf/mutation_framework.py`，产物 `tests/perf/distill_capacity_red_lines.json`）
 
 | 编号 | 变异 | 应红 |
 |---|---|---|
-| M1 | 系数改回 0.6 | T1、T2 |
-| M2 | 上限推导少减 1（= 1,250,000） | T1、T2 |
-| M3 | `TextManager._check_length` 用 `>=` 代替 `>` | T3 |
-| M4 | 一条上传路径绕过 `_check_length` | T3 |
-| M5 | `_upstream_user_message` 不判超窗 | T5 |
-| M6 | 超窗判定不看状态码（任何含措辞的错误都命中） | T5 |
-| M7 | 413 文案改回写死 | T4、S1 |
-| M8 | 前端接口失败时放行上传 | T6 |
-
-驱动照 `tests/perf/mutation_framework.py`，产物 `tests/perf/distill_capacity_red_lines.json`（`tests/test_lock_coverage.py` 要求）。
+| M1 | `fits_one_pass` 用 `<=` | U2、R4、R5 |
+| M2 | 一条上传路径绕过 `_check_length` | R1 或 R3 |
+| M3 | `check_upload` 对小说按字数判 | R1、R3 |
+| M4 | 计数不放线程（直接同步调用） | 计数在事件循环线程执行的断言（R1 附带） |
+| M5 | 选路径换回字数估算 | R4、R5、S2 |
+| M6 | `_upstream_user_message` 不判超窗 | R6 |
+| M7 | 超窗判定不看状态码 | R6（`test_other_400_unchanged` 的反例） |
+| M8 | 413 文案写死 | R2、S1 |
+| M9 | 前端接口失败时放行 | F1 |
+| M10 | 预算断言删掉 | U4 |
 
 ## 6. 本地命令（只跑受影响的文件；合并门是分支 CI）
 
 ```powershell
-docker compose -f docker-compose.test.yml up -d --wait
+docker ps --format "{{.Names}} {{.Ports}}" | Select-String "55432"   # 有别的容器占用 55432 → 停下报告，不要停别人的容器
+docker compose -f docker-compose.test.yml up -d --wait                # 项目名 character-distill-test，tmpfs 空库
 python -m pytest -q tests/test_length_budget.py tests/test_error_user_facing.py tests/test_distiller_routing.py tests/test_text_failure_messages.py tests/test_card_draft.py tests/test_distill_resume.py tests/test_distill_usage_accounting.py tests/test_identify_failure_channels.py tests/test_usage_identity_context.py tests/test_lock_coverage.py
 python tests/perf/distill_capacity_mutations.py
 cd web/frontend; npm test
 ```
 
-## 7. 上线后核对（线上监测，不是实验）
+不跑本地全量；合并只做 git 操作。
 
-上线后第一次蒸馏 100 万字以上的书时，取接口返回的 `prompt_tokens` 与原文字数之比，记入 §9。比例 ≤ 0.72 即与本 spec 一致；超出则停下报告（余量按 §2.2 重算）。
+## 7. 执行方专属步骤与线上核对
+
+1. **tokenizer 来源核对（S0 必做）**：从 V4.1 官方仓库下载 `tokenizer.json`，算 sha256。与 C11 的 V3 值相同 → 证实 V4.1 沿用 V3 tokenizer，入库文件不变；不同 → 用 V4.1 的文件替换入库文件，更新 `SOURCE.md`，重跑 §6，结果写 §9。
+2. **线上核对（监测，不是实验）**：上线后第一次蒸馏 100 万字以上的书，记录接口返回的 `prompt_tokens` 与本地 `count_tokens` 之差，写 §9；差超过提示词部分（约 5 千）即停下报告。
 
 ## 8. 进度
 
+- [ ] 交接：`Test-Path docs/specs/distill-capacity.md` 为 True；`git log --oneline -3` 与远端一致
 - [ ] 实现（Claude，沙箱 PG）
-- [ ] §4 测试先红后绿、§5 变异全红（Claude 预跑，贴结果）
-- [ ] 执行方 S0 复核 C1–C10、复跑 §6
+- [ ] §4 先红后绿、§5 变异全红（Claude 预跑，贴结果）
+- [ ] 执行方 S0：C1–C11 复核、§7.1 tokenizer 来源核对、复跑 §6
 - [ ] 分支 CI 绿 → PR → Shiyu 合并
 
 ## 9. 补充
 
 本段改动面内新发现的问题直接修并写进这里；需要拍板的停下报告，不自行记账。
+
+## 10. 自检表（对照 Shiyu 的标准，逐条）
+
+| 标准 | 本 spec 落在哪 | 状态 |
+|---|---|---|
+| 1 事实在最新 main 上现读、带坐标、S0 复核 | §2 C1–C11（`ad3bc7e1`），§8 S0 | ✅ |
+| 2 设计问题先给 2–3 方案再写 spec | 单一来源 A/B（已拍板）；计数方式 §1.1 A/B/C（已拍板） | ✅ |
+| 3 测试一节固定写法 | §6 | ✅ |
+| 4 spec 交 `.md` 文件 | 本文件 | ✅ |
+| 5 审计逐文件清单 | 审计时执行（本段不适用于 spec） | — |
+| 6 新问题不自行记账 | §9 | ✅ |
+| 路径机制表（通道 × 上下文 × 测试） | §2.1 | ✅ |
+| 真实规模算一遍、测试按比例复刻 | §2.2 最坏总量与计数耗时；§4.2 边界按 token 数复刻 | ✅ |
+| 只在样本上实测的前提写明范围 | §2.2 约合字数「因文本而异」；C11 tokenizer 间接证据 + §7.1 核对 | ✅ |
+| ① 出处对照表 | §2.3 | ✅ |
+| ② 全量扫描原文 | 附录 A | ✅ |
+| ③ 规模表 | §2.2 | ✅ |
+| ④ 调用点矩阵逐格到测试名 | §4.2 | ✅ |
+| 变异发出前 Claude 先实跑 | §5（实现后预跑，未全红不推） | ⏳ 实现阶段 |
+| 经验 1 复用先找现成库 | §1.1：`tokenizers` 已在锁定依赖中，零新增 | ✅ |
+| 经验 2 替换原生控件先列行为 | 不替换控件，只用 `disabled` 属性 | 不适用 |
+| 经验 3 行为照抄权威来源 | 超窗措辞出自官方仓库讨论；窗口出自官方模型卡 | ✅ |
+| 经验 4 事实全量现查 | 附录 A 扫描命令与原始输出 | ✅ |
+| 经验 5 变异按矩阵、先实跑 | §5 每条对应矩阵格 | ⏳ 实现阶段 |
+| 经验 6 能自动验的不手动 | 前端用 vitest 断言，无需手看 | ✅ |
+| 经验 7 交接可核对 | §8 `Test-Path` + 提交号；v2 首行标明取代 v1 | ✅ |
+| 经验 8 起环境前查冲突 | §6 首行 55432 检查、项目名、tmpfs | ✅ |
+| 不打补丁、隔离、抽象、复用 | 一个模块管所有上限；两处重复判断收一；前端两处体积常量收一；死代码 `charCountClass` 随旧上限删除 | ✅ |
+| skill 用上不过度 | Claude 实现：karpathy-guidelines；前端读 frontend-design（只取可访问性下限）；执行方只配 `@verification-before-completion` | ✅ |
 
 ### 附录 A：全量扫描输出（`ad3bc7e1`）
 
