@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""arc-behaviors-draft 变异矩阵驱动 —— spec `docs/specs/arc-behaviors-draft.md` §5 的 M1–M12。
+"""card_draft 变异矩阵驱动 —— 草稿契约的 38 条变异各有专属红源（`docs/specs/`。
 
-不变量（脚本自检）：
-  1. 先验基线：靶测试全绿才开跑，否则「变异后红」说不清红源。
-  2. 锚点恰一命中：`src.count(old) == 1`，否则当场 assert —— 锚点漂移会变成「变异没生效」的假绿。
-  3. 还原逐字节：每条跑完立刻还原，收尾核对 sha256。
+覆盖域是新锁 `tests/test_card_draft.py`（`c4a6364c` 把草稿契约的判别器聚到一个文件）。
+跑法交 `mutation_framework.run_matrix` —— 与另外四个驱动共用一份执行原语；本文件只留
+变异表与基线门，不再自写执行代码（原实现拿不到「红在哪一行」，产物写不出来、元锁恒红）。
+
+**变异表逐条预跑**：每条在 `c4a6364c` 上全红；期望一律 `RED`、不设 marker（每条的红源
+是整条判据，不靠红源里某个标记串鉴别）。
 
 用法：python tests/perf/card_draft_mutations.py        （需测试 PG：docker-compose.test.yml）
 """
 from __future__ import annotations
 
-import hashlib
 import pathlib
-import subprocess
 import sys
 
 for _s in (sys.stdout, sys.stderr):
@@ -21,127 +21,278 @@ for _s in (sys.stdout, sys.stderr):
     except (AttributeError, OSError):
         pass
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-DRAFT = "core/card_draft.py"
-SCHEMA = "core/schema.py"
-DIST = "core/distiller.py"
-ROUTE = "web/routers/distill.py"
+PERF_DIR = pathlib.Path(__file__).resolve().parent
+ROOT = PERF_DIR.parents[1]
+sys.path.insert(0, str(PERF_DIR))
+sys.path.insert(0, str(ROOT / "tests"))
 
-T_CARD = "tests/test_card_draft.py"
-T_ROUTE = "tests/test_distill_task_api.py::TestDraftConversion"
-T_G6 = "tests/test_card_arc_behaviors.py::test_g6_prompt_carries_arc_and_behaviors_together"
+import lock_coverage  # noqa: E402  —— 判档与产物写入的唯一一份实现
+import mutation_framework as framework  # noqa: E402  —— 执行原语的唯一一份实现
 
-# (编号, 文件, 原文, 变异, 应红的测试 -k 表达式或节点)
-MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
-    ("M1", DRAFT, "if len(valid) == count:", "if len(valid) >= 1:",
-     [f"{T_CARD}::test_u2_tagged_in_some_phases_goes_under_them_in_order",
-      f"{T_CARD}::TestEntries::test_distill_sync"]),
-    ("M2", DRAFT, "if len(valid) != len(set(row.phases)) or not valid:",
-     "if len(valid) != len(set(row.phases)):",
-     [f"{T_CARD}::test_u4_no_valid_number_retracts_the_row_with_a_warning"]),
-    ("M3", DRAFT, "if 1 <= p <= count", "if 0 <= p <= count",
-     [f"{T_CARD}::test_u4_no_valid_number_retracts_the_row_with_a_warning"]),
-    ("M4", DRAFT,
-     '            logger.warning("[card_draft] 做法的阶段编号不合法（共 %d 个阶段）%s：%s",\n'
-     "                           count, row.phases, row.situation)\n",
-     "            pass\n",
-     [f"{T_CARD}::test_u3_out_of_range_numbers_are_dropped_with_a_warning",
-      f"{T_CARD}::test_u4_no_valid_number_retracts_the_row_with_a_warning"]),
-    ("M5", ROUTE,
-     "            # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。\n"
-     "            card = card_from_draft(data)\n        except Exception as exc:\n"
-     "            # ValidationError",
-     "            # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。\n"
-     "            card = CharacterCard.model_validate(data)\n        except Exception as exc:\n"
-     "            # ValidationError",
-     [f"{T_ROUTE}::test_bg_task_converts_draft",
-      f"{T_CARD}::test_s1_model_output_becomes_a_card_only_through_card_from_draft"]),
-    ("M6", ROUTE,
-     "            card = card_from_draft(data)\n        except Exception as exc:\n"
-     '            logger.error("Card validation failed: %s"',
-     "            card = CharacterCard.model_validate(data)\n        except Exception as exc:\n"
-     '            logger.error("Card validation failed: %s"',
-     [f"{T_ROUTE}::test_run_stream_converts_draft",
-      f"{T_CARD}::test_s1_model_output_becomes_a_card_only_through_card_from_draft"]),
-    ("M7", DIST, "            return card_from_draft(data)\n        except ValidationError as exc:\n"
-     '            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n'
-     '            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n\n'
-     "    def distill_stream",
-     "            return CharacterCard.model_validate(data)\n        except ValidationError as exc:\n"
-     '            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n'
-     '            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n\n'
-     "    def distill_stream",
-     [f"{T_CARD}::TestEntries::test_distill_sync",
-      f"{T_CARD}::test_s1_model_output_becomes_a_card_only_through_card_from_draft"]),
-    ("M8", DIST, "        yield json.dumps(draft.model_dump(), ensure_ascii=False)",
-     "        yield json.dumps(card_from_draft(merged).model_dump(), ensure_ascii=False)",
-     [f"{T_CARD}::TestEntries::test_stream_grouped_yields_draft"]),
-    ("M9", DIST,
-     "    def distill(self, text: str, character_name: str) -> CharacterCard:",
-     "    def distill(self, text: str, character_name: str) -> CharacterCard:\n"
-     "        _unused = CharacterCard.model_json_schema()",
-     [f"{T_CARD}::test_s1_schema_for_the_model_has_one_source"]),
-    ("M10", SCHEMA,
-     '        """旧卡的阶段是一句字符串 → 当作没有 label 的 state。"""\n'
-     '        return {"state": value} if isinstance(value, str) else value',
-     '        """旧卡的阶段是一句字符串 → 当作没有 label 的 state。"""\n'
-     "        return value",
-     [f"{T_CARD}::test_u6_legacy_arc_shapes_still_convert"]),
-    ("M11", SCHEMA,
-     '        return {"phases": value} if isinstance(value, list) else value',
-     "        return value",
-     [f"{T_CARD}::test_u6_legacy_arc_shapes_still_convert"]),
-    ("M12", DIST, ', "phases": [1, 2]}\\n', "}\\n", [T_G6]),
+ARTIFACT = PERF_DIR / "card_draft_red_lines.json"
+
+# 预跑实测：每条在 c4a6364c 上全红，「撞到」= 新域 tests/test_card_draft.py 里被撞到的判别器行号。
+TARGET = "tests/test_card_draft.py"
+DRAFT, SCHEMA, DIST, ROUTE = (ROOT / "core" / "card_draft.py", ROOT / "core" / "schema.py",
+                              ROOT / "core" / "distiller.py", ROOT / "web" / "routers" / "distill.py")
+
+TARGETS = (DRAFT, SCHEMA, DIST, ROUTE)
+
+MUTATIONS = [
+    # 撞到 [49, 75, 83]
+    ('M1  分发：只要有一个合法编号就放顶层（「所有阶段都标了」退化成「标了任一阶段」）',
+     TARGET, [("repl", DRAFT, [
+         ('if len(valid) == count:',
+          'if len(valid) >= 1:'),
+     ])], "RED"),
+    # 撞到 [93]
+    ('M2  warning 条件漏掉「编号全部作废」：整条撤回时不留痕',
+     TARGET, [("repl", DRAFT, [
+         ('if len(valid) != len(set(row.phases)) or not valid:',
+          'if len(valid) != len(set(row.phases)):'),
+     ])], "RED"),
+    # 撞到 [92]
+    ('M3  阶段编号下界 1 → 0：0 号被当成合法编号',
+     TARGET, [("repl", DRAFT, [
+         ('if 1 <= p <= count',
+          'if 0 <= p <= count'),
+     ])], "RED"),
+    # 撞到 [84, 93]
+    ('M4  删掉非法编号的 warning',
+     TARGET, [("repl", DRAFT, [
+         ('            logger.warning("[card_draft] 做法的阶段编号不合法（共 %d 个阶段）%s：%s",\n                           count, row.phases, row.situation)\n',
+          '            pass\n'),
+     ])], "RED"),
+    # 撞到 [50, 83]
+    ('M13  挂阶段时下标算反：阶段 p 的做法挂到倒数第 p 个阶段',
+     TARGET, [("repl", DRAFT, [
+         ('by_phase[p - 1].append(behavior)',
+          'by_phase[count - p].append(behavior)'),
+     ])], "RED"),
+    # 撞到 [51]
+    ('M14  转卡时丢掉阶段的 label',
+     TARGET, [("repl", DRAFT, [
+         ('    card = draft.model_dump()\n',
+          '    card = draft.model_dump(exclude={"character_arc": {"phases": {"__all__": {"label"}}}})\n'),
+     ])], "RED"),
+    # 撞到 [49, 69]
+    ('M15  顶层判据写成 len(valid) > count：标了所有阶段的做法永远进不了顶层',
+     TARGET, [("repl", DRAFT, [
+         ('if len(valid) == count:',
+          'if len(valid) > count:'),
+     ])], "RED"),
+    # 撞到 [50, 70]
+    ('M16  顶层与阶段不再互斥：进了顶层的做法同时挂到各阶段',
+     TARGET, [("repl", DRAFT, [
+         ('            general.append(behavior)\n        else:\n            for p in valid:',
+          '            general.append(behavior)\n        if True:\n            for p in valid:'),
+     ])], "RED"),
+    # 撞到 [76]
+    ('M17  同一阶段内做法倒序（append → insert(0)）',
+     TARGET, [("repl", DRAFT, [
+         ('by_phase[p - 1].append(behavior)',
+          'by_phase[p - 1].insert(0, behavior)'),
+     ])], "RED"),
+    # 撞到 [50, 77, 83]
+    ('M18  有合法编号就挂到所有阶段，不看标了哪几个',
+     TARGET, [("repl", DRAFT, [
+         ('            for p in valid:\n',
+          '            for p in (valid and range(1, count + 1)):\n'),
+     ])], "RED"),
+    # 撞到 [83, 92]
+    ('M19  越界编号被夹到最后一个阶段，而不是撤回',
+     TARGET, [("repl", DRAFT, [
+         ('valid = sorted({p for p in row.phases if 1 <= p <= count})',
+          'valid = sorted({min(p, count) for p in row.phases if 1 <= p})'),
+     ])], "RED"),
+    # 撞到 [91]
+    ('M20  编号全部作废的做法改放顶层，而不是整条撤回',
+     TARGET, [("repl", DRAFT, [
+         ('if len(valid) == count:',
+          'if len(valid) == count or not valid:'),
+     ])], "RED"),
+    # 撞到 [99]
+    ('M21  无阶段的卡丢掉全部做法',
+     TARGET, [("repl", DRAFT, [
+         ('        if count == 0:\n            general.append(behavior)\n            continue\n',
+          '        if count == 0:\n            continue\n'),
+     ])], "RED"),
+    # 撞到 [100]
+    ('M22  无阶段的卡也走编号校验：做法照收，但每条打一次 warning',
+     TARGET, [("repl", DRAFT, [
+         ('        if count == 0:\n            general.append(behavior)\n            continue\n',
+          ''),
+     ])], "RED"),
+    # 撞到 [110, 180, 188, 196, 280, 315]
+    ('M23  形态不对时宽容兜底（situation_behaviors 不是列表就当空列表），不再抛 ValidationError',
+     TARGET, [("repl", DRAFT, [
+         ('    draft = CardDraft.model_validate(data)\n',
+          '    if not isinstance(data.get("situation_behaviors", []), list):\n        data = {**data, "situation_behaviors": []}\n    draft = CardDraft.model_validate(data)\n'),
+     ])], "RED"),
+    # 撞到 [116]
+    ('M24  草稿 schema 标题回到 CardDraft：模型看到的不再是「角色卡」',
+     TARGET, [("repl", DRAFT, [
+         ('    model_config = ConfigDict(title="CharacterCard")\n',
+          ''),
+     ])], "RED"),
+    # 撞到 [117, 235, 275, 308]
+    ('M25  草稿做法丢掉 phases 字段',
+     TARGET, [("repl", DRAFT, [
+         ('    phases: list[int] = []\n',
+          ''),
+     ])], "RED"),
+    # 撞到 [118]
+    ('M26  草稿弧线的阶段改用存卡的 ArcPhase（阶段下带 behaviors）',
+     TARGET, [("repl", DRAFT, [
+         ('    phases: list[PhaseState] = []\n',
+          '    phases: list[ArcPhase] = []\n'),
+         ('ArcAxis, CharacterCard, PhaseState,',
+          'ArcAxis, ArcPhase, CharacterCard, PhaseState,'),
+     ])], "RED"),
+    # 撞到 [120]
+    ('M27  分组 schema 漏进组外字段（name 进了每一组）',
+     TARGET, [("repl", DRAFT, [
+         ('if k in fields},',
+          'if k in fields or k == "name"},'),
+     ])], "RED"),
+    # 撞到 [121]
+    ('M28  分组 schema 取自存卡 CharacterCard：G6 的做法引用变成 SituationBehavior',
+     TARGET, [("repl", DRAFT, [
+         ('    full = CardDraft.model_json_schema()\n',
+          '    full = (CardDraft if group is None else CharacterCard).model_json_schema()\n'),
+     ])], "RED"),
+    # 撞到 [49, 70, 76, 83, 92, 106, 127, 365]
+    ('M29  转卡跳过校验（model_construct）：phases 标注留在存卡里',
+     TARGET, [("repl", DRAFT, [
+         ('    return CharacterCard.model_validate(card)\n',
+          '    return CharacterCard.model_construct(**card)\n'),
+     ])], "RED"),
+    # 撞到 [106]
+    ('M10  旧卡字符串阶段被当成 label 而不是 state',
+     TARGET, [("repl", SCHEMA, [
+         ('        return {"state": value} if isinstance(value, str) else value',
+          '        return {"label": value} if isinstance(value, str) else value'),
+     ])], "RED"),
+    # 撞到 [106]
+    ('M11  旧卡阶段列表转换时丢掉第一个阶段',
+     TARGET, [("repl", SCHEMA, [
+         ('        return {"phases": value} if isinstance(value, list) else value',
+          '        return {"phases": value[1:]} if isinstance(value, list) else value'),
+     ])], "RED"),
+    # 撞到 [49, 347]
+    ('M7  distiller 同步入口退回 CharacterCard.model_validate（不经 card_from_draft）',
+     TARGET, [("repl", DIST, [
+         ('            return card_from_draft(data)\n        except ValidationError as exc:\n            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n\n    def distill_stream',
+          '            return CharacterCard.model_validate(data)\n        except ValidationError as exc:\n            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n\n    def distill_stream'),
+     ])], "RED"),
+    # 撞到 [235, 347]
+    ('M8  分组流式在 distiller 里就转成卡，交出的不再是草稿',
+     TARGET, [("repl", DIST, [
+         ('        yield json.dumps(draft.model_dump(), ensure_ascii=False)',
+          '        yield json.dumps(card_from_draft(merged).model_dump(), ensure_ascii=False)'),
+     ])], "RED"),
+    # 撞到 [343]
+    ('M9  distiller 另起一处 model_json_schema（schema 不再单一出处）',
+     TARGET, [("repl", DIST, [
+         ('    def distill(self, text: str, character_name: str) -> CharacterCard:',
+          '    def distill(self, text: str, character_name: str) -> CharacterCard:\n        _unused = CharacterCard.model_json_schema()'),
+     ])], "RED"),
+    # 撞到 [320]
+    ('M12  G6 提示词模板的示例做法去掉 phases 编号',
+     TARGET, [("repl", DIST, [
+         (', "phases": [1, 2]}\\n',
+          '}\\n'),
+     ])], "RED"),
+    # 撞到 [210]
+    ('M30  长文流式改写了模型原文（交出的草稿被改动）',
+     TARGET, [("repl", DIST, [
+         ('            yield token\n            tc += 1\n',
+          '            yield token.replace(\'"phases": [1, 2]\', \'"phases": [1]\')\n            tc += 1\n'),
+     ])], "RED"),
+    # 撞到 [233]
+    ('M31  分组流式每组回来就交出一段 JSON：交出的字符串不止一个',
+     TARGET, [("repl", DIST, [
+         ('            group_data[group] = payload\n            yield {"heartbeat": True}',
+          '            group_data[group] = payload\n            yield json.dumps(payload, ensure_ascii=False)'),
+     ])], "RED"),
+    # 撞到 [236]
+    ('M32  分组流式交出的 JSON 不是合法草稿（character_arc 被写成字符串）',
+     TARGET, [("repl", DIST, [
+         ('        yield json.dumps(draft.model_dump(), ensure_ascii=False)',
+          '        yield json.dumps({**draft.model_dump(), "character_arc": "未定"}, ensure_ascii=False)'),
+     ])], "RED"),
+    # 撞到 [240]
+    ('M33  分组流式合并后不校验（model_construct）：坏草稿也交出字符串',
+     TARGET, [("repl", DIST, [
+         ('            draft = CardDraft.model_validate(merged)\n',
+          '            draft = CardDraft.model_construct(**merged)\n'),
+     ])], "RED"),
+    # 撞到 [241]
+    ('M34  分组流式校验失败的错误帧键名不是 error',
+     TARGET, [("repl", DIST, [
+         ('            yield {"error": user_facing_error(exc)}\n            return\n\n        yield json.dumps(draft.model_dump()',
+          '            yield {"message": user_facing_error(exc)}\n            return\n\n        yield json.dumps(draft.model_dump()'),
+     ])], "RED"),
+    # 撞到 [49, 347]
+    ('M5  路由 R1（/start 后台任务）退回 CharacterCard.model_validate',
+     TARGET, [("repl", ROUTE, [
+         ('            # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。\n            card = card_from_draft(data)\n        except Exception as exc:\n            # ValidationError',
+          '            # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。\n            card = CharacterCard.model_validate(data)\n        except Exception as exc:\n            # ValidationError'),
+     ])], "RED"),
+    # 撞到 [49, 347]
+    ('M6  路由 R2（/run_stream）退回 CharacterCard.model_validate',
+     TARGET, [("repl", ROUTE, [
+         ('            # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。\n            card = card_from_draft(data)\n        except Exception as exc:\n            logger.error("Card validation failed: %s"',
+          '            # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。\n            card = CharacterCard.model_validate(data)\n        except Exception as exc:\n            logger.error("Card validation failed: %s"'),
+     ])], "RED"),
+    # 撞到 [281]
+    ('M35  R1 校验失败的上屏文案变了',
+     TARGET, [("repl", ROUTE, [
+         ('_set_task(task_id, {"status": "error", "message": "蒸馏失败：数据校验错误，请重试", "character": name})',
+          '_set_task(task_id, {"status": "error", "message": "蒸馏失败：服务内部异常，请重试", "character": name})'),
+     ])], "RED"),
+    # 撞到 [106, 128, 365]
+    ('M36  旧卡阶段校验器非幂等：每校验一次给 state 加一次前缀（存了再读不等于自己）',
+     TARGET, [("repl", SCHEMA, [
+         ('        return {"state": value} if isinstance(value, str) else value',
+          '        return {"state": value} if isinstance(value, str) else {**value, "state": "（旧）" + value.get("state", "")}'),
+     ])], "RED"),
+    # 撞到 [304]
+    ('M37  /run_stream 的响应码不是 200',
+     TARGET, [("repl", ROUTE, [
+         ('        media_type="text/event-stream",\n    )\n\n\n@router.post("/reindex/{text_id}")',
+          '        media_type="text/event-stream", status_code=202,\n    )\n\n\n@router.post("/reindex/{text_id}")'),
+     ])], "RED"),
+    # 撞到 [309]
+    ('M38  /run_stream 同一张卡落库两次',
+     TARGET, [("repl", ROUTE, [
+         ('            result = await text_manager.save_distilled_card(\n                req.text_id, card, user_id,\n',
+          '            await text_manager.save_distilled_card(\n                req.text_id, card, user_id,\n                embedding_key=emb.key, embedding_region=emb.region,\n            )\n            result = await text_manager.save_distilled_card(\n                req.text_id, card, user_id,\n'),
+     ])], "RED"),
 ]
 
-
-def _pytest(nodes: list[str]) -> tuple[bool, str]:
-    proc = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-x", *nodes],
-                          cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    tail = (proc.stdout.strip().splitlines() or [""])[-1]
-    return proc.returncode == 0, tail
+GROUPS = {"M": MUTATIONS}
 
 
-def _sha(paths: set[str]) -> dict[str, str]:
-    return {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in sorted(paths)}
+def _baseline_gate() -> dict[str, str]:
+    """先验基线：覆盖域的靶子锁绿才开跑 —— 否则「变异后红」说不清红源。
+
+    「跑不起来」与「跑起来了但红」由 `lock_coverage.baseline_verdict` 分开（缺陷 45）。
+    """
+    summary, _, _, _ = framework._run("tests/test_card_draft.py")
+    print(f"  基线 tests/test_card_draft.py  {summary}")
+    cause = lock_coverage.baseline_verdict(summary)
+    return {"tests/test_card_draft.py": cause} if cause else {}
 
 
 def main() -> int:
-    targets = {f for _, f, *_ in MUTATIONS}
-    before = _sha(targets)
-    all_nodes = sorted({n for *_, nodes in MUTATIONS for n in nodes})
-    ok, tail = _pytest(all_nodes)
-    print(f"基线（靶测试）：{'绿' if ok else '红'}  {tail}")
-    if not ok:
-        print("基线不绿，拒跑。")
-        return 2
-
-    survived = []
-    for mid, rel, old, new, nodes in MUTATIONS:
-        path = ROOT / rel
-        src = path.read_bytes()
-        text = src.decode("utf-8")
-        assert text.count(old) == 1, f"{mid}：锚点在 {rel} 命中 {text.count(old)} 次（应恰 1 次）"
-        path.write_bytes(text.replace(old, new).encode("utf-8"))
-        try:
-            reds = []
-            for node in nodes:
-                green, tail = _pytest([node])
-                reds.append((node.split("::")[-1], not green, tail))
-        finally:
-            path.write_bytes(src)
-        killed = all(r for _, r, _ in reds)
-        if not killed:
-            survived.append(mid)
-        print(f"{mid} {rel}: {'全红 ✓' if killed else '有存活 ✗'}")
-        for name, red, tail in reds:
-            print(f"    {'红' if red else '绿'}  {name}  ({tail})")
-
-    after = _sha(targets)
-    assert after == before, f"还原后 sha256 不一致：{[p for p in before if before[p] != after[p]]}"
-    print(f"还原核对：{len(before)} 个文件 sha256 与开跑前一致")
-    print("结论：" + ("全部变异被打红" if not survived else f"存活 {survived}"))
-    return 1 if survived else 0
+    print("== 先验基线 ==")
+    bad = _baseline_gate()
+    if bad:
+        return lock_coverage.refuse_on_baseline(bad)
+    return framework.run_matrix(
+        MUTATIONS, domain=lock_coverage.domain_of(GROUPS), targets=TARGETS, artifact=ARTIFACT,
+        driver_rel="tests/perf/card_draft_mutations.py")
 
 
 if __name__ == "__main__":

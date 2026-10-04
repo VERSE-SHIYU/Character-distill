@@ -1,0 +1,426 @@
+{
+  "driver": "tests/perf/card_draft_mutations.py",
+  "domain": [
+    "tests/test_card_draft.py"
+  ],
+  "mutations": {
+    "M1  分发：只要有一个合法编号就放顶层（「所有阶段都标了」退化成「标了任一阶段」）": [
+      [
+        "tests/test_card_draft.py",
+        "assert dump[\"situation_behaviors\"] == [_B]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert card.situation_behaviors == []",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert [len(p.behaviors) for p in card.character_arc.phases] == [1, 0]",
+        0
+      ]
+    ],
+    "M2  warning 条件漏掉「编号全部作废」：整条撤回时不留痕": [
+      [
+        "tests/test_card_draft.py",
+        "assert sum(\"阶段编号不合法\" in r.getMessage() for r in caplog.records) == 1",
+        1
+      ]
+    ],
+    "M3  阶段编号下界 1 → 0：0 号被当成合法编号": [
+      [
+        "tests/test_card_draft.py",
+        "assert all(p.behaviors == [] for p in card.character_arc.phases)",
+        1
+      ]
+    ],
+    "M4  删掉非法编号的 warning": [
+      [
+        "tests/test_card_draft.py",
+        "assert sum(\"阶段编号不合法\" in r.getMessage() for r in caplog.records) == 1",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert sum(\"阶段编号不合法\" in r.getMessage() for r in caplog.records) == 1",
+        1
+      ]
+    ],
+    "M13  挂阶段时下标算反：阶段 p 的做法挂到倒数第 p 个阶段": [
+      [
+        "tests/test_card_draft.py",
+        "assert [p[\"behaviors\"] for p in dump[\"character_arc\"][\"phases\"]] == [[_A], [_C]]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert [len(p.behaviors) for p in card.character_arc.phases] == [1, 0]",
+        0
+      ]
+    ],
+    "M14  转卡时丢掉阶段的 label": [
+      [
+        "tests/test_card_draft.py",
+        "assert [p[\"label\"] for p in dump[\"character_arc\"][\"phases\"]] == [\"死要面子\", \"不再分辩\"]",
+        0
+      ]
+    ],
+    "M15  顶层判据写成 len(valid) > count：标了所有阶段的做法永远进不了顶层": [
+      [
+        "tests/test_card_draft.py",
+        "assert dump[\"situation_behaviors\"] == [_B]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert len(card.situation_behaviors) == 1",
+        0
+      ]
+    ],
+    "M16  顶层与阶段不再互斥：进了顶层的做法同时挂到各阶段": [
+      [
+        "tests/test_card_draft.py",
+        "assert [p[\"behaviors\"] for p in dump[\"character_arc\"][\"phases\"]] == [[_A], [_C]]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert all(p.behaviors == [] for p in card.character_arc.phases)",
+        0
+      ]
+    ],
+    "M17  同一阶段内做法倒序（append → insert(0)）": [
+      [
+        "tests/test_card_draft.py",
+        "assert [b.situation for b in card.character_arc.phases[1].behaviors] == [\"x\", \"y\"]",
+        0
+      ]
+    ],
+    "M18  有合法编号就挂到所有阶段，不看标了哪几个": [
+      [
+        "tests/test_card_draft.py",
+        "assert [p[\"behaviors\"] for p in dump[\"character_arc\"][\"phases\"]] == [[_A], [_C]]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert card.character_arc.phases[0].behaviors == card.character_arc.phases[2].behaviors == []",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert [len(p.behaviors) for p in card.character_arc.phases] == [1, 0]",
+        0
+      ]
+    ],
+    "M19  越界编号被夹到最后一个阶段，而不是撤回": [
+      [
+        "tests/test_card_draft.py",
+        "assert [len(p.behaviors) for p in card.character_arc.phases] == [1, 0]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert all(p.behaviors == [] for p in card.character_arc.phases)",
+        1
+      ]
+    ],
+    "M20  编号全部作废的做法改放顶层，而不是整条撤回": [
+      [
+        "tests/test_card_draft.py",
+        "assert card.situation_behaviors == []",
+        1
+      ]
+    ],
+    "M21  无阶段的卡丢掉全部做法": [
+      [
+        "tests/test_card_draft.py",
+        "assert len(card.situation_behaviors) == 2",
+        0
+      ]
+    ],
+    "M22  无阶段的卡也走编号校验：做法照收，但每条打一次 warning": [
+      [
+        "tests/test_card_draft.py",
+        "assert not caplog.records",
+        0
+      ]
+    ],
+    "M23  形态不对时宽容兜底（situation_behaviors 不是列表就当空列表），不再抛 ValidationError": [
+      [
+        "tests/test_card_draft.py",
+        "with pytest.raises(ValidationError):",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "with pytest.raises(DistillError):",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "with pytest.raises(DistillError):",
+        1
+      ],
+      [
+        "tests/test_card_draft.py",
+        "with pytest.raises(DistillError):",
+        2
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert saved == []",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert frames[-1] == {\"error\": \"蒸馏失败：数据校验错误，请重试\"}",
+        0
+      ]
+    ],
+    "M24  草稿 schema 标题回到 CardDraft：模型看到的不再是「角色卡」": [
+      [
+        "tests/test_card_draft.py",
+        "assert full[\"title\"] == \"CharacterCard\"",
+        0
+      ]
+    ],
+    "M25  草稿做法丢掉 phases 字段": [
+      [
+        "tests/test_card_draft.py",
+        "assert \"phases\" in full[\"$defs\"][\"DraftBehavior\"][\"properties\"]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert len(saved) == 1",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert frames[-1].get(\"done\") is True",
+        0
+      ]
+    ],
+    "M26  草稿弧线的阶段改用存卡的 ArcPhase（阶段下带 behaviors）": [
+      [
+        "tests/test_card_draft.py",
+        "assert \"behaviors\" not in full[\"$defs\"][\"PhaseState\"][\"properties\"]",
+        0
+      ]
+    ],
+    "M27  分组 schema 漏进组外字段（name 进了每一组）": [
+      [
+        "tests/test_card_draft.py",
+        "assert set(draft_schema(group)[\"properties\"]) == set(fields), group",
+        0
+      ]
+    ],
+    "M28  分组 schema 取自存卡 CharacterCard：G6 的做法引用变成 SituationBehavior": [
+      [
+        "tests/test_card_draft.py",
+        "assert g6[\"properties\"][\"situation_behaviors\"][\"items\"][\"$ref\"].endswith(\"/DraftBehavior\")",
+        0
+      ]
+    ],
+    "M29  转卡跳过校验（model_construct）：phases 标注留在存卡里": [
+      [
+        "tests/test_card_draft.py",
+        "assert dump[\"situation_behaviors\"] == [_B]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert all(p.behaviors == [] for p in card.character_arc.phases)",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert [b.situation for b in card.character_arc.phases[1].behaviors] == [\"x\", \"y\"]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert [len(p.behaviors) for p in card.character_arc.phases] == [1, 0]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert all(p.behaviors == [] for p in card.character_arc.phases)",
+        1
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert [p.state for p in card.character_arc.phases] == arc",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert rows and all(\"phases\" not in b for b in rows)",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert CharacterCard.model_validate_json(row[\"card_json\"]) == card",
+        0
+      ]
+    ],
+    "M10  旧卡字符串阶段被当成 label 而不是 state": [
+      [
+        "tests/test_card_draft.py",
+        "assert [p.state for p in card.character_arc.phases] == arc",
+        0
+      ]
+    ],
+    "M11  旧卡阶段列表转换时丢掉第一个阶段": [
+      [
+        "tests/test_card_draft.py",
+        "assert [p.state for p in card.character_arc.phases] == arc",
+        0
+      ]
+    ],
+    "M7  distiller 同步入口退回 CharacterCard.model_validate（不经 card_from_draft）": [
+      [
+        "tests/test_card_draft.py",
+        "assert dump[\"situation_behaviors\"] == [_B]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert _calls(r\"\\bcard_from_draft\\(\") == {\"core/distiller.py\": 3, \"web/routers/distill.py\": 2}",
+        0
+      ]
+    ],
+    "M8  分组流式在 distiller 里就转成卡，交出的不再是草稿": [
+      [
+        "tests/test_card_draft.py",
+        "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert _calls(r\"\\bcard_from_draft\\(\") == {\"core/distiller.py\": 3, \"web/routers/distill.py\": 2}",
+        0
+      ]
+    ],
+    "M9  distiller 另起一处 model_json_schema（schema 不再单一出处）": [
+      [
+        "tests/test_card_draft.py",
+        "assert _calls(r\"model_json_schema\\(\") == {\"core/card_draft.py\": 1}",
+        0
+      ]
+    ],
+    "M12  G6 提示词模板的示例做法去掉 phases 编号": [
+      [
+        "tests/test_card_draft.py",
+        "assert '\"phases\": [1, 2]' in format_prompt_after(\"G6\")",
+        0
+      ]
+    ],
+    "M30  长文流式改写了模型原文（交出的草稿被改动）": [
+      [
+        "tests/test_card_draft.py",
+        "assert json.loads(out) == KONG_DRAFT",
+        0
+      ]
+    ],
+    "M31  分组流式每组回来就交出一段 JSON：交出的字符串不止一个": [
+      [
+        "tests/test_card_draft.py",
+        "assert len(out) == 1",
+        0
+      ]
+    ],
+    "M32  分组流式交出的 JSON 不是合法草稿（character_arc 被写成字符串）": [
+      [
+        "tests/test_card_draft.py",
+        "assert CardDraft.model_validate(draft)",
+        0
+      ]
+    ],
+    "M33  分组流式合并后不校验（model_construct）：坏草稿也交出字符串": [
+      [
+        "tests/test_card_draft.py",
+        "assert not [p for p in bad if isinstance(p, str)]",
+        0
+      ]
+    ],
+    "M34  分组流式校验失败的错误帧键名不是 error": [
+      [
+        "tests/test_card_draft.py",
+        "assert any(isinstance(p, dict) and \"error\" in p for p in bad)",
+        0
+      ]
+    ],
+    "M5  路由 R1（/start 后台任务）退回 CharacterCard.model_validate": [
+      [
+        "tests/test_card_draft.py",
+        "assert dump[\"situation_behaviors\"] == [_B]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert _calls(r\"\\bcard_from_draft\\(\") == {\"core/distiller.py\": 3, \"web/routers/distill.py\": 2}",
+        0
+      ]
+    ],
+    "M6  路由 R2（/run_stream）退回 CharacterCard.model_validate": [
+      [
+        "tests/test_card_draft.py",
+        "assert dump[\"situation_behaviors\"] == [_B]",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert _calls(r\"\\bcard_from_draft\\(\") == {\"core/distiller.py\": 3, \"web/routers/distill.py\": 2}",
+        0
+      ]
+    ],
+    "M35  R1 校验失败的上屏文案变了": [
+      [
+        "tests/test_card_draft.py",
+        "assert {\"status\": \"error\", \"message\": \"蒸馏失败：数据校验错误，请重试\"}.items() <= snaps[-1].items()",
+        0
+      ]
+    ],
+    "M36  旧卡阶段校验器非幂等：每校验一次给 state 加一次前缀（存了再读不等于自己）": [
+      [
+        "tests/test_card_draft.py",
+        "assert [p.state for p in card.character_arc.phases] == arc",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert CharacterCard.model_validate(dump).model_dump() == dump",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert CharacterCard.model_validate_json(row[\"card_json\"]) == card",
+        0
+      ]
+    ],
+    "M37  /run_stream 的响应码不是 200": [
+      [
+        "tests/test_card_draft.py",
+        "assert resp.status_code == 200",
+        0
+      ]
+    ],
+    "M38  /run_stream 同一张卡落库两次": [
+      [
+        "tests/test_card_draft.py",
+        "assert len(saved) == 1",
+        1
+      ]
+    ]
+  },
+  "controls": [],
+  "skipped": []
+}
