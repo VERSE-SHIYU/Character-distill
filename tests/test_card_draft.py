@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """模型输出契约（草稿）→ 存卡：分发、各入口接线、唯一出口、PG 往返。
 
-spec：docs/specs/arc-behaviors-draft.md §4。路由两个消费点（R1/R2）在
-tests/test_distill_task_api.py 的 `TestDraftConversion`。
+spec：docs/specs/arc-behaviors-draft.md §4。草稿契约的判别器全部在本文件 —— 它是变异驱动
+`tests/perf/card_draft_mutations.py` 的覆盖域（`tests/test_lock_coverage.py` 按文件计域）。
+路由两个消费点（R1/R2）的通用桩从 `test_distill_task_api` 复用，不复制。
 """
 import copy
 import json
@@ -16,7 +17,10 @@ import pytest
 from pydantic import ValidationError
 
 from core.card_draft import CardDraft, card_from_draft, draft_schema
-from core.distiller import DistillError, Distiller
+import deps
+from core.distiller import DistillError, Distiller, format_prompt_after
+from routers import distill as D
+from test_distill_task_api import _build_client, _CardStubDistiller, _FakeStore, _run_to_card
 from core.schema import FORMAT_GROUPS, CharacterCard
 
 REPO = Path(__file__).resolve().parent.parent
@@ -235,6 +239,85 @@ class TestEntries:
         bad = self._grouped(monkeypatch, _BAD)
         assert not [p for p in bad if isinstance(p, str)]
         assert any(isinstance(p, dict) and "error" in p for p in bad)
+
+
+# ── 4.2 调用点矩阵：路由两个消费点（R1 /start 后台任务、R2 /run_stream）──────
+# 蒸馏流交出的是草稿（做法带 phases），转成卡只经 `card_from_draft`。这里不用
+# SQLiteStore：store 用内存 `_FakeStore`，名单入口打桩，TextManager 用桩记下收到的卡。
+
+class _DraftStubDistiller(_CardStubDistiller):
+    def __init__(self, draft):
+        super().__init__()
+        self.CARD = draft
+
+
+async def _stub_roster(storage, distiller, text_id, user_id, content):
+    return distiller.identify_characters(content)
+
+
+class _DraftRouteStore:
+    """`/run_stream` 前半段只读这两样；其余落库由 TextManager 桩接走。"""
+
+    def __init__(self, uid):
+        self.uid = uid
+
+    async def get_text_owned(self, text_id, user_id):
+        return {"id": text_id, "content": "正文", "text_type": "story"} if user_id == self.uid else None
+
+    async def get_user_api_config(self, user_id):
+        return {}
+
+
+class TestDraftConversion:
+    def test_bg_task_converts_draft(self, monkeypatch):
+        monkeypatch.setattr(D, "resolve_characters", _stub_roster)
+        saved, _ = _run_to_card(monkeypatch, _FakeStore(), _DraftStubDistiller(KONG_DRAFT))
+        assert len(saved) == 1
+        _assert_kong(saved[0])
+
+        saved, snaps = _run_to_card(monkeypatch, _FakeStore(), _DraftStubDistiller(_BAD),
+                                    task_id="tCardBad")
+        assert saved == []
+        assert {"status": "error", "message": "蒸馏失败：数据校验错误，请重试"}.items() <= snaps[-1].items()
+
+    def test_run_stream_converts_draft(self, monkeypatch):
+        uid = f"usr_{uuid.uuid4().hex[:8]}"
+        saved: list = []
+
+        class _TM:
+            async def save_distilled_card(self, text_id, card, user_id, *,
+                                          embedding_key="", embedding_region=""):
+                saved.append(card)
+                return {"card_id": "card_x"}
+
+        async def _no_llm(user_id, storage=None):
+            return None
+
+        monkeypatch.setattr(D, "resolve_characters", _stub_roster)
+        monkeypatch.setattr(deps, "get_user_llm", _no_llm)
+        monkeypatch.setattr(deps, "get_text_manager", lambda llm=None: _TM())
+        client = _build_client(_DraftRouteStore(uid), uid)
+
+        def _frames(draft):
+            monkeypatch.setattr(deps, "get_distiller", lambda llm=None: _DraftStubDistiller(draft))
+            resp = client.post("/api/distill/run_stream", json={"text_id": "txt1", "character_name": "乙"})
+            assert resp.status_code == 200
+            return [json.loads(l[6:]) for l in resp.text.splitlines() if l.startswith("data: ")]
+
+        frames = _frames(KONG_DRAFT)
+        assert frames[-1].get("done") is True
+        assert len(saved) == 1
+        _assert_kong(saved[0])
+
+        # 校验失败即收场：错误帧是最后一帧，之后不会再落库（再落库只能发生在错误帧之后，
+        # 那时上一句已经红了 —— 故不再单列「落库次数」，它在任何合法变异下都撞不到）。
+        frames = _frames(_BAD)
+        assert frames[-1] == {"error": "蒸馏失败：数据校验错误，请重试"}
+
+
+def test_g6_template_tags_behaviors_with_phase_numbers():
+    """G6 提示词模板里的示例做法带 `phases` 编号 —— 模型照模板写草稿。"""
+    assert '"phases": [1, 2]' in format_prompt_after("G6")
 
 
 # ── 4.3 结构：两处唯一出处 ─────────────────────────────────────────────
