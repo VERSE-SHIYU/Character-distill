@@ -189,9 +189,10 @@ cd web/frontend; npm test
 ## 8. 进度
 
 - [ ] 交接：`Test-Path docs/specs/distill-capacity.md` 为 True；`git log --oneline -3` 与远端一致
-- [ ] 实现（Claude，沙箱 PG）
-- [ ] §4 先红后绿、§5 变异全红（Claude 预跑，贴结果）
-- [ ] 执行方 S0：C1–C11 复核、§7.1 tokenizer 来源核对、复跑 §6
+- [ ] 执行方 S0：C1–C11 复核、§7.1 tokenizer 来源核对（需访问 Hugging Face，只有本地能做，故本段由执行方实现）
+- [ ] 实现（执行方，测试库一律 PG：`docker-compose.test.yml`，不用 SQLite）
+- [ ] §4 先在 `ad3bc7e1` 上红、再在本分支上绿；§5 变异全红（执行方跑，贴原始输出）
+- [ ] 审计（Claude 用 token 读 diff，逐文件给结论）
 - [ ] 分支 CI 绿 → PR → Shiyu 合并
 
 ## 9. 补充
@@ -215,7 +216,7 @@ cd web/frontend; npm test
 | ② 全量扫描原文 | 附录 A | ✅ |
 | ③ 规模表 | §2.2 | ✅ |
 | ④ 调用点矩阵逐格到测试名 | §4.2 | ✅ |
-| 变异发出前 Claude 先实跑 | §5（实现后预跑，未全红不推） | ⏳ 实现阶段 |
+| 变异发出前先实跑 | §5（执行方实现后跑，未全红不推；Claude 审计结果） | ⏳ 实现阶段 |
 | 经验 1 复用先找现成库 | §1.1：`tokenizers` 已在锁定依赖中，零新增 | ✅ |
 | 经验 2 替换原生控件先列行为 | 不替换控件，只用 `disabled` 属性 | 不适用 |
 | 经验 3 行为照抄权威来源 | 超窗措辞出自官方仓库讨论；窗口出自官方模型卡 | ✅ |
