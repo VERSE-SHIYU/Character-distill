@@ -9,7 +9,8 @@
 **不变量**（每条变异都成立，脚本自检，不是口头保证）
   1. **锚点恰一命中**：`repl` 的 `old` 必须恰命中一次，0/2 命中当场 assert（锚点漂移会
      静默变成「变异没生效」，那是最危险的假绿）。
-  2. **逐字节还原**：每条跑完在 `finally` 里按基线字节还原；收尾核 sha256、隐藏文件残留。
+  2. **逐字节还原**：施加与运行都在 `try` 里，`finally` 按基线字节还原；收尾核 sha256、
+     隐藏文件残留、新建文件残留。
   3. **`write` 只用于新建**：写前断言路径不存在，路径记进 `_CREATED`，还原时删掉。
   4. **红源坐标可比**：`_run` 把红行号从「变异后」搬回「变异前」坐标系，搬不动就报出来。
 """
@@ -173,18 +174,24 @@ def run_matrix(items, *, domain, targets, artifact, driver_rel, root=ROOT,
     controls: list[str] = []
     skipped: list[str] = list(pre_skipped)
     dom = set(domain)
+    # 本轮所有 `write` 新建过的路径：`_restore` 每条都删，收尾再核一遍 —— 删没删掉要点名，
+    # 不能只信 `_restore` 自己（残留的新建文件会被下一条变异、下一个驱动当成树的一部分）。
+    created_all: set[pathlib.Path] = set()
 
     for item in items:
         label, target, edits, expect = item[:4]
         marker = item[4] if len(item) > 4 else None
-        _apply(edits)
         try:
+            # `_apply` 也在 try 里：一条变异有多处改动时，后一处锚点没命中会当场 assert，
+            # 前一处已经写进树了 —— 不还原就带着半个变异退出。
+            _apply(edits)
             if callable(target):
                 got, keep, lines, problems = target()
             else:
                 summary, keep, lines, problems = _run(target)
                 got = lock_coverage.outcome(summary)
         finally:
+            created_all |= _CREATED
             _restore(baseline)
         if problems:
             mismatches.append(f"{label}：{'；'.join(problems)}")
@@ -241,6 +248,10 @@ def run_matrix(items, *, domain, targets, artifact, driver_rel, root=ROOT,
         if _hidden(p).exists():
             mismatches.append(f"{_hidden(p).name} 残留在树里（移走的文件没还原）")
         print(f"  {str(p.relative_to(root)):38s} {same}  {got_hash[:16]}")
+    for p in sorted(created_all):
+        if p.exists():
+            mismatches.append(f"{p.name} 残留在树里（变异新建的文件没清掉）")
+        print(f"  {p.name:38s} {'不存在' if not p.exists() else '仍在！'}")
 
     print("\n== 结论 ==")
     if mismatches:

@@ -260,6 +260,13 @@ S1 + S3 共要把四个旧驱动各跑两遍；route_facts 最慢，可以放后
 - **F13 判据自身没有分辨力（S5 当场发现、就地修）**：`test_unrestored_target_is_a_mismatch` 原用 `_callable("RED")`（红源**不落在域里**），于是**空转守卫**也记一条 mismatch —— 删掉收尾的 sha256 比对后 `rc` 仍为 1，判据对「收尾核 sha256」**毫无分辨力**（S5 实测 F13 不变红）。改法：给可调用靶子一条落入域里的红源（**不空转**），使这条唯一的 mismatch 只能来自 sha256 比对；改后 F13 变红。属本段改动面内、新写文件**自身的**判据漏洞，按本节「改动面内新发现的问题直接修」处理，不另记账。
 - **分支 CI 号**：见推送后本轮报告（gate job）。
 
+- **Claude web 审计（`1ad08cdd`）发现 4 处，已在下一个提交修掉**：
+  1. **收尾的新建文件残留核查丢了**：旧 pg_gate（`55146032:tests/perf/pg_gate_mutations.py:494-497`）与旧 alerting 收尾都点名残留，`run_matrix` 收口时漏掉（§4.1 要求「收尾核 `_CREATED` 残留」，AGENTS.md 也这么写）。改法：本轮记下每条变异新建的路径（`created_all`），收尾逐个核，还在就记 mismatch。新增 `test_created_file_residue_is_a_mismatch`。
+  2. **`_apply` 在 `try` 外**：多处改动的变异，后一处锚点没命中时前一处已写进树，进程带着半个变异退出（pg_gate 的 `_both` 每条两处，G-10 正是这样失败的）。**这是本 spec §4.1 原文写错**（「`_apply` → try」），不是执行方的偏离。改法：`_apply` 挪进 `try`。新增 `test_partial_apply_is_restored`。
+  3. **F15 只测了函数，没测接线**：删掉 alerting `main` 里 `if offenders: return 2` 整段，原用例仍绿。新增 `test_alerting_main_refuses_edits_on_its_domain`（替换 `MUTATIONS` 后 `main()` 必须回 2，且走不到先验基线）。
+  4. **清理**：ping / pg_gate / route_facts 里把条目拆开再原样拼回的循环、alerting 里原样复制的列表推导删掉，直接把选中的组交给 `run_matrix`（它本来就收 4 元或 5 元条目）。
+- **修后验证（Claude web，Linux 沙箱，PG 16 + compose v5.5.1）**：`test_mutation_framework.py` 20 passed；三条新变异各自只打红自己的用例（删收尾核查 → `test_created_file_residue_is_a_mismatch`；`_apply` 挪回 try 外 → `test_partial_apply_is_restored`；删 `main` 的门 → `test_alerting_main_refuses_edits_on_its_domain`），跑完逐字节还原；五个驱动重跑，产物与改前逐字节相同（card_draft / alerting / pg_gate / route_facts 与入库相同；ping 与旧驱动在 Linux 上跑出的相同 —— Windows 上 B-1/B-1b 走 skip，属环境差异，见 §6）。
+
 ## 附录 A —— 扫描与预跑的原始输出
 
 ### A1 新覆盖域 `tests/test_card_draft.py` 的全部判别器（`c4a6364c`，`lock_coverage.discriminators`）

@@ -726,14 +726,12 @@ def main() -> int:
     pre_skipped = []
     for name in groups:
         for item in GROUPS[name]:
-            label, target, edits, expect = item[:4]
-            marker = item[4] if len(item) > 4 else None
-            if expect == "RED-container" and not args.with_container:
-                pre_skipped.append(label)
+            if item[3] == "RED-container" and not args.with_container:
+                pre_skipped.append(item[0])
                 continue
-            if target == _ORDER_SWAP:            # I-3 的口子：包成可调用靶子
-                target = _order_swap_target
-            items.append((label, target, edits, expect, marker))
+            if item[1] == _ORDER_SWAP:           # I-3 的口子：包成可调用靶子
+                item = (item[0], _order_swap_target, *item[2:])
+            items.append(item)
 
     return framework.run_matrix(
         items, domain=lock_coverage.domain_of(GROUPS), targets=TARGETS, artifact=ARTIFACT,

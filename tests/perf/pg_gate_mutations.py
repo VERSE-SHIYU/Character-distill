@@ -444,12 +444,7 @@ def main() -> int:
         return lock_coverage.refuse_on_baseline(bad_baseline)
 
     wanted = [x.strip() for x in args.group.upper().split(",") if x.strip()]
-    items = []
-    for name in [g for g in wanted if g in GROUPS]:
-        for item in GROUPS[name]:
-            label, target, edits, expect = item[:4]
-            marker = item[4] if len(item) > 4 else None
-            items.append((label, target, edits, expect, marker))
+    items = [item for name in wanted if name in GROUPS for item in GROUPS[name]]
 
     return framework.run_matrix(
         items, domain=lock_coverage.domain_of(GROUPS), targets=TARGETS, artifact=ARTIFACT,

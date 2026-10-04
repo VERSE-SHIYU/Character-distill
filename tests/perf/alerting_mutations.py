@@ -261,10 +261,8 @@ def main() -> int:
     if bad:
         return lock_coverage.refuse_on_baseline(bad)
 
-    items = [(label, target, edits, expect, marker)
-             for (label, target, edits, expect, marker) in MUTATIONS]
     return framework.run_matrix(
-        items, domain=DOMAIN, targets=TARGETS, artifact=ARTIFACT,
+        MUTATIONS, domain=DOMAIN, targets=TARGETS, artifact=ARTIFACT,
         driver_rel="tests/perf/alerting_mutations.py")
 
 

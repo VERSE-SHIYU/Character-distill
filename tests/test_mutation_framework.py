@@ -122,6 +122,37 @@ def test_write_refuses_an_existing_path(sandbox, tmp_path):
         F._apply([("write", existing, "y = 1\n")])
 
 
+def test_created_file_residue_is_a_mismatch(sandbox, tmp_path, monkeypatch):
+    """收尾逐个核新建文件：`_restore` 漏删时要点名，不能只信 `_restore` 自己。"""
+    created = tmp_path / "created.py"
+    dom = _domain_file(tmp_path)
+    loc = f"{dom.name}:{_a_domain_line(dom)}"
+
+    def restore_without_deleting_created(baseline):     # 只还原靶子字节，漏删新建文件
+        for path, data in baseline.items():
+            path.write_bytes(data)
+
+    monkeypatch.setattr(F, "_restore", restore_without_deleting_created)
+    # 红源落进域里（不空转），靶子字节也还原了 —— 唯一的 mismatch 只能来自新建文件残留。
+    items = [("M1", _callable("RED", lines={loc}), [("write", created, "y = 1\n")], "RED")]
+    rc, art = _matrix(tmp_path, items, domain=[dom.name], targets=[dom])
+    assert rc == 1
+    assert not art.exists()
+
+
+def test_partial_apply_is_restored(sandbox, tmp_path):
+    """一条变异两处改动、第二处锚点没命中：当场 assert，第一处已写进的文件也要还原。"""
+    a = tmp_path / "a.py"
+    b = tmp_path / "b.py"
+    a.write_text("x = 1\n", encoding="utf-8")
+    b.write_text("y = 1\n", encoding="utf-8")
+    edits = [("repl", a, [("x = 1", "x = 2")]), ("repl", b, [("不存在的锚点", "z")])]
+    items = [("M1", _callable("RED"), edits, "RED")]
+    with pytest.raises(AssertionError, match="命中 0 次"):
+        _matrix(tmp_path, items, domain=["a.py"], targets=[a, b])
+    assert a.read_text(encoding="utf-8") == "x = 1\n"
+
+
 # ── F5 / F6：空转与编号重复 ──────────────────────────────────────────────────
 
 def test_vacuous_red_is_a_mismatch_and_writes_no_artifact(sandbox, tmp_path):
@@ -253,3 +284,14 @@ def test_alerting_refuses_edits_on_its_domain():
             [("append", A.TEST, "\n")], "RED")
     assert A._domain_edits([fake]) == ["X 打域文件"]
     assert A._domain_edits(A.MUTATIONS) == []      # 现表一条都不碰域文件
+
+
+def test_alerting_main_refuses_edits_on_its_domain(monkeypatch):
+    """门要接在 `main` 上：变异打到域文件时 `main` 直接拒跑（退出码 2），不进基线、不跑矩阵。"""
+    import alerting_mutations as A
+
+    fake = ("X 打域文件", "tests/test_failure_alerting.py", [("append", A.TEST, "\n")], "RED", None)
+    monkeypatch.setattr(A, "MUTATIONS", [fake])
+    monkeypatch.setattr(sys, "argv", ["alerting_mutations.py"])
+    monkeypatch.setattr(A, "_baseline_gate", lambda: pytest.fail("门没拦住：已经走到先验基线"))
+    assert A.main() == 2
