@@ -75,7 +75,7 @@
       ],
       [
         "tests/test_card_draft.py",
-        "assert rows and all(\"occurrences\" not in b and \"anchor\" not in p for p in dump[\"character_arc\"][\"phases\"] for ",
+        "assert rows and not any(\"occurrences\" in b for b in rows) and not any( \"anchor\" in p for p in dump[\"character_",
         0
       ]
     ],
@@ -177,7 +177,7 @@
       ],
       [
         "tests/test_card_draft.py",
-        "assert rows and all(\"occurrences\" not in b and \"anchor\" not in p for p in dump[\"character_arc\"][\"phases\"] for ",
+        "assert rows and not any(\"occurrences\" in b for b in rows) and not any( \"anchor\" in p for p in dump[\"character_",
         0
       ],
       [
@@ -216,16 +216,6 @@
       ]
     ],
     "M14  草稿阶段丢掉 anchor 字段": [
-      [
-        "tests/test_card_draft.py",
-        "assert dump[\"situation_behaviors\"] == [_B]",
-        0
-      ],
-      [
-        "tests/test_card_draft.py",
-        "assert len(card.situation_behaviors) == 1",
-        0
-      ],
       [
         "tests/test_card_draft.py",
         "assert \"anchor\" in full[\"$defs\"][\"DraftPhase\"][\"properties\"]",

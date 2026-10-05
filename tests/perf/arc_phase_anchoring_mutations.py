@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """arc-phase-anchoring 变异矩阵驱动 —— 位置校正的每条变异各有专属红源。
 
-spec：`docs/specs/arc-phase-anchoring.md` §5（M1–M19b）+ §4.1。覆盖域是新锁
+spec：`docs/specs/arc-phase-anchoring.md` §5（M1–M19b）+ §4.1 + §9.5（M31–M36，审计补）。覆盖域是新锁
 `tests/test_phase_anchoring.py`（纯计算层 `core.phase_anchoring` / `core.quotes`
 与五个调用点 E1–E5 的判别器全在这一个文件）。跑法交 `mutation_framework.run_matrix`
 —— 与另外几个驱动共用一份执行原语；本文件只留变异表与基线门。
@@ -114,8 +114,8 @@ MUTATIONS = [
           "        nums = [occ.phase for occ in row.occurrences]\n"
           "        valid = sorted({p for p in nums if 1 <= p <= count})")])], "RED"),
     ('M18 同阶段多段摘录：任一段核对不上就整阶段不成立', TARGET, [("repl", ANCH, [
-        ("                    dropped += 1\n                    continue",
-         '                    dropped += 1\n                    picked = ""\n                    break')])], "RED"),
+        ("                    continue\n                lo, hi = ranges[p - 1]",
+         "                    break\n                lo, hi = ranges[p - 1]")])], "RED"),
     ('M19a 出现次数判定改 >=（恰好 3 次也不作证据）', TARGET, [("repl", ANCH, [
         ("                if loc is None or len(loc) > MAX_OCCURRENCES:",
          "                if loc is None or len(loc) >= MAX_OCCURRENCES:")])], "RED"),
@@ -153,6 +153,27 @@ MUTATIONS = [
     ('M30 草稿做法多出一个 phases 字段（存卡形态被草稿字段污染）', TARGET, [("repl", DRAFT, [
         ("    occurrences: list[DraftOccurrence] = []\n",
          "    occurrences: list[DraftOccurrence] = []\n    phases: list[int] = []\n")])], "RED"),
+    # ── 审计 §9.5 补（A1–A3），两个方向 ──
+    ('M31 阶段 1 以外的空锚点退回取全文末尾（不跳过整卡）', TARGET, [("repl", ANCH, [
+        ('            return [], f"阶段 {i + 1} 锚点为空"',
+         "            starts.append(len(source_norm))\n            continue")])], "RED"),
+    ('M32 阶段 1 的空锚点也整卡跳过', TARGET, [("repl", ANCH, [
+        ("            if i == 0:\n                starts.append(0)\n                continue\n", "")])], "RED"),
+    ('M33 dropped 按摘录计（核对不上的摘录也记一次去掉）', TARGET, [("repl", ANCH, [
+        ("                    unverified += 1              # 查不到 / 出现太多 → 不作位置证据\n",
+         "                    unverified += 1              # 查不到 / 出现太多 → 不作位置证据\n"
+         "                    dropped += 1\n")])], "RED"),
+    ('M34 tags 按摘录计', TARGET, [("repl", ANCH, [
+        ('            tags += 1\n            picked = ""\n', '            picked = ""\n'),
+        ("            for quote in by_phase.get(p, []):    # 规则 3：同阶段多段摘录，任一段通过即成立\n",
+         "            for quote in by_phase.get(p, []):    # 规则 3：同阶段多段摘录，任一段通过即成立\n"
+         "                tags += 1\n")])], "RED"),
+    ('M35 删去「去掉标注」的 warning', TARGET, [("repl", ANCH, [
+        ('                logger.warning("去掉标注：做法 %r 在阶段 %d 没有落在该阶段的摘录",\n'
+         "                               row.situation, p)\n",
+         "                pass\n")])], "RED"),
+    ('M36 整卡跳过时不计 tags', TARGET, [("repl", ANCH, [
+        ("            tags += len(valid)                   # 分母照常计（监测比例要用）\n", "")])], "RED"),
 ]
 
 GROUPS = {"M": MUTATIONS}
