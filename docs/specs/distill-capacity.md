@@ -294,6 +294,10 @@ cd web/frontend; npm test
 - **【小 5】`MAX_FILE_SIZE` 别名**：`web/routers/text.py` 删去 `MAX_FILE_SIZE = MAX_FILE_BYTES` 别名，413 文案与体积门直接用 `MAX_FILE_BYTES`。**连带**：`test_length_budget.py` 的 R2 用例 `monkeypatch` 目标随之改为 `MAX_FILE_BYTES`；驱动 M8 的锚点字符串同步改（`MAX_FILE_SIZE` → `MAX_FILE_BYTES`），产物里 M8 的键名随之刷新。
   - **前端 `TextPanel.jsx`**：去掉本地 `validateFile` 包装，直接调 lib。**注意**：该包装**并非只做转调** —— 它在转调前还做**扩展名白名单**校验（拖拽会绕过 `accept`）。为不丢这条校验，把扩展名判断**内联到唯一调用点**（`handleFiles`），lib 的 `validateFile` 只负责接口来的体积上限。
 - **重跑结果**：§6 Python 组 **265 passed**（132.50s）；`cd web/frontend; npm test` **70 files / 349 tests passed**（较整改前 +2，即上述两条新用例）；变异驱动 `python tests/perf/distill_capacity_mutations.py` **基线 19 passed、M1–M17 全 RED、逐字节还原通过**；`test_lock_coverage` 对刷新后的产物仍**闭合**（`test_lock_coverage + test_length_budget + test_tokens` 合跑 **53 passed**）。
+- **分支 CI 补红（§6 本地清单不覆盖的两条整仓元锁）**：上一提交的分支 CI gate/sentinel 在**全仓回归**里红了两条 —— §6 只跑受影响的文件，这两条是**全仓普查**，故本地跑不出：
+  - `tests/test_auth_param_used.py`：新端点 `GET /api/text/limits` 注入了 `user` 却从不引用。**修法**：加进该文件 `ALLOWLIST`（理由「全局上限常量：值不随用户变化，不做归属校验」，与 `/api/settings/config` 的纯登录门同一形态）。**不是**为了让锁变绿而在端点里假装用一下 user。
+  - `tests/test_exception_pickle_lock.py`：`tests/test_length_budget.py` 的替身 `_Upstream` 带自定义状态（`status_code`）既未登记、默认 `reduce` 又无法用 `args`（只有 message）重建。**修法**：给它加 `__reduce__` 并登记进 `_REGISTRY` —— 与既有替身 `_RateLimitError429` 同一形态。
+  - 重跑：`test_auth_param_used + test_exception_pickle_lock + test_length_budget + test_lock_coverage` **64 passed**；变异驱动重跑仍**全红、产物无变化**。
 
 
 ## 10. 自检表（对照 Shiyu 的标准，逐条）

@@ -77,6 +77,10 @@ _REGISTRY = {
         "test_llm_adapter_retry",
         lambda cls: cls("0"),
     ),
+    ("tests/test_length_budget.py", "_Upstream"): (
+        "test_length_budget",
+        lambda cls: cls(400, "Input token exceed the limit"),
+    ),
 }
 
 

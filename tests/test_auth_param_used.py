@@ -41,6 +41,7 @@ ALLOWLIST = {
     ("/api/voice/status", "get"): "全局服务状态",
     ("/api/voice/asr", "post"): "全局 ASR",
     ("/api/settings/config", "get"): "纯登录门：读全局 LLM/语音配置，不做归属校验",
+    ("/api/text/limits", "get"): "全局上限常量：值不随用户变化，不做归属校验",
 }
 
 

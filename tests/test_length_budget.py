@@ -79,6 +79,10 @@ class _Upstream(Exception):
         self.status_code = status
         super().__init__(text)
 
+    def __reduce__(self):
+        # 带自定义状态：默认 reduce 会用 args（只有 message）重建 `cls(*args)`，少一个 status 参数。
+        return (self.__class__, (self.status_code, str(self)))
+
 
 def _client(monkeypatch):
     from fastapi import FastAPI
