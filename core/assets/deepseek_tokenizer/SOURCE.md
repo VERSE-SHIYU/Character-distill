@@ -9,8 +9,10 @@
 
 This file differs byte-for-byte from the official V3 (`621ac2e3…`), V3.1 / V3.2-Exp
 (`32b34a41…`) tokenizer files, and from DeepSeek's `deepseek-recipe` V4.1 copy
-(`81f64d12…`). The difference is only in the special-token table (this file adds
-special token 129,280 and omits 128,000). **Body tokenization is identical** — the
-same plain text encodes to the same number of tokens under every copy. Evidence and
+(`81f64d12…`). The differences are confined to the special-token entries: every copy has the same
+128,000 regular tokens, and this file's vocabulary including special tokens totals
+129,280 (deepseek-recipe's copy, for example, only re-labels id 129264 as an image
+token). **Body tokenization is identical** — verified by encoding the public-domain
+samples and a 1.2M-character novel with each copy and getting the same counts. Evidence and
 the recomputed sample counts are recorded in `docs/specs/distill-capacity.md` §9.1
 and C11.

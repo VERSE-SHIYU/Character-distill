@@ -329,6 +329,18 @@ cd web/frontend; npm test
 | 不打补丁、隔离、抽象、复用 | 一个模块管所有上限；两处重复判断收一；前端两处体积常量收一；死代码 `charCountClass` 随旧上限删除 | ✅ |
 | skill 用上不过度 | 前端读过 frontend-design（只取可访问性下限）；执行方配两个：`@search-first`（实现前搜可复用的现成实现）、`@verification-before-completion`（报通过前附实际输出） | ✅ |
 
+
+### 9.7 审计方最终结论（2026-10-05，基于 7d45a8a6，CI 37252578384 绿）
+
+**通过。** 1 处阻塞（前端信任非 200 响应）与小项均已整改并验证（§9.6）；审计方另修一处 `SOURCE.md` 表述（原句「adds special token 129,280 and omits 128,000」不成立：129,280 是含特殊 token 的词表总数，不是某个 token），本提交改正。
+
+逐文件：
+- 已读全文或全部改动：`core/tokens.py`、`core/length_budget.py`、`core/distiller.py`、`core/utils.py`、`core/context_engine.py`、`core/chat_engine.py`、`core/group_session.py`、`core/text_manager.py`、`core/text_failure.py`、`scripts/run_agent_eval.py`、`web/routers/text.py`、`adapters/llm_adapter.py`、`web/frontend/src/lib/textLimits.js`、`TextPanel.jsx`、`useAppStore.js`、`.gitignore`、`requirements.in`、`requirements.txt`（只变 tokenizers 的 via）、`SOURCE.md`、`tests/test_tokens.py`、`tests/test_text_failure_messages.py`、`tests/lock_coverage_gaps.py`、`tests/test_distill_usage_accounting.py`、`tests/test_distiller_routing.py`、`tests/test_auth_param_used.py` 与 `tests/test_exception_pickle_lock.py` 的登记、`TextLimits.test.jsx`（6 条用例清单）、`tests/fixtures/kongyiji.txt`（公版、无编者注）—— 结论均为符合 spec。
+- 按校验而非逐行读：`tokenizer.json`（sha256 `c90dfa01…`、6,367,257B 与 HF V4.1 一致）；`distill_capacity_red_lines.json`（生成产物，由 `test_lock_coverage.py` 在 CI 校验）。
+- 读了用例清单与关键断言、未逐行读全文：`tests/test_length_budget.py`（矩阵 R1–R10、S1/S2 均有对应用例，变异 M1–M17 全红佐证其判别力）、`tests/perf/distill_capacity_mutations.py`（`TARGETS` 覆盖 8 个被改文件）。
+- 说明：审计方 §9.6 小项 5 称前端 `validateFile` 包装「只做转调」有误，它还做扩展名白名单；执行方保留该校验并内联到唯一调用点，处理正确。
+- 记录缺口：§9 无 9.2；「选路径阈值用 `fits_one_pass(n, threshold)`」的决定已写入 §3.2，编号空缺不补。
+
 ### 附录 A：全量扫描输出（`ad3bc7e1`）
 
 ```
