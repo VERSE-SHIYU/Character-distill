@@ -125,7 +125,7 @@ def public_limits() -> dict               # {story_max_tokens, chat_max_chars, m
 
 - `Distiller`：删 `_estimate_tokens`；两处选路径改为 `fits_one_pass(count_tokens(text))`；`self._longctx_threshold` 取 `LONGCTX_THRESHOLD_TOKENS`（保留属性名，现有测试调小它走分片）；删读配置那一行与过时注释。
 - `TextManager`：两段重复判断收为私有 `_check_length`，内部 `await asyncio.to_thread(check_upload, parsed, text_type)`；两条上传路径都调它。
-- `text.py`：`MAX_FILE_SIZE` 引用 `MAX_FILE_BYTES`；413 文案由常量生成。新增 `GET /api/text/limits`，沿用该路由的登录依赖。
+- `text.py`：直接用 `MAX_FILE_BYTES`（不另设别名）；413 文案由该常量生成。新增 `GET /api/text/limits`，沿用该路由的登录依赖。
 - `requirements.in` 把 `tokenizers` 升为**直接依赖**（版本沿用锁定的 0.23.2，重新编译锁文件不应引入别的变化）。
 
 ### 3.3 前端（单一来源 = 接口）
@@ -278,6 +278,22 @@ cd web/frontend; npm test
 - **修法**：在 `lib/` 段后加锚定例外 `!web/frontend/src/lib/`（只解禁前端这个目录；Python 的 `lib/` 忽略规则不受影响）。
 - **验证**：`git status --ignored web/frontend/src/lib` → `??`（未忽略）；`git ls-files --others web/frontend/src/lib` → 仅 `web/frontend/src/lib/textLimits.js` 一条；目录里也只有这一个文件。
 - **判定**：这是**交付必需**，不是顺手改 —— 少这一行，§3.3 的产物永远进不了库。
+
+### 9.6 审计整改（1 阻塞 + 5 小项，2026-10-05）
+
+同分支追加提交，不改写已推送历史。
+
+- **【阻塞】`lib/textLimits.js` 的 `fetchTextLimits` 不检查响应可信度**：原先直接 `res.json()` 并**无条件缓存** —— 401/500 的错误体（或 200 的字段残缺体）会被当成上限：`uploadDisabled` 判为 false 放行所有文件，`hintFromLimits` 对 `undefined` 做算术显示 NaN，且因缓存而**永久**。
+  - **修法**：`!res.ok` 抛错；再加 `assertLimits` 校验三个字段（`story_max_tokens` / `chat_max_chars` / `max_file_bytes`）**都为正整数**，不符合即抛；失败**不写缓存**（`_cache` 保持 null，`_inflight` 在 `finally` 清空，下次挂载可重试）。
+  - **补测试**（`TextLimits.test.jsx` 新增 2 条）：① 非 200 但响应体**恰好是合法上限形状**（401 + `LIMITS`）→ 上传按钮禁用 + 显示「暂时无法获取上传限制」；② 200 但字段缺失 → 同上。
+  - **补变异（手动，M9 同法）**：把 `.then((res) => { if (!res.ok) throw …; return res.json() })` 退回 `.then((res) => res.json())`，跑 `npx vitest run src/components/__tests__/TextLimits.test.jsx` → 用例①红，红源为 `expect(btn).toBeDisabled()`（收到未禁用的按钮）；**1 failed | 5 passed**。还原后 sha256 与变异前一致。用例②在该变异下仍绿 —— 说明 `res.ok` 与字段校验是**两个独立判别器**，各有一条专属用例。
+- **【小 1】窗口常量注释出处**：`core/length_budget.py` 原写「deepseek-v4-pro / 定价页」，改为 NVIDIA 官方模型卡（`build.nvidia.com/deepseek-ai/deepseek-v4.1-flash`，输入+输出合计 1,048,576）+ DeepSeek-V4.1-Flash 技术报告（arXiv 2609.19969），与 §2.3 一致。
+- **【小 2】`SOURCE.md`**：**现文已经是正确表述**（词表 129,280；本文件较其它几份**只在特殊 token 表**不同 —— 加入 129,280、不含 128,000；正文分词逐字相同）。逐条比对无差异，**未改动**（避免为「改正」而重复改动一段已正确的话）。
+- **【小 3】`tokens.py`**：`encode(text)` → `encode(text, add_special_tokens=False)`，与「文本 token 数」的语义一致（不该把模型特殊 token 计进去）。实测该 tokenizer 对样本两法**同为 1,848**，故 U1 期望值不变，`tests/test_tokens.py` 里对照的官方直接编码（默认 `True`）与封装数仍相等。
+- **【小 4】重锁**：按 `requirements.in` 文件头的 uv 命令重编 `requirements.txt`（`--constraint requirements.txt`），按文件头说明清掉 `-c requirements.txt` 自指边。**清理后与上一把锁的 diff 只有一处** —— `tokenizers` 的 `# via` 由 `chromadb` 变为 `-r requirements.in` + `chromadb`（因为 §3.3 已把 `tokenizers` 升为直接依赖）。无任何版本变化。
+- **【小 5】`MAX_FILE_SIZE` 别名**：`web/routers/text.py` 删去 `MAX_FILE_SIZE = MAX_FILE_BYTES` 别名，413 文案与体积门直接用 `MAX_FILE_BYTES`。**连带**：`test_length_budget.py` 的 R2 用例 `monkeypatch` 目标随之改为 `MAX_FILE_BYTES`；驱动 M8 的锚点字符串同步改（`MAX_FILE_SIZE` → `MAX_FILE_BYTES`），产物里 M8 的键名随之刷新。
+  - **前端 `TextPanel.jsx`**：去掉本地 `validateFile` 包装，直接调 lib。**注意**：该包装**并非只做转调** —— 它在转调前还做**扩展名白名单**校验（拖拽会绕过 `accept`）。为不丢这条校验，把扩展名判断**内联到唯一调用点**（`handleFiles`），lib 的 `validateFile` 只负责接口来的体积上限。
+- **重跑结果**：§6 Python 组 **265 passed**（132.50s）；`cd web/frontend; npm test` **70 files / 349 tests passed**（较整改前 +2，即上述两条新用例）；变异驱动 `python tests/perf/distill_capacity_mutations.py` **基线 19 passed、M1–M17 全 RED、逐字节还原通过**；`test_lock_coverage` 对刷新后的产物仍**闭合**（`test_lock_coverage + test_length_budget + test_tokens` 合跑 **53 passed**）。
 
 
 ## 10. 自检表（对照 Shiyu 的标准，逐条）
