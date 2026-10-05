@@ -52,15 +52,31 @@ def normalize(s) -> str:
 _ELLIPSIS = re.compile(r"…+|\.{3,}")
 
 
+def locate_in_normalized(source_norm: str, quote: str) -> list[int] | None:
+    """`quote` 各段都在 `source_norm` 里时返回**最长一段**的全部起点；任一段缺失返回 None。
+
+    存在性判定与 `verbatim_in_normalized` 共用这一份分段与匹配（M14）：返回非 None 就是逐字
+    对得上。**不新增顺序要求** —— 各段都在即通过，段序不管（C11）。
+
+    位置只由最长一段定：省略号首段可能极短（「这……下回还清罢」的「这」在《孔乙己》全文出现
+    22 次、首次在开篇），拿它定位置正好把要纠正的错放回阶段 1（C12），故取最长段。
+    """
+    segs = [s for s in (normalize(p) for p in _ELLIPSIS.split(str(quote))) if s]
+    if not segs or not all(s in source_norm for s in segs):
+        return None
+    longest = max(segs, key=len)
+    return [m.start() for m in re.finditer(re.escape(longest), source_norm)]
+
+
 def verbatim_in_normalized(source_norm: str, quote: str) -> bool:
     """`quote` 是否逐字出现在**已归一化**的 `source_norm` 里（省略处允许跳过）。
 
     与 `verbatim_in` 的分工：核一张卡片要拿整本原文比几十条引文，`verbatim_in` 每条都会
     重新归一化一遍整段 source（80 万字 × 几十条），这一层只接受调用方归一化好的 source，
-    把「整本归一化一次」的成本省下来。节选仍按省略号拆开逐段核对。
+    把「整本归一化一次」的成本省下来。节选仍按省略号拆开逐段核对 —— 判定与 `locate_in_normalized`
+    同源：找得到位置就是对得上。
     """
-    segs = [s for s in (normalize(p) for p in _ELLIPSIS.split(str(quote))) if s]
-    return bool(segs) and all(s in source_norm for s in segs)
+    return locate_in_normalized(source_norm, quote) is not None
 
 
 def verbatim_in(source: str, quote: str) -> bool:
