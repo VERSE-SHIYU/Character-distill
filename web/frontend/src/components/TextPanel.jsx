@@ -14,7 +14,7 @@ import useSmoothProgress from '../hooks/useSmoothProgress'
 import useCanWrite from '../hooks/useCanWrite'
 import { formatDateTime } from '../utils/time'
 import DistillWorkbenchButton from './common/DistillWorkbenchButton'
-import { fetchTextLimits, uploadDisabled, validateFile as validateFileSize, hintFromLimits } from '../lib/textLimits'
+import { fetchTextLimits, uploadDisabled, validateFile, hintFromLimits } from '../lib/textLimits'
 
 const ALLOWED_EXT = ['.txt', '.md', '.json', '.csv', '.log', '.pdf', '.docx']
 
@@ -36,14 +36,6 @@ function UploadProgressBanner({ task }) {
 function extOf(name) {
   const i = name.lastIndexOf('.')
   return i >= 0 ? name.slice(i).toLowerCase() : ''
-}
-
-function validateFile(file, limits) {
-  const ext = extOf(file.name)
-  if (!ALLOWED_EXT.includes(ext)) {
-    return `不支持格式，仅允许：${ALLOWED_EXT.join(' ')}`
-  }
-  return validateFileSize(file, limits)
 }
 
 function formatCount(n) {
@@ -126,7 +118,10 @@ export default function TextPanel() {
       if (!fileList?.length) return
       setLocalError(null)
       const file = fileList[0]
-      const err = validateFile(file, limits)
+      // 扩展名是前端专有的白名单（拖拽会绕过 accept），体积上限来自 lib 的接口值。
+      const err = ALLOWED_EXT.includes(extOf(file.name))
+        ? validateFile(file, limits)
+        : `不支持格式，仅允许：${ALLOWED_EXT.join(' ')}`
       if (err) {
         setLocalError(err)
         return

@@ -7,6 +7,19 @@ import { fetchWithTimeout } from '../api/client'
 
 export const LIMITS_UNAVAILABLE_MESSAGE = '暂时无法获取上传限制'
 
+const LIMIT_FIELDS = ['story_max_tokens', 'chat_max_chars', 'max_file_bytes']
+
+// 三个字段都必须是正整数：401/500 的错误体会被 res.ok 拦下，但 200 的错误壳
+// （或字段改名）也会漏进来 —— 放行后校验没数可依，等于把「不知道」当「没上限」。
+function assertLimits(data) {
+  for (const k of LIMIT_FIELDS) {
+    if (!Number.isInteger(data?.[k]) || data[k] <= 0) {
+      throw new Error('上传限制响应格式非法')
+    }
+  }
+  return data
+}
+
 let _cache = null
 let _inflight = null
 
@@ -14,7 +27,11 @@ export function fetchTextLimits() {
   if (_cache) return Promise.resolve(_cache)
   if (_inflight) return _inflight
   _inflight = fetchWithTimeout('/api/text/limits')
-    .then((res) => res.json())
+    .then((res) => {
+      if (!res.ok) throw new Error(`上传限制接口 ${res.status}`)
+      return res.json()
+    })
+    .then(assertLimits)
     .then((data) => {
       _cache = data
       return data
