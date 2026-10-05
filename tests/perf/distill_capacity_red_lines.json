@@ -12,12 +12,12 @@
       ],
       [
         "tests/test_length_budget.py",
-        "with pytest.raises(ValueError):",
+        "with pytest.raises(ValueError, match=\"超过小说上限\"):",
         0
       ],
       [
         "tests/test_length_budget.py",
-        "with pytest.raises(ValueError):",
+        "with pytest.raises(ValueError, match=\"超过小说上限\"):",
         1
       ],
       [
@@ -34,19 +34,19 @@
     "M2  文件上传绕过 _check_length（不再判长度）": [
       [
         "tests/test_length_budget.py",
-        "with pytest.raises(ValueError):",
+        "with pytest.raises(ValueError, match=\"超过小说上限\"):",
         0
       ]
     ],
     "M3  check_upload 对小说按字数判（len 换掉 count_tokens）": [
       [
         "tests/test_length_budget.py",
-        "with pytest.raises(ValueError):",
+        "with pytest.raises(ValueError, match=\"超过小说上限\"):",
         0
       ],
       [
         "tests/test_length_budget.py",
-        "with pytest.raises(ValueError):",
+        "with pytest.raises(ValueError, match=\"超过小说上限\"):",
         1
       ]
     ],
@@ -82,7 +82,7 @@
     "M6  _upstream_user_message 不判超窗（去掉超窗分支）": [
       [
         "tests/test_length_budget.py",
-        "assert \"文本过长\" in _upstream_user_message(_Upstream(400, \"Input token exceed the limit\"))",
+        "assert \"文本过长\" in _upstream_user_message(_Upstream(400, wording))",
         0
       ]
     ],
@@ -165,6 +165,61 @@
       ]
     ],
     "M17 check_upload 聊天分支不判上限（if n > CHAT_MAX_CHARS → if False）": [
+      [
+        "tests/test_length_budget.py",
+        "with pytest.raises(ValueError, match=\"超过聊天记录上限\"):",
+        0
+      ]
+    ],
+    "M18 小说一律拒收（check_upload 的小说分支恒抛）": [
+      [
+        "tests/test_length_budget.py",
+        "assert not rejected, \"阈值 − 1 的小说被拒 —— 上限判定过严（不是「太长」而是「一律不收」）\"",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "assert not rejected, \"阈值 − 1 的文本被拒 —— 上限判定过严（不是「太长」而是「一律不收」）\"",
+        0
+      ]
+    ],
+    "M19 选路径一律分片（_takes_one_pass 恒 False）": [
+      [
+        "tests/test_length_budget.py",
+        "assert seen == [\"one_pass\"]",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "assert seen == [\"one_pass\"]",
+        1
+      ]
+    ],
+    "M20 阈值比较写回 distiller（`< self._longctx_threshold`，行为等价，S3 才看得见）": [
+      [
+        "tests/test_length_budget.py",
+        "assert not offenders, ( f\"阈值比较被写回了调用点（应只在 length_budget.fits_one_pass）：{offenders}\")",
+        0
+      ]
+    ],
+    "M21 删「maximum context length」措辞（三句只剩两句）": [
+      [
+        "tests/test_length_budget.py",
+        "assert \"文本过长\" in _upstream_user_message(_Upstream(400, wording))",
+        0
+      ]
+    ],
+    "M22 文本上传绕过 _check_length（upload_text 不再判长度）": [
+      [
+        "tests/test_length_budget.py",
+        "assert seen and seen[0] is not threading.main_thread()",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "with pytest.raises(ValueError, match=\"超过小说上限\"):",
+        1
+      ],
       [
         "tests/test_length_budget.py",
         "with pytest.raises(ValueError, match=\"超过聊天记录上限\"):",

@@ -13,6 +13,11 @@
 判别器没有被任何 M1–M13 撞到，`tests/test_lock_coverage.py` 会当场判「名单外缺口」。它们各自
 只改一处、且改法就是「修复前代码长什么样」（写死字面量 / 篡改返回值 / 不判 / 回字数估算）。
 
+**M18–M22 是审计方点名的**（§9.7 的 A1–A4 缺口 + 文本上传路径的绕过后补）：M1–M17 全是
+「放宽 / 回旧写法」方向，于是「过严」方向的缺陷（小说一律拒收、选路径一律分片、阈值比较
+写回调用点、超窗措辞漏一句）在矩阵里**一条都没有**。M18–M22 各补一条，改法同样是
+「修复前代码长什么样」（恒真 / 恒假 / 就地内联比较 / 删一句措辞 / 去掉调用）。
+
 用法：python tests/perf/distill_capacity_mutations.py        （需测试 PG：docker-compose.test.yml）
 """
 from __future__ import annotations
@@ -159,6 +164,39 @@ MUTATIONS = [
      TARGET, [("repl", LEN, [
          ('        if n > CHAT_MAX_CHARS:',
           '        if False:'),
+     ])], "RED"),
+    # 撞到 R1-accept / R3-accept：小说一律拒收（第一条「过严」方向 —— M1–M17 全是放宽方向）
+    ('M18 小说一律拒收（check_upload 的小说分支恒抛）',
+     TARGET, [("repl", LEN, [
+         ('    if not fits_one_pass(n):\n', '    if True:  # 小说一律拒收\n'),
+     ])], "RED"),
+    # 撞到 R4-accept / R5-accept：选路径一律分片
+    ('M19 选路径一律分片（_takes_one_pass 恒 False）',
+     TARGET, [("repl", DIST, [
+         ('        return fits_one_pass(count_tokens(text), self._longctx_threshold)',
+          '        return False'),
+     ])], "RED"),
+    # 撞到 S3：阈值比较写回 distiller（与上一处行为等价，只有结构锁看得见）
+    ('M20 阈值比较写回 distiller（`< self._longctx_threshold`，行为等价，S3 才看得见）',
+     TARGET, [("repl", DIST, [
+         ('        return fits_one_pass(count_tokens(text), self._longctx_threshold)',
+          '        return count_tokens(text) < self._longctx_threshold'),
+     ])], "RED"),
+    # 撞到 R6：三句超窗措辞删掉一句
+    ('M21 删「maximum context length」措辞（三句只剩两句）',
+     TARGET, [("repl", ADAPT, [
+         ('    "maximum context length",\n', ''),
+     ])], "RED"),
+    # 撞到 R3-reject：文本上传路径绕过 _check_length（与 M2 的文件路径同形）
+    ('M22 文本上传绕过 _check_length（upload_text 不再判长度）',
+     TARGET, [("repl", TM, [
+         ('        if not parsed:\n'
+          '            raise ValueError(_MSG["empty_after_parse"])\n\n'
+          '        original_chars = len(parsed)\n'
+          '        await self._check_length(parsed, text_type)\n',
+          '        if not parsed:\n'
+          '            raise ValueError(_MSG["empty_after_parse"])\n\n'
+          '        original_chars = len(parsed)\n'),
      ])], "RED"),
 ]
 

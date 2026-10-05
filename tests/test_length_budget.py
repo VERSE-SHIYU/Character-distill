@@ -8,7 +8,7 @@
 所以本文件的写法是刻意的：**一个用例恰一条判别器**，且每条判别器都有一条变异专门打它。
 
 粒度说明（别当意外）：`tests/test_tokens.py` 的 U1/U3 不在本域里（它们判 tokenizer 本身，
-不需要变异），本文件只收 §4.1 的 U2/U4/U5 与 §4.2 的 R1–R10、§4.3 的 S1/S2。
+不需要变异），本文件只收 §4.1 的 U2/U4/U5 与 §4.2 的 R1–R10、§4.3 的 S1/S2/S3。
 
 Run: pytest tests/test_length_budget.py -v
 """
@@ -119,6 +119,15 @@ def _upload_file(monkeypatch, name: str, content: bytes):
     )
 
 
+def _temp_txt(content: str) -> str:
+    """落一个 `.txt` 拿路径 —— R1 的收/拒两侧共用，不各写一遍 tempfile。"""
+    import tempfile
+
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
+        f.write(content)
+        return f.name
+
+
 # ── §4.1 单元：U2 / U4 / U5 ────────────────────────────────────────────────
 
 
@@ -145,23 +154,35 @@ def test_public_limits_mirrors_the_module_constants():
 # ── §4.2 调用点矩阵：R1 文件上传 ───────────────────────────────────────────
 
 
-def test_file_upload_story_boundary_by_token_count():
-    """R1·收拒：文件上传按 **token 数**判小说上限（打桩到阈值 → 拒）。变异 M1/M2/M3。"""
-    import tempfile
+def test_file_upload_story_boundary_by_token_count(monkeypatch):
+    """R1·拒：文件上传按 **token 数**判小说上限（打桩到阈值 → 拒，且文案是小说上限那句）。变异 M1/M2/M3。
 
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
-        f.write("正文")
-        path = f.name
-
+    `match=` 不是修饰：不带它时，编码 / 解析为空等**别的**守卫抛的 `ValueError` 也能满足这条
+    `raises`，红源就不是「长度判定」了。`monkeypatch` 取代全局赋值 + `finally` 还原。
+    """
+    path = _temp_txt("正文")
     tm = _text_manager()
-    from core import length_budget
+    monkeypatch.setattr("core.length_budget.count_tokens", lambda text: LONGCTX_THRESHOLD_TOKENS)
+    with pytest.raises(ValueError, match="超过小说上限"):
+        asyncio.run(tm.upload_text_from_file(path, "book.txt", text_type="story", user_id="u"))
 
-    length_budget.count_tokens = lambda text: LONGCTX_THRESHOLD_TOKENS
+
+def test_file_upload_accepts_one_token_below_the_threshold(monkeypatch):
+    """R1·收：阈值 − 1 的小说**必须被收下**。变异 M18（小说一律拒收）在此变红。
+
+    收下与否由末尾那条 `assert` 判定，不靠「调完不抛」—— 后者在变异抛错时红在
+    `asyncio.run` 那一行（不是判别器），元锁会把这条变异记成空转变异。
+    """
+    path = _temp_txt("正文")
+    tm = _text_manager()
+    monkeypatch.setattr("core.length_budget.count_tokens",
+                        lambda text: LONGCTX_THRESHOLD_TOKENS - 1)
+    rejected = False
     try:
-        with pytest.raises(ValueError):
-            asyncio.run(tm.upload_text_from_file(path, "book.txt", text_type="story", user_id="u"))
-    finally:
-        length_budget.count_tokens = _real_count_tokens
+        asyncio.run(tm.upload_text_from_file(path, "book.txt", text_type="story", user_id="u"))
+    except ValueError:
+        rejected = True
+    assert not rejected, "阈值 − 1 的小说被拒 —— 上限判定过严（不是「太长」而是「一律不收」）"
 
 
 def test_the_upload_token_count_runs_off_the_event_loop_thread(monkeypatch):
@@ -192,17 +213,25 @@ def test_file_upload_size_413_message_from_constants(monkeypatch):
 # ── §4.2：R3 文本上传 ─────────────────────────────────────────────────────
 
 
-def test_text_upload_story_boundary_by_token_count():
-    """R3·收拒：文本上传走同一条 `_check_length`（打桩到阈值 → 拒）。变异 M1/M2/M3。"""
-    from core import length_budget
-
-    length_budget.count_tokens = lambda text: LONGCTX_THRESHOLD_TOKENS
+def test_text_upload_story_boundary_by_token_count(monkeypatch):
+    """R3·拒：文本上传走同一条 `_check_length`（打桩到阈值 → 拒，文案是小说上限那句）。变异 M3/M22。"""
     tm = _text_manager()
+    monkeypatch.setattr("core.length_budget.count_tokens", lambda text: LONGCTX_THRESHOLD_TOKENS)
+    with pytest.raises(ValueError, match="超过小说上限"):
+        asyncio.run(tm.upload_text("book.txt", "正文", text_type="story", user_id="u"))
+
+
+def test_text_upload_accepts_one_token_below_the_threshold(monkeypatch):
+    """R3·收：阈值 − 1 的文本**必须被收下**。变异 M18 在此变红（与 R1 的收侧同形）。"""
+    tm = _text_manager()
+    monkeypatch.setattr("core.length_budget.count_tokens",
+                        lambda text: LONGCTX_THRESHOLD_TOKENS - 1)
+    rejected = False
     try:
-        with pytest.raises(ValueError):
-            asyncio.run(tm.upload_text("book.txt", "正文", text_type="story", user_id="u"))
-    finally:
-        length_budget.count_tokens = _real_count_tokens
+        asyncio.run(tm.upload_text("book.txt", "正文", text_type="story", user_id="u"))
+    except ValueError:
+        rejected = True
+    assert not rejected, "阈值 − 1 的文本被拒 —— 上限判定过严（不是「太长」而是「一律不收」）"
 
 
 def test_text_upload_chat_boundary_by_char_count():
@@ -222,7 +251,11 @@ def test_text_upload_chat_boundary_by_char_count():
 
 
 def test_sync_route_by_token_count(monkeypatch):
-    """R4：同步选路径按**精确 token 数**与阈值比 —— 恰等于阈值走分片（不进一次读完）。变异 M1/M5。"""
+    """R4·拒分片：恰等于阈值 → 走分片（不进一次读完）。变异 M1/M5。
+
+    `suppress` 只吞「进了分片路径之后」的噪声（假 LLM 跑不出真蒸馏）；「收」那侧的
+    `assert seen == [...]` 自己判「有没有进一次读完」，与它是两类信号。
+    """
     seen: list[str] = []
     d = _distiller()
     d._longctx_threshold = 1000
@@ -233,8 +266,20 @@ def test_sync_route_by_token_count(monkeypatch):
     assert seen == []
 
 
+def test_sync_route_takes_one_pass_below_threshold(monkeypatch):
+    """R4·收：阈值 − 1 → 进一次读完（`_longctx_threshold=1000`，stub 回 999）。变异 M19。"""
+    seen: list[str] = []
+    d = _distiller()
+    d._longctx_threshold = 1000
+    monkeypatch.setattr("core.distiller.count_tokens", lambda text: 999)
+    monkeypatch.setattr(d, "_distill_longcontext", lambda text, name: seen.append("one_pass"))
+    with contextlib.suppress(Exception):
+        d.distill_incremental("正文正文", "角色")
+    assert seen == ["one_pass"]
+
+
 def test_stream_route_by_token_count(monkeypatch):
-    """R5：流式选路径同一判断 —— 恰等于阈值走分片。变异 M1/M5。"""
+    """R5·拒分片：流式同一判断 —— 恰等于阈值走分片。变异 M1/M5。"""
     seen: list[str] = []
     d = _distiller()
     d._longctx_threshold = 1000
@@ -246,14 +291,37 @@ def test_stream_route_by_token_count(monkeypatch):
     assert seen == []
 
 
+def test_stream_route_takes_one_pass_below_threshold(monkeypatch):
+    """R5·收：阈值 − 1 → 流式也进一次读完。变异 M19。"""
+    seen: list[str] = []
+    d = _distiller()
+    d._longctx_threshold = 1000
+    monkeypatch.setattr("core.distiller.count_tokens", lambda text: 999)
+    monkeypatch.setattr(d, "_distill_longcontext_stream",
+                        lambda text, name: (seen.append("one_pass"), iter(()))[1])
+    with contextlib.suppress(Exception):
+        list(d.distill_incremental_stream("正文正文", "角色"))
+    assert seen == ["one_pass"]
+
+
 # ── §4.2：R6 超窗上屏 ─────────────────────────────────────────────────────
 
 
-def test_overflow_400_user_message():
-    """R6·超窗：400 + 已知超窗措辞 → 「文本过长」那句，不是通用文案。变异 M6。"""
+# R6 的三句已知措辞**写死在这里**，不从 `llm_adapter._CONTEXT_OVERFLOW_WORDINGS` import ——
+# 从被测那张表 import，删掉表里任一句时参数化列表跟着少一项，测试照样全绿（变异 M21 撞不到）。
+_OVERFLOW_WORDINGS = (
+    "Input token exceed the limit",
+    "maximum context length",
+    "exceeds model context limit",
+)
+
+
+@pytest.mark.parametrize("wording", _OVERFLOW_WORDINGS)
+def test_overflow_400_user_message(wording):
+    """R6·超窗：400 + **任一句**已知超窗措辞 → 「文本过长」那句，不是通用文案。变异 M6/M21。"""
     from adapters.llm_adapter import _upstream_user_message
 
-    assert "文本过长" in _upstream_user_message(_Upstream(400, "Input token exceed the limit"))
+    assert "文本过长" in _upstream_user_message(_Upstream(400, wording))
 
 
 def test_other_400_unchanged():
@@ -401,5 +469,14 @@ def test_s2_count_tokens_is_the_single_token_counter():
     ) and _tokenizer_from_file_sites() == {"core/tokens.py"}
 
 
-# 保存真身供打桩用例还原（放到文件末尾，避免被 _iter_sources 之类的扫描误判）
-from core.tokens import count_tokens as _real_count_tokens  # noqa: E402
+# S3 的靶子：阈值比较只许在 `length_budget.fits_one_pass`（§3.2 已定：选路径与小说上限共用
+# 那一个判断）。调用点（`core/distiller.py`）里不许自己写 `< self._longctx_threshold`。
+_S3_SCAN_DIRS = ("core",)
+_S3_FORBIDDEN = (r"<\s*self\._longctx_threshold",)
+
+
+def test_s3_threshold_comparison_lives_only_in_fits_one_pass():
+    """S3：阈值比较只在 `length_budget.fits_one_pass` —— 调用点不许自己写 `< self._longctx_threshold`。变异 M20。"""
+    offenders = _grep_sources(_S3_FORBIDDEN, set(), _S3_SCAN_DIRS, (".py",))
+    assert not offenders, (
+        f"阈值比较被写回了调用点（应只在 length_budget.fits_one_pass）：{offenders}")

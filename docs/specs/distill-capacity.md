@@ -177,6 +177,7 @@ def public_limits() -> dict               # {story_max_tokens, chat_max_chars, m
 |---|---|
 | S1 | `core/ web/routers/ web/frontend/src/` 不再出现：`* 0.6`、`1_000_000`（上传上限）、`900000`/`900_000`（`length_budget` 以外）、`30 * 1024 * 1024`（以外）、`100 * 1024 * 1024`、「100 万」；`longctx_threshold` 不再被读取 |
 | S2 | `core.tokens.count_tokens` 是全仓库唯一的 token 计数：`core/ web/ adapters/ scripts/` 中不再出现 `_count_tokens`、`_estimate_tokens`、`_CHARS_PER_TOKEN`、`estimate_usage_from_chars`、`len(...) * 0.6/0.8`、`/ 1.5`，`Tokenizer.from_file` 只在 `core/tokens.py` |
+| S3 | 阈值比较只在 `length_budget.fits_one_pass`：`core/` 内不许出现 `< self._longctx_threshold`（调用点自己内联比较即红，§9.7 A3 / §9.8 补） |
 
 ## 5. 变异清单（实现后在 PG 上预跑，全部打红才推；驱动基于 `tests/perf/mutation_framework.py`，产物 `tests/perf/distill_capacity_red_lines.json`）
 
@@ -199,6 +200,13 @@ def public_limits() -> dict               # {story_max_tokens, chat_max_chars, m
 | M15 | limits 接口篡改字段（不原样回 `public_limits`） | R7 |
 | M16 | 群聊预算改回按字数（`count_tokens` → `len`） | R9 |
 | M17 | 聊天分支不判上限（`if n > CHAT_MAX_CHARS` → `if False`） | R3 |
+| M18 | 小说一律拒收（`check_upload` 小说分支恒抛） | R1/R3 的**收**侧（§9.8） |
+| M19 | 选路径一律分片（`_takes_one_pass` 恒 False） | R4/R5 的**收**侧（§9.8） |
+| M20 | 阈值比较写回 distiller（`< self._longctx_threshold`） | S3（§9.8） |
+| M21 | 删「maximum context length」措辞（三句只剩两句） | R6（§9.8） |
+| M22 | 文本上传绕过 `_check_length`（`upload_text` 不再判长度） | R3-reject / R3-chat / 线程断言（§9.8） |
+
+**M18–M22 是审计方点名的过严方向补位**（§9.7 的 A1–A4 + 补 M22）：M1–M17 全是「放宽 / 回旧写法」方向，矩阵里没有一条能撞「过严」缺陷（一律拒收、一律分片、比较写回调用点、措辞漏一句）。各补一条后，22 条全红（§9.8 有修前存活 / 修后打红的实跑证据）。
 
 **M9 不在驱动里**：它落在前端 vitest 文件上，而驱动框架的覆盖域、判别器解析（Python AST）、
 红源解析（pytest `--tb=long`）都只认 `.py`，前端变异无从入域；F1 的覆盖走 §6 的 `npm test`。
@@ -353,6 +361,33 @@ cd web/frontend; npm test
 **根因（两层）**：① 审计方写的 §4 测试计划本身只写了边界的「拒」一侧（R1/R3 只列 `boundary`，R4/R5 只列「恰等于阈值走分片」），执行方照写；② `distill_capacity_mutations.py` 逐行读完：17 条变异全部是「回到旧写法 / 放宽」方向，没有一条是「过严」方向（一律拒、一律分片），所以「全红」证明不了另一侧被测到。另：M2 只绕过了文件上传路径，文本上传路径的绕过没有变异（补 M22）。
 
 整改：每个缺口补一条专属变异（M18–M22，M22 = `upload_text` 绕过 `_check_length`），并证明**修测试前存活、修测试后打红**。`tests/perf/distill_capacity_mutations.py` 整改后连同新增变异一并逐行审。其余文件结论维持（见本节前一版，`ea3754ad`）。
+
+### 9.8 §9.7 整改（2026-10-05）：A1–A4 补判据 + M18–M22 补变异
+
+按 §9.7 处方整改，**只动测试与变异表，业务代码一字未改**（本段所有红源都由测试读出，不是产品缺陷）。
+
+**修的是什么**（对应 §9.7 的 A1–A4 + 补 M22）
+
+| # | 修法 | 判别器变化 |
+|---|---|---|
+| A1 | R1/R3 各补一条「阈值 − 1 → **收**」用例；两处 `pytest.raises` 加 `match="超过小说上限"`；`count_tokens` 打桩由全局赋值 + `finally` 改 `monkeypatch`（`_real_count_tokens` 末尾那行删掉） | 收侧两条（R1/R3），拒侧由「任意 ValueError」收成「小说上限那句」 |
+| A2 | R4/R5 各补一条「阈值 − 1 → **进一次读完**」用例（`assert seen == ["one_pass"]`） | 收侧两条（R4/R5） |
+| A3 | 新增 S3：`core/` 内不许出现 `< self._longctx_threshold` | S3 一条 |
+| A4 | R6 措辞三句改参数化；**三句写死在测试里**，不从 `llm_adapter._CONTEXT_OVERFLOW_WORDINGS` import —— 从被测表 import，删一句时参数化列表跟着少一项，测试照样全绿（M21 撞不到） | R6 由「测一句」→「三句都要判」 |
+| 补 | 新增 M22（文本上传路径绕过 `_check_length`，与 M2 的文件路径同形） | 撞 R3-reject / R3-chat / 线程断言 |
+
+**「修测试前存活、修测试后打红」实跑证据**（本机 `.venv` + 测试 PG 55432，同一份驱动）
+
+- **修前**（`tests/test_length_budget.py` 取 HEAD=`268bc6ec` 版，驱动用新版只跑 M18–M22）：M18/M19/M20/M21 实得 **green（存活）、红源空**，与审计方沙箱结论一致；**M22 已红**（`198/220/245`：线程断言 + R3-reject + R3-chat —— 一撤 `_check_length`，聊天分支就落到 `chat_clean_empty`、线程断言就扫不到 `check_upload` 调用）。故 M22 是**补矩阵完整性**（文本上传路径此前没有绕过变异），**不是**补测试缺口 —— 与审计方「应红 A1 新增拒收用例」的说法有偏差，如实记在这里。
+- **修后**（完整矩阵 22 条）：**22/22 全红**，产物已刷新 `tests/perf/distill_capacity_red_lines.json`。新增红源逐条对上：M18 → R1/R3 收侧（`test_length_budget.py:185/234`）；M19 → R4/R5 收侧（`278/304`）；M20 → S3（`481`）；M21 → R6（`324`）；M22 → 线程断言 + R3-reject + R3-chat（`198/220/245`）。
+
+**回归**
+
+- §6 Python 组：**272 passed**（含 `test_lock_coverage.py` 元锁闭合：判别器集合 == 被撞集合，两个方向都空）。
+- 前端 `npm test`：**349 passed / 70 files**（本轮未动前端，作回归）。
+- 与两张全仓表（`test_auth_param_used`、`test_exception_pickle_lock`）同批跑：**75 passed**。
+
+**本锁看不见的（边界，如实记）**：R1/R3 的「收」侧只证「没被拒」，证不了「收下的是对的内容」；S3 是正则代理（`<\s*self\._longctx_threshold`），换成别的等价内联写法（先取 `t = self._longctx_threshold` 再比）会漏 —— 与 S1/S2 同一取舍（0 层的语义等价判定，本仓用字符串代理）。
 
 ### 附录 A：全量扫描输出（`ad3bc7e1`）
 
