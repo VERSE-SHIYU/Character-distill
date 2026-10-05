@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from adapters.llm_adapter import IncompleteResponseError, _extract_content
 from core.distiller import Distiller
 from core.schema import FORMAT_GROUPS
-from core.utils import estimate_usage_from_chars, try_record_usage
+from core.utils import estimate_usage, try_record_usage
 
 # WP7：格式化改成按字段组并行，桩 LLM 得按组回 JSON 才走得完那一阶段。
 # 认组 / 造回复都复用 WP7 那批件，不另抄一份字段样例 —— 抄一份就是第二处「组字段表」。
@@ -225,7 +225,7 @@ class TestStreamChannelAccounting:
         """流式截断（finish_reason=length）→ 补一条**估算**账，半截正文照常交出去。
 
         `chat_stream` 的 usage chunk 排在 finish_reason **之后**，校验不过就不交付，
-        故截断时 `last_usage` 必为 None —— 不按字符估算补记，这一笔在生产里就是
+        故截断时 `last_usage` 必为 None —— 不按 tokenizer 估算补记，这一笔在生产里就是
         静默不落库（只记成功 = 统计系统性偏低）。
 
         变异：把 `_collect_stream` 里异常/截断那条 `_try_record_usage` 删掉 → 本用例红。
@@ -242,8 +242,8 @@ class TestStreamChannelAccounting:
         assert [a for a, _ in records] == ["distill_identify"], records
         payload = records[0][1]
         assert payload["estimated"] is True, "拿不到 last_usage，只能标估算"
-        assert payload == estimate_usage_from_chars(
-            len(SYSTEM) + len(USER), len(PARTIAL)), "prompt/completion 两侧都要按已见字符算"
+        assert payload == estimate_usage(
+            SYSTEM + USER, PARTIAL), "prompt/completion 两侧都要按原文的精确计数算"
 
 
 class TestNonStreamTruncationAccounting:
@@ -256,7 +256,7 @@ class TestNonStreamTruncationAccounting:
         `if not usage` 分支：打印一行「no usage data」就 return，**一条也不落库**。
         形如「只记成功」的静默偏低，与流式支修掉的那条同形态。
 
-        变异：把非流式截断支那条 `estimate_usage_from_chars(...)` 退回 `usage=None`
+        变异：把非流式截断支那条 `estimate_usage(...)` 退回 `usage=None`
         （即本用例加入前的实现）→ `payload` 变 None，本用例红。
         """
         llm = _FakeLLM([])
@@ -269,10 +269,10 @@ class TestNonStreamTruncationAccounting:
         assert (text, truncated) == (PARTIAL, True), "半截正文是重修的证据，必须交出去"
         assert [a for a, _ in records] == ["distill"], records
         payload = records[0][1]
-        assert payload is not None, "截断时拿不到 last_usage，必须按字符估算补记"
+        assert payload is not None, "截断时拿不到 last_usage，必须按原文精确计数补记"
         assert payload["estimated"] is True, "估的账要标出来，别冒充真实读数"
-        assert payload == estimate_usage_from_chars(
-            len(SYSTEM) + len(USER), len(PARTIAL)), "prompt/completion 两侧都要按已见字符算"
+        assert payload == estimate_usage(
+            SYSTEM + USER, PARTIAL), "prompt/completion 两侧都要按原文的精确计数算"
 
 
 class TestNonStreamHardFailureAccounting:
@@ -296,9 +296,9 @@ class TestNonStreamHardFailureAccounting:
 
         assert [a for a, _ in records] == ["distill"], records
         payload = records[0][1]
-        assert payload is not None, "硬失败时拿不到 last_usage，必须按字符估算补记"
+        assert payload is not None, "硬失败时拿不到 last_usage，必须按原文精确计数补记"
         assert payload["estimated"] is True, "估的账要标出来，别冒充真实读数"
-        assert payload == estimate_usage_from_chars(len(SYSTEM) + len(USER)), (
+        assert payload == estimate_usage(SYSTEM + USER), (
             "硬失败没有产出任何正文，completion 侧按 0 算；prompt 侧照实")
 
 

@@ -224,7 +224,7 @@ ALLOWED_GAPS: dict[str, dict[tuple[str, str, int], str]] = {
          0):
             '真 PG 可达时 `ping()` 返回 `None`。这一条要真 PG，本机与容器都跳过（另账）；要撞它得改 pg ping 的实现。',   # test_pg_ping_succeeds_on_reachable_database
     },
-    # ───── tests/perf/route_facts_mutations.py（39 条）─────
+    # ───── tests/perf/route_facts_mutations.py（37 条）─────
     'tests/perf/route_facts_mutations.py': {
         # ── tests/test_auth_param_used.py ──
         ('tests/test_auth_param_used.py',
@@ -371,14 +371,6 @@ ALLOWED_GAPS: dict[str, dict[tuple[str, str, int], str]] = {
          0):
             'detail 里不得出现中间层的「解析失败」措辞 —— 双包复发。要撞它得让内层异常消息上屏。',   # test_l3_empty_docx_is_not_double_wrapped
         ('tests/test_text_failure_messages.py',
-         'assert r.status_code == 400, r.text',
-         3):
-            '超长文本必须得 400。要撞它得让 `too_long` 被映射成别的状态码。',   # test_l3_oversized_text_screens_table_wording
-        ('tests/test_text_failure_messages.py',
-         'assert r.json()["detail"] == TEXT_FAILURE_MESSAGES["too_long"].format(limit_text="100 万")',
-         0):
-            '超长的 detail 必须是表里那一句、且 limit 被格式化进去（文案里的占位符要真的被填，不是原样上屏）。要撞它得跳过 `.format()`。',   # test_l3_oversized_text_screens_table_wording
-        ('tests/test_text_failure_messages.py',
          'assert msg not in literals, f"表键 {key!r} 的文案在 text_manager.py 里又抄了一份"',
          0):
             '表键的文案在 `text_manager.py` 里不得再抄一份（文案唯一出处）。要撞它得在源码里复制一句表里的文案字面量。',   # test_l3_wording_has_a_single_source
@@ -389,7 +381,7 @@ ALLOWED_GAPS: dict[str, dict[tuple[str, str, int], str]] = {
     },
 }
 
-# 合计 84 条。
+# 合计 82 条。
 
 
 # ── 「理由是不是占位语」：一条机械判据，须标明层级与失效方向 ────────────────────

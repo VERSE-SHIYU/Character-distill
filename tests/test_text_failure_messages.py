@@ -58,11 +58,13 @@ _TM_PATH = _ROOT / "core" / "text_manager.py"
 _TM_SRC = _TM_PATH.read_text(encoding="utf-8")
 _TM_TREE = ast.parse(_TM_SRC)
 
-# 期望的 raise 条数下限：15 条 `_MSG[...]` 形态的 raise（合并后 12 键）+ 6 条裸 re-raise。
+# 期望的 raise 条数下限：13 条 `_MSG[...]` 形态的 raise（合并后 11 键）+ 6 条裸 re-raise。
 # 2026-09-22 由 16 降为 15：`TextManager.distill_all` 整段删除（全仓零调用方，见 AGENTS.md
 # 的 86 条目），它带着的那条 `raise ValueError(_MSG["text_not_found"])` 随之消失 ——
 # 本下限的用途是「扫描面塌没塌」，不是「不许减少」，故跟着实测数走；但每次下调都要写明原因。
-_MIN_TABLE_RAISES = 15
+# 2026-10-04 由 15 降为 13：两段上传长度判断收成 `TextManager._check_length`（distill-capacity
+# §3.2），长度上限归 `core/length_budget.py`，`_MSG["too_long"]` 的两条 raise 一并移出本文件。
+_MIN_TABLE_RAISES = 13
 
 
 def _table_alias(tree: ast.Module) -> str:
@@ -564,19 +566,6 @@ def test_l3_empty_docx_is_not_double_wrapped(monkeypatch, capsys):
     assert detail == TEXT_FAILURE_MESSAGES["docx_empty"], (
         f"双包复发（上屏该只有本仓那一句）：{detail!r}")
     assert "解析失败" not in detail, detail
-
-
-def test_l3_oversized_text_screens_table_wording(monkeypatch):
-    """超长的**唯一**载体是 `file`（缺陷 40 commit 二 把 urlencoded 的 `text` 字段下掉了）。
-
-    载体从 `data={"text": …}` 换成文件上传**不是**为了绕开 starlette 的 1MB 上限，而是
-    因为那条通道已经不存在了 —— 命题（超长 → 400 + 表里那句）原样保留。带 filename 的
-    part 不受 `max_part_size` 约束（starlette 的检查写在 `if self._current_part.file is None:`
-    里面），所以 100 万零 1 字（≈3MB）能走到本仓自己的 `max_chars`。
-    """
-    r = _upload_file(monkeypatch, "big.txt", ("字" * 1_000_001).encode("utf-8"))
-    assert r.status_code == 400, r.text
-    assert r.json()["detail"] == TEXT_FAILURE_MESSAGES["too_long"].format(limit_text="100 万")
 
 
 # ── L7：正向 —— 合法输入必须解析出它自己的字 ────────────────────────────────

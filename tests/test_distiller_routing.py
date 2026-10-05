@@ -267,27 +267,6 @@ class TestBatchThreadCarriesCallerIdentity:
         assert [u for _, u in seen] == ["u_ctx", "u_ctx"], f"批线程丢了调用方身份：{seen}"
 
 
-class TestEstimateTokens:
-    def test_short_text_below_threshold(self):
-        """~4w token text → _estimate_tokens < 150000."""
-        text = "测试" * 66667
-        assert Distiller._estimate_tokens(text) < 150000
-
-    def test_long_text_at_or_above_threshold(self):
-        """~20w token text → _estimate_tokens >= 150000."""
-        text = "测试" * 350000
-        assert Distiller._estimate_tokens(text) >= 150000
-
-    def test_empty_text(self):
-        assert Distiller._estimate_tokens("") == 0
-
-    def test_ascii_text(self):
-        """ASCII chars also work with the same multiplier."""
-        text = "hello" * 10000
-        tokens = Distiller._estimate_tokens(text)
-        assert tokens == int(len(text) * 0.6)
-
-
 class TestRouting:
     def setup_method(self):
         mock_llm = MagicMock()
@@ -360,11 +339,11 @@ class TestRouting:
         """
         d = Distiller(llm=self.distiller._llm, config_path=None)
         text = "测试" * 100
-        with patch.object(Distiller, "_estimate_tokens", return_value=519_689):
+        with patch("core.distiller.count_tokens", return_value=519_689):
             with patch.object(d, "_distill_longcontext_stream", return_value=iter([])) as one_pass:
                 list(d.distill_incremental_stream(text, "角色"))
             one_pass.assert_called_once()
-        with patch.object(Distiller, "_estimate_tokens", return_value=950_000):
+        with patch("core.distiller.count_tokens", return_value=950_000):
             with patch.object(d, "_distill_longcontext_stream") as one_pass:
                 try:
                     list(d.distill_incremental_stream(text, "角色"))
@@ -389,7 +368,7 @@ class TestRouting:
         d = Distiller(llm=llm, config_path=None)
         text = "此处是正文。" * 40
         name = "独一无二的测试角色"
-        with patch.object(Distiller, "_estimate_tokens", return_value=1_000):
+        with patch("core.distiller.count_tokens", return_value=1_000):
             list(d.distill_incremental_stream(text, name))
 
         system, messages, max_tokens = seen[0]
@@ -413,7 +392,7 @@ class TestRouting:
         d = Distiller(llm=llm, config_path=None)
         text = "此处是正文。" * 40
         name = "独一无二的测试角色"
-        with patch.object(Distiller, "_estimate_tokens", return_value=1_000):
+        with patch("core.distiller.count_tokens", return_value=1_000):
             d.distill_incremental(text, name)
 
         system, messages, max_tokens = seen[0]
