@@ -14,9 +14,9 @@ import useSmoothProgress from '../hooks/useSmoothProgress'
 import useCanWrite from '../hooks/useCanWrite'
 import { formatDateTime } from '../utils/time'
 import DistillWorkbenchButton from './common/DistillWorkbenchButton'
+import { fetchTextLimits, uploadDisabled, validateFile, hintFromLimits } from '../lib/textLimits'
 
 const ALLOWED_EXT = ['.txt', '.md', '.json', '.csv', '.log', '.pdf', '.docx']
-const MAX_BYTES = 100 * 1024 * 1024
 
 function UploadProgressBanner({ task }) {
   const statusMap = {
@@ -38,28 +38,9 @@ function extOf(name) {
   return i >= 0 ? name.slice(i).toLowerCase() : ''
 }
 
-function validateFile(file) {
-  const ext = extOf(file.name)
-  if (!ALLOWED_EXT.includes(ext)) {
-    return `不支持格式，仅允许：${ALLOWED_EXT.join(' ')}`
-  }
-  if (file.size > MAX_BYTES) {
-    return '文件超过 100MB 上限'
-  }
-  return null
-}
-
 function formatCount(n) {
   if (n == null) return '—'
   return Number(n).toLocaleString('zh-CN')
-}
-
-function charCountClass(n) {
-  if (n == null) return ''
-  if (n <= 100000) return 'chars-green'
-  if (n <= 500000) return 'chars-blue'
-  if (n <= 1000000) return 'chars-orange'
-  return 'chars-red'
 }
 
 export default function TextPanel() {
@@ -81,6 +62,9 @@ export default function TextPanel() {
   const startChat = useAppStore((s) => s.startChat)
 
   const [activeTab, setActiveTab] = useState('text') // 'text' | 'character'
+
+  // 上传上限：null = 还在取 / 取失败 —— 两种都禁用上传（见 lib/textLimits.js）。
+  const [limits, setLimits] = useState(null)
 
   const inputRef = useRef(null)
   const [dragOver, setDragOver] = useState(false)
@@ -107,6 +91,14 @@ export default function TextPanel() {
     loadTexts()
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    let cancelled = false
+    fetchTextLimits()
+      .then((data) => { if (!cancelled) setLimits(data) })
+      .catch(() => { if (!cancelled) setLimits(null) })
+    return () => { cancelled = true }
+  }, [])
+
   // Load card counts for each text
   useEffect(() => {
     texts.forEach(async (t) => {
@@ -126,7 +118,10 @@ export default function TextPanel() {
       if (!fileList?.length) return
       setLocalError(null)
       const file = fileList[0]
-      const err = validateFile(file)
+      // 扩展名是前端专有的白名单（拖拽会绕过 accept），体积上限来自 lib 的接口值。
+      const err = ALLOWED_EXT.includes(extOf(file.name))
+        ? validateFile(file, limits)
+        : `不支持格式，仅允许：${ALLOWED_EXT.join(' ')}`
       if (err) {
         setLocalError(err)
         return
@@ -137,7 +132,7 @@ export default function TextPanel() {
       setMetaTitleError('')
       setTextType('story')
     },
-    [],
+    [limits],
   )
 
   const handleConfirmUpload = useCallback(async () => {
@@ -259,13 +254,13 @@ export default function TextPanel() {
         <button
           type="button"
           className="btn-primary"
-          disabled={isUploading}
+          disabled={isUploading || uploadDisabled(limits)}
           onClick={() => inputRef.current?.click()}
         >
           {isUploading ? '上传中…' : '选择文件上传'}
         </button>
         <p className="text-upload-meta">
-          {`支持 ${ALLOWED_EXT.join(' ')} · 小说上限 100 万字 · 聊天记录上限 200 万字 · 单文件最大 100MB`}
+          {`支持 ${ALLOWED_EXT.join(' ')} · ${hintFromLimits(limits)}`}
         </p>
       </section>
       )}

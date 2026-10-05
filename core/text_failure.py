@@ -15,7 +15,7 @@
     raise ValueError(TEXT_FAILURE_MESSAGES["docx_empty"])
     raise ValueError(TEXT_FAILURE_MESSAGES["pdf_page_limit"].format(n=page_count, limit=MAX_PDF_PAGES))
 
-带占位符的三条用 `.format()` 补本仓自己的事实（页数、字数上限、扩展名）；占位符
+带占位符的两条用 `.format()` 补本仓自己的事实（页数、扩展名）；占位符
 只接受**本仓产生的值**，不得喂第三方异常的字符串 —— 那是本模块存在的全部理由。
 """
 from __future__ import annotations
@@ -24,7 +24,6 @@ TEXT_FAILURE_MESSAGES: dict[str, str] = {
     # ── 格式 / 体积 / 内容（两条公开入口共用） ─────────────────────────
     "unsupported_ext": "Unsupported file extension: {ext}",
     "empty_after_parse": "Text content is empty after parsing",
-    "too_long": "文本超过 {limit_text} 字上限，请分卷上传",
     "chat_clean_empty": "聊天记录清洗后无有效内容，请检查文件格式",
     "text_not_found": "Text not found",
     # ── 文本文件读取 ──────────────────────────────────────────────────

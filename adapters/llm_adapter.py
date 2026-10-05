@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI, BadRequestError, OpenAI, Timeout
 
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
-from core.utils import estimate_usage_from_chars  # 字符→token 估算的唯一出口
+from core.utils import estimate_usage  # 无 usage 时的估算兜底出口（内部走唯一的 count_tokens）
 
 if TYPE_CHECKING:
     from core.concurrency import AdaptiveGate  # 只在注解里出现，适配器不构造闸
@@ -517,15 +517,41 @@ _TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
 )
 
 
+# 输入超过上下文窗口：上游报 HTTP 400 + 已知措辞（出处见 spec §2.3 —— DeepSeek 官方仓库
+# 讨论 #3399 的 "Input token exceed the limit"，另有 "maximum context length" 措辞）。
+# 只认这三句：换别家模型时措辞不同会落进通用文案，宁可口径笼统也不猜。
+_CONTEXT_OVERFLOW_WORDINGS = (
+    "Input token exceed the limit",
+    "maximum context length",
+    "exceeds model context limit",
+)
+
+
+def _is_context_overflow(exc: Exception) -> bool:
+    """输入超过模型上下文窗口 —— 状态码 **400** 且报文命中已知措辞（两个条件同时成立）。
+
+    只看措辞不看状态码会把别的 4xx/5xx 误判成超窗（`test_other_400_unchanged` 反例）；
+    只看状态码不看措辞会把所有 400 都当超窗。故两个条件都要。
+    """
+    if _status_code(exc) != 400:
+        return False
+    text = str(exc)
+    return any(wording in text for wording in _CONTEXT_OVERFLOW_WORDINGS)
+
+
 def _upstream_user_message(exc: Exception) -> str:
     """上游异常 → 上屏文案；未登记的状态码 → ""（由出口落通用文案）。
 
-    传输层失败先判：它没有 status_code，落进状态码表只会得到 ""（通用文案），而这类失败
+    超窗先判：它是 400，落进状态码表只会得到 ""（通用文案），而处置是「缩短文本」，
+    与「去设置页检查 key」不同 —— 用户需要知道是**内容太长**而不是配置错。
+    传输层失败次之：它没有 status_code，落进状态码表只会得到 ""（通用文案），而这类失败
     的处置是「重发一次」而不是「去设置页检查 key」。文案与 ``_GENERIC_USER_ERROR``（"服务
     暂时不可用…"）刻意不同，措辞更指向动作，也便于据文案分辨「有没有被认成传输层」。
     状态码取自 ``_status_code``（与 ``_classify_retry`` 的 429 判定同一处定义）—— 免得同
     一次失败在「算不算限流」和「该说什么」两处各判出一个答案。
     """
+    if _is_context_overflow(exc):
+        return "文本过长，超出模型一次能处理的长度，请缩短后再试"
     if isinstance(exc, _TRANSPORT_ERRORS):
         return "模型服务暂时不可用，请稍后重试"
     return _UPSTREAM_USER_MESSAGES.get(_status_code(exc), "")
@@ -1057,7 +1083,7 @@ class LLMAdapter:
         self._before_call()   # 建流之前：拒绝时连 create() 都不发
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
-        prompt_chars = sum(len(m.get("content", "")) for m in payload)
+        prompt_text = "".join(str(m.get("content", "")) for m in payload)
         self.last_usage = None  # 切断上一轮污染
         usage: dict | None = None  # 本次用量：随返回值交付，不靠收尾时回头读共享槽
         # SDK max_retries 已归 0：create()（吐首 chunk 前）连接失败不再被 SDK 静默重试，
@@ -1088,7 +1114,7 @@ class LLMAdapter:
                 break
             except Exception as exc:
                 time.sleep(budget.on_failure(exc))
-        completion_chars = 0
+        completion_parts: list[str] = []
         saw_finish_reason = False  # 流式终态只在最后一个 chunk 上出现
         try:
             for chunk in stream:
@@ -1114,16 +1140,16 @@ class LLMAdapter:
                 delta = choices[0].delta
                 piece = delta.content
                 if piece:
-                    completion_chars += len(piece)
+                    completion_parts.append(piece)
                     yield piece
             if not saw_finish_reason:
                 _check_finish_reason(None, where="chat_stream")  # 流尽仍无终态 → 记缺失
-            # 厂商全程未回 usage chunk → 字符估算兜底（估算口径的唯一出口在 core.utils，
-            # Map 失败分片走的是同一个函数，改系数不会漏一边）
+            # 厂商全程未回 usage chunk → 按原文精确计数兜底（估算口径的唯一出口在
+            # core.utils，Map 失败分片走的是同一个函数，计数方式不会漏一边）
             if usage is None:
-                usage = estimate_usage_from_chars(prompt_chars, completion_chars)
+                usage = estimate_usage(prompt_text, "".join(completion_parts))
                 self.last_usage = usage
-                print(f"[llm] usage chunk missing, estimated from chars (pt~{usage['prompt_tokens']} ct~{usage['completion_tokens']})")
+                print(f"[llm] usage chunk missing, estimated from text (pt~{usage['prompt_tokens']} ct~{usage['completion_tokens']})")
             return usage
         except IncompleteResponseError:
             raise  # 截断是确定性失败：不吞、不打「读取失败」误导日志、不重试

@@ -1,0 +1,232 @@
+{
+  "driver": "tests/perf/distill_capacity_mutations.py",
+  "domain": [
+    "tests/test_length_budget.py"
+  ],
+  "mutations": {
+    "M1  fits_one_pass 用 <=（恰等于阈值走一次读完，不再是分片）": [
+      [
+        "tests/test_length_budget.py",
+        "assert fits_one_pass(LONGCTX_THRESHOLD_TOKENS - 1) and not fits_one_pass(LONGCTX_THRESHOLD_TOKENS)",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "with pytest.raises(ValueError, match=\"超过小说上限\"):",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "with pytest.raises(ValueError, match=\"超过小说上限\"):",
+        1
+      ],
+      [
+        "tests/test_length_budget.py",
+        "assert seen == []",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "assert seen == []",
+        1
+      ]
+    ],
+    "M2  文件上传绕过 _check_length（不再判长度）": [
+      [
+        "tests/test_length_budget.py",
+        "with pytest.raises(ValueError, match=\"超过小说上限\"):",
+        0
+      ]
+    ],
+    "M3  check_upload 对小说按字数判（len 换掉 count_tokens）": [
+      [
+        "tests/test_length_budget.py",
+        "with pytest.raises(ValueError, match=\"超过小说上限\"):",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "with pytest.raises(ValueError, match=\"超过小说上限\"):",
+        1
+      ]
+    ],
+    "M4  长度计数不放线程（to_thread 去掉，直接同步调用）": [
+      [
+        "tests/test_length_budget.py",
+        "assert seen and seen[0] is not threading.main_thread()",
+        0
+      ]
+    ],
+    "M5  选路径换回字数估算（count_tokens → len × 0.6）": [
+      [
+        "tests/test_length_budget.py",
+        "assert seen == []",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "assert seen == []",
+        1
+      ],
+      [
+        "tests/test_length_budget.py",
+        "assert not _grep_sources(_S1_LEGACY, _S1_EXCLUDE) and not _grep_sources(_S1_OVERRIDE, set())",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "assert not _grep_sources( _S2_OTHER_COUNTER, _S2_EXCLUDE, _S2_SCAN_DIRS, _S2_SUFFIXES ) and _tokenizer_from_fi",
+        0
+      ]
+    ],
+    "M6  _upstream_user_message 不判超窗（去掉超窗分支）": [
+      [
+        "tests/test_length_budget.py",
+        "assert \"文本过长\" in _upstream_user_message(_Upstream(400, wording))",
+        0
+      ]
+    ],
+    "M7  _is_context_overflow 不看状态码（只看措辞）": [
+      [
+        "tests/test_length_budget.py",
+        "assert _upstream_user_message(_Upstream(500, \"maximum context length exceeded\")) == \"\"",
+        0
+      ]
+    ],
+    "M8  413 文案写死（脱离 MAX_FILE_BYTES 常量）": [
+      [
+        "tests/test_length_budget.py",
+        "assert r.status_code == 413 and \"2MB\" in r.json()[\"detail\"]",
+        0
+      ]
+    ],
+    "M10 assert_budget_fits 的断言删掉（越窗也放行）": [
+      [
+        "tests/test_length_budget.py",
+        "with pytest.raises(AssertionError):",
+        0
+      ]
+    ],
+    "M11 聊天上下文预算改回 len × 0.8（不再按精确计数）": [
+      [
+        "tests/test_length_budget.py",
+        "assert [m[\"content\"] for m in out] == [\"当前问题\"]",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "assert not _grep_sources( _S2_OTHER_COUNTER, _S2_EXCLUDE, _S2_SCAN_DIRS, _S2_SUFFIXES ) and _tokenizer_from_fi",
+        0
+      ]
+    ],
+    "M12 用量兜底改回按字数除 1.5（不再按精确计数）": [
+      [
+        "tests/test_length_budget.py",
+        "assert estimate_usage(\"角色甲说\", \"回复乙\") == { \"prompt_tokens\": 4, \"completion_tokens\": 3, \"estimated\": True, }",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "assert rows[-1][\"usage\"][\"completion_tokens\"] == 2",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "assert not _grep_sources( _S2_OTHER_COUNTER, _S2_EXCLUDE, _S2_SCAN_DIRS, _S2_SUFFIXES ) and _tokenizer_from_fi",
+        0
+      ]
+    ],
+    "M13 流式兜底只计最后一片（不累加每一片）": [
+      [
+        "tests/test_length_budget.py",
+        "assert rows[-1][\"usage\"][\"completion_tokens\"] == 2",
+        0
+      ]
+    ],
+    "M14 public_limits 的 story 上限写死为 1_000_000（脱离 LONGCTX_THRESHOLD_TOKENS）": [
+      [
+        "tests/test_length_budget.py",
+        "assert public_limits() == { \"story_max_tokens\": LONGCTX_THRESHOLD_TOKENS, \"chat_max_chars\": CHAT_MAX_CHARS, \"m",
+        0
+      ]
+    ],
+    "M15 limits 接口篡改一个字段（不再原样回 public_limits）": [
+      [
+        "tests/test_length_budget.py",
+        "assert r.status_code == 200 and r.json() == public_limits()",
+        0
+      ]
+    ],
+    "M16 群聊历史预算改回按字数（count_tokens → len）": [
+      [
+        "tests/test_length_budget.py",
+        "assert [m[\"content\"] for m in out] == [\"B\", \"C\"]",
+        0
+      ]
+    ],
+    "M17 check_upload 聊天分支不判上限（if n > CHAT_MAX_CHARS → if False）": [
+      [
+        "tests/test_length_budget.py",
+        "with pytest.raises(ValueError, match=\"超过聊天记录上限\"):",
+        0
+      ]
+    ],
+    "M18 小说一律拒收（check_upload 的小说分支恒抛）": [
+      [
+        "tests/test_length_budget.py",
+        "assert not rejected, \"阈值 − 1 的小说被拒 —— 上限判定过严（不是「太长」而是「一律不收」）\"",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "assert not rejected, \"阈值 − 1 的文本被拒 —— 上限判定过严（不是「太长」而是「一律不收」）\"",
+        0
+      ]
+    ],
+    "M19 选路径一律分片（_takes_one_pass 恒 False）": [
+      [
+        "tests/test_length_budget.py",
+        "assert seen == [\"one_pass\"]",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "assert seen == [\"one_pass\"]",
+        1
+      ]
+    ],
+    "M20 阈值比较写回 distiller（`< self._longctx_threshold`，行为等价，S3 才看得见）": [
+      [
+        "tests/test_length_budget.py",
+        "assert not offenders, ( f\"阈值比较被写回了调用点（应只在 length_budget.fits_one_pass）：{offenders}\")",
+        0
+      ]
+    ],
+    "M21 删「maximum context length」措辞（三句只剩两句）": [
+      [
+        "tests/test_length_budget.py",
+        "assert \"文本过长\" in _upstream_user_message(_Upstream(400, wording))",
+        0
+      ]
+    ],
+    "M22 文本上传绕过 _check_length（upload_text 不再判长度）": [
+      [
+        "tests/test_length_budget.py",
+        "assert seen and seen[0] is not threading.main_thread()",
+        0
+      ],
+      [
+        "tests/test_length_budget.py",
+        "with pytest.raises(ValueError, match=\"超过小说上限\"):",
+        1
+      ],
+      [
+        "tests/test_length_budget.py",
+        "with pytest.raises(ValueError, match=\"超过聊天记录上限\"):",
+        0
+      ]
+    ]
+  },
+  "controls": [],
+  "skipped": []
+}

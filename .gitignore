@@ -16,6 +16,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# 例外：上面的 lib/ 是 Python 打包规则，会误伤前端源码目录
+!web/frontend/src/lib/
 parts/
 sdist/
 var/

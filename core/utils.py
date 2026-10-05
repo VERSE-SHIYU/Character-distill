@@ -7,14 +7,11 @@ from typing import Any
 from core.nonfatal import nonfatal
 from core.request_context import current_user_id
 from core.scheduling import submit_to_main_loop
-
-# 字符→token 的估算系数。**唯一出处**：chat_stream 的兜底与这里必须同源，
-# 各写一份的话改系数必漏一边（缺陷 16「出口分散」的形态）。
-_CHARS_PER_TOKEN = 1.5
+from core.tokens import count_tokens
 
 
-def estimate_usage_from_chars(prompt_chars: int, completion_chars: int = 0) -> dict:
-    """真实 usage 不可得时的估算兜底 —— 字符→token 的**唯一出口**。
+def estimate_usage(prompt_text: str, completion_text: str = "") -> dict:
+    """真实 usage 不可得时的估算兜底 —— 传**原文**，内部走唯一的 `count_tokens`。
 
     两处会走到这里：厂商全程不回 usage chunk（chat_stream 兜底）、请求在拿到
     响应前就失败（超时/429 重试墙耗尽，客户端根本看不到 usage）。返回值带
@@ -22,8 +19,8 @@ def estimate_usage_from_chars(prompt_chars: int, completion_chars: int = 0) -> d
     不是文案 —— 查询时能过滤、能分别统计。
     """
     return {
-        "prompt_tokens": int(prompt_chars / _CHARS_PER_TOKEN),
-        "completion_tokens": int(completion_chars / _CHARS_PER_TOKEN),
+        "prompt_tokens": count_tokens(prompt_text),
+        "completion_tokens": count_tokens(completion_text),
         "estimated": True,
     }
 

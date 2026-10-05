@@ -18,6 +18,7 @@ from core.character_roster import aliases_for, cached_characters, resolve_charac
 from core.chat_engine import ChatEngine
 from core.chat_preprocessor import ChatPreprocessor
 from core.distiller import Distiller
+from core.length_budget import check_upload
 from core.message_outbox import MessageOutbox
 from core.moderation.card_guard import GuardVerdict, guard_card_obj
 from core.schema import CharacterCard
@@ -247,6 +248,14 @@ class TextManager:
 
     # ---- File-based upload (PDF/DOCX support) ----
 
+    async def _check_length(self, parsed: str, text_type: str) -> None:
+        """长度上限判断 —— 唯一一处，两条上传路径共用（原先是两段重复的 `max_chars`）。
+
+        整本 tokenize 是 CPU 密集，放 `asyncio.to_thread`：留在大 loop 上会把
+        同进程的其它请求一起卡住。超限由 `check_upload` 抛 `ValueError`。
+        """
+        await asyncio.to_thread(check_upload, parsed, text_type)
+
     async def upload_text_from_file(self, file_path: str, filename: str, title: str = "", description: str = "", text_type: str = "story", user_id: str = "") -> dict[str, Any]:
         """Parse an on-disk file and save to storage. Returns dict with text_id and char stats."""
         ext = Path(filename).suffix.lower()
@@ -271,10 +280,7 @@ class TextManager:
             raise ValueError(_MSG["empty_after_parse"])
 
         original_chars = len(parsed)
-        max_chars = 2_000_000 if text_type == "chat" else 1_000_000
-        if original_chars > max_chars:
-            limit_text = "200 万" if text_type == "chat" else "100 万"
-            raise ValueError(_MSG["too_long"].format(limit_text=limit_text))
+        await self._check_length(parsed, text_type)
 
         # Chat preprocessing: Layer 0 (format clean) + Layer 1 (quality filter)
         # Layer 2 (character context) is deferred to distillation time.
@@ -396,10 +402,7 @@ class TextManager:
             raise ValueError(_MSG["empty_after_parse"])
 
         original_chars = len(parsed)
-        max_chars = 2_000_000 if text_type == "chat" else 1_000_000
-        if original_chars > max_chars:
-            limit_text = "200 万" if text_type == "chat" else "100 万"
-            raise ValueError(_MSG["too_long"].format(limit_text=limit_text))
+        await self._check_length(parsed, text_type)
 
         # Chat preprocessing: Layer 0 (format clean) + Layer 1 (quality filter)
         cleaned = parsed

@@ -18,16 +18,12 @@ from core.schema import (
 )
 from core.rag import RAGEngine
 from core.scene_indexer import _detect_emotion
+from core.tokens import count_tokens
 from core.utils import try_record_usage
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 from core import concurrency as C  # 派生与上下文传播
 
 logger = logging.getLogger(__name__)
-
-
-def _count_tokens(text: str) -> int:
-    """粗估 token 数：中文 1 char ≈ 0.8 tok。"""
-    return max(1, int(len(text) * 0.8))
 
 
 def _truncate(text: str, max_tokens: int) -> str:
@@ -278,7 +274,7 @@ class ContextEngine:
         # ① 固定区（核心层 + 规则）
         card_core = self._build_card_core()
         rules_block = self._build_rules_section(user_role)
-        budget -= _count_tokens(card_core) + _count_tokens(rules_block)
+        budget -= count_tokens(card_core) + count_tokens(rules_block)
         parts.append(card_core)
         parts.append(rules_block)
 
@@ -314,14 +310,14 @@ class ContextEngine:
         for _name, content, max_tok in sources:
             if not content or budget <= 0:
                 continue
-            allowed = min(_count_tokens(content), max_tok, budget)
+            allowed = min(count_tokens(content), max_tok, budget)
             if allowed > 20:
                 parts.append(_truncate(content, allowed))
                 budget -= allowed
 
         result = "\n\n".join(p for p in parts if p.strip())
 
-        total_used = _count_tokens(result)
+        total_used = count_tokens(result)
         if total_used > self.TOTAL_BUDGET * 0.9:
             print(
                 f"[ContextEngine] WARNING: prompt ~{total_used} tok, "
