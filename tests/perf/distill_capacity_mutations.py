@@ -99,9 +99,9 @@ MUTATIONS = [
           '    return any(wording in text for wording in _CONTEXT_OVERFLOW_WORDINGS)'),
      ])], "RED"),
     # 撞到 R2：413 文案写死，不再由常量生成
-    ('M8  413 文案写死（脱离 MAX_FILE_SIZE 常量）',
+    ('M8  413 文案写死（脱离 MAX_FILE_BYTES 常量）',
      TARGET, [("repl", ROUTE, [
-         ('    return f"文件体积超过 {MAX_FILE_SIZE // (1024 * 1024)}MB 上限，请压缩后重试"',
+         ('    return f"文件体积超过 {MAX_FILE_BYTES // (1024 * 1024)}MB 上限，请压缩后重试"',
           '    return "文件体积超过 100MB 上限，请压缩后重试"'),
      ])], "RED"),
     # 撞到 U4：导入时预算断言的可复用判据被删

@@ -106,13 +106,12 @@ router = APIRouter(prefix="/api/text", tags=["text"])
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-MAX_FILE_SIZE = MAX_FILE_BYTES  # 唯一来源：core/length_budget.py
 ALLOWED_EXTENSIONS = {".txt", ".md", ".json", ".csv", ".log", ".pdf", ".docx"}
 
 
 def _file_too_large_message() -> str:
-    """413 文案由上限常量生成 —— 改 `MAX_FILE_SIZE` 文案跟着变，不另抄一份字面量。"""
-    return f"文件体积超过 {MAX_FILE_SIZE // (1024 * 1024)}MB 上限，请压缩后重试"
+    """413 文案由上限常量生成 —— 改 `MAX_FILE_BYTES` 文案跟着变，不另抄一份字面量。"""
+    return f"文件体积超过 {MAX_FILE_BYTES // (1024 * 1024)}MB 上限，请压缩后重试"
 
 
 def _validate_extension(filename: str) -> None:
@@ -156,7 +155,7 @@ async def upload_text(
             async with aiofiles.open(temp_path, "wb") as f:
                 while chunk := await file.read(1024 * 1024):
                     total_size += len(chunk)
-                    if total_size > MAX_FILE_SIZE:
+                    if total_size > MAX_FILE_BYTES:
                         await f.close()
                         os.unlink(temp_path)
                         raise HTTPException(413, _file_too_large_message())

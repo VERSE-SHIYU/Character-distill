@@ -17,7 +17,8 @@ from __future__ import annotations
 
 from core.tokens import count_tokens
 
-# 官方给定 deepseek-v4-pro 上下文 1M token（https://api-docs.deepseek.com/quick_start/pricing）
+# DeepSeek-V4.1-Flash 上下文（输入 + 输出合计 1,048,576）：NVIDIA 官方模型卡
+# https://build.nvidia.com/deepseek-ai/deepseek-v4.1-flash；技术报告 arXiv 2609.19969（最长 1M）
 CONTEXT_WINDOW_TOKENS = 1_048_576
 # 900_000：留给提示词与输出的余量 —— 超过即走分片路径
 LONGCTX_THRESHOLD_TOKENS = 900_000

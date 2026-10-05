@@ -93,7 +93,7 @@
         0
       ]
     ],
-    "M8  413 文案写死（脱离 MAX_FILE_SIZE 常量）": [
+    "M8  413 文案写死（脱离 MAX_FILE_BYTES 常量）": [
       [
         "tests/test_length_budget.py",
         "assert r.status_code == 413 and \"2MB\" in r.json()[\"detail\"]",

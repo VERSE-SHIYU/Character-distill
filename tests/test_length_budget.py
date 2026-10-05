@@ -177,10 +177,10 @@ def test_the_upload_token_count_runs_off_the_event_loop_thread(monkeypatch):
 
 
 def test_file_upload_size_413_message_from_constants(monkeypatch):
-    """R2·文案：413 文案由 `MAX_FILE_SIZE` 常量生成（改常量 → 文案跟着变）。变异 M8。"""
+    """R2·文案：413 文案由 `MAX_FILE_BYTES` 常量生成（改常量 → 文案跟着变）。变异 M8。"""
     import routers.text as text_routes
 
-    monkeypatch.setattr(text_routes, "MAX_FILE_SIZE", 2 * 1024 * 1024)
+    monkeypatch.setattr(text_routes, "MAX_FILE_BYTES", 2 * 1024 * 1024)
     r = _upload_file(monkeypatch, "big.txt", b"x" * (2 * 1024 * 1024 + 16))
     assert r.status_code == 413 and "2MB" in r.json()["detail"]
 

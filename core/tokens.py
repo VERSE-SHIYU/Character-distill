@@ -39,4 +39,4 @@ def count_tokens(text: str) -> int:
     """`text` 的 token 数。空串 → 0，不触发 tokenizer 加载。"""
     if not text:
         return 0
-    return len(_get_tokenizer().encode(text).ids)
+    return len(_get_tokenizer().encode(text, add_special_tokens=False).ids)
