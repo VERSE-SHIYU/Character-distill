@@ -343,7 +343,16 @@ cd web/frontend; npm test
 
 另：R1/R3 用全局赋值 `length_budget.count_tokens = …` 加 `finally` 还原，`_real_count_tokens` 在文件末尾才导入；改用 `monkeypatch`。
 
-整改：每个缺口补一条专属变异（M18–M21），并证明**修测试前存活、修测试后打红**。`tests/perf/distill_capacity_mutations.py` 整改后连同新增变异一并逐行审。其余文件结论维持（见本节前一版，`ea3754ad`）。
+**实跑证据（审计方在沙箱 PG 上实际施加变异，不是推断）**：基线 `tests/test_length_budget.py` + `tests/test_tokens.py` 23 passed。
+- M18「小说一律拒收」→ R1、R3 仍 2 passed（存活）；**同一变异下 §6 全部受影响测试 265 passed、零失败** —— 所有小说都传不上去这种全站故障，现有测试一条都抓不到。
+- M19「选路径一律分片」→ R4、R5 仍 2 passed（存活）。
+- M20「比较写回 distiller」→ S1、S2、R4 仍 3 passed（存活）。
+- M21「删 `maximum context length`」→ R6 两条仍 2 passed（存活）。
+- 还原后 `git status` 干净。
+
+**根因（两层）**：① 审计方写的 §4 测试计划本身只写了边界的「拒」一侧（R1/R3 只列 `boundary`，R4/R5 只列「恰等于阈值走分片」），执行方照写；② `distill_capacity_mutations.py` 逐行读完：17 条变异全部是「回到旧写法 / 放宽」方向，没有一条是「过严」方向（一律拒、一律分片），所以「全红」证明不了另一侧被测到。另：M2 只绕过了文件上传路径，文本上传路径的绕过没有变异（补 M22）。
+
+整改：每个缺口补一条专属变异（M18–M22，M22 = `upload_text` 绕过 `_check_length`），并证明**修测试前存活、修测试后打红**。`tests/perf/distill_capacity_mutations.py` 整改后连同新增变异一并逐行审。其余文件结论维持（见本节前一版，`ea3754ad`）。
 
 ### 附录 A：全量扫描输出（`ad3bc7e1`）
 
