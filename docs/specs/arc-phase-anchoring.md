@@ -97,12 +97,12 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
 
 0. **先后次序**：先做现有的编号合法性过滤（越界编号去掉并 warning，全部不合法则整条撤回——**现有行为不变**，`card_draft.py:82-90`），再对剩下的合法标注做位置检查；兜底（规则 4）退回的是**合法**标注。
 1. **阶段范围**：用 `locate_in_normalized` 找每个锚点的位置（同样取最长段）；阶段 k 的范围是 `[锚点 k 位置, 锚点 k+1 位置)`，阶段 1 锚点为空时从 0 开始，最后一阶段到全文末尾。锚点重复出现时取第一次出现。
-2. **整卡跳过（D7）**：任一锚点（阶段 1 空锚点除外）查不到，或锚点位置不严格递增 → 整卡不做位置检查，保留模型标注，warning 一条（含卡名与原因）。
-3. **单条标注**：同一阶段若有多段摘录，按阶段合并，任一段通过即该阶段成立。摘录查不到，或最长段在原文出现超过 `MAX_OCCURRENCES` 次 → 该段不作证据；有任一位置落在所标阶段范围内（D6）→ 保留，若位置数 > 1 记「位置不唯一」；否则去掉。去掉都打 warning。
+2. **整卡跳过（D7）**：阶段 1 以外的锚点查不到**或为空**、或锚点位置不严格递增 → 整卡不做位置检查，保留模型标注，warning 一条（含卡名与原因）。
+3. **单条标注**：同一阶段若有多段摘录，按阶段合并，任一段通过即该阶段成立。摘录查不到，或最长段在原文出现超过 `MAX_OCCURRENCES` 次 → 该段不作证据；有任一位置落在所标阶段范围内（D6）→ 保留，若位置数 > 1 记「位置不唯一」；否则去掉，每个不成立的（做法, 阶段）各打一条 warning。
 4. **兜底（D5）**：一条做法的标注全部被去掉 → 退回它原来的全部标注，warning。
 4.1 **存卡 `source_quote` 取值**：挂在阶段 k 下取阶段 k 中第一段通过的摘录，没有通过的（兜底 / 整卡跳过时）取阶段 k 的第一段；顶层取第一段。是否逐字由落卡后的 `retract_unverified` 照常把关（C6），本段不重复核对。
 5. **无阶段的卡**：不做位置检查，做法全放顶层（同现状），`source_quote` 取第一段摘录。
-6. **监测（D8）**：每张卡转换后打一行结构化 INFO：`[phase_anchoring] card=… tags=… dropped=… ambiguous=… unverified_quotes=… fallback=… skipped_card=…`。
+6. **监测（D8）**：每张卡转换后打一行结构化 INFO：`[phase_anchoring] card=… tags=… dropped=… ambiguous=… unverified_quotes=… fallback=… skipped_card=…`。`tags` 与 `dropped` 按（做法, 阶段）计，整卡跳过时 `tags` 照常计；`unverified_quotes` 按摘录计。
 
 ### 3.3 提示词（`core/distiller.py`）
 
@@ -118,18 +118,24 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
 
 ### 4.1 单元（`tests/test_phase_anchoring.py`，新）
 
-| 编号 | 用例 | 两侧 |
-|---|---|---|
-| U1 | 范围：锚点 2 的位置恰属阶段 2，前一字属阶段 1 | 边界两侧各一 |
-| U2 | 摘录落在所标阶段 → 保留；落在别的阶段 → 去掉 | 收 / 拒 |
-| U3 | 摘录查不到 → 去掉；最长段恰好出现 3 次且一处在范围内 → 保留；出现 4 次 → 不作证据 | 3 / 4 两侧 |
-| U4 | 重复摘录：一处在范围内 → 保留并记不唯一；全不在范围内 → 去掉 | 收 / 拒 |
-| U5 | 兜底：全部被去掉 → 退回原标注；只去掉部分 → 不退回 | 两侧 |
-| U6 | 锚点查不到 / 顺序颠倒 → 整卡跳过；锚点正常 → 不跳过 | 两侧 |
-| U7 | 监测行字段齐全且计数正确（caplog） | —— |
-| U8 | `locate_in_normalized`：位置取最长段（「这……下回还清罢」定位到断腿后，不是开篇）；任一段缺失 → `None`；倒序节选仍判通过（C11）；`verbatim_in_normalized` 与改前一致（`core/quotes.py` 现有测试全部保持绿） | 两侧 |
-| U9 | 次序：越界编号先去掉再查位置；兜底只退回合法标注；全部越界 → 整条撤回（与改前一致） | 两侧 |
-| U10 | 同阶段多段摘录：一段在范围内即保留，`source_quote` 取通过的那段；都不在 → 去掉 | 收 / 拒 |
+**本表是规则→测试的索引，不复述规则** —— 规则的权威表达只在 §3.2，摘录匹配的权威表达在 §2.3（C5）。左列填 §3.2 的规则号，E 行对应 §4.2 的调用点；右列填守它的测试函数，函数名一律以 `tests/test_phase_anchoring.py`（规则 5 在 `tests/test_card_draft.py`）里 `def test_` 的实际定义为准，旧 U 编号不再使用。
+
+| §3.2 规则 / §2.3 依据 / §4.2 调用点 | 守它的测试函数 |
+|---|---|
+| 规则 0（编号合法性过滤） | `test_u10_out_of_range_number_alone_retracts_the_row`、`test_u11_in_range_number_kept_alongside_an_out_of_range_one`、`test_u12_invalid_number_warns` |
+| 规则 1（阶段范围） | `test_u1_phase_ranges_are_half_open`、`test_u1b_anchor_position_belongs_to_the_later_phase_not_the_earlier`、`test_u1c_character_just_before_the_anchor_belongs_to_the_earlier_phase` |
+| 规则 2（整卡跳过） | `test_u16_missing_anchor_keeps_every_tag_unchecked`、`test_u17_missing_anchor_warns_skip`、`test_u18_reversed_anchors_skip_the_whole_card`、`test_u23_empty_anchor_on_last_phase_skips_the_whole_card`、`test_u24_empty_anchor_on_a_middle_phase_skips_with_its_own_reason` |
+| 规则 3（单条标注） | `test_u7_tag_kept_when_quote_is_in_the_tagged_phase_dropped_when_not`、`test_u8_quote_not_found_is_dropped`、`test_u9_up_to_max_occurrences_is_evidence`、`test_u9b_over_max_occurrences_is_not_evidence`、`test_u19_duplicate_quote_any_hit_keeps_and_all_miss_drops`、`test_u20_phase_absent_when_no_quote_is_in_range`、`test_u27_each_dropped_tag_warns_once` |
+| 规则 4（兜底） | `test_u13_fallback_restores_when_every_tag_was_dropped`、`test_u14_fallback_warns`、`test_u15_partial_drop_does_not_fallback` |
+| 规则 4.1（存卡 `source_quote` 取值） | `test_u21_source_quote_is_the_passing_one_not_the_first` |
+| 规则 5（无阶段的卡） | `test_u5_card_without_phases_keeps_everything_top_level`（`tests/test_card_draft.py`） |
+| 规则 6（监测） | `test_u22_monitoring_line_reports_counts`、`test_u25_monitoring_counts_tags_not_quotes`、`test_u26_skipped_card_still_counts_its_tags` |
+| §2.3 C5（`core/quotes.py` 的 `locate_in_normalized` / `verbatim_in_normalized`，规则 1、3 依赖） | `test_u2_locate_takes_the_longest_segment`、`test_u3_locate_returns_every_start_of_the_segment`、`test_u4_locate_is_none_when_any_segment_is_absent`、`test_u5_verbatim_is_false_when_any_segment_is_absent`、`test_u6_verbatim_ignores_segment_order` |
+| E1 `distill`（`:1497`） | `test_entry_distill_anchors` |
+| E2 `_distill_longcontext`（`:1606`） | `test_entry_longcontext_anchors` |
+| E3 `distill_incremental` 格式化（`:2207`） | `test_entry_incremental_anchors` |
+| E4 `/start`（`:507`） | `test_bg_task_anchors` |
+| E5 `/run_stream`（`:1126`） | `test_run_stream_anchors` |
 
 **拒侧用例的写法（沙箱预跑时发现）**：兜底 D5 会把「全部被去掉」的标注退回，所以拒侧用例里这条做法必须另有一个**能通过**的标注；否则被测的标注即使没被去掉、结果也一样，变异 M1 会存活。
 
@@ -154,6 +160,8 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
 | S3 | 草稿 `DraftBehavior` 不再有 `phases` 与 `source_quote` 字段；存卡 `SituationBehavior` 字段与改前一致 |
 
 ## 5. 变异清单（「放宽」与「过严」两个方向都要有；执行方实现后跑，Claude 审计时在沙箱复跑）
+
+**本表为发出前快照；实施后以 `tests/perf/arc_phase_anchoring_mutations.py` 与 `_red_lines.json` 为准（M1–M36）。**
 
 | 编号 | 方向 | 变异 | 应红 |
 |---|---|---|---|
@@ -322,6 +330,15 @@ C2 说 `:2207` 传 `text`，C13 说「一律传原始全文」。同步 `distill
 - 变异 M31–M36 进 `arc_phase_anchoring_mutations.py`；M18 的锚点随新计数代码改写（语义不变）。
 - 红：新用例在修复前的 `d63ddae1` 上 5 条 FAILED（U23–U27）；修复后 §6 全绿；两个驱动 EXIT=0（M1–M36 全 RED）；`test_lock_coverage` 通过。
 - 独立性说明：本轮实现与审计同为 Claude，复核由 CI + 执行方读 diff 承担。
+
+### 9.7 单一来源整理（Claude，2026-10-05，分支 `docs/arc-anchoring-single-source`）
+
+纯文档：**不改代码与测试**。目标——每类知识的权威表达只留一处，其余各处指向它。
+
+- **§3.2 补全三条规则**（先读 `core/phase_anchoring.py` 对应代码再写）：规则 2 补「**或为空**」——此前只写「查不到」，与 `phase_ranges` 里 i>0 空锚点返回原因的分支（`core/phase_anchoring.py:66-70`）不符；规则 3 把「去掉都打 warning」明确成「每个不成立的（做法, 阶段）各一条 warning」（`verify` 的 `:142-145`）；规则 6 补计数单位——`tags`/`dropped` 按（做法, 阶段）计、整卡跳过时 `tags` 照常计（`:118`、`:126`），`unverified_quotes` 按摘录计（`:131`）。
+- **§4.1 表改为规则→测试的索引**：由「U 编号 | 用例 | 两侧」改为「§3.2 规则号 | 守它的测试函数」，覆盖规则 0–6、§2.3 C5 与调用点矩阵 E1–E5。函数名取自 `grep -n "^def test_" tests/test_phase_anchoring.py` 的实际输出（规则 5 的锁在 `tests/test_card_draft.py`），旧 U 编号不再使用。规则本身不再在 §4.1 复述——唯一权威在 §3.2。
+- **§5 表上方加一行**：本表是发出前快照，实施后以 `tests/perf/arc_phase_anchoring_mutations.py` 与 `_red_lines.json`（M1–M36）为准；表体不动。
+- §9.1–§9.6 为历史记录，不动。
 
 ## 10. 自检表（对照 Shiyu 的标准）
 
