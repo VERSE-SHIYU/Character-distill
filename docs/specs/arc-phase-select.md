@@ -439,6 +439,33 @@ G5 不等 G6）见 §6 与驱动。node_modules junction 不入库：`git ls-fil
 `SessionRag` 根本不看它，而裸 `RAGEngine`（离线测评等）不认这个 kwarg，传了会 `TypeError`。故指纹
 打包成条件 kwargs（`core/context_engine.py:_scene_items`）。
 
+**F. 本地受影响清单漏了 3 份既有用例（分支 CI `gate` 抓到 8 条红；偏离声明的第二步）。** §5/§7 的
+测试清单是「本段新增 + §2.2 路径机制表」，**没有**把三份会被本段新设计改变期望的**既有**用例列进去。
+分支 CI `gate` 报 `8 failed, 2881 passed`，逐条核对后确认全是**旧断言跟不上新设计**（非代码 bug），
+按下述口径更新（三处都是「断言目标变了」，不是放宽判据）：
+
+1. **`tests/test_session_user_role_restore.py`（2 红）**：身份改为**构造时注入**（§3.6/S5）后，
+   替身 `_create_session` 必须照样把 `user_role`/`arc_phase` 应用到引擎 —— 原替身忽略这对
+   kwargs，把真路径的身份注入藏了起来。边界用例
+   `TestEmptyRoleStaysEmpty` 随之由「空不覆盖既有值」（旧的事后赋值 + `if db_session.get(...)`
+   守卫语义）改写为「库里为空 → 引擎角色为空」：守卫已随构造时注入消失，新引擎本就以库里的身份出生。
+2. **`tests/test_card_arc_behaviors.py`（4 红）**：3 条是 `model_dump()` 的**全等**断言，新增字段
+   （`CharacterArc.source_fingerprint`、`ArcPhase.memories/start/boundary_examples/dialogue_examples`）
+   进了 dump → 期望字典按新形态补齐（保留「无意外字段」的全等锁）；第 4 条是 G6 提示词的**字面量**锁，
+   `situation_behaviors` 与 `key_memories` 现已并成一行「`… / …`」→ 断言改用新文案。
+3. **`tests/test_identify_failure_channels.py`（2 红）**：(a) 流出的 str 帧现在是**草稿** JSON
+   （`key_memories` 的元素带 occurrences），原按 `CharacterCard` 校验会 `ValidationError` → 改按
+   `CardDraft` 校验，`_assert_all_groups_landed` 兼容草稿/存卡两种 `key_memories` 形态；(b) 对话
+   示例在有起点的卡上按位置归到**阶段**下（§3.9），原断言只读顶层 `dialogue_examples` → 改用
+   `_all_dialogue_examples`（顶层 + 各阶段）确认「示例仍在」，与产卡通道该锁的「通道没漏接后置步骤」
+   一致。
+
+三份改后本机复跑：`tests/test_card_arc_behaviors.py + test_identify_failure_channels.py +
+test_session_user_role_restore.py` = **38 passed**；相关非 Chroma 集（`test_arc_view/arc_phase_select/
+arc_phase_select_locks/card_draft/phase_anchoring/distiller_routing/lock_coverage/card_quotes/
+schema_parity`）= **207 passed**。本机 Windows 全量跑到真 Chroma 段必 SIGSEGV（已知），全量以
+Linux CI 为准。
+
 ## 10. 自检表
 
 | 标准 | 落点 | 状态 |
