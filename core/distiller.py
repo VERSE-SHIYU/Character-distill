@@ -51,8 +51,14 @@ from core.roster_aggregate import (
     usable_alias,
 )
 from core.card_draft import CardDraft, card_from_draft, draft_schema
+from core.length_budget import (
+    LONGCTX_THRESHOLD_TOKENS,
+    LONG_OUTPUT_MAX_TOKENS as _LONG_OUTPUT_MAX_TOKENS,
+    fits_one_pass,
+)
 from core.schema import CharacterCard, FORMAT_GROUPS, PRESET_TAGS
-from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
+from core.tokens import count_tokens
+from core.utils import aggregate_usage, estimate_usage, try_record_usage
 from core import telemetry as T  # OTel 埋点
 from core import concurrency as C  # 派生与上下文传播
 from core.nonfatal import nonfatal
@@ -531,7 +537,8 @@ class Distiller:
     #: 384K token（https://api-docs.deepseek.com/quick_start/pricing），16384 是它的
     #: 1/24：够装一份完整档案，又给「输出跑飞」留了封顶代价。格式化各组仍用
     #: `CARD_MAX_TOKENS` —— 每组只出卡的一部分，上限不必跟着放大。
-    LONG_OUTPUT_MAX_TOKENS = 16384
+    #: 值来自 `core/length_budget.py`：它与上下文窗口的断言同源，不在这里再写一份。
+    LONG_OUTPUT_MAX_TOKENS = _LONG_OUTPUT_MAX_TOKENS
     #: 角色识别算法的版本：口径（提示词 / 覆盖范围 / 合并规则）一改就 +1。
     #: 名单落库时带此版本，读回时版本不符即当无缓存 —— 旧版本的名单是残缺的
     #: （只覆盖前 1 万字那版只认头两章），沿用比重算更糟。值是**唯一定义**，
@@ -591,10 +598,9 @@ class Distiller:
         distill_cfg = data["distill"]
         self._chunk_size: int = int(distill_cfg.get("chunk_size", 3000))
         self._max_profile_len: int = int(distill_cfg.get("max_profile_len", 2000))
-        # 官方给定 deepseek-v4-pro 上下文 1M token（https://api-docs.deepseek.com/quick_start/pricing）；
-        # 90 万是留给提示词与输出的余量。分片路径留给超过 90 万 token 的书 —— 实测红楼梦
-        # 866,149 字 ≈ 519,689 token（app 日志原文），整本一次读完即可，不必再拆。
-        self._longctx_threshold: int = int(distill_cfg.get("longctx_threshold", 900000))
+        # 阈值取自 `core/length_budget.py`（唯一定义处），不再读配置 —— 配置里那份与
+        # 窗口断言各写一份就会漂移。属性名保留：现有测试调小它走分片路径。
+        self._longctx_threshold: int = LONGCTX_THRESHOLD_TOKENS
         self._map_concurrency: int = max(1, int(distill_cfg.get("map_concurrency", 30)))
 
     def _try_record_usage(self, action: str = "distill", usage: dict | None = None) -> None:
@@ -771,13 +777,13 @@ class Distiller:
         return Distiller._unfinished_kind(exc)[0]
 
     @staticmethod
-    def _prompt_chars(system_prompt: str, messages: list[dict[str, Any]]) -> int:
-        """一次调用实际喂进去的字符总数 —— 估算账的输入（两侧字符 → token 估算）。
+    def _prompt_text(system_prompt: str, messages: list[dict[str, Any]]) -> str:
+        """一次调用实际喂进去的原文 —— 估算账的输入（原文 → 唯一的 `count_tokens`）。
 
         流式与非流式两条截断路共用这一个口径：同一段 prompt 在两支里算出同一个数，
-        免得「按字符估算」这个数各写一遍、迟早漂成两个。
+        免得「按什么算」这个问题各写一遍、迟早漂成两个。
         """
-        return len(system_prompt) + sum(len(str(m.get("content", ""))) for m in messages)
+        return system_prompt + "".join(str(m.get("content", "")) for m in messages)
 
     def _collect_stream(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str,
@@ -801,11 +807,11 @@ class Distiller:
         新增一个调用方漏写就是一段没账的成本。**成功时的用量取自流的返回值**（
         `StopIteration.value`，即 `adapters/llm_adapter.py::_stream` 的 `return usage`），
         不去读 `last_usage` 那个跨调用的共享槽：流是并发跑的，收尾回头读会读到并发的
-        另一条流的账（缺陷 20）。截断与其余失败都按字符估算补记：usage chunk 排在
+        另一条流的账（缺陷 20）。截断与其余失败都按原文的精确计数补记：usage chunk 排在
         finish_reason **之后**，校验不过就不交付，故截断时那条流没交过用量；而失败调用
         同样烧了 token（重试墙下空烧）—— 只记成功会让统计系统性偏低。
         """
-        prompt_chars = self._prompt_chars(system_prompt, messages)
+        prompt_text = self._prompt_text(system_prompt, messages)
         parts: list[str] = []
         usage: dict | None = None
         try:
@@ -822,7 +828,7 @@ class Distiller:
         except Exception as exc:
             text = "".join(parts)
             self._try_record_usage(
-                usage_action, estimate_usage_from_chars(prompt_chars, len(text)),
+                usage_action, estimate_usage(prompt_text, text),
             )
             evidence = self._truncation_evidence(exc, text)
             if evidence is None:
@@ -857,7 +863,7 @@ class Distiller:
         花出去了，成功、截断、硬失败三种收尾都是同一次调用。
 
         截断与硬失败那两路**拿不到 `last_usage`**：`chat()` 进本轮就先清空，而
-        `_extract_content` 的抛出点在 usage 回写之前，故只能按字符估算补记 ——
+        `_extract_content` 的抛出点在 usage 回写之前，故只能按原文的精确计数补记 ——
         截断支带上已生成的半截正文（缺陷 91），硬失败支 completion 侧为 0（缺陷 92），
         与流式支 `_collect_stream` 的 except 支同口径。
         """
@@ -874,13 +880,13 @@ class Distiller:
                 # 非截断（硬失败 / content_filter / 空正文）照样烧了 token（重试墙下正是
                 # 空烧）—— 与截断支、流式支同口径：先记一条估算账再原样上抛。只记成功
                 # 会让统计系统性偏低（缺陷 91 同形）。
-                self._try_record_usage(action, estimate_usage_from_chars(
-                    self._prompt_chars(system_prompt, messages)))
+                self._try_record_usage(action, estimate_usage(
+                    self._prompt_text(system_prompt, messages)))
                 print(f"调用 LLM 进行{label}失败：{exc}")
                 raise
             reply, truncated = evidence, True
-            usage = estimate_usage_from_chars(
-                self._prompt_chars(system_prompt, messages), len(reply))
+            usage = estimate_usage(
+                self._prompt_text(system_prompt, messages), reply)
         self._try_record_usage(action, usage)
         return reply, truncated
 
@@ -1546,10 +1552,12 @@ class Distiller:
 
     # ── Auto-tagging ───────────────────────────────────────────────────
 
-    @staticmethod
-    def _estimate_tokens(text: str) -> int:
-        """Estimate token count: Chinese text ~0.6 tokens per char."""
-        return int(len(text) * 0.6)
+    def _takes_one_pass(self, text: str) -> bool:
+        """文本能否一次读完 —— 官方 token 数与阈值（`self._longctx_threshold`）比较。
+
+        阈值属性可被测试调小以强制走分片路径，故不直接用模块常量。
+        """
+        return fits_one_pass(count_tokens(text), self._longctx_threshold)
 
     # ── Long-context distillation ──────────────────────────────────────
 
@@ -1895,9 +1903,9 @@ class Distiller:
                 )
             except Exception as exc:
                 logger.warning("%s %s failed: %s", log_label, i, exc, exc_info=True)
-                # 失败分片照样烧了 token（重试墙下空烧 26–100s）—— prompt 侧按字符
-                # 估算补记，completion 未知记 0 并标 estimated。只记成功 = 统计系统性偏低。
-                usage = estimate_usage_from_chars(len(system) + len(user))
+                # 失败分片照样烧了 token（重试墙下空烧 26–100s）—— prompt 侧按原文
+                # 精确计数补记，completion 未知记 0 并标 estimated。只记成功 = 统计系统性偏低。
+                usage = estimate_usage(system + user)
                 async with lock:
                     failures.append((i, exc))
                 result = ""
@@ -2061,9 +2069,7 @@ class Distiller:
         is_classic = text_type == "classic"
 
         # ── Long-context routing ─────────────────────────────────────────
-        estimated = self._estimate_tokens(text)
-        print(f"[distiller] Token estimate: ~{estimated} (threshold: {self._longctx_threshold})")
-        if estimated < self._longctx_threshold:
+        if self._takes_one_pass(text):
             if is_chat:
                 preprocessor = ChatPreprocessor()
                 text = preprocessor._layer2_character_context(text, character_name)
@@ -2163,7 +2169,7 @@ class Distiller:
             compress_user = f"请压缩到{max_profile_len}字以内：\n\n{profile_draft}"
             # 失败被吞（fails open）也要落账 —— 先备好估算值，成功再换成真实值。
             # 一条记录覆盖两条路径：两条记录会让「只摘一条」看不出缺口。
-            compress_usage = estimate_usage_from_chars(len(compress_system) + len(compress_user))
+            compress_usage = estimate_usage(compress_system + compress_user)
             try:
                 profile_draft = self._llm.chat(
                     compress_system, [{"role": "user", "content": compress_user}],
@@ -2246,9 +2252,7 @@ class Distiller:
         is_classic = text_type == "classic"
 
         # ── Long-context routing ─────────────────────────────────────────
-        estimated = self._estimate_tokens(text)
-        print(f"[distiller] Token estimate: ~{estimated} (threshold: {self._longctx_threshold})")
-        if estimated < self._longctx_threshold:
+        if self._takes_one_pass(text):
             if is_chat:
                 preprocessor = ChatPreprocessor()
                 text = preprocessor._layer2_character_context(text, character_name)

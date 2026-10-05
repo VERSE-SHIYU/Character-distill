@@ -8,8 +8,8 @@ import asyncio
 from typing import Any
 
 from core.chat_engine import ChatEngine
-from core.context_engine import _count_tokens
 from core.message_outbox import MessageOutbox
+from core.tokens import count_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ class GroupSession:
 
         # Token truncation: drop oldest messages until under MAX_HISTORY_TOKENS
         while messages:
-            total = sum(_count_tokens(m["content"]) for m in messages)
+            total = sum(count_tokens(m["content"]) for m in messages)
             if total <= MAX_HISTORY_TOKENS:
                 break
             messages.pop(0)

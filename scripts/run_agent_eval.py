@@ -40,9 +40,9 @@ from adapters.llm_adapter import LLMAdapter, ToolsNotSupportedError
 from core.agent.agent_loop import AgentLoop
 from core.agent.tools import AgentToolkit
 from core.chat_engine import ChatEngine
-from core.context_engine import _count_tokens
 from core.rag import RAGEngine
 from core.schema import CharacterCard
+from core.tokens import count_tokens
 from storage import get_store
 
 # ── 路径 ──
@@ -99,7 +99,7 @@ class BuildMetrics:
 
         def wrapped(user_message, user_role="", current_mood=None, include_dynamic=True):
             result = self._original(user_message, user_role, current_mood, include_dynamic)
-            self.last_sp_tokens = _count_tokens(result)
+            self.last_sp_tokens = count_tokens(result)
             self.last_sp_len = len(result)
             return result
 
@@ -113,7 +113,7 @@ class BuildMetrics:
 def compute_tool_msg_tokens(messages: list[dict]) -> int:
     """计算 tool 回填消息的总 token 数。"""
     return sum(
-        _count_tokens(m.get("content", ""))
+        count_tokens(m.get("content", ""))
         for m in messages
         if m.get("role") == "tool"
     )
@@ -415,7 +415,7 @@ async def _run_agent(
             return CaseResult(
                 case_id=case["id"], category=case["category"],
                 mode="agent",
-                sp_tokens=_count_tokens(legacy_sp),
+                sp_tokens=count_tokens(legacy_sp),
                 sp_text_len=len(legacy_sp),
                 steps=0,
                 reply=loop_reply,

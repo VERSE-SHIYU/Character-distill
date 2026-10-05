@@ -18,7 +18,7 @@ from core.clock import UserClock, describe_time_period
 from core.context_engine import ContextEngine
 from core.rag import RAGEngine
 from core.schema import CharacterCard, SourceTrace
-from core.context_engine import _count_tokens
+from core.tokens import count_tokens
 from core.utils import try_record_usage
 from core.event_service import EventService
 from core.reaction_service import ReactionService
@@ -383,14 +383,14 @@ class ChatEngine:
                 + getattr(self._ctx_engine, "MAX_MEMORY", 0)
                 + getattr(self._ctx_engine, "MAX_WEB", 0)
             ) or 4000
-            tok = _count_tokens(retrieval_block)
+            tok = count_tokens(retrieval_block)
             if tok > budget:
                 # 从末尾逐条移除
-                while _count_tokens(retrieval_block) > budget and len(parts) > 1:
+                while count_tokens(retrieval_block) > budget and len(parts) > 1:
                     parts.pop()
                     retrieval_block = "\n\n【检索参考】\n" + "\n\n".join(parts)
                 # 单条仍超出 → 硬截断
-                if _count_tokens(retrieval_block) > budget:
+                if count_tokens(retrieval_block) > budget:
                     ratio = budget / tok
                     max_chars = int(len(retrieval_block) * ratio * 0.95)
                     retrieval_block = retrieval_block[:max_chars] + "\n（检索结果过长已截断）"
@@ -519,8 +519,8 @@ class ChatEngine:
             user_msg = history[i - 1]
             asst_msg = history[i]
             pair_tok = (
-                _count_tokens(user_msg.get("content", ""))
-                + _count_tokens(asst_msg.get("content", ""))
+                count_tokens(user_msg.get("content", ""))
+                + count_tokens(asst_msg.get("content", ""))
             )
             if used + pair_tok > budget:
                 break
