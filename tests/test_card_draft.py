@@ -145,8 +145,8 @@ def test_u8_schema_sent_to_the_model_is_the_draft():
 def test_u9_stored_card_has_no_phase_tags_and_round_trips():
     dump = card_from_draft(KONG_DRAFT, _SRC).model_dump()
     rows = dump["situation_behaviors"] + [b for p in dump["character_arc"]["phases"] for b in p["behaviors"]]
-    assert rows and all("occurrences" not in b and "anchor" not in p for p in dump["character_arc"]["phases"]
-                        for b in [rows])  # 存卡不带草稿字段
+    assert rows and not any("occurrences" in b for b in rows) and not any(
+        "anchor" in p for p in dump["character_arc"]["phases"])  # 存卡不带草稿字段
     assert CharacterCard.model_validate(dump).model_dump() == dump
 
 

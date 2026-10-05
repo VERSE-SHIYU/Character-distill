@@ -133,21 +133,19 @@ def test_u8_quote_not_found_is_dropped():
 
 
 def test_u9_up_to_max_occurrences_is_evidence():
-    """最长段恰好出现 3 次、一处在范围内 → 保留（3 ≤ MAX_OCCURRENCES）。"""
+    """最长段恰好出现 3 次、一处在范围内 → 保留（3 ≤ MAX_OCCURRENCES）。两阶段都成立 → 顶层。"""
     src = "重复重复重复此处独有"                        # 「重复」@0/2/4；阶段 2 锚点 @6
     card = _card([_row([_occ(1, "重复"), _occ(2, "此处独有")], "三次")],
-                 src=src, anchors={2: "此处独有"})
-    assert _placement(card) == (
-        [],
-        [[_beh("三次", quote="重复")], [_beh("三次", quote="此处独有")], []])
+                 src=src, n=2, anchors={2: "此处独有"})
+    assert _placement(card) == ([_beh("三次", quote="重复")], [[], []])
 
 
 def test_u9b_over_max_occurrences_is_not_evidence():
     """出现 4 次（> MAX_OCCURRENCES）→ 不作位置证据，该阶段标去掉。"""
     src = "重复重复重复重复此处独有"                     # 「重复」×4
     card = _card([_row([_occ(1, "重复"), _occ(2, "此处独有")], "四次")],
-                 src=src, anchors={2: "此处独有"})
-    assert _placement(card) == ([], [[], [_beh("四次", quote="此处独有")], []])
+                 src=src, n=2, anchors={2: "此处独有"})
+    assert _placement(card) == ([], [[], [_beh("四次", quote="此处独有")]])
 
 
 def test_u10_out_of_range_number_alone_retracts_the_row():
@@ -252,6 +250,54 @@ def test_u22_monitoring_line_reports_counts(caplog):
     line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
     assert line == ("[phase_anchoring] card=角色 tags=1 dropped=1 ambiguous=0 "
                     "unverified_quotes=0 fallback=1 skipped_card=False")
+
+
+def test_u23_empty_anchor_on_last_phase_skips_the_whole_card():
+    """末阶段锚点为空 = 不可定位 → 整卡跳过（§9.5 A1）。
+
+    不跳过就会得到空区间 `[len, len)`，阶段 3 的标注被静默去掉，只剩阶段 2。
+    """
+    card = _card([_row([_occ(2, _Q2), _occ(3, _Q3)], "末阶段")], anchors={2: _Q2, 3: ""})
+    assert _placement(card) == (
+        [], [[], [_beh("末阶段", quote=_Q2)], [_beh("末阶段", quote=_Q3)]])
+
+
+def test_u24_empty_anchor_on_a_middle_phase_skips_with_its_own_reason(caplog):
+    """中间阶段锚点为空 → 整卡跳过，原因写「锚点为空」，不是碰巧撞上递增检查（§9.5 A1）。"""
+    with caplog.at_level(logging.WARNING, logger="core.phase_anchoring"):
+        _card([_row([_occ(3, _Q3)], "x")], anchors={2: "", 3: _Q3})
+    assert [r.getMessage() for r in caplog.records if "跳过" in r.getMessage()] == [
+        "整卡跳过位置检查（阶段 2 锚点为空）：角色"]
+
+
+_COUNT_ROWS = [_row([_occ(2, "查无此句"), _occ(2, _Q2), _occ(1, _Q3)], "计数")]
+"""阶段 2：第一段核对不上、第二段通过；阶段 1：摘录在阶段 3 → 去掉。
+共 2 个标注、去掉 1 个、核对不上的摘录 1 段（§9.5 A2）。"""
+
+
+def test_u25_monitoring_counts_tags_not_quotes(caplog):
+    with caplog.at_level(logging.INFO, logger="core.card_draft"):
+        _card(_COUNT_ROWS)
+    line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
+    assert line == ("[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 "
+                    "unverified_quotes=1 fallback=0 skipped_card=False")
+
+
+def test_u26_skipped_card_still_counts_its_tags(caplog):
+    """整卡跳过时 tags 照常计数 —— 监测比例才有分母（§9.5 A2）。"""
+    with caplog.at_level(logging.INFO, logger="core.card_draft"):
+        _card(_COUNT_ROWS, anchors={2: _Q2, 3: "查无此句"})
+    line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
+    assert line == ("[phase_anchoring] card=角色 tags=2 dropped=0 ambiguous=0 "
+                    "unverified_quotes=0 fallback=0 skipped_card=True")
+
+
+def test_u27_each_dropped_tag_warns_once(caplog):
+    """规则 3：去掉的每个标注各打一条 warning（情境 + 阶段号）；通过的不打（§9.5 A3）。"""
+    with caplog.at_level(logging.WARNING, logger="core.phase_anchoring"):
+        _card(_COUNT_ROWS)
+    assert [r.getMessage() for r in caplog.records if "去掉标注" in r.getMessage()] == [
+        "去掉标注：做法 '计数' 在阶段 1 没有落在该阶段的摘录"]
 
 
 # ── 4.2 调用点矩阵：五个入口各喂同一份草稿 + 原文 ─────────────────────

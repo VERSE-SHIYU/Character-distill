@@ -56,16 +56,18 @@ def phase_ranges(phases, source_norm: str) -> tuple[list[tuple[int, int]], str]:
     """各阶段在规范化原文里的半开区间 `[起, 止)`，以及整卡跳过的原因（空串 = 不跳过）。
 
     阶段 k 的范围是 `[锚点 k 位置, 锚点 k+1 位置)`：锚点取最长段在全文的**首次**出现；阶段 1
-    锚点为空时从 0 开始；最后一阶段到全文末尾。空锚点（非阶段 1，规范只允许阶段 1 为空）退到
-    全文末尾 —— 最后一阶段因此是空区间（不参与判定），中间的则多半触发下面的递增检查而跳过。
-    任一锚点核对不上、或锚点位置不严格递增 → 返回空表与原因，由调用方整卡跳过（D7）。
+    锚点为空时从 0 开始；最后一阶段到全文末尾。
+    以下任一情况返回空表与原因，由调用方整卡跳过（规则 2 / D7）：阶段 1 以外的锚点为空（与
+    「查不到」同为不可定位）、锚点核对不上、锚点位置不严格递增。
     """
     starts: list[int] = []
     for i, phase in enumerate(phases):
         anchor = _anchor_of(phase)
         if not anchor:
-            starts.append(0 if i == 0 else len(source_norm))
-            continue
+            if i == 0:
+                starts.append(0)
+                continue
+            return [], f"阶段 {i + 1} 锚点为空"
         loc = locate_in_normalized(source_norm, anchor)
         if loc is None:
             return [], f"阶段 {i + 1} 锚点核对不上：{anchor}"
@@ -77,10 +79,6 @@ def phase_ranges(phases, source_norm: str) -> tuple[list[tuple[int, int]], str]:
     ranges = [(starts[k], starts[k + 1] if k + 1 < n else len(source_norm))
               for k in range(n)]
     return ranges, ""
-
-
-def _first_quote(row) -> str:
-    return row.occurrences[0].quote if row.occurrences else ""
 
 
 def verify(draft, source_text: str, valid_rows: list[list[int]]) -> Verification:
@@ -117,20 +115,20 @@ def verify(draft, source_text: str, valid_rows: list[list[int]]) -> Verification
             phase_quotes.append({})
             continue
         if skipped:                              # 规则 2：保留标注，摘录取首段
+            tags += len(valid)                   # 分母照常计（监测比例要用）
             final.append(list(valid))
             phase_quotes.append(_first_quotes(by_phase, valid))
             continue
 
         standing: list[int] = []
         chosen: dict[int, str] = {}
-        for p in valid:
+        for p in valid:                          # 计数单位是标注（做法, 阶段），不是摘录
+            tags += 1
             picked = ""
             for quote in by_phase.get(p, []):    # 规则 3：同阶段多段摘录，任一段通过即成立
-                tags += 1
                 loc = locate_in_normalized(source_norm, quote)
                 if loc is None or len(loc) > MAX_OCCURRENCES:
                     unverified += 1              # 查不到 / 出现太多 → 不作位置证据
-                    dropped += 1
                     continue
                 lo, hi = ranges[p - 1]
                 if any(lo <= x < hi for x in loc):
@@ -138,10 +136,13 @@ def verify(draft, source_text: str, valid_rows: list[list[int]]) -> Verification
                         ambiguous += 1           # D6：任意一次命中即通过，记「位置不唯一」
                     picked = quote
                     break
-                dropped += 1
             if picked:
                 standing.append(p)
                 chosen[p] = picked
+            else:                                # 规则 3：去掉的标注各打一条 warning
+                dropped += 1
+                logger.warning("去掉标注：做法 %r 在阶段 %d 没有落在该阶段的摘录",
+                               row.situation, p)
 
         if not standing:                         # 规则 4：全部被去掉 → 兜底，退回合法标注
             fallback += 1
