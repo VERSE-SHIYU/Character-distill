@@ -683,11 +683,6 @@ const useAppStore = create((set, get) => {
   setUploadTaskProgress: (val) => set({ uploadTaskProgress: val }),
 
   uploadText: async (file, title, description, textType = 'story') => {
-    const MAX_SIZE = 100 * 1024 * 1024 // 100MB
-    if (file.size > MAX_SIZE) {
-      set({ error: `文件过大（${(file.size / 1024 / 1024).toFixed(1)}MB），最大支持 100MB` })
-      return
-    }
     set({ uploadProgress: 0 })
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
