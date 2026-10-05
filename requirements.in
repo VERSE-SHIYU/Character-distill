@@ -34,6 +34,10 @@
 openai>=1.30.0
 pydantic>=2.0
 chromadb>=0.5.0
+# `core/tokens.py` 直接 `from tokenizers import Tokenizer`（全仓唯一的 token 计数）。
+# 它此前只是 chromadb 的传递依赖，直接 import 就该直接声明 —— 否则哪天 chromadb 换了
+# 分词后端，是运行期 ImportError 而不是解析期的版本冲突。锁定版本 0.23.2 不变。
+tokenizers>=0.23.2
 pyyaml>=6.0
 python-dotenv>=1.0.0
 fastapi>=0.115.0
