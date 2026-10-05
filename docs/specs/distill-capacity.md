@@ -386,6 +386,7 @@ cd web/frontend; npm test
 - §6 Python 组：**272 passed**（含 `test_lock_coverage.py` 元锁闭合：判别器集合 == 被撞集合，两个方向都空）。
 - 前端 `npm test`：**349 passed / 70 files**（本轮未动前端，作回归）。
 - 与两张全仓表（`test_auth_param_used`、`test_exception_pickle_lock`）同批跑：**75 passed**。
+- **分支 CI**：提交 `90b71427`，run `37258195960` —— `gate / 本仓回归`、`sentinel / 上游漂移`、`lint+test / 前端` 三项**全绿**。
 
 **本锁看不见的（边界，如实记）**：R1/R3 的「收」侧只证「没被拒」，证不了「收下的是对的内容」；S3 是正则代理（`<\s*self\._longctx_threshold`），换成别的等价内联写法（先取 `t = self._longctx_threshold` 再比）会漏 —— 与 S1/S2 同一取舍（0 层的语义等价判定，本仓用字符串代理）。
 
