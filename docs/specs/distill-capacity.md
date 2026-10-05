@@ -330,16 +330,20 @@ cd web/frontend; npm test
 | skill 用上不过度 | 前端读过 frontend-design（只取可访问性下限）；执行方配两个：`@search-first`（实现前搜可复用的现成实现）、`@verification-before-completion`（报通过前附实际输出） | ✅ |
 
 
-### 9.7 审计方最终结论（2026-10-05，基于 7d45a8a6，CI 37252578384 绿）
+### 9.7 审计方结论（2026-10-05，基于 ea3754ad）：**撤回此前的「通过」**
 
-**通过。** 1 处阻塞（前端信任非 200 响应）与小项均已整改并验证（§9.6）；审计方另修一处 `SOURCE.md` 表述（原句「adds special token 129,280 and omits 128,000」不成立：129,280 是含特殊 token 的词表总数，不是某个 token），本提交改正。
+此前的「通过」违反审计规矩第 5 条：当时自列为「未逐行读全文」的 `tests/test_length_budget.py` 未读完就下了结论。现已逐行读完，发现 4 处测试判别力缺口，**PR #111 暂不合并**：
 
-逐文件：
-- 已读全文或全部改动：`core/tokens.py`、`core/length_budget.py`、`core/distiller.py`、`core/utils.py`、`core/context_engine.py`、`core/chat_engine.py`、`core/group_session.py`、`core/text_manager.py`、`core/text_failure.py`、`scripts/run_agent_eval.py`、`web/routers/text.py`、`adapters/llm_adapter.py`、`web/frontend/src/lib/textLimits.js`、`TextPanel.jsx`、`useAppStore.js`、`.gitignore`、`requirements.in`、`requirements.txt`（只变 tokenizers 的 via）、`SOURCE.md`、`tests/test_tokens.py`、`tests/test_text_failure_messages.py`、`tests/lock_coverage_gaps.py`、`tests/test_distill_usage_accounting.py`、`tests/test_distiller_routing.py`、`tests/test_auth_param_used.py` 与 `tests/test_exception_pickle_lock.py` 的登记、`TextLimits.test.jsx`（6 条用例清单）、`tests/fixtures/kongyiji.txt`（公版、无编者注）—— 结论均为符合 spec。
-- 按校验而非逐行读：`tokenizer.json`（sha256 `c90dfa01…`、6,367,257B 与 HF V4.1 一致）；`distill_capacity_red_lines.json`（生成产物，由 `test_lock_coverage.py` 在 CI 校验）。
-- 读了用例清单与关键断言、未逐行读全文：`tests/test_length_budget.py`（矩阵 R1–R10、S1/S2 均有对应用例，变异 M1–M17 全红佐证其判别力）、`tests/perf/distill_capacity_mutations.py`（`TARGETS` 覆盖 8 个被改文件）。
-- 说明：审计方 §9.6 小项 5 称前端 `validateFile` 包装「只做转调」有误，它还做扩展名白名单；执行方保留该校验并内联到唯一调用点，处理正确。
-- 记录缺口：§9 无 9.2；「选路径阈值用 `fits_one_pass(n, threshold)`」的决定已写入 §3.2，编号空缺不补。
+| # | 位置 | 缺口 | 后果 |
+|---|---|---|---|
+| A1 | R1 `test_file_upload_story_boundary_by_token_count`、R3 `test_text_upload_story_boundary_by_token_count` | 只测「= 阈值 → 拒」，**没有「阈值 − 1 → 收」**；`pytest.raises(ValueError)` 不带 `match=` | 变异「小说一律拒收」存活（所有小说都传不上去，测试仍绿）；也可能被别的守卫（编码、解析为空）抛的 ValueError 替它变红 |
+| A2 | R4 `test_sync_route_by_token_count`、R5 `test_stream_route_by_token_count` | 只测「= 阈值 → 不走一次读完」，且包在 `contextlib.suppress(Exception)` 里；没有「阈值 − 1 → 走一次读完」 | 变异「一律分片」或「选路径前就抛错」都存活 |
+| A3 | S1/S2 | 缺已定的结构断言：比较阈值只在 `length_budget.fits_one_pass`，`distiller` 里不许有 `< self._longctx_threshold` | 比较被写回 distiller 时测试不报 |
+| A4 | R6 `test_overflow_400_user_message` | 三句超窗措辞只测了一句 | 删掉另两句措辞的变异存活 |
+
+另：R1/R3 用全局赋值 `length_budget.count_tokens = …` 加 `finally` 还原，`_real_count_tokens` 在文件末尾才导入；改用 `monkeypatch`。
+
+整改：每个缺口补一条专属变异（M18–M21），并证明**修测试前存活、修测试后打红**。`tests/perf/distill_capacity_mutations.py` 整改后连同新增变异一并逐行审。其余文件结论维持（见本节前一版，`ea3754ad`）。
 
 ### 附录 A：全量扫描输出（`ad3bc7e1`）
 
