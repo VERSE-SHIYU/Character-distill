@@ -249,6 +249,33 @@ python tests/perf/card_draft_mutations.py
 2. 初稿以首段定位置 —— 「这……下回还清罢」会被定到开篇，恰好把本段要纠正的错放回阶段 1（C12 实测）。改为取最长段，加 M15。
 3. 初稿没写「编号合法性过滤」与位置检查、兜底的先后，也没写同阶段多段摘录 —— 补规则 0、4.1，U9、U10，M17、M18。
 
+### 9.2 PG 端口冲突与处置（执行方，2026-10-05）
+
+本机 `55432`（共享 `charsim_test`）已被上一个任务占用，而 §6 的门要求「被占用就停下报告」。
+按用户裁定用方案 1：严格对齐 `docker-compose.test.yml` 的配置、只换端口，起一次性容器
+
+```
+docker run -d --name cd-test-arc-anchoring -p 55433:5432 --tmpfs /var/lib/postgresql/data \
+  -e POSTGRES_USER=charsim -e POSTGRES_PASSWORD=ci_test_password -e POSTGRES_DB=charsim_test \
+  postgres:16-alpine
+```
+
+`TEST_DATABASE_URL` 指向 55433；本段全部测试跑完后删除该容器（不碰共享的 55432）。
+
+### 9.3 `:2207` 同步分片入口传的 `text`（执行方，2026-10-05）
+
+C2 说 `:2207` 传 `text`，C13 说「一律传原始全文」。同步 `distill_incremental` 里 `text` 在
+`text_type="chat"` 时被重新赋值为 L2 预处理后的文本 —— story/classic 判据一致，chat 不一致。
+生产没有用同步路径跑 chat 的调用方（路由走 `distill_incremental_stream`），且此处 `text`
+正是模型看到的原文，传它自洽。按 spec 字面传 `text`。
+
+### 9.4 变异实测（执行方，2026-10-05）
+
+`tests/perf/arc_phase_anchoring_mutations.py` M1–M30 全部 RED，覆盖域 32 条判别器逐条有撞
+（`tests/test_lock_coverage.py` 31 passed）。M17 按 spec 原形（兜底退回含越界编号的原标注）
+会让越界编号流入分发、`by_phase[p-1]` 抛 IndexError（崩溃而非判据变红，元锁会记成空转），
+改为等价缺陷形态「越界编号连同其摘录夹到末阶段」，照样红 U9 三条。
+
 ## 10. 自检表（对照 Shiyu 的标准）
 
 | 标准 | 落在哪 | 状态 |
