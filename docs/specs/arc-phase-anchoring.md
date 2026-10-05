@@ -276,6 +276,53 @@ C2 说 `:2207` 传 `text`，C13 说「一律传原始全文」。同步 `distill
 会让越界编号流入分发、`by_phase[p-1]` 抛 IndexError（崩溃而非判据变红，元锁会记成空转），
 改为等价缺陷形态「越界编号连同其摘录夹到末阶段」，照样红 U9 三条。
 
+### 9.5 审计（Claude，2026-10-05，分支 `d63ddae1`）
+
+**复现**：沙箱 PG 16 上 §6 命令 → `239 passed`；`arc_phase_anchoring_mutations.py` EXIT=0，M1–M30 实得全部 RED；`card_draft_mutations.py` EXIT=0；另手跑旧 M3（编号下界 1→0）→ `test_u4_no_valid_number_retracts_the_row_with_a_warning[phases1]` 红，仍有覆盖。三处偏离（M17、M27、U18）认可。§9.3（同步 chat 路径传预处理文本）认可。
+
+**逐文件**：
+
+| 文件 | 结论 |
+|---|---|
+| `AGENTS.md` | 看过。写了「锚点为空（阶段 1 除外）视为不可定位」，代码没做到（见 A1），A1 修完后成立 |
+| `core/card_draft.py` | 看过，通过 |
+| `core/distiller.py` | 看过，通过（提示词 L/O、模板、格式说明、3 处调用点） |
+| `core/phase_anchoring.py` | 看过，**A1、A2、A3、A4 不通过** |
+| `core/quotes.py` | 看过，通过 |
+| `core/schema.py` | 看过，通过 |
+| `docs/specs/arc-phase-anchoring.md` | 看过，通过 |
+| `tests/perf/arc_phase_anchoring_mutations.py` + `_red_lines.json` | 看过并复跑，通过 |
+| `tests/perf/card_draft_mutations.py` + `card_draft_red_lines.json` | 看过并复跑，通过 |
+| `tests/test_card_draft.py` | 看过，**A5 不通过** |
+| `tests/test_distill_task_api.py` | 看过，通过 |
+| `tests/test_phase_anchoring.py` | 看过，缺 A1/A2/A3 的用例 |
+| `web/routers/distill.py` | 看过，通过（两处传 `content`，`:1126` 走 `to_thread`） |
+
+**A1（违反规则 2）末阶段空锚点不跳过整卡。** `phase_ranges` 对 i>0 的空锚点取 `len(source_norm)`：中间阶段靠递增检查碰巧跳过，**末阶段**不跳过，得到空区间 `[len, len)`，该阶段所有标注被静默去掉。实测（孔乙己原文，两阶段，阶段 2 锚点为空，做法标 [1,2] 且两段摘录各在本阶段）：落卡为「阶段 1 一条、顶层 0 条」；锚点正常时为「顶层 1 条」。修法：i>0 的空锚点与「查不到」同处理，返回原因「阶段 k 锚点为空」整卡跳过。
+
+**A2（监测口径错）`tags` / `dropped` 按摘录计，不按标注计。** 同阶段第一段摘录不通过、第二段通过时，`dropped` 仍 +1；通过之后的摘录不计入 `tags`。实测（阶段 2 两段摘录一错一对 + 阶段 1 一条错标）：输出 `tags=3 dropped=2`，实际 2 个标注、去掉 1 个。修法：`tags` = 被检查的（做法, 阶段）数，`dropped` = 最终不成立的（做法, 阶段）数；`unverified_quotes` 保持按摘录计；整卡跳过时 `tags` 仍计数（比例才有分母）。
+
+**A3（违反规则 3「去掉都打 warning」）** 去掉单个标注时没有 warning，只有兜底和整卡跳过打了。修法：每个不成立的（做法, 阶段）打一条 warning（情境 + 阶段号），由 `verify` 打（与兜底、跳过的 warning 同处）。
+
+**A4（死代码）** `core/phase_anchoring.py` 的 `_first_quote` 无调用方（`grep -n "_first_quote(" core/` 只命中定义与 `card_draft.py` 自己的同名函数）。删掉。
+
+**A5（断言部分空转）** `tests/test_card_draft.py:148-149` 的 `for b in [rows]` 让 `b` 是列表本身，`"occurrences" not in b` 恒真（实测：做法里带 `occurrences`、阶段不带 `anchor` 时整句为 True）。改成两条直写：每条做法的键里没有 `occurrences`，每个阶段的键里没有 `anchor`。
+
+**补的测试与变异（两个方向）**：
+- U6 扩：末阶段空锚点 → 整卡跳过；中间阶段空锚点 → 整卡跳过；阶段 1 空锚点 → 不跳过（已有）。变异 M31 放宽：i>0 空锚点退回取 `len(source_norm)`（现状写法）→ 末阶段用例红。变异 M32 过严：阶段 1 空锚点也跳过 → 阶段 1 用例红。
+- U7 扩：同阶段两段摘录（一错一对）+ 另一阶段错标 → 精确断言 `tags=2 dropped=1 unverified_quotes=…`。变异 M33：`dropped` 改回按摘录计 → 红；变异 M34：`tags` 改回按摘录计 → 红。
+- 规则 3 warning：caplog 断言去掉的每个标注各一条。变异 M35：删去该 warning → 红。
+- 以上进 `arc_phase_anchoring_mutations.py`，覆盖闭合由 `test_lock_coverage.py` 核。
+
+### 9.6 A1–A5 修复（Claude 在沙箱直接实现，2026-10-05；Shiyu 授权推分支）
+
+- `core/phase_anchoring.py`：`phase_ranges` 中 i>0 的空锚点返回「阶段 k 锚点为空」整卡跳过（A1）；计数改为按（做法, 阶段），整卡跳过时 `tags` 照常计（A2）；每个不成立的标注打一条「去掉标注」warning（A3）；删死代码 `_first_quote`（A4）。
+- `tests/test_card_draft.py`：`test_u9` 断言拆直写（A5）。
+- `tests/test_phase_anchoring.py`：新增 U23–U27。`test_u9` / `test_u9b` 原先 `n=3` 却只给了阶段 2 的锚点 —— 依赖了 A1 的错误行为（阶段 3 空区间）；改为 `n=2`，`test_u9` 两阶段都成立，按分发规则进顶层。
+- 变异 M31–M36 进 `arc_phase_anchoring_mutations.py`；M18 的锚点随新计数代码改写（语义不变）。
+- 红：新用例在修复前的 `d63ddae1` 上 5 条 FAILED（U23–U27）；修复后 §6 全绿；两个驱动 EXIT=0（M1–M36 全 RED）；`test_lock_coverage` 通过。
+- 独立性说明：本轮实现与审计同为 Claude，复核由 CI + 执行方读 diff 承担。
+
 ## 10. 自检表（对照 Shiyu 的标准）
 
 | 标准 | 落在哪 | 状态 |
