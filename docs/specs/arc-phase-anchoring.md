@@ -31,7 +31,12 @@ C5. 核对工具 `core/quotes.py:41-63`：`normalize`（繁转简、去全部空
 C6. 落卡后还有一道摘录核对：`core/card_quotes.py:127` `retract_unverified(card, content)`，由 `finalize_card`（`core/distiller.py:1770`）调用；查不到的摘录清空、条目保留。本段不改它，它照常复核存卡里的 `source_quote`。
 C7. 提示词：维度 L `core/distiller.py:190` 起、维度 O `:205` 起（`phases` 说明 `:209`），G6 模板 `:259`，G6 格式说明 `:291`。
 C8. 引用旧草稿形态（`phases` 整数数组）的测试与脚本：`tests/test_card_draft.py`、`tests/test_card_arc_behaviors.py`、`tests/test_distiller_routing.py`、`tests/perf/card_draft_mutations.py`、`tests/perf/card_draft_red_lines.json`（见附录 A）。`tests/perf/arc_draft_sample_check.py` 读的是**存卡**，不受影响。
-C9. 实测（沙箱）：`normalize` 120 万字整本 0.29s；在规范化全文里找一个短串的全部位置约 1ms。
+C9. 实测（沙箱，2026-10-05 复测）：`normalize` 125 万字整本 0.32s；在规范化全文里找一个短串的全部位置约 1ms。
+C11. 现有核对**不要求省略号各段的先后顺序**：`verbatim_in_normalized` 只判各段都在（`:61`）。沙箱实测（`tests/fixtures/kongyiji.txt`，规范化后 2187 字）：`verbatim_in_normalized(s, "下回还清罢……温一碗酒")` 为 True（倒序也过）。
+C12. 省略号首段可能极短：模型真实写法「这……下回还清罢」，首段「这」在规范化全文出现 22 次、首次在第 64 字（开篇）；「下回还清罢」在第 1907 字（断腿后）。**若以首段定位置，正好把要纠正的这条错放回阶段 1**。故位置取**最长一段**（§3.1）。
+C13. 原文口径：路由两处（`:507` `:1126`）手上是原始 `content`，聊天类文本在 `distiller` 内部经 `_layer2_character_context` 预处理后才给模型（`core/distiller.py:2258/2271`）；落卡后的 `retract_unverified` 也拿原始 `content` 核对（`:1791`）。本段与之同口径：一律传原始全文。
+C14. 文档：`AGENTS.md:1799` 描述草稿格式（「每条带 `phases` 阶段编号」），随本段同步改写；`docs/specs/arc-behaviors-draft-reference.json` 与 `arc-behaviors-draft-samples/` 是历史审计数据，全仓库无代码读取（`git grep` 只命中 `docs/specs/arc-behaviors-draft.md`），不改。
+C15. 前端只读存卡：`CharCard.jsx:835`、`EditCardModal.jsx:88`、`MarketCardDetail.jsx:750` 读 `character_arc.phases`（存卡形态）；存卡结构不变，前端不改、不跑 `npm test`。
 C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async 生成器里**同步**调用 `card_from_draft`（事件循环线程）；`:507` 在后台任务线程里。
 
 ### 2.1 路径机制表（通道 × 执行上下文 × 守它的测试）
@@ -50,8 +55,10 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
 |---|---|---|---|
 | 阶段数 | 提示词「最多 4 个」 | 维度 L | 锚点数 = 阶段数（阶段 1 可空） |
 | 做法条数 | 6–12 | 维度 O | 每条 `occurrences` ≤ 阶段数 |
-| 摘录长度 | 10–40 字 | 维度 O | 太短（规范化后 < 4 字）不作位置证据，按「核对不上」处理 |
+| 摘录长度 | 10–40 字 | 维度 O | 不按长度设限；能否作位置证据看出现次数（下一行） |
+| 摘录最长段在原文中的出现次数 | `MAX_OCCURRENCES = 3`（`core/phase_anchoring.py` 内具名常量，只此一处） | 样本实测：公版《孔乙己》两张卡 14 段摘录，出现次数全部为 1 或 2；《阿Q正传》原文不在仓库，另两张卡 20 段未测 | > 3 次不作位置证据（按该段「核对不上」处理）；样本外（台词在全书反复出现，如「我真傻，真的」）同样按此处理，必要时走兜底 D5 |
 | 原文 | 小说 < 90 万 tokens（约 120–130 万字） | `core/length_budget.py` | 每次转换只 normalize 一次整本（C9：0.29s） |
+| 整本规范化次数 | 每张卡 2 次（本段 `card_from_draft` 1 次 + 落卡后 `retract_unverified` 1 次，`card_quotes.py:139`），各约 0.29s | C9 | 不合并：合并须改 `finalize_card` 签名，超出本段改动面；成本已量化，记为已知代价 |
 | 额外输出 | 每卡约 80–130 tokens，最坏约 1,200 | 四张样本实算 | 远低于 `LONG_OUTPUT_MAX_TOKENS` 16384 |
 
 ### 2.3 出处对照表
@@ -65,6 +72,10 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
 | Verifiable by Construction（arXiv 2609.15964）；VetScore（arXiv 2608.03675） | 说法逐条绑定逐字摘录；各模型逐字准确率 42%–93%，「Fuzzy」指省略号跳过 | D3、D4 | 文献 |
 | `core/quotes.py:41-63` | 现有规范化已覆盖格式差异 | D4 | 代码事实 |
 | D2、D5、D6、D7 的具体规则 | —— | —— | **自研**，无文献直接验证 |
+| §3.2 规则 0（先过滤编号再查位置） | `card_draft.py:82-90` 现有过滤 | 规则 0、U9 | 代码事实（保持现有行为） |
+| 位置取最长段 | C11、C12 实测 | §3.1、U8、M15 | **自研**，依据为本仓库实测 |
+| 同阶段多段摘录任一通过、`source_quote` 取值（规则 3、4.1） | —— | U10、M18 | **自研** |
+| 最长段出现 > `MAX_OCCURRENCES` 次不作位置证据 | 样本实测（§2.2） | 规则 3、U3、M19 | **自研**（Shiyu 2026-10-05 选方案 A）；N=3 取样本最大值 2 之上一档，上线后看「位置不唯一」比例 |
 
 ## 3. 设计
 
@@ -77,14 +88,19 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
   - `DraftPhase(PhaseState)` + `anchor: str = ""`；`DraftArc.phases: list[DraftPhase]`；
   - `card_from_draft(data, source_text)`：校验草稿 → 调 `phase_anchoring.verify(draft, source_text)` 得到每条做法的最终阶段 → 按原规则分发（全阶段 → 顶层，否则挂所标阶段）→ 存卡的 `source_quote`：挂在阶段 k 下用阶段 k 那段摘录，顶层用第一段。
 - **`core/phase_anchoring.py`**（新，纯计算，无 IO）：只做「锚点 → 阶段范围」「摘录位置 → 标注是否成立」「兜底」「监测计数」，返回结果对象，不改草稿、不碰存卡。
-- **`core/quotes.py`**（加一个函数，复用现有规范化）：`positions_in_normalized(source_norm, quote) -> list[int]`，返回摘录在规范化全文中的全部起点（按省略号分段时，后续各段须在前一段之后出现）。`verbatim_in_normalized` 改为调用它（`bool(positions)`），**同一套匹配只写一次**。
+- **`core/quotes.py`**（加一个函数，复用现有规范化与分段）：`locate_in_normalized(source_norm, quote) -> list[int] | None`——
+  - 按现有方式按省略号分段；任一段不在全文 → `None`（= 核对不上，与今天口径一致，**不新增顺序要求**，C11）；
+  - 否则返回**最长一段**在全文中的全部起点（C12：短段不作位置证据）；
+  - `verbatim_in_normalized` 改为 `locate_in_normalized(...) is not None`，**分段与匹配只写一次**，判定结果与改前逐字一致。
 
 ### 3.2 规则
 
-1. **阶段范围**：在规范化全文中找每个锚点的位置；阶段 k 的范围是 `[锚点 k 位置, 锚点 k+1 位置)`，阶段 1 锚点为空时从 0 开始，最后一阶段到全文末尾。锚点重复出现时取第一次出现。
+0. **先后次序**：先做现有的编号合法性过滤（越界编号去掉并 warning，全部不合法则整条撤回——**现有行为不变**，`card_draft.py:82-90`），再对剩下的合法标注做位置检查；兜底（规则 4）退回的是**合法**标注。
+1. **阶段范围**：用 `locate_in_normalized` 找每个锚点的位置（同样取最长段）；阶段 k 的范围是 `[锚点 k 位置, 锚点 k+1 位置)`，阶段 1 锚点为空时从 0 开始，最后一阶段到全文末尾。锚点重复出现时取第一次出现。
 2. **整卡跳过（D7）**：任一锚点（阶段 1 空锚点除外）查不到，或锚点位置不严格递增 → 整卡不做位置检查，保留模型标注，warning 一条（含卡名与原因）。
-3. **单条标注**：摘录规范化后 < 4 字或查不到 → 该标注去掉；有任一位置落在所标阶段范围内（D6）→ 保留，若位置数 > 1 记「位置不唯一」；否则去掉。去掉都打 warning。
+3. **单条标注**：同一阶段若有多段摘录，按阶段合并，任一段通过即该阶段成立。摘录查不到，或最长段在原文出现超过 `MAX_OCCURRENCES` 次 → 该段不作证据；有任一位置落在所标阶段范围内（D6）→ 保留，若位置数 > 1 记「位置不唯一」；否则去掉。去掉都打 warning。
 4. **兜底（D5）**：一条做法的标注全部被去掉 → 退回它原来的全部标注，warning。
+4.1 **存卡 `source_quote` 取值**：挂在阶段 k 下取阶段 k 中第一段通过的摘录，没有通过的（兜底 / 整卡跳过时）取阶段 k 的第一段；顶层取第一段。是否逐字由落卡后的 `retract_unverified` 照常把关（C6），本段不重复核对。
 5. **无阶段的卡**：不做位置检查，做法全放顶层（同现状），`source_quote` 取第一段摘录。
 6. **监测（D8）**：每张卡转换后打一行结构化 INFO：`[phase_anchoring] card=… tags=… dropped=… ambiguous=… unverified_quotes=… fallback=… skipped_card=…`。
 
@@ -106,12 +122,16 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
 |---|---|---|
 | U1 | 范围：锚点 2 的位置恰属阶段 2，前一字属阶段 1 | 边界两侧各一 |
 | U2 | 摘录落在所标阶段 → 保留；落在别的阶段 → 去掉 | 收 / 拒 |
-| U3 | 摘录查不到、规范化后 < 4 字 → 去掉 | 拒（另有 4 字恰好通过一条） |
+| U3 | 摘录查不到 → 去掉；最长段恰好出现 3 次且一处在范围内 → 保留；出现 4 次 → 不作证据 | 3 / 4 两侧 |
 | U4 | 重复摘录：一处在范围内 → 保留并记不唯一；全不在范围内 → 去掉 | 收 / 拒 |
 | U5 | 兜底：全部被去掉 → 退回原标注；只去掉部分 → 不退回 | 两侧 |
 | U6 | 锚点查不到 / 顺序颠倒 → 整卡跳过；锚点正常 → 不跳过 | 两侧 |
 | U7 | 监测行字段齐全且计数正确（caplog） | —— |
-| U8 | `positions_in_normalized`：省略号分段要求顺序；`verbatim_in_normalized` 结果与改前一致（`core/quotes.py` 现有测试全部保持绿） | 两侧 |
+| U8 | `locate_in_normalized`：位置取最长段（「这……下回还清罢」定位到断腿后，不是开篇）；任一段缺失 → `None`；倒序节选仍判通过（C11）；`verbatim_in_normalized` 与改前一致（`core/quotes.py` 现有测试全部保持绿） | 两侧 |
+| U9 | 次序：越界编号先去掉再查位置；兜底只退回合法标注；全部越界 → 整条撤回（与改前一致） | 两侧 |
+| U10 | 同阶段多段摘录：一段在范围内即保留，`source_quote` 取通过的那段；都不在 → 去掉 | 收 / 拒 |
+
+**拒侧用例的写法（沙箱预跑时发现）**：兜底 D5 会把「全部被去掉」的标注退回，所以拒侧用例里这条做法必须另有一个**能通过**的标注；否则被测的标注即使没被去掉、结果也一样，变异 M1 会存活。
 
 用《孔乙己》公版原文（`tests/fixtures/kongyiji.txt`）构造：「下回还清」只在断腿后出现 → 标在阶段 1 的那条被去掉（复刻 §9.6 的真实错误）。
 
@@ -141,7 +161,8 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
 | M2 | 过严 | 位置检查恒不通过（所有标注去掉，兜底后全退回） | U2 收侧 |
 | M3 | 过严 | 删兜底（全部去掉时整条消失） | U5 |
 | M4 | 放宽 | 兜底在部分去掉时也退回 | U5 另一侧 |
-| M5 | 放宽 | 锚点失败也照常检查（不跳过） | U6 |
+| M5a | 放宽 | 锚点查不到时当作全文末尾，照常检查（不跳过） | U6 |
+| M5b | 放宽 | 去掉锚点「严格递增」检查 | U6（顺序颠倒一侧） |
 | M6 | 过严 | 锚点正常也整卡跳过 | U6 另一侧、E1 |
 | M7 | 过严 | 重复摘录要求**所有**位置都在范围内 | U4 收侧 |
 | M8 | 放宽 | 重复摘录不检查范围直接通过 | U4 拒侧 |
@@ -150,7 +171,43 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
 | M11 | 取值 | 阶段 k 的 `source_quote` 一律取第一段 | 矩阵第二列 |
 | M12 | 上下文 | `:1126` 去掉 `to_thread` | E5 线程断言 |
 | M13 | 监测 | 不打监测行或计数错 | U7 |
-| M14 | 复用 | `verbatim_in_normalized` 不再走 `positions_in_normalized`（另写一份匹配） | S2、U8 |
+| M14 | 复用 | `verbatim_in_normalized` 不再走 `locate_in_normalized`（另写一份匹配） | S2、U8 |
+| M15 | 取值 | 位置取首段而非最长段 | U8（孔乙己「这……」） |
+| M16 | 过严 | 定位时要求省略号各段按顺序出现 | U8 倒序侧 |
+| M17 | 次序 | 兜底退回含越界编号的原标注 | U9 |
+| M18 | 过严 | 同阶段多段摘录要求每段都在范围内 | U10 收侧 |
+| M19a | 边界 | 出现次数判定改 `>=`（恰好 3 次也不作证据） | U3 收侧 |
+| M19b | 放宽 | 删去次数限制 | U3 拒侧 |
+
+### 5.1 发出前预跑（Claude 沙箱，2026-10-05）
+
+在沙箱写了纯计算层的原型（`locate_in_normalized` + 位置检查 + 兜底 + 计数，不含调用点接线），按 §4.1 写 15 条单元用例，逐条注入变异：
+
+```
+RED   M1  放宽 恒通过            | 8 failed, 7 passed
+RED   M2  过严 恒不通过          | 9 failed, 6 passed
+RED   M3  过严 删兜底            | 1 failed, 14 passed
+RED   M4  放宽 部分去掉也退回    | 7 failed, 8 passed
+RED   M5a 放宽 锚点失败照查      | 1 failed, 14 passed
+RED   M5b 放宽 不查顺序          | 1 failed, 14 passed
+RED   M6  过严 锚点正常也跳过    | 10 failed, 5 passed
+RED   M7  过严 重复须全在范围    | 1 failed, 14 passed
+RED   M8  放宽 重复不查范围      | 1 failed, 14 passed
+RED   M9  边界 <=                | 2 failed, 13 passed
+RED   M13 监测 不计 dropped      | 1 failed, 14 passed
+RED   M15 取首段                 | 2 failed, 13 passed
+RED   M16 过严 要求顺序          | 1 failed, 14 passed
+RED   M18 过严 同阶段每段都须在  | 3 failed, 12 passed
+RED   M19a 边界 >=               | 1 failed, 14 passed
+RED   M19b 放宽 删次数限制       | 1 failed, 14 passed
+原型未变异：15 passed
+```
+
+预跑中暴露两处，已改进正文：
+- M5 初版写成「锚点失败当 0」，被「严格递增」检查顺带拦住，测不出东西 → 拆成 M5a / M5b；
+- 拒侧用例被兜底 D5 掩盖 → §4.1 加拒侧写法。
+
+**未预跑**：M10、M11、M12、M14、M17 依赖调用点接线、`card_from_draft` 或结构锁，要等实现后才有代码；审计时由 Claude 在沙箱 PG 上亲手跑并贴输出。原型只用来验证测试设计，不交付，以执行方的实现为准。
 
 驱动基于 `tests/perf/mutation_framework.py`，产物 `tests/perf/arc_phase_anchoring_red_lines.json`（`tests/test_lock_coverage.py` 要求）。旧驱动 `card_draft_mutations.py` 里引用 `phases` 的锚点随草稿格式同步更新，其产物重新生成。
 
@@ -159,10 +216,9 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
 ```powershell
 docker ps --format "{{.Names}} {{.Ports}}" | Select-String "55432"   # 被占用就停下报告
 docker compose -f docker-compose.test.yml up -d --wait
-python -m pytest -q tests/test_phase_anchoring.py tests/test_card_draft.py tests/test_card_arc_behaviors.py tests/test_distiller_routing.py tests/test_card_quotes.py tests/test_distill_task_api.py tests/test_lock_coverage.py
+python -m pytest -q tests/test_phase_anchoring.py tests/test_card_draft.py tests/test_card_arc_behaviors.py tests/test_distiller_routing.py tests/test_card_quotes.py tests/test_quotes.py tests/test_distiller_dialogue_pick.py tests/test_distill_task_api.py tests/test_lock_coverage.py
 python tests/perf/arc_phase_anchoring_mutations.py
 python tests/perf/card_draft_mutations.py
-cd web/frontend; npm test
 ```
 
 不跑本地全量；合并只做 git 操作。
@@ -186,6 +242,13 @@ cd web/frontend; npm test
 
 本段改动面内新发现的问题直接修并写进这里；需要拍板的停下报告，不自行记账。
 
+### 9.1 发出前自审（Claude，2026-10-05，`0d3d40b0`）
+
+初稿三处缺口，已改进正文：
+1. 初稿让 `verbatim_in_normalized = bool(positions)` 且定位要求省略号各段有序 —— 会给现有核对**新增顺序要求**，与 U8「结果与改前一致」自相矛盾（C11 实测倒序节选今天判通过）。改为 `locate_in_normalized`，存在性判定不变。
+2. 初稿以首段定位置 —— 「这……下回还清罢」会被定到开篇，恰好把本段要纠正的错放回阶段 1（C12 实测）。改为取最长段，加 M15。
+3. 初稿没写「编号合法性过滤」与位置检查、兜底的先后，也没写同阶段多段摘录 —— 补规则 0、4.1，U9、U10，M17、M18。
+
 ## 10. 自检表（对照 Shiyu 的标准）
 
 | 标准 | 落在哪 | 状态 |
@@ -204,8 +267,9 @@ cd web/frontend; npm test
 | ③ 规模表 | §2.2 | ✅ |
 | ④ 调用点矩阵 | §4.2 | ✅ |
 | 每条边界两侧都测；变异含放宽与过严两方向 | §4.1「两侧」列；§5「方向」列 | ✅ |
-| 变异发出前先实跑 | 本段由执行方实现，Claude 无法在 spec 前预跑；改为审计时在沙箱亲手复跑并贴输出 | ⚠️ 说明 |
-| 先找现成库 / 先搜代码库 | 复用 `core/quotes.py` 的规范化（C5），只加一个返回位置的函数并让原函数调它；不引入模糊匹配库（D4） | ✅ |
+| 变异发出前先实跑 | 纯计算层 16 条变异已在沙箱原型上预跑，全部打红（§5.1）；接线相关的 5 条审计时跑 | ✅（部分，范围已写明） |
+| 先找现成库 / 先搜代码库 | 复用 `core/quotes.py` 的规范化与分段（C5），只加一个返回位置的函数并让原函数调它；不引入模糊匹配库（D4） | ✅ |
+| 修改不夹带行为变化 | 编号合法性过滤原样保留（规则 0）；`verbatim_in_normalized` 判定不变，不新增顺序要求（C11、U8、M16） | ✅ |
 | 不打补丁、隔离、抽象、复用 | 新逻辑独立成 `core/phase_anchoring.py`；字段用共用底 `BehaviorCore`；匹配只写一份；出口仍唯一 | ✅ |
 | skill 用上不过度 | 执行方：`@search-first`、`@verification-before-completion` | ✅ |
 
@@ -253,3 +317,12 @@ tests/test_card_arc_behaviors.py
 tests/test_card_draft.py
 tests/test_distiller_routing.py
 ```
+
+### 9.2 按 Shiyu 准则复查（Claude，2026-10-05）
+
+- 受影响测试漏列：`verbatim_in_normalized` 的全部调用方（`git grep` 全量）为 `core/card_quotes.py:98/117`、`core/quotes.py:75`；直接测它的是 `tests/test_quotes.py`、`tests/test_distiller_dialogue_pick.py`，§6 原先漏列，已补。
+- 出处表漏列本轮新增的自研规则，已补 4 行并标性质。
+- 整本规范化做两次：已写进 §2.2 规模表，作为已知代价。
+- 变异预跑：M1–M18 中，只有涉及现有行为的判据可以在基线上预跑（倒序节选判通过：`0d3d40b0` 实测为 True）；其余变异要等实现后才有代码可跑，审计时在沙箱亲手跑并贴输出。
+- 已定（Shiyu 选 A）：去掉「< 4 字」阈值，改为「最长段出现 > 3 次不作位置证据」，N 依据与样本范围见 §2.2；补 U3 两侧与 M19。
+
