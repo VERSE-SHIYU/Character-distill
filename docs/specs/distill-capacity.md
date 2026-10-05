@@ -390,6 +390,22 @@ cd web/frontend; npm test
 
 **本锁看不见的（边界，如实记）**：R1/R3 的「收」侧只证「没被拒」，证不了「收下的是对的内容」；S3 是正则代理（`<\s*self\._longctx_threshold`），换成别的等价内联写法（先取 `t = self._longctx_threshold` 再比）会漏 —— 与 S1/S2 同一取舍（0 层的语义等价判定，本仓用字符串代理）。
 
+
+### 9.9 审计方结论（2026-10-05，基于 c0eb6f52，CI 37258916463 全绿）：**通过**
+
+审计方式按 2026-10-05 起的规矩：沙箱 PG 16（55432）上亲手跑，贴实际结果，不转述。
+
+- **变异驱动**：`python tests/perf/distill_capacity_mutations.py` → 基线 26 passed；M1–M8、M10–M22 共 21 条**期望 RED、实得 RED**；sha256 逐字节还原通过；重跑后产物 `distill_capacity_red_lines.json` 与入库逐字节相同（`git status` 干净）。M9（前端）沿用执行方 §9.6 的手动证据。
+- **受影响测试**：§6 Python 组 + `test_auth_param_used` + `test_exception_pickle_lock` 同批 **287 passed**。
+- **审计方自拟探针**（不在驱动表里，用来查盲区）：
+  - 比较写回 distiller 且用 `<=` → 被打红（R4 拒侧，2 failed）；
+  - 选路径前就抛错 → 被打红（R4/R5 收侧，2 failed）；
+  - 先取 `t = self._longctx_threshold` 再比（行为等价）→ **存活**。这正是 §9.8 已如实记下的 S3 正则代理盲区，行为测试本来就看不见行为等价的写法，接受。
+- **逐文件**（本轮改动的 4 个文件全部逐行读完）：`tests/test_length_budget.py`（A1–A4 的改动全部到位；R4/R5 仍保留 `suppress`，但收侧 `assert seen == ["one_pass"]` 能抓住「选路径前抛错」，见上一条探针）、`tests/perf/distill_capacity_mutations.py`（M18–M22 锚点与 §5 表一致）、`tests/perf/distill_capacity_red_lines.json`（生成产物，审计方重跑逐字节一致）、`docs/specs/distill-capacity.md`（§5 表与 §9.8）。
+- **M22 的说明接受**：修前已红，是补矩阵完整性，不是补测试缺口；审计方 §9.7 的预期写错了。
+
+结论：PR #111 可以合并。合并后按 §7.2 做一次线上核对（监测）。
+
 ### 附录 A：全量扫描输出（`ad3bc7e1`）
 
 ```
