@@ -49,6 +49,15 @@ def normalize(s) -> str:
     return "".join(ch for ch in folded if not ch.isspace() and ch not in _DROP_CHARS).translate(_VARIANT_FOLD)
 
 
+def normalized_starts(text: str, raw_starts: Sequence[int]) -> list[int]:
+    """升序原文起点 → 规范化坐标：即 `normalize(text[:r])` 的长度。
+
+    索引坐标靠的就是这条不变式（C6）：逐段规范化累加 == 规范化整段前缀长。**只此一处** ——
+    场景索引与原文切片两类索引都调它，不各自再算一遍。
+    """
+    return [len(normalize(text[:r])) for r in raw_starts]
+
+
 _ELLIPSIS = re.compile(r"…+|\.{3,}")
 
 
@@ -149,6 +158,7 @@ class Candidate(NamedTuple):
     """一条候选：本角色的那句（`lead`/`line`）、紧邻的上一句（`prev_*`）与原文片段。
 
     `context` 是原文的**连续子串**，说话人由模型读它判定（见 `render_candidates`）。
+    `start` 是本句开引号在**原文**中的起点（抽取时记下，不回找）——按位置归阶段用。
     """
 
     n: int
@@ -157,6 +167,7 @@ class Candidate(NamedTuple):
     prev_lead: str
     prev_line: str
     context: str
+    start: int = 0
 
 
 def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
@@ -190,7 +201,7 @@ def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
                     quotes[i - 2].end() if i >= 2 else 0)
         out.append(Candidate(n=len(out) + 1, lead=lead, line=m.group(1),
                              prev_lead=prev_lead, prev_line=prev.group(1),
-                             context=text[start:m.end()]))
+                             context=text[start:m.end()], start=m.start()))
     return out
 
 

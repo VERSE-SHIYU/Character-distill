@@ -18,6 +18,11 @@ export default function ArcList({ arc }) {
                 {p.state}
               </span>
               {p.behaviors?.length > 0 && <BehaviorList items={p.behaviors} />}
+              {p.memories?.length > 0 && (
+                <ul className="card-arc-memories">
+                  {p.memories.map((m, j) => <li key={j} className="card-arc-memory">{m}</li>)}
+                </ul>
+              )}
             </div>
           </li>
         ))}

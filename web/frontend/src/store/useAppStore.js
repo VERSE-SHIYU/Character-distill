@@ -59,6 +59,14 @@ export const isTerminal = (task) => task?.done === true
 /** 可用动作 —— 只认归一化后的 actions。UI 不得在 actions 之外自行推断。 */
 export const taskActions = (task) => (Array.isArray(task?.actions) ? task.actions : [])
 
+// 建会话请求体与 URL：只此一处（S3），三处建会话都走 startSessionBody。
+const START_SESSION_URL = '/api/distill/start_session'
+
+// 按卡偏好持久化：键名即 localStorage key，身份与阶段共用这一对（S10）。
+function readPrefs(key) {
+  try { return JSON.parse(localStorage.getItem(key) || '{}') } catch { return {} }
+}
+
 const useAppStore = create((set, get) => {
   // 结构性竞态防护：写会话/角色态数据的 async action 用 protect 包装，越界写自动丢弃。
   // guard 只存在 scoped 里，action 永不手写 `if (get().sessionId !== ...) return`。
@@ -309,38 +317,62 @@ const useAppStore = create((set, get) => {
   loading: false,
   resumeLoading: false,
   sending: false,
-  // Per-card user roles: {cardId: role}, persisted as JSON
-  userRolesByCard: (() => {
-    try { return JSON.parse(localStorage.getItem('user_roles_by_card') || '{}') }
-    catch { return {} }
-  })(),
-  setUserRole: (cardId, role) => {
+  // 按卡偏好：{cardId: value}，持久化在 localStorage。身份与阶段共用这一对读写函数。
+  userRolesByCard: readPrefs('user_roles_by_card'),
+  arcPhasesByCard: readPrefs('arc_phases_by_card'),
+  setCardPref: (key, cardId, value) => {
     if (!cardId) return
-    const { userRolesByCard } = get()
-    const updated = { ...userRolesByCard, [cardId]: role }
-    localStorage.setItem('user_roles_by_card', JSON.stringify(updated))
-    set({ userRolesByCard: updated })
+    const updated = { ...get()[key], [cardId]: value }
+    localStorage.setItem(key, JSON.stringify(updated))
+    set({ [key]: updated })
   },
-  getUserRole: (cardId) => {
-    const { userRolesByCard } = get()
-    if (!cardId) return ''
-    if (userRolesByCard[cardId]) return userRolesByCard[cardId]
-    // Fallback: migrate old global user_role on first per-card read
-    const oldGlobal = localStorage.getItem('user_role')
-    if (oldGlobal) {
-      const updated = { ...userRolesByCard, [cardId]: oldGlobal }
-      localStorage.setItem('user_roles_by_card', JSON.stringify(updated))
-      localStorage.removeItem('user_role')  // 迁移是一次性的，用完即焚
-      set({ userRolesByCard: updated })
-      return oldGlobal
+  getCardPref: (key, cardId, legacyKey) => {
+    if (!cardId) return undefined
+    const map = get()[key]
+    if (map[cardId] !== undefined) return map[cardId]
+    // 旧的全站值只读一次就搬到按卡（只有身份有这一步），原值即焚。
+    const legacy = legacyKey ? localStorage.getItem(legacyKey) : null
+    if (legacy != null) {
+      const updated = { ...map, [cardId]: legacy }
+      localStorage.setItem(key, JSON.stringify(updated))
+      localStorage.removeItem(legacyKey)
+      set({ [key]: updated })
+      return legacy
     }
-    return ''
+    return undefined
+  },
+  setUserRole: (cardId, role) => get().setCardPref('userRolesByCard', cardId, role),
+  getUserRole: (cardId) => get().getCardPref('userRolesByCard', cardId, 'user_role') || '',
+  setArcPhase: (cardId, k) => get().setCardPref('arcPhasesByCard', cardId, k),
+  getArcPhase: (cardId) => {
+    const v = get().getCardPref('arcPhasesByCard', cardId)
+    return v == null ? null : v
+  },
+  defaultArcPhase: (card) => {
+    const phases = parseCardJson(card)?.character_arc?.phases || []
+    return phases.length ? phases.length : null
+  },
+  /** 建会话请求体：只此一处（S3）。有阶段带选中的（未选过用最后阶段），无阶段为 null。 */
+  startSessionBody: (card) => {
+    const cardId = card.id || card.card_id
+    const chosen = get().getArcPhase(cardId)
+    return {
+      text_id: card.text_id || '',
+      card_id: cardId,
+      user_role: get().getUserRole(cardId),
+      arc_phase: chosen ?? get().defaultArcPhase(card),
+    }
   },
 
-  // 会话身份：当前活跃会话实际使用的身份。随会话走，不回写卡片身份。
-  // 新会话创建时从卡片身份快照，恢复旧会话时从 session.user_role 取值。
+  // 会话身份：当前活跃会话实际使用的身份与阶段。随会话走，不回写卡片偏好。
+  // **赋值只走 applySessionIdentity**（S7）：新会话从卡片默认取，恢复存档从 session 取。
   sessionUserRole: '',
+  sessionArcPhase: null,
   setSessionUserRole: (role) => set({ sessionUserRole: role }),
+  applySessionIdentity: ({ user_role, arc_phase }) => set({
+    sessionUserRole: user_role || '',
+    sessionArcPhase: arc_phase ?? null,
+  }),
 
   error: null,
   setError: (err) => set({ error: err }),
@@ -1164,14 +1196,8 @@ const useAppStore = create((set, get) => {
 
     let sessionId = card.session_id || null
     if (!sessionId && card.text_id) {
-      const _cardId = card.id || card.card_id
-
       try {
-        const result = await postJSON('/api/distill/start_session', {
-          text_id: card.text_id,
-          card_id: _cardId,
-          user_role: get().getUserRole(_cardId),
-        }, 120000, abort.signal)
+        const result = await postJSON(START_SESSION_URL, get().startSessionBody(card), 120000, abort.signal)
 
         sessionId = result.session_id
       } catch (err) {
@@ -1181,7 +1207,11 @@ const useAppStore = create((set, get) => {
       }
     }
     const _cardId = card.id || card.card_id
-    set({ _pendingChatCardId: null, sessionId, resumeLoading: false, sessionUserRole: get().getUserRole(_cardId) })
+    set({ _pendingChatCardId: null, sessionId, resumeLoading: false })
+    get().applySessionIdentity({
+      user_role: get().getUserRole(_cardId),
+      arc_phase: get().getArcPhase(_cardId) ?? get().defaultArcPhase(card),
+    })
     get().loadVoiceRef(_cardId)
   },
 
@@ -1245,6 +1275,7 @@ const useAppStore = create((set, get) => {
     let sessionId = card.session_id || null
     let backendFirstMessage = null
     let backendFirstMessageSave = null
+    let sessionBody = null
     try {
       if (!sessionId) {
         if (!cardId) {
@@ -1252,11 +1283,8 @@ const useAppStore = create((set, get) => {
           return
         }
 
-        const result = await postJSON('/api/distill/start_session', {
-          text_id: card.text_id || '',
-          card_id: cardId,
-          user_role: get().getUserRole(cardId),
-        }, undefined, abort.signal)
+        sessionBody = get().startSessionBody(card)
+        const result = await postJSON(START_SESSION_URL, sessionBody, undefined, abort.signal)
 
         sessionId = result.session_id
         backendFirstMessage = result?.first_message
@@ -1288,10 +1316,13 @@ const useAppStore = create((set, get) => {
       sessionId,
       currentSessionAvatar: null,
       sending: false,
-      sessionUserRole: get().getUserRole(cardId),
       messages: _startChatMsgs,
       currentTextTitle: textTitle || get().currentTextTitle,
       userAvatar: null,
+    })
+    get().applySessionIdentity(sessionBody ?? {
+      user_role: get().getUserRole(cardId),
+      arc_phase: get().getArcPhase(cardId) ?? get().defaultArcPhase(card),
     })
     get().resetAffinity()
     get().fetchAffinity()
@@ -1322,10 +1353,13 @@ const useAppStore = create((set, get) => {
       currentView: 'chat',
       sending: false,
       messages: _enterMsgs,
-      sessionUserRole: session.user_role || get().getUserRole(session.card_id),
       currentSessionAvatar: session.avatar_data ?? null,
       userAvatar: null,
       error: null,
+    })
+    get().applySessionIdentity({
+      user_role: session.user_role || get().getUserRole(session.card_id),
+      arc_phase: session.arc_phase ?? null,
     })
     get().resetAffinity()
     get().fetchAffinity()
@@ -1361,11 +1395,8 @@ const useAppStore = create((set, get) => {
 
 
     try {
-      const result = await postJSON('/api/distill/start_session', {
-        text_id: card.text_id || '',
-        card_id: cardId,
-        user_role: get().getUserRole(cardId),
-      })
+      const sessionBody = get().startSessionBody(card)
+      const result = await postJSON(START_SESSION_URL, sessionBody)
 
       const sessionId = result.session_id
       const textTitle = card.text_id
@@ -1380,12 +1411,12 @@ const useAppStore = create((set, get) => {
       set({
         currentCard: { ...card, session_id: sessionId },
         sessionId,
-        sessionUserRole: get().getUserRole(cardId),
         sending: false,
         _pendingChatCardId: null,
         messages: _newArchiveMsgs,
         currentTextTitle: textTitle || get().currentTextTitle,
       })
+      get().applySessionIdentity(sessionBody)
       get().resetAffinity()
       get().fetchAffinity()
     } catch (err) {
@@ -1715,7 +1746,6 @@ const useAppStore = create((set, get) => {
       }), m.save))
       set({
         sessionId: session.id || sessionId,
-        sessionUserRole: session.user_role || get().getUserRole(session.card_id),
         currentSessionAvatar: session.avatar_data ?? null,
         messages,
         currentCard: {
@@ -1727,6 +1757,10 @@ const useAppStore = create((set, get) => {
         currentView: 'chat',
         error: null,
         resumeLoading: false,
+      })
+      get().applySessionIdentity({
+        user_role: session.user_role || get().getUserRole(session.card_id),
+        arc_phase: session.arc_phase ?? null,
       })
     } catch (err) {
       console.error('[store] resumeSession failed:', err)

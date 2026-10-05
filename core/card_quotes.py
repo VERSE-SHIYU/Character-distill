@@ -35,8 +35,10 @@ VERIFIED_FIELDS: tuple[str, ...] = (
     "cognitive.speech_style",
     "speaking_style.sentence_pattern",
     "relationships[].attitude",
+    "relationships[].phase_attitudes[].attitude",
     "situation_behaviors[].behavior",
     "character_arc.phases[].behaviors[].behavior",
+    "character_arc.phases[].memories[]",
 )
 
 # 整个值就声明「是原文」的字段（同样的路径形状）。**唯一出处**。对不上没有可保留的部分：

@@ -1399,7 +1399,7 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
                     """
-                    SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.user_id, s.deleted_at, c.text_id, c.name AS character_name
+                    SELECT s.id, s.card_id, s.user_role, s.arc_phase, s.avatar_data, s.created_at, s.updated_at, s.user_id, s.deleted_at, c.text_id, c.name AS character_name
                     FROM sessions s
                     JOIN cards c ON s.card_id = c.id
                     WHERE s.id = $1
@@ -1416,7 +1416,7 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
                     """
-                    SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.user_id, s.deleted_at, c.text_id, c.name AS character_name
+                    SELECT s.id, s.card_id, s.user_role, s.arc_phase, s.avatar_data, s.created_at, s.updated_at, s.user_id, s.deleted_at, c.text_id, c.name AS character_name
                     FROM sessions s
                     JOIN cards c ON s.card_id = c.id
                     WHERE s.id = $1 AND s.user_id = $2
@@ -1425,6 +1425,19 @@ class PostgresStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get session (owned) failed: {exc}")
+            raise
+
+    async def set_session_arc_phase(self, id: str, user_id: str, phase: int | None) -> bool:
+        """Set the session's chosen arc phase (ownership-checked). See base.py."""
+        try:
+            async with await self._connect() as conn:
+                tag = await conn.execute(
+                    "UPDATE sessions SET arc_phase = $1 WHERE id = $2 AND user_id = $3",
+                    phase, id, user_id,
+                )
+                return self._parse_rowcount(tag) > 0
+        except Exception as exc:
+            print(f"[PostgresStore] Set session arc phase failed: {exc}")
             raise
 
     async def update_session_avatar(self, session_id: str, user_id: str, avatar_data: str) -> bool:
@@ -1502,7 +1515,7 @@ class PostgresStore(StorageBase):
                     SELECT
                         s.id,
                         s.card_id,
-                        s.user_role,
+                        s.user_role, s.arc_phase,
                         s.avatar_data,
                         s.created_at,
                         s.updated_at,
@@ -1587,7 +1600,7 @@ class PostgresStore(StorageBase):
                 if user_id:
                     rows = await conn.fetch(
                         """
-                        SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.deleted_at,
+                        SELECT s.id, s.card_id, s.user_role, s.arc_phase, s.avatar_data, s.created_at, s.updated_at, s.deleted_at,
                                c.text_id, c.name AS character_name
                         FROM sessions s
                         JOIN cards c ON s.card_id = c.id
@@ -1598,7 +1611,7 @@ class PostgresStore(StorageBase):
                 else:
                     rows = await conn.fetch(
                         """
-                        SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.deleted_at,
+                        SELECT s.id, s.card_id, s.user_role, s.arc_phase, s.avatar_data, s.created_at, s.updated_at, s.deleted_at,
                                c.text_id, c.name AS character_name
                         FROM sessions s
                         JOIN cards c ON s.card_id = c.id

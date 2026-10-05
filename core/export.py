@@ -26,6 +26,10 @@ def to_tavern_json(card: CharacterCard, first_message: str = "") -> dict:
         personality_lines.append("价值观：" + "；".join(card.values))
     if card.key_memories:
         personality_lines.append("关键记忆：" + "；".join(card.key_memories))
+    for i, phase in enumerate(card.character_arc.phases, 1):
+        if phase.memories:                       # 只在那阶段成立的记忆，别从导出里消失
+            head = f"阶段 {i} · {phase.label}" if phase.label else f"阶段 {i}"
+            personality_lines.append(f"{head}记忆：" + "；".join(phase.memories))
     if card.inner_tensions:
         personality_lines.append("内在矛盾：" + "；".join(card.inner_tensions))
     personality_text = "\n".join(personality_lines)

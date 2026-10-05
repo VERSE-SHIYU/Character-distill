@@ -18,6 +18,7 @@ from core.schema import CharacterCard, parse_evidence
 from core.clock import UserClock
 from core.message_outbox import SaveState, save_field
 from core.nonfatal import nonfatal
+from core.text_manager import session_identity
 from storage.base import StorageBase
 from routers.auth import get_current_user
 from web.llm_resolution import resolve_embedding
@@ -231,6 +232,7 @@ async def resume_session(
         )
         memory = await asyncio.to_thread(text_manager.memory_for, user_id, emb.key, emb.region)
         # 原会话 id 直接进构造：引擎一出生就在原 id 名下，不再「新 id 造好再搬过来」。
+        # 身份（user_role + arc_phase）经唯一出口 `session_identity` 在构造时注入（S5）。
         await asyncio.wait_for(
             asyncio.to_thread(
                 text_manager._create_session,
@@ -240,6 +242,7 @@ async def resume_session(
                 card_id=card_rec["id"],
                 user_id=user_id,
                 session_id=session_id,
+                **session_identity(db_session),
                 memory=memory,
             ),
             timeout=120.0,
@@ -269,11 +272,7 @@ async def resume_session(
             engine.last_summary = m["content"]
             break
 
-    # 7. Restore user_role
-    # 重建会话时把角色从库里恢复回来。这句也是缺陷 55（凭据落进 `user_role`）射程的边界：
-    # 进程内的旧会话一没，脏角色值就只能经这里重新流回引擎、再随 prompt 进模型。
-    if db_session.get("user_role"):
-        engine.user_role = db_session["user_role"]
+    # 7.（身份已在构造时经 `session_identity` 注入，不再事后赋值 —— S5）
 
     # 8. Restore affinity from DB — each session has independent scores
     try:

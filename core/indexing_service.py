@@ -133,16 +133,35 @@ class SessionRag:
         self._probe, self._stamp = rag, stamp
 
     def query_with_emotion_ex(self, query_text: str, **kwargs: Any) -> EvidenceHits:
+        before = kwargs.get("before")
+        source_fingerprint = kwargs.pop("source_fingerprint", "")
         self._refresh()
         if self._unavailable is not None:
             raise self._unavailable.with_traceback(None)
         if self._engine is None:
+            return EvidenceHits([])
+        # **适用性判断只在这一处**：要按坐标截断，已装载集合须带位置（pos_schema）且讲的
+        # 是同一份正文（指纹相符）。否则加 where 会把旧条目全排除、静默搜不到 —— 宁可不
+        # 检索，也不给「之后的」内容。上界 None（最后阶段 / 旧卡）时照常检索。
+        if before is not None and not self._applicable(source_fingerprint):
+            logger.warning(
+                "RAG 阶段截断不适用（集合 %s 无 pos_schema 或指纹不符），本轮检索为空："
+                "text_id=%s card_id=%s",
+                self.collection_name, self._text_id, self._card_id,
+            )
             return EvidenceHits([])
         try:
             return self._engine.query_with_emotion_ex(query_text, **kwargs)
         except CollectionUnusableError:
             self._stamp = None
             raise
+
+    def _applicable(self, source_fingerprint: str) -> bool:
+        """已装载集合能否按坐标截断：带 `pos_schema` 且 `content_fingerprint` 相符。"""
+        col = self._engine.collection if self._engine is not None else None
+        meta = (col.metadata or {}) if col is not None else {}
+        return (meta.get("pos_schema") == 1
+                and meta.get("content_fingerprint") == source_fingerprint)
 
 
 class IndexingService:
@@ -252,7 +271,7 @@ class IndexingService:
     def _scene_index_job(
         self, text_id: str, card_id: str, content: str, char_name: str,
         all_characters: list[dict[str, Any]] | None,
-        embedding_key: str, embedding_region: str,
+        embedding_key: str, embedding_region: str, need_positions: bool = False,
     ) -> None:
         """后台场景预索引的整个作业（建原文集合 → 建本卡场景集合）。(sync)"""
         rag = self._build_text_collection(
@@ -264,7 +283,10 @@ class IndexingService:
         # rag 是本作业私有的，`index_scenes` 把它改指到场景集合不影响任何会话。
         name = f"scenes_{card_id}"
         with _builds.building(name):
-            SceneIndexer().index_scenes(content, rag, char_name, collection_name=name)
+            SceneIndexer().index_scenes(
+                content, rag, char_name, collection_name=name,
+                need_positions=need_positions,
+            )
 
     def _run_in_background(
         self, dedup_key: str, label: str, job: Callable[..., Any], *args: Any,
@@ -302,10 +324,13 @@ class IndexingService:
         all_characters: list[dict[str, Any]] | None = None,
         embedding_key: str = "",
         embedding_region: str = "",
+        need_positions: bool = False,
     ) -> None:
         """Fire-and-forget scene index（同一张卡的作业一个接一个跑）。
 
-        没有 embedding key 时不调度（理由同 `get_rag_for_session`）。
+        没有 embedding key 时不调度（理由同 `get_rag_for_session`）。``need_positions``
+        只在带起点的卡存卡时由 `save_distilled_card` 传 True（指纹相同但集合无 pos_schema
+        时也重建），其余调度照旧幂等。
         """
         if not embedding_key:
             logger.info("Scene index skipped: user has no embedding key (card_id=%s)", card_id)
@@ -313,8 +338,26 @@ class IndexingService:
         self._run_in_background(
             f"scenes_{card_id}", f"Scene index card_id={card_id}", self._scene_index_job,
             text_id, card_id, content, char_name, all_characters,
-            embedding_key, embedding_region,
+            embedding_key, embedding_region, need_positions,
         )
+
+    def text_needs_reindex(
+        self, text_id: str, *, embedding_key: str = "", embedding_region: str = "",
+    ) -> bool:
+        """`text_{id}` 集合是否**缺位置**（不带 `pos_schema`）到需要按当前名单重建。(sync)
+
+        只读集合元数据（不嵌入、不查询）。没有集合 / 没 key / 集合不可用 → False：
+        首次建立时自然会带位置，不该在这里调度。真缺位置的存量集合才返回 True。
+        """
+        if not embedding_key:
+            return False
+        rag = self._new_rag(embedding_key, embedding_region)
+        try:
+            if not rag.load_existing(f"text_{text_id}"):
+                return False
+        except CollectionUnusableError:
+            return False
+        return (rag.collection.metadata or {}).get("pos_schema") != 1
 
     def schedule_text_reindex(
         self,

@@ -249,7 +249,7 @@ def test_u22_monitoring_line_reports_counts(caplog):
         _card([_row([_occ(3, _Q1)], "全丢")])
     line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
     assert line == ("[phase_anchoring] card=角色 tags=1 dropped=1 ambiguous=0 "
-                    "unverified_quotes=0 fallback=1 skipped_card=False")
+                    "unverified_quotes=0 fallback=1 skipped_card=False memories_dropped=0")
 
 
 def test_u23_empty_anchor_on_last_phase_skips_the_whole_card():
@@ -280,7 +280,7 @@ def test_u25_monitoring_counts_tags_not_quotes(caplog):
         _card(_COUNT_ROWS)
     line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
     assert line == ("[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 "
-                    "unverified_quotes=1 fallback=0 skipped_card=False")
+                    "unverified_quotes=1 fallback=0 skipped_card=False memories_dropped=0")
 
 
 def test_u26_skipped_card_still_counts_its_tags(caplog):
@@ -289,7 +289,7 @@ def test_u26_skipped_card_still_counts_its_tags(caplog):
         _card(_COUNT_ROWS, anchors={2: _Q2, 3: "查无此句"})
     line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
     assert line == ("[phase_anchoring] card=角色 tags=2 dropped=0 ambiguous=0 "
-                    "unverified_quotes=0 fallback=0 skipped_card=True")
+                    "unverified_quotes=0 fallback=0 skipped_card=True memories_dropped=0")
 
 
 def test_u27_each_dropped_tag_warns_once(caplog):
