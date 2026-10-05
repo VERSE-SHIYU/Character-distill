@@ -195,6 +195,22 @@ def public_limits() -> dict               # {story_max_tokens, chat_max_chars, m
 | M11 | 聊天预算改回 `len × 0.8` | R8、S2 |
 | M12 | 用量兜底改回按字数除 1.5 | R10、S2 |
 | M13 | 流式兜底只计最后一片（不累加） | R10 |
+| M14 | `public_limits` 字段写死字面量（脱离常量） | U5 |
+| M15 | limits 接口篡改字段（不原样回 `public_limits`） | R7 |
+| M16 | 群聊预算改回按字数（`count_tokens` → `len`） | R9 |
+| M17 | 聊天分支不判上限（`if n > CHAT_MAX_CHARS` → `if False`） | R3 |
+
+**M9 不在驱动里**：它落在前端 vitest 文件上，而驱动框架的覆盖域、判别器解析（Python AST）、
+红源解析（pytest `--tb=long`）都只认 `.py`，前端变异无从入域；F1 的覆盖走 §6 的 `npm test`。
+M9 已**手动**跑过一次（2026-10-05）：把 `uploadDisabled` 改成 `return false`（接口失败时放行）
+→ `npm test` **1 failed | 346 passed**，红的正是 `TextLimits.test.jsx > disables upload when
+limits fail`（`expect(element).toBeDisabled()`，第 129 行「Received element is not disabled」）；
+还原后该文件 **4 passed**，F1 有分辨力。
+
+**M14–M17 是 §5 之外补的**：§5 原本只列到 M13，但 U5/R7/R9/R3-chat 这四条判别器**没有**任何
+M1–M13 撞得到，元锁 `tests/test_lock_coverage.py` 会当场判「名单外缺口」（而这些判据都在本分支
+新写的文件里，入不了「只收建档时刻就有」的缺口名单）。故每条补一条只改一处的专属变异，改法即
+「修复前的代码形态」。
 
 ## 6. 本地命令（只跑受影响的文件；合并门是分支 CI）
 
@@ -231,6 +247,38 @@ cd web/frontend; npm test
 - 执行方：V4.1 官方 `tokenizer.json` 与 C11 原期望值不一致；C11 原值来自第三方 GitHub 镜像，与官方 V3 也不一致（审计方原依据有误）。
 - 审计方用 DeepSeek 官方 GitHub `deepseek-recipe` 的 V4.1 文件重算（见 C11）：正文 token 数与此前全部相同，§0、§2.2 的数字不变；U1 期望值为《孔乙己》1,848。
 - 入库：HF V4.1 官方文件；`SOURCE.md` 记 URL、revision、下载日期、sha256、字节数，以及与 V3/V3.1/V3.2 官方文件不同、正文分词一致这一事实。
+
+### 9.3 §4.3 S2 正则过宽修正（2026-10-05）
+
+- **问题**：S2 原用裸正则 `\*\s*0\.[68]\b`，且扫描范围含 `web/frontend/src`，于是把前端一处**非 token 估算**的视口判断也算了命中：`web/frontend/src/components/ChatArea.jsx:395` 的 `window.screen.height * 0.8`（移动端键盘弹起检测）。这是**测试写宽**导致的误报，业务代码正确，未改 `ChatArea.jsx`。
+- **修法（只改测试）**：① S2 扫描范围收为 **Python 源码**（`core/ web/ adapters/ scripts/` 下的 `*.py`）——前端没有 token 计数；② 比例形态收窄为 token 估算的形态 `len\s*\(.*?\)\s*\*\s*0\.[68]\b`（长度 × 小数系数），不再匹配任意的 `* 0.6/0.8`。其余标识（`_count_tokens`、`_estimate_tokens`、`_CHARS_PER_TOKEN`、`estimate_usage_from_chars`、`/ 1.5`）不变。
+- **改动前完整命中列表**（旧正则、旧范围全扫，非截断）：
+
+  ```
+  web/frontend/src/components/ChatArea.jsx:395  pat='\*\s*0\.[68]\b'  ->  if (window.visualViewport.height < window.screen.height * 0.8) {
+  ```
+
+  共 **1 条** —— 确认除该视口判断外，没有任何真问题被这次误报盖住。基线 `fee2bf7b` 上该模式的两处**真·旧估算**（`core/context_engine.py:30` 的 `int(len(text) * 0.8)`、`core/distiller.py:1552` 的 `int(len(text) * 0.6)`）此前已随本次实现删除。
+- **改动后**：`tests/test_length_budget.py` **19 passed**；在**扩大后**的 Python 范围（`core/ web/ adapters/ scripts/`）重扫 **0 命中**（`Tokenizer.from_file` 仍只在 `core/tokens.py`）。
+- **分辨力未减**：收窄后仍能打红 §5 的 M5/M11/M12（它们正是把 `len(...) × 0.6/0.8`、`/ 1.5` 或旧标识塞回来）。
+
+### 9.4 §5 变异驱动跑通与元锁闭合（2026-10-05）
+
+- **驱动跑通**：`python tests/perf/distill_capacity_mutations.py` —— **17 条全红**（M1–M8、M10–M17），产物 `tests/perf/distill_capacity_red_lines.json` 已刷新，收尾 sha256 逐字节还原通过。
+- **元锁闭合**：首跑后 `tests/test_lock_coverage.py` 报 **5 条名单外缺口**，都在 `tests/test_length_budget.py`：U5（`public_limits`）、R7（limits 接口）、R3-chat（聊天边界）、R9（群聊预算）、以及测试替身里一条 `raise RuntimeError("boom")`。处置：
+  - **补四条专属变异 M14–M17**（§5 已加）：分别只改 `core/length_budget.py`、`web/routers/text.py`、`core/group_session.py`，打红 U5/R7/R9/R3-chat 各一条。`core/group_session.py` 随之进驱动 `TARGETS`（否则变异不被基线快照，还原不回来）。
+  - **测试替身的失败注入改形态**：`test_stream_usage_fallback_accumulates_every_piece` 里 `raise RuntimeError("boom")` 是**就地构造**，按判别器定义算一条 `ast.Raise`，但它是替身的**机制**、任何合法变异都撞不到（与 `test_health_probe_targets.py` 的 `raise self._exc` 同类）。照文档已认可的形态改成存起来的异常 `_exc = RuntimeError("boom")` + `raise self._exc` —— 转抛不计判别器，机制不变。**不是删代码**。
+- **两条测试写错，用变异逼出来的**（改测试，不改业务代码）：
+  - **R3-chat 判据满足于错的守卫**：`test_text_upload_chat_boundary_by_char_count` 原先只写裸 `pytest.raises(ValueError)`。M17（`if n > CHAT_MAX_CHARS → if False`）下它**仍是绿的** —— 一堵「同字」正文会被 `ChatPreprocessor` 整行丢掉，清洗后的空文本那条 `chat_clean_empty` 也能让它通过。加 `match="超过聊天记录上限"` 后 M17 才红（实测红源正是 `Regex pattern did not match`）。
+- **现测数**：`pytest tests/test_lock_coverage.py` **30 passed**；§6 的 Python 组 **265 passed**（120.63s）。
+
+### 9.5 `.gitignore` 的 `lib/` 误伤前端 `src/lib/`（交付必需，2026-10-05）
+
+- **问题**：仓库 `.gitignore` 那条 `lib/` 是 Python 打包规则，**按目录名匹配任意深度**，把 §3.3 要求新增的 `web/frontend/src/lib/textLimits.js`（上传上限接口的消费端 + 校验/提示纯函数）静默忽略了 —— `git status` 里看不到它，`git add <目录>` 也不会带上，交付就缺这一个文件，而 CI 不会报（它压根不在库里）。
+- **修法**：在 `lib/` 段后加锚定例外 `!web/frontend/src/lib/`（只解禁前端这个目录；Python 的 `lib/` 忽略规则不受影响）。
+- **验证**：`git status --ignored web/frontend/src/lib` → `??`（未忽略）；`git ls-files --others web/frontend/src/lib` → 仅 `web/frontend/src/lib/textLimits.js` 一条；目录里也只有这一个文件。
+- **判定**：这是**交付必需**，不是顺手改 —— 少这一行，§3.3 的产物永远进不了库。
+
 
 ## 10. 自检表（对照 Shiyu 的标准，逐条）
 
