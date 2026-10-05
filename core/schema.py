@@ -66,15 +66,23 @@ class PsycheProfile(BaseModel):
     soft_spots: list[str] = []       # 软肋：戳中会心软的点
 
 
-class SituationBehavior(BaseModel):
+class BehaviorCore(BaseModel):
+    """情境→行为：此人遇到某类情境时的具体做法。
+
+    存卡（`SituationBehavior`）与给模型的草稿（`core.card_draft.DraftBehavior`）共用的底：
+    两边都只写一次情境与做法，各自的附加字段（存卡的摘录、草稿的阶段标注）在子类上加。
+    """
+    situation: str           # 一类情境（不是某一章的某件事）
+    behavior: str            # 此人在这类情境下的具体做法
+
+
+class SituationBehavior(BehaviorCore):
     """情境→行为：此人遇到某类情境时的具体做法。
 
     挂在哪里就是它的适用范围：阶段下的（`ArcPhase.behaviors`）只在那个阶段成立，
     卡片顶层的（`CharacterCard.situation_behaviors`）从头到尾都成立。挂到哪里不由模型
     选，由 `core.card_draft.card_from_draft` 按模型标的阶段分发。
     """
-    situation: str           # 一类情境（不是某一章的某件事）
-    behavior: str            # 此人在这类情境下的具体做法
     source_quote: str = ""   # 原文摘录，只用于展示；落卡前核对，查不到即清空
 
 

@@ -504,7 +504,7 @@ def _run_distill_task(
 
         try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
-            card = card_from_draft(data)
+            card = card_from_draft(data, content)
         except Exception as exc:
             # ValidationError 的 str() 带字段名与输入值（可能含原文片段），只进日志
             logger.error("Card validation failed for %s: %s", name, exc, exc_info=True)
@@ -1123,7 +1123,9 @@ async def distill_stream(
 
         try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
-            card = card_from_draft(data)
+            # 位置检查要 normalize 整本原文（约 0.3s CPU），本生成器跑在事件循环线程上 ——
+            # 同步跑会堵住它，与上面 dialogue_candidates 同法挪进 to_thread。
+            card = await asyncio.to_thread(card_from_draft, data, content)
         except Exception as exc:
             logger.error("Card validation failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': '蒸馏失败：数据校验错误，请重试'}, ensure_ascii=False, default=str)}\n\n"

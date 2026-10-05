@@ -192,6 +192,7 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
         '   - phases：按故事顺序排列。只在心态或立场确实变了的地方分段，通常2-3个、最多4个；同一种心态下的不同场景不算新阶段。每个阶段都必须是此人还在场、还能与人交谈的时期，死亡、失踪、离场不单列为阶段。\n'
         '   - label：这一阶段的心态或立场（≤8字，如「隐忍不发」），不要写事件或结局（如「被逐出师门」「死去」）。\n'
         '   - state：一句话。句首用书里的具体事件或时段点明这是什么时候（如「被逐出师门之后」），不要写「前期」「中期」「后期」；再写此时的心态与行事方式。\n'
+        '   - anchor：标志这一阶段开始的一句原文（10-40字，逐字照抄）；阶段 1 可留空字符串。\n'
         '   - 阶段按 phases 的顺序从 1 开始编号，维度 O 用这个编号。'
     ),
     ("G3",
@@ -205,8 +206,7 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
         'O. 情境→行为：此人遇到某类情境时会怎么做，全部写进 situation_behaviors（6-12条），每条只写一次。\n'
         '   - situation：把情境抽象成一类（如「被人当众质疑」「有人向他求助」），不带人名、地名和只发生一次的细节。\n'
         '   - behavior：具体做法（说什么、做什么、怎么应对），≤60字，不要写形容词；负面做法（算计、欺骗、自私、记仇）照原文如实写，不美化、不改成直接发火。\n'
-        '   - source_quote：从原文原样复制一小段（10-40字）体现这个做法；找不到逐字原文就留空字符串。\n'
-        '   - phases：原文里此人在哪几个阶段这样做过，填维度 L 的阶段编号（如 [1, 2]）。只填原文里确实这样做过的阶段，不要因为性格没变就把其余阶段也填上。同一类情境在不同阶段做法不同的，分成两条，各标各的阶段。维度 L 的 phases 为空时，phases 写空数组 []。'
+        '   - occurrences：这个做法在原文里哪些阶段出现过，每个阶段各给一段**该阶段里**的原文摘录（10-40字，逐字照抄），写成 [{"phase": 1, "quote": "…"}]。只填原文里确实这样做过的阶段，不要因为性格没变就把其余阶段也填上。同一类情境在不同阶段做法不同的，分成两条，各标各的阶段。维度 L 没有阶段时只写一条，phase 填 0。'
     ),
 )
 _FORMAT_DIM_M = (
@@ -251,12 +251,12 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("character_arc",
         '  "character_arc": {\n'
         '    "axis": "从…到…",\n'
-        '    "phases": [{"label": "阶段心态", "state": "故事时期，此时的心态与行事方式"}]\n'
+        '    "phases": [{"label": "阶段心态", "state": "故事时期，此时的心态与行事方式", "anchor": "标志这一阶段开始的一句原文"}]\n'
         '  }'
     ),
     ("situation_behaviors",
         '  "situation_behaviors": [\n'
-        '    {"situation": "一类情境", "behavior": "具体做法", "source_quote": "原文摘录", "phases": [1, 2]}\n'
+        '    {"situation": "一类情境", "behavior": "具体做法", "occurrences": [{"phase": 1, "quote": "该阶段里的原文摘录"}, {"phase": 2, "quote": "该阶段里的原文摘录"}]}\n'
         '  ]'
     ),
     ("psyche",
@@ -287,8 +287,8 @@ _FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
     ("G4", '- psyche 是必需嵌套对象，triggers 和 soft_spots 放在 psyche 内部，不在顶层'),
     (None, '- 数组字段的元素形态按模板来：模板里写成【一句字符串】的，就输出一句字符串，不要改成对象'),
     ("G5", '- relationships 的每个元素是【对象】，含 target/relation/attitude/note 四个字段'),
-    ("G6", '- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state'),
-    ("G6", '- situation_behaviors 的每个元素是【对象】，含 situation/behavior/source_quote/phases；phases 是整数数组'),
+    ("G6", '- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state/anchor'),
+    ("G6", '- situation_behaviors 的每个元素是【对象】，含 situation/behavior/occurrences；occurrences 的每个元素是【对象】，含 phase/quote'),
     ("G4", '- 数字字段（openness/conscientiousness 等）输出整数，不要加引号'),
     (None, '- 所有字段必须按此模板输出，不要添加自定义字段'),
 )
@@ -1494,7 +1494,7 @@ class Distiller:
             action_label="distill", upstream_truncated=upstream_truncated,
         )
         try:
-            return card_from_draft(data)
+            return card_from_draft(data, text)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
@@ -1603,7 +1603,7 @@ class Distiller:
             action_label="distill_longcontext", upstream_truncated=upstream_truncated,
         )
         try:
-            return card_from_draft(data)
+            return card_from_draft(data, text)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
@@ -2204,7 +2204,7 @@ class Distiller:
             action_label="distill_format", upstream_truncated=upstream_truncated,
         )
         try:
-            card = card_from_draft(data)
+            card = card_from_draft(data, text)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc

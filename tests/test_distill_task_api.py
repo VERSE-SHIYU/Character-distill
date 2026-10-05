@@ -291,10 +291,12 @@ class _CardStubDistiller:
         return type(card).model_validate(card_dict)
 
 
-def _run_to_card(monkeypatch, store, distiller, *, task_id="tCard", user_id="usr_card"):
+def _run_to_card(monkeypatch, store, distiller, *, task_id="tCard", user_id="usr_card",
+                 content="正文"):
     """驱动 `_run_distill_task` 直到落卡：真 SQLiteStore + 假蒸馏器 / 假 TextManager。
 
     不走后台线程也不看进度帧（本段只验接线）：直接在本线程调，与 `TestA2Wiring` 同法。
+    `content` 就是任务的原文（默认 `"正文"`）—— 位置校正用例要让它与草稿里的摘录对得上。
     返回 (TextManager 收到的卡列表, 每次 `_set_task` 收到的增量)。
     """
     saved: list = []
@@ -322,7 +324,7 @@ def _run_to_card(monkeypatch, store, distiller, *, task_id="tCard", user_id="usr
         }
 
     D._run_distill_task(task_id, "txt_card", "", False, user_id,
-                        "正文", "story", object())
+                        content, "story", object())
     return saved, snapshots
 
 
