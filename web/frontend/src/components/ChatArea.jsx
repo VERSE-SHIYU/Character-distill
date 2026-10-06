@@ -26,6 +26,8 @@ import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 import ChatSessionList from './common/ChatSessionList'
 import SplitLayout, { PaneToggle } from './common/SplitLayout'
+import { applyKeyboardUrlOverrides, isGoalCheckEnabled } from '../keyboard/keyboardMode'
+import { installGoalCheck } from '../keyboard/goalCheck'
 
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
@@ -222,6 +224,7 @@ function ChatView() {
     ? `${currentText.filename} (${Number(currentText.char_count || 0).toLocaleString('zh-CN')}字)`
     : null
 
+  const rootRef = useRef(null)
   const listRef = useRef(null)
   const bottomRef = useRef(null)
   const cancelStreamRef = useRef(null)
@@ -407,6 +410,17 @@ function ChatView() {
     return () => window.visualViewport.removeEventListener('resize', handler)
   }, [])
 
+  // §1 目标检查：B1 开关 + C1–C3。默认关，?kbdcheck=1 才装。
+  useEffect(() => {
+    applyKeyboardUrlOverrides()
+    if (!isGoalCheckEnabled()) return undefined
+    return installGoalCheck({
+      getInputBar: () => rootRef.current?.querySelector('.composer-bar') ?? null,
+      getList: () => listRef.current,
+      getLastMessage: () => bottomRef.current?.previousElementSibling ?? null,
+    })
+  }, [])
+
   const loadMemories = useCallback(async () => {
     if (!cardId) return
     setMemoriesLoading(true)
@@ -496,7 +510,7 @@ function ChatView() {
   const geoLabel = geo ? (geo.country === '中国' ? (geo.region || '中国') : geo.country) : ''
 
   return (
-    <div className={`chat-view chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`} {...chatSwipeBack}>
+    <div ref={rootRef} className={`chat-view chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`} {...chatSwipeBack}>
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
       <SplitOrFullscreen
         open={historyOpen}
