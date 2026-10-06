@@ -1,5 +1,5 @@
 /**
- * U13 身份弹窗的阶段单选：有阶段卡渲染原生单选项、默认最后阶段；无阶段不渲染。
+ * U13 身份弹窗的阶段单选：**可按**的卡渲染原生单选项、默认最后阶段；无阶段 / 不可按不渲染。
  * 选中某项 → setArcPhase(cardId, k)。
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -37,7 +37,7 @@ beforeEach(() => {
 describe('U13 RoleSetupModal 阶段单选', () => {
   it('有阶段：渲染单选、默认选中最后阶段', () => {
     const { container } = render(
-      <RoleSetupModal isOpen characterName="甲" characterId="c1" arcPhases={PHASES} onConfirm={() => {}} />)
+      <RoleSetupModal isOpen characterName="甲" characterId="c1" arcPhases={PHASES} selectable onConfirm={() => {}} />)
     const radios = container.querySelectorAll('input[type="radio"]')
     expect(radios.length).toBe(3)
     expect(radios[2].checked).toBe(true)
@@ -45,7 +45,7 @@ describe('U13 RoleSetupModal 阶段单选', () => {
 
   it('选中阶段 1 → setArcPhase(cardId, 1)', () => {
     const { container } = render(
-      <RoleSetupModal isOpen characterName="甲" characterId="c1" arcPhases={PHASES} onConfirm={() => {}} />)
+      <RoleSetupModal isOpen characterName="甲" characterId="c1" arcPhases={PHASES} selectable onConfirm={() => {}} />)
     fireEvent.click(container.querySelectorAll('input[type="radio"]')[0])
     expect(store.setArcPhase).toHaveBeenCalledWith('c1', 1)
   })
