@@ -36,16 +36,27 @@ RELATIONSHIP_RULES = (
 )
 
 
-def _batch_prompt(prefix: str, batch: list[str], phases: list[str]) -> str:
+# 补跑那一次额外点明的一句：名单是我们给的，模型只需**逐字照抄** target，别改名、别用别称。
+# 名字对不上就看不出「谁还没回」，于是同一个人被当成缺人反复补、或反过来静默丢掉。
+_EXACT_TARGET_NOTE = "target 逐字使用上面名单里的写法：不要改名、不要用别称。"
+
+
+def _batch_prompt(prefix: str, batch: list[str], phases: list[str], *,
+                  exact: bool = False) -> str:
     """本批的提示词：调用方的 `prefix` 逐字在前（前缀一致缓存才命中），后面只换本批人物。
 
     `prefix` 是**共享前缀**（正文 / 组共享段），不含本步指令 —— 见 `_relationships_batched`
     的调用点与锁 S14：把主调用的系统提示整段拿来，维度 F 的「只出名单」会被带进来。
+
+    `exact=True` 时多一句「逐字照抄名单里的写法」（补跑那次用；首次没缺人就不加，避免
+    无谓地改动主路径的提示词）。
     """
     stage = "、".join(p for p in phases if p) or "（无阶段）"
+    exact_line = f"{_EXACT_TARGET_NOTE}\n" if exact else ""
     return (
         f"{prefix}\n\n"
         f"只产出这几个人物与主角的关系，其余人不要出现：{'、'.join(batch)}\n"
+        f"{exact_line}"
         f"阶段依次为：{stage}；每条关系按阶段给态度。\n"
         f"{RELATIONSHIP_RULES}\n"
         "输出 JSON 数组，每个元素含 target / relation / attitude / note，"
@@ -53,27 +64,62 @@ def _batch_prompt(prefix: str, batch: list[str], phases: list[str]) -> str:
     )
 
 
-def batch_relationships(targets: list[str], phases: list[str], *,
-                        stream_call: Callable[[str, list[str]], Any],
-                        prefix: str, batch_size: int = REL_BATCH_SIZE) -> list[dict]:
-    """按 `batch_size` 切批、批间并行，汇总成一份关系列表（顺序与 `targets` 一致）。
-
-    `stream_call(prompt, batch)` 由调用方注入，返回本批的关系条目（字典或模型皆可）。
-    任一批抛异常 → `RelationshipBatchError`，整步失败。
-    """
-    batches = [targets[i:i + batch_size] for i in range(0, len(targets), batch_size)]
-    if not batches:
-        return []
-
-    def _run(batch: list[str]) -> list:
-        return list(stream_call(_batch_prompt(prefix, batch, phases), batch) or [])
-
-    out: list[dict] = []
+def _fan_out(batches: list[list[str]], run: Callable[[list[str]], list]) -> list:
+    """并行跑各批并汇总（顺序 = 批序）；任一批抛异常 → `RelationshipBatchError`，整步失败。"""
+    out: list = []
     with ThreadPoolExecutor(max_workers=len(batches)) as pool:
-        futures = [C.ctx_submit(pool, _run, b) for b in batches]
+        futures = [C.ctx_submit(pool, run, b) for b in batches]
         for i, fut in enumerate(futures):
             try:
                 out.extend(fut.result())
             except Exception as exc:
                 raise RelationshipBatchError(f"第 {i + 1} 批关系生成失败：{exc}") from exc
     return out
+
+
+def batch_relationships(targets: list[str], phases: list[str], *,
+                        stream_call: Callable[[str, list[str]], Any],
+                        prefix: str, batch_size: int = REL_BATCH_SIZE) -> list[dict]:
+    """按 `batch_size` 切批、批间并行，汇总成一份关系列表（顺序与 `targets` 一致）。
+
+    `stream_call(prompt, batch)` 由调用方注入，返回本批的关系条目（dict 列表）。
+    任一批抛异常 → `RelationshipBatchError`，整步失败。
+
+    **完整性**（B2）：名单是**我们发出的**，模型只需逐字照抄 `target`（提示词里就这么写）。
+    故比对是**逐字字符串**：模型漏掉名单里的人，一次性补不齐就等于静默丢人 —— 缺人只对缺的
+    那些**补跑一次**（那次提示里点明「逐字使用名单里的写法」）；补跑后仍缺 →
+    `RelationshipBatchError` 点名是谁。名单外的条目（写错名 / 多写的）一律丢弃。
+
+    **不解析别名**：别名→标准名要名单（`{name, aliases}`），蒸馏入口拿不到（要读存储）；
+    分三步走的这条路里，第一步给名单、第二步照名单写，名字本就是同一批字符串，逐字比对上。
+    """
+    want: list[str] = []
+    seen: set[str] = set()
+    for t in targets:
+        if t and t not in seen:
+            seen.add(t)
+            want.append(t)
+    if not want:
+        return []
+
+    found: dict[str, dict] = {}
+
+    def _merge(rows: list) -> None:
+        for row in rows or []:
+            key = row.get("target")
+            if key in seen and key not in found:
+                found[key] = dict(row)
+
+    def _run(batch: list[str], *, exact: bool = False) -> list:
+        return list(stream_call(_batch_prompt(prefix, batch, phases, exact=exact), batch) or [])
+
+    _merge(_fan_out([want[i:i + batch_size] for i in range(0, len(want), batch_size)], _run))
+    missing = [k for k in want if k not in found]
+    if missing:
+        _merge(_fan_out(
+            [missing[i:i + batch_size] for i in range(0, len(missing), batch_size)],
+            lambda b: _run(b, exact=True)))
+        still = [k for k in want if k not in found]
+        if still:
+            raise RelationshipBatchError(f"关系生成缺少人物：{'、'.join(still)}")
+    return [found[k] for k in want]

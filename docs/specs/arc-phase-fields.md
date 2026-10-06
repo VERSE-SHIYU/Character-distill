@@ -347,6 +347,35 @@ experience 字段），修复后只在 `card_from_draft` 开头建一次。样�
 （口径内联回维度 F）打红 `S13`、`MB7`（组共享前缀退回整段格式提示）打红 `S14b`、`MB8`
 （阶段 note 不落卡）打红 `U23` —— 四条均实测 RED。
 
+### B2 关系完整性（2026-10-06，本步一个提交；Shiyu 更正后的口径）
+
+**缺陷**：主调用（维度 F / G5）只出关系**名单**，详情由 `core.relationship_batch` 按 10 人一批
+补。模型在某一批里漏掉一个（或把 target 写成别名 / 写错名）时，**整批仍算成功** —— 漏掉的那个人
+就被静默丢掉，落卡后从成品看不出来。既有的失败口径只覆盖「某一批抛异常」，不覆盖「这一批少回了一个」。
+
+**契约**：名单是**我们发出的**，提示词要求 `target` 逐字照抄，故比对是**逐字字符串**
+（`dedupe_relationship_targets` 同口径：`str(target)`）。**不做别名解析** —— 别名→标准名要
+`{name, aliases}` 名单，那要读存储（`character_roster.aliases_for`），蒸馏入口（`distill` /
+`distill_incremental` / `_distill_longcontext` / 组路径 / `fill_relationships`）手里都没有；
+让 `relationship_batch` 去认识 roster 又违反「本模块不认识 Distiller、roster」的注入原则。
+分三步走的这条路里，第一步给名单、第二步照名单写，名字本就是同一批字符串。
+
+**改法**（只动 `core/relationship_batch.py` 一处）：
+
+- 切批/并行/汇总抽成 `_fan_out(batches, run)`；首轮跑完全部批次后，按**逐字比对**算
+  `missing = [谁在名单里但没回]`。
+- `missing` 非空 → **只对缺的那些补跑一次**（补跑那次的提示词多一句 `_EXACT_TARGET_NOTE`：
+  「target 逐字使用上面名单里的写法」；首次不加，避免无谓改动主路径提示词）。
+- 补跑后仍缺 → `RelationshipBatchError(f"关系生成缺少人物：{'、'.join(still)}")` 点名是谁。
+- 名单外的条目（写错名 / 多写的）在 `_merge` 里丢弃；`target` 原样保留（不规范化）。
+
+**判据**：`U24`（漏 1 人 → 补回，且 `calls == [[全体], [缺的那个]]` —— 只多调 1 次、只补缺的）、
+`U25`（补后仍缺 → `RelationshipBatchError`，`match="乙"` 点名）、`U26`（写错名算缺人 + 名单外条目
+被丢弃）、`U28`（行为锁：`_relationships_batched` 每批经适配器的 `chat_stream_long` 而非 `chat`）。
+变异 `MB9`（缺人不补跑）打红 `U24`/`U26`、`MB10`（补后仍缺只丢人不报错）打红 `U25`；`MA19`
+的靶子从结构锁 `S9`（源码字面）改为行为锁 `U28` —— 原判据把调用换成非流式也照绿，正是
+「变异打不红 = 判据不具分辨力」。均实测 RED。
+
 ### 偏离与旁证（随步记录）
 
 - **B2 组路径/档案路径的共享前缀**：spec 只点名了「一次读完路径拆 `book_prefix`」与「组路径
@@ -358,6 +387,16 @@ experience 字段），修复后只在 `card_from_draft` 开头建一次。样�
   phases, source_text)` 改成 `verify(items, valid_rows, anchors)`（`anchors` 是新增的
   `PhaseAnchors` NamedTuple，含 `n / source_norm / ranges / reason`），`build_anchors(phases,
   source_text)` 是唯一的产地；`phase_ranges` 保持原签名（既有测试直接调它）。
+- **B2 完整性：取消别名注入（Shiyu 更正）**：初版按 spec 原文给 `batch_relationships` 加了
+  注入式 `canonical(name) -> 标准名`。核实后取消：`core/card_relationships.py` 里**没有**名字
+  规范化函数（只有逐字去重的 `str(target)`），而真正的别名→标准名要在存储里读名单
+  （`character_roster.aliases_for(chars, name)`），蒸馏入口拿不到。改为**逐字比对**、
+  `target` 原样保留；「模型用别名回话」不再算在场，算缺人（补跑提示里点明逐字照抄名单）。
+- **变异锚点维护（同段内必然）**：本步改写了 `_relationships_batched` 与 `_batch_prompt` 的
+  形态，牵动两处既有变异锚：`MB7` 的靶子名（`test_s14b_shared_prefix_producers_defined_once`
+  → `_is_a_real_shared_prefix`，上一步改名时漏改，本步一并修正）、`MA20` 的前缀锚（`_run`
+  多出的 `exact=exact` 实参）。另 `MA18` 的锚（`for i, fut in enumerate(futures):`，8 空格）
+  经 `_fan_out` 后仍在同一缩进、恰一命中，未改。
 - **旁证（非本段改动面）**：注册变异驱动 `tests/perf/arc_phase_anchoring_mutations.py` 有三条
   锚点已在更早的分支提交上失真（M17 锚 `row.occurrences`、M30 锚 `occurrences: list[...] = []`
   计数 3、M35 锚旧版 warning 文案），`_apply` 的「锚点恰一命中」会当场 assert，该驱动**跑不完**。

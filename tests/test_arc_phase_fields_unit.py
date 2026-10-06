@@ -475,10 +475,11 @@ def test_relationship_batch_prefix_passed_verbatim():
 
     def capture(prompt, batch):
         seen.append(prompt)
-        return []
+        return [{"target": t, "relation": "友"} for t in batch]
 
     batch_relationships(["甲", "乙"], ["阶段一"], stream_call=capture, prefix="SHARED-PREFIX")
     assert all("SHARED-PREFIX" in p for p in seen)
+    assert len(seen) == 1, "没人缺失就不该补跑（前缀判据只需看首批）"
 
 
 # ── U18 类型隔离 ────────────────────────────────────────────────────────
@@ -602,3 +603,109 @@ def test_relationship_note_flows_from_draft_to_projection():
     assert notes == {1: "普通同学", 2: "生死之交"}, "草稿的按阶段 note 没落进 phase_attitudes"
     assert project_card(card, 1)[0].relationships[0].note == "普通同学"
     assert project_card(card, 2)[0].relationships[0].note == "生死之交"
+
+
+# ── U24–U28 关系完整性：缺人补一次、别名算在场、名单外丢弃（B2，Shiyu 定）──
+
+def test_relationship_batch_recovers_missing_once():
+    """U24：模型漏掉名单里的人 → 只对缺的那些补跑一次，补齐后顺序照名单。
+
+    判据是「补跑且只补跑缺的人、且只一次」：把缺的人也算进补跑批，或补跑整批，
+    都在 `calls` 上看得见。
+    """
+    from core.relationship_batch import batch_relationships
+
+    calls: list[list[str]] = []
+
+    def fake(prompt: str, batch: list[str]):
+        calls.append(list(batch))
+        # 首批漏掉「乙」，补跑那批（只含「乙」）就答得出来。
+        return [{"target": t, "relation": "友"}
+                for t in batch if t != "乙" or len(calls) > 1]
+
+    out = batch_relationships(["甲", "乙", "丙"], ["阶段一"],
+                              stream_call=fake, prefix="P")
+
+    assert calls[0] == ["甲", "乙", "丙"], "首批不是全体"
+    assert calls[1] == ["乙"], "补跑的不是且只是缺的那个人"
+    assert len(calls) == 2, "补跑应恰好一次"
+    assert [r["target"] for r in out] == ["甲", "乙", "丙"], "补齐后没按名单顺序"
+
+
+def test_relationship_batch_missing_after_retry_raises():
+    """U25：补跑一次仍缺 → 整步失败，且点名是谁（不静默丢人）。
+
+    裸 `pytest.raises` 会被任何 `RelationshipBatchError` 满足（别的批失败也抛它），
+    故用 `match=` 钉住缺的人名。
+    """
+    from core.relationship_batch import batch_relationships, RelationshipBatchError
+
+    calls: list[list[str]] = []
+
+    def fake(prompt: str, batch: list[str]):
+        calls.append(list(batch))
+        return [{"target": t, "relation": "友"} for t in batch if t != "乙"]
+
+    with pytest.raises(RelationshipBatchError, match="乙"):
+        batch_relationships(["甲", "乙"], ["阶段一"], stream_call=fake, prefix="P")
+    assert len(calls) == 2, "应只补跑一次就失败"
+
+
+def test_relationship_batch_wrong_name_is_missing_and_extra_dropped():
+    """U26：写错名（不在名单里）的条目算缺人（要补跑）、且被丢弃，不混进草稿。
+
+    名单是我们发出的、提示词要求逐字照抄 target，故比对是**逐字字符串**：模型把「乙」
+    写成「宝玉」时，对不出「乙」已回 → 「宝玉」那条丢弃、「乙」判缺 → 补跑一次。
+    """
+    from core.relationship_batch import batch_relationships
+
+    calls: list[list[str]] = []
+
+    def fake(prompt: str, batch: list[str]):
+        calls.append(list(batch))
+        if len(calls) == 1:
+            # 首批：甲 回了，乙 被写成了名单外的「宝玉」。
+            return [{"target": "甲", "relation": "友"},
+                    {"target": "宝玉", "relation": "亲人"}]
+        return [{"target": t, "relation": "友"} for t in batch]
+
+    out = batch_relationships(["甲", "乙"], ["阶段一"], stream_call=fake, prefix="P")
+
+    assert calls == [["甲", "乙"], ["乙"]], "写错名没算缺人（或补跑的不是缺的那个）"
+    assert [r["target"] for r in out] == ["甲", "乙"], "名单外的条目混进来了 / 缺人没补齐"
+
+
+def test_relationships_batched_goes_through_stream():
+    """U28：`Distiller._relationships_batched` 每批真的走 `_collect_stream`（流式）。
+
+    非流式会撞生成轮的 45 s 单次 / 60 s 总墙钟（C20）。这是**行为锁**：原先 MA19 盯的
+    是源码里 `_collect_stream(` 的字面（把调用换成非流式也照绿），这里改成看模型适配器
+    实际收到的是 `chat_stream_long`（流式入口）而不是 `chat`（非流式入口）。
+    """
+    import json
+    from core.distiller import Distiller
+
+    streamed: list[str] = []
+    chatted: list[str] = []
+
+    class _LLM:
+        model = "stub-stream"
+        last_usage = None
+
+        def chat_stream_long(self, system, messages, max_tokens=None, **kw):
+            streamed.append(system)
+            yield json.dumps([{"target": "乙", "relation": "同窗"}], ensure_ascii=False)
+            return {"prompt_tokens": 1, "completion_tokens": 1}
+
+        def chat(self, system, messages, max_tokens=None, **kw):
+            chatted.append(system)
+            return "[]"
+
+    d = Distiller(llm=_LLM(), config_path=None)
+    draft = {"name": "甲", "relationships": [{"target": "乙"}]}
+    d._relationships_batched(draft, prefix="P",
+                            messages=[{"role": "user", "content": "x"}])
+
+    assert streamed, "关系分批没走流式（判据失去意义）"
+    assert not chatted, "关系分批走了非流式的 chat"
+    assert draft["relationships"][0]["relation"] == "同窗", "分批结果没写回草稿"

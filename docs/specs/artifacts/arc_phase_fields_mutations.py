@@ -147,14 +147,17 @@ MUTANTS = [
                      "        for i, fut in enumerate(futures[:-1]):")])], "RED"),
     ("MA18b 批大小越界", _u("test_relationship_batch_splits_and_merges"),
      [("repl", RB, [("REL_BATCH_SIZE = 10", "REL_BATCH_SIZE = 11")])], "RED"),
-    ("MA19 分批走非流式", _loc("test_s9_batches_go_through_collect_stream"),
+    # MA19 原靶子是结构锁 `test_s9_batches_go_through_collect_stream`（源码字面）。本段把靶子
+    # 换成行为锁 `test_relationships_batched_goes_through_stream`（看适配器收到的是流式入口还是
+    # 非流式入口）—— 与 MB13 同一条变异，两个编号各留一行，对账表与 §7 编号都能对上。
+    ("MA19 分批走非流式", _u("test_relationships_batched_goes_through_stream"),
      [("repl", DIST, [("            reply, truncated = self._collect_stream(\n"
                        '                prompt, messages, "关系生成", "distill_relationships")',
                        "            reply, truncated = self._chat_accounted(\n"
                        '                prompt, messages, "关系生成", "distill_relationships")')])], "RED"),
     ("MA20 分批前缀与主调用不同", _u("test_relationship_batch_prefix_passed_verbatim"),
-     [("repl", RB, [("        return list(stream_call(_batch_prompt(prefix, batch, phases), batch) or [])",
-                     "        return list(stream_call(_batch_prompt(prefix[:3], batch, phases), batch) or [])")])], "RED"),
+     [("repl", RB, [("        return list(stream_call(_batch_prompt(prefix, batch, phases, exact=exact), batch) or [])",
+                     "        return list(stream_call(_batch_prompt(prefix[:3], batch, phases, exact=exact), batch) or [])")])], "RED"),
     # ── core/context_engine.py：类型隔离 ──
     ("MA21 ContextEngine 收原卡不抛错", _u("test_projected_card_type_only_from_project_card"),
      [("repl", CTX, [("        self.card = require_projected(card)   # 原卡不进注入层（DA18）",
@@ -211,13 +214,31 @@ MUTANTS = [
                        "        '   关系的类型、态度与阶段变化由后续单独生成，这里**不要**写。'\n"
                        "        '单向视角：只写主角怎么看对方，不写对方怎么看主角。'")])], "RED"),
     ("MB7 组共享前缀塞进整段格式提示（B2 回归）",
-     _loc("test_s14b_shared_prefix_producers_defined_once"),
+     _loc("test_s14b_shared_prefix_is_a_real_shared_prefix"),
      [("repl", DIST, [("    return DISTILL_PROMPT_BEFORE_NAME + character_name + _FORMAT_SHARED_HEAD",
                        "    return DISTILL_PROMPT_BEFORE_NAME + character_name + format_prompt_after()")])], "RED"),
     ("MB8 阶段 note 不落卡（B7 的行为面）",
      _u("test_relationship_note_flows_from_draft_to_projection"),
      [("repl", CD, [('            {"phase": p, "attitude": att_map.get(p, ""), "note": note_map.get(p, "")}',
                      '            {"phase": p, "attitude": att_map.get(p, "")}')])], "RED"),
+    # MB9/MB10：B2 —— 关系完整性（缺人补一次、补不齐就点名，不静默丢人）。
+    ("MB9 缺人不补跑（B2 的旧形态：静默丢人）",
+     _u("test_relationship_batch_recovers_missing_once"),
+     [("repl", RB, [("    missing = [k for k in want if k not in found]\n"
+                     "    if missing:\n"
+                     "        _merge(_fan_out(\n"
+                     "            [missing[i:i + batch_size] for i in range(0, len(missing), batch_size)],\n"
+                     "            lambda b: _run(b, exact=True)))\n"
+                     "        still = [k for k in want if k not in found]\n"
+                     "        if still:\n"
+                     '            raise RelationshipBatchError(f"关系生成缺少人物：{\'、\'.join(still)}")\n',
+                     "    pass  # 变异：缺人不补跑\n")])], "RED"),
+    ("MB10 补跑后仍缺只丢人不报错（B2 的旧形态）",
+     _u("test_relationship_batch_missing_after_retry_raises"),
+     [("repl", RB, [("        still = [k for k in want if k not in found]\n"
+                     "        if still:\n"
+                     '            raise RelationshipBatchError(f"关系生成缺少人物：{\'、\'.join(still)}")',
+                     "        want = [k for k in want if k in found]  # 变异：静默丢掉还缺的人")])], "RED"),
 ]
 
 BASELINE_TARGETS = (U, READERS, "tests/test_arc_phase_fields_entries.py", LOC)
