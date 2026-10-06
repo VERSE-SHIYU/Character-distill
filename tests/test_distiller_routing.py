@@ -799,12 +799,21 @@ _FORMAT_GROUP_MARKERS = (
 _FORMAT_GROUP_ORDER = [g for g, _ in _FORMAT_GROUP_MARKERS]
 
 
+# 关系分批的提示词不是任何一个字段组（§4.5）：主调用只出名单，细节这一跳按 10 人一批补。
+# 认成一个「伪组」是为了让共用桩的那几个模块不必各自再写一支分支 —— 组回复里回详情即可。
+REL_BATCH_GROUP = "REL_BATCH"
+_REL_BATCH_MARKER = "只产出这几个人物与主角的关系"
+
+
 def _format_group_of(system: str) -> str | None:
-    """从格式化系统提示词认出组别；认不出返回 None（该断言的用例会因此变红）。"""
+    """从格式化系统提示词认出组别；关系分批那一跳返回 `REL_BATCH_GROUP`；认不出返回 None。"""
+    if _REL_BATCH_MARKER in system:
+        return REL_BATCH_GROUP
     for group, marker in _FORMAT_GROUP_MARKERS:
         if marker in system:
             return group
     return None
+
 
 def _timed(value: str) -> dict:
     """状态/经历类字段的草稿形态：一条取值 + 它在哪一段原文里成立（§4.2 由登记表派生）。"""
@@ -838,8 +847,8 @@ _SAMPLE_FIELD_VALUES = {
     "first_message": "你来了。",
     "cognitive": {"education_level": "普通", "knowledge_scope": [_timed("常识")],
                   "speech_style": [_timed("平实")], "vocabulary_level": "日常"},
-    "relationships": [{"target": "某人", "relation": "朋友", "attitude": "亲近",
-                       "note": "认识很久的朋友"}],
+    # G5 只出名单（维度 F）：细节由关系分批补齐，故组回复里只有 target。
+    "relationships": [{"target": "某人"}],
     "key_memories": [{"memory": "关键经历",
                       "occurrences": [{"phase": 1, "quote": "开头甲甲甲"}]}],
     "character_arc": {"axis": "从甲到乙", "phases": [{"label": "阶段一", "state": "开头时的状态"}]},
@@ -852,32 +861,49 @@ _SAMPLE_FIELD_VALUES = {
 }
 
 
+_SAMPLE_RELATION_DETAILS = [
+    {"target": "某人", "relation": "朋友", "attitude": "亲近", "note": "认识很久的朋友",
+     "attitudes": [{"phase": 1, "attitude": "亲近", "quote": ""}]},
+]
+
+
 def _group_reply(group: str) -> str:
-    """按组回一份字段齐备的 JSON —— 组字段表从 schema 读，不另抄一份。"""
+    """按组回一份字段齐备的 JSON —— 组字段表从 schema 读，不另抄一份。
+
+    `REL_BATCH_GROUP` 回关系详情（分批那一跳要的是 `list[DraftRelationship]`，不是字段组）。
+    """
+    if group == REL_BATCH_GROUP:
+        return json.dumps(_SAMPLE_RELATION_DETAILS, ensure_ascii=False)
     from core.schema import FORMAT_GROUPS as _FG
 
     return json.dumps({k: _SAMPLE_FIELD_VALUES[k] for k in _FG[group]})
 
 
 class TestFormatGroupsRunInParallel:
-    """WP7 F1 + 本段 §3.2：除 G5 外的组并行，G5 在 G6 返回后才启动。
+    """WP7 F1 + 本段 §4.4：不依赖阶段的组（G1/G5/G6）先并行，依赖组（G2/G3/G4）等 G6 返回后并行。
 
-    并行判据是 `threading.Barrier(len(FORMAT_GROUPS) - 1)`（G5 不参与）—— 除 G5 外的组必须
-    同时在跑，串行实现等不齐、2 s 后破障、该组失败，成品卡出不来（无 str 帧）。G5 的判据是
-    它的提示词带上了 G6 定出的阶段列表（G6 没先返回就拿不到），与 U20 同口径。记账判据是每组
-    一条 `distill_format`、各带不同 usage。组数从 `FORMAT_GROUPS` 读，不写死。
+    并行判据是两批各自的 `threading.Barrier`：串行实现等不齐、2 s 后破障、该组失败，
+    成品卡出不来（无 str 帧）。依赖判据是 G6 的事件早于依赖组的第一条事件，且依赖组的提示词
+    带上了 G6 定出的阶段列表（G6 没先返回两者都拿不到）。记账判据是每组一条 `distill_format`、
+    各带不同 usage。组划分从 `PHASE_DEPENDENT_GROUPS`（登记表推导）读，组数从 `FORMAT_GROUPS`
+    读，都不写死。
 
-    变异：① 所有组改回串行 ② G5 不等 G6 就启动（提示词缺 G6 的阶段列表）。
+    变异：① 所有组改回串行 ② 依赖组不等 G6 就启动（提示词缺 G6 的阶段列表）。
     """
 
     CHUNK = 3000
     TEXT = "AB" * (1500 * 50)   # 150000 字符 → 50 片（≤80，走单次合并）
 
-    def test_groups_run_in_parallel_and_g5_waits_for_g6(self, monkeypatch):
+    def test_dependent_groups_wait_for_g6_and_both_batches_run_parallel(self, monkeypatch):
+        from core.distiller import PHASE_DEPENDENT_GROUPS
+
         n_groups = len(FORMAT_GROUPS)
-        barrier = threading.Barrier(n_groups - 1, timeout=2)   # G5 不参与破障
+        first = [g for g in FORMAT_GROUPS if g not in PHASE_DEPENDENT_GROUPS]
+        second = sorted(PHASE_DEPENDENT_GROUPS)
+        barriers = {"first": threading.Barrier(len(first), timeout=2),
+                    "second": threading.Barrier(len(second), timeout=2)}
         events: list[str] = []
-        g5_systems: list[str] = []
+        dep_systems: list[str] = []
         rows: list[tuple[str, dict | None]] = []
 
         def _record(*, storage, llm, action, usage, source):
@@ -899,15 +925,17 @@ class TestFormatGroupsRunInParallel:
                 if "你正在整合关于" in system:
                     yield "合并结果"
                     return {"prompt_tokens": 1, "completion_tokens": 1}
+                if "只产出这几个人物与主角的关系" in system:   # 关系分批调用
+                    events.append("rel")
+                    yield json.dumps(_SAMPLE_RELATION_DETAILS, ensure_ascii=False)
+                    return {"prompt_tokens": 900, "completion_tokens": 90}
                 group = _format_group_of(system)
-                idx = _FORMAT_GROUP_ORDER.index(group) if group else -1
-                if group == "G5":         # G5 单独一条线，不参与破障
-                    g5_systems.append(system)
-                    events.append("group:G5")
-                else:
-                    barrier.wait()        # 串行实现到这里等不齐 → 破障
-                    events.append(f"group:{group}")
+                if group in PHASE_DEPENDENT_GROUPS:
+                    dep_systems.append(system)
+                barriers["first" if group in first else "second"].wait()
+                events.append(f"group:{group}")
                 yield _group_reply(group)
+                idx = _FORMAT_GROUP_ORDER.index(group)
                 return {"prompt_tokens": 10 + idx, "completion_tokens": idx}
 
         d = Distiller(llm=_LLM(), config_path=None)
@@ -931,8 +959,14 @@ class TestFormatGroupsRunInParallel:
         assert events[0] == "formatting", f"formatting 帧不在各组调用之前：{events}"
         assert sum(1 for e in events if e.startswith("group:")) == n_groups, events
         assert sum(1 for f in frames if isinstance(f, str)) == 1, "成品卡不是恰 1 个 str 帧"
-        # G5 等到了 G6：提示词带上了 G6 定出的阶段（G6 没先返回就拿不到）
-        assert g5_systems and "阶段一" in g5_systems[0], f"G5 没等 G6：{g5_systems[:1]}"
+        # 依赖组等到了 G6：G6 的事件在前，且提示词带上了 G6 定出的阶段
+        g6_at = events.index("group:G6")
+        assert all(events.index(f"group:{g}") > g6_at for g in second), (
+            f"依赖组没等 G6：{events}")
+        assert dep_systems and all("阶段一" in s for s in dep_systems), (
+            f"依赖组的提示词没带 G6 的阶段列表：{dep_systems[:1]}")
+        # 关系分批在依赖组之后跑（它要 G5 的名单 + G6 的阶段）
+        assert events.index("rel") > g6_at, events
 
 
 class TestBatchCountDecidesTotalMerge:
@@ -971,6 +1005,8 @@ class TestBatchCountDecidesTotalMerge:
                 if "你正在整合关于" in system:
                     reply = "合并乙" if mark in body else "合并甲"
                     seen["reduce"].append(reply)
+                elif "只产出这几个人物与主角的关系" in system:   # 关系分批，不算格式化组
+                    reply = json.dumps(_SAMPLE_RELATION_DETAILS, ensure_ascii=False)
                 else:
                     seen["format"].append(body)
                     reply = _group_reply(_format_group_of(system))

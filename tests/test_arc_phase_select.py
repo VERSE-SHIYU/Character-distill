@@ -150,16 +150,16 @@ def test_u16_export_includes_phase_memories():
     assert "死要面子" in blob or "不再分辩" in blob, "阶段记忆没标出所属阶段"
 
 
-# ── U20 分组蒸馏：G5 等 G6，其余组仍并行 ────────────────────────────────────
+# ── U20 分组蒸馏：依赖组（G2/G3/G4）等 G6，其余组先并行 ──────────────────────
 
-def test_u20_g5_waits_for_g6_and_others_stay_parallel(monkeypatch):
-    from test_distiller_routing import _FakeAsyncClient, _format_group_of, _group_reply
-    from core.distiller import Distiller
+def test_u20_dependent_groups_wait_for_g6(monkeypatch):
+    from test_distiller_routing import (
+        _FakeAsyncClient, _SAMPLE_RELATION_DETAILS, _format_group_of, _group_reply)
+    from core.distiller import Distiller, PHASE_DEPENDENT_GROUPS
 
-    n = len(FORMAT_GROUPS)
-    barrier = threading.Barrier(n - 1, timeout=2)   # 除 G5 外的组一起等破障
+    barrier = threading.Barrier(len(PHASE_DEPENDENT_GROUPS), timeout=2)   # 依赖组一起等破障
     events: list[str] = []
-    g5_systems: list[str] = []
+    dep_systems: list[str] = []
 
     class _LLM:
         last_usage = None
@@ -175,13 +175,14 @@ def test_u20_g5_waits_for_g6_and_others_stay_parallel(monkeypatch):
             if "你正在整合关于" in system:
                 yield "合并结果"
                 return {"prompt_tokens": 1, "completion_tokens": 1}
+            if "只产出这几个人物与主角的关系" in system:   # 关系分批调用
+                yield json.dumps(_SAMPLE_RELATION_DETAILS, ensure_ascii=False)
+                return {"prompt_tokens": 1, "completion_tokens": 1}
             group = _format_group_of(system)
-            if group == "G5":
-                g5_systems.append(system)
-                events.append("G5")
-            else:
-                barrier.wait()
-                events.append(group)
+            if group in PHASE_DEPENDENT_GROUPS:
+                dep_systems.append(system)
+                barrier.wait()          # 串行实现等不齐 → 破障
+            events.append(group)
             yield _group_reply(group)
             return {"prompt_tokens": 1, "completion_tokens": 1}
 
@@ -192,9 +193,10 @@ def test_u20_g5_waits_for_g6_and_others_stay_parallel(monkeypatch):
 
     cards = [f for f in frames if isinstance(f, str)]
     assert cards, f"没出卡：{[f for f in frames if isinstance(f, dict) and 'error' in f]}"
-    assert events.index("G6") < events.index("G5"), f"G5 没等 G6：{events}"
-    assert g5_systems and "阶段一" in g5_systems[0], (
-        f"G5 的提示词没带上 G6 的阶段列表：{g5_systems[:1]}")
+    assert events.index("G6") < min(events.index(g) for g in PHASE_DEPENDENT_GROUPS), (
+        f"依赖组没等 G6：{events}")
+    assert dep_systems and all("阶段一" in s for s in dep_systems), (
+        f"依赖组的提示词没带上 G6 的阶段列表：{dep_systems[:1]}")
 
 
 # ── U21 / E10 投影只在构造处：ChatEngine 拿到的就是投影卡 ────────────────────

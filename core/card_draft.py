@@ -71,7 +71,12 @@ class DraftAttitude(BaseModel):
 
 
 class DraftRelationship(Relationship):
-    """一条关系：`attitudes` 按阶段给态度，转卡时按位置检查分发到 `phase_attitudes`。"""
+    """一条关系：`attitudes` 按阶段给态度，转卡时按位置检查分发到 `phase_attitudes`。
+
+    `relation` 在草稿里可以有默认值：主调用（维度 F）只出对象名单（只有 target），
+    关系详情由 `_relationships_batched` 按批补齐后再转卡。
+    """
+    relation: str = ""
     attitudes: list[DraftAttitude] = []
 
 
