@@ -44,7 +44,7 @@ export function evaluateGoalCheck({ inputRect, lastRect, listBottomPadding, vv, 
     gap,
     overlap,
     listBottomPadding,
-    pushedUp: vv.offsetTop,
+    offsetTop: vv.offsetTop,
     viewHeight: vv.height,
     windowHeight,
   }
@@ -56,7 +56,7 @@ export function formatReport(label, r) {
   return [
     `[${label}] C1 ${mark(r.c1)}  C2 ${mark(r.c2)}  C3 ${mark(r.c3)}`,
     `输入栏 ${r.inputTop.toFixed(0)}–${r.inputBottom.toFixed(0)}  末条底 ${r.lastBottom.toFixed(0)}  间距 ${r.gap.toFixed(0)}  留白 ${r.listBottomPadding}`,
-    `推上去 ${r.pushedUp.toFixed(0)}  可视高 ${r.viewHeight.toFixed(0)}  窗口高 ${r.windowHeight}`,
+    `offsetTop ${r.offsetTop.toFixed(0)}  pageTop ${r.pageTop.toFixed(0)}  scrollY ${r.scrollY.toFixed(0)}  可视高 ${r.viewHeight.toFixed(0)}  窗口高 ${r.windowHeight}`,
   ].join('\n')
 }
 
@@ -85,7 +85,7 @@ export function installGoalCheck({
       overlay.setAttribute('data-kbd-goalcheck', '')
       Object.assign(overlay.style, {
         position: 'fixed',
-        top: '0',
+        top: '0px',
         left: '0',
         right: '0',
         zIndex: '2147483647',
@@ -93,7 +93,7 @@ export function installGoalCheck({
         background: 'rgba(0,0,0,.72)',
         color: '#0f0',
         font: '12px/1.45 ui-monospace, Menlo, monospace',
-        padding: '4px 8px',
+        padding: 'calc(4px + env(safe-area-inset-top)) 8px 4px',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-all',
       })
@@ -102,9 +102,19 @@ export function installGoalCheck({
     return overlay
   }
 
+  // P1：浮层是 position:fixed，跟的是 layout viewport；页面被键盘顶起时它会被
+  // 推出可视区（home screen 模式下还被灵动岛盖住）。每次写入把 top 顶到
+  // visual viewport 顶端，scroll/resize 时再同步一次。
+  const syncTop = () => {
+    if (overlay && win.visualViewport) {
+      overlay.style.top = `${win.visualViewport.offsetTop}px`
+    }
+  }
+
   const write = (text) => {
     const el = ensureOverlay()
     el.textContent = el.textContent ? `${el.textContent}\n${text}` : text
+    syncTop()
   }
 
   let timers = []
@@ -129,15 +139,18 @@ export function installGoalCheck({
     const listBottomPadding = listEl
       ? (parseFloat(win.getComputedStyle(listEl).paddingBottom) || 0)
       : 0
-    write(
-      formatReport(label, evaluateGoalCheck({
-        inputRect: barEl.getBoundingClientRect(),
-        lastRect: lastEl.getBoundingClientRect(),
-        listBottomPadding,
-        vv: vvp,
-        windowHeight: win.innerHeight,
-      })),
-    )
+    const report = evaluateGoalCheck({
+      inputRect: barEl.getBoundingClientRect(),
+      lastRect: lastEl.getBoundingClientRect(),
+      listBottomPadding,
+      vv: vvp,
+      windowHeight: win.innerHeight,
+    })
+    // P2：页面顶起未必落在 offsetTop 上，也可能表现为文档滚动 / 根节点位移
+    // （ChatUI 的 viewportTop 就是量根节点 rect.top）。三个数一起报才判断得了。
+    report.pageTop = Math.abs(doc.documentElement.getBoundingClientRect().top)
+    report.scrollY = win.scrollY
+    write(formatReport(label, report))
   }
 
   const onFocusIn = (e) => {
@@ -149,8 +162,16 @@ export function installGoalCheck({
 
   doc.addEventListener('focusin', onFocusIn, true)
 
+  const vvp = win.visualViewport
+  if (vvp) {
+    vvp.addEventListener('scroll', syncTop)
+    vvp.addEventListener('resize', syncTop)
+  }
+
   return () => {
     doc.removeEventListener('focusin', onFocusIn, true)
+    vvp?.removeEventListener('scroll', syncTop)
+    vvp?.removeEventListener('resize', syncTop)
     clearTimers()
     overlay?.remove()
     overlay = null

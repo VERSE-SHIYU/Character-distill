@@ -7,7 +7,24 @@ import {
 } from './goalCheck'
 
 const rect = (top, bottom) => ({ top, bottom, height: bottom - top })
-const vv = (offsetTop, height) => ({ offsetTop, height })
+
+// visualViewport stub that also behaves as an EventTarget, so installGoalCheck
+// can subscribe to scroll/resize. `emit` drives the listeners by hand.
+const vv = (offsetTop, height) => {
+  const listeners = {}
+  return {
+    offsetTop,
+    height,
+    _listeners: listeners,
+    addEventListener: (t, fn) => {
+      ;(listeners[t] ||= []).push(fn)
+    },
+    removeEventListener: (t, fn) => {
+      listeners[t] = (listeners[t] || []).filter((f) => f !== fn)
+    },
+    emit: (t) => (listeners[t] || []).slice().forEach((fn) => fn()),
+  }
+}
 
 describe('evaluateGoalCheck — C1 输入栏在键盘上方', () => {
   it('passes when the input bar lies fully inside the visual viewport', () => {
@@ -90,6 +107,69 @@ describe('evaluateGoalCheck — C3 消息区不是空白', () => {
   })
 })
 
+// P3：判据里不把 offsetTop 算进去会翻转结论的样本。单个样本同时覆盖
+// C1（视觉区下界）与 C3（末条可见高度）。
+describe('evaluateGoalCheck — offsetTop 参与判据（P3）', () => {
+  const inputRect = rect(700, 780)
+  const lastRect = rect(600, 690)
+
+  it('offsetTop>0 时三项全过；忽略 offsetTop 会把 C1、C3 翻成不过', () => {
+    const withOffset = evaluateGoalCheck({
+      inputRect,
+      lastRect,
+      listBottomPadding: 80,
+      vv: vv(200, 600),
+      windowHeight: 600,
+    })
+    expect(withOffset).toMatchObject({ c1: true, c2: true, c3: true })
+
+    const ignored = evaluateGoalCheck({
+      inputRect,
+      lastRect,
+      listBottomPadding: 80,
+      vv: vv(0, 600),
+      windowHeight: 600,
+    })
+    expect(ignored).toMatchObject({ c1: false, c3: false })
+  })
+})
+
+// 边界（含等号）——判据用 >= / <=，写成 > / < 会在这里变红。
+describe('evaluateGoalCheck — 边界（含等号）', () => {
+  it('C1：输入栏顶与视觉区顶重合算过', () => {
+    const r = evaluateGoalCheck({
+      inputRect: rect(0, 80),
+      lastRect: rect(-100, -10),
+      listBottomPadding: 0,
+      vv: vv(0, 800),
+      windowHeight: 800,
+    })
+    expect(r.c1).toBe(true)
+  })
+
+  it('C1：输入栏底与视觉区底重合算过', () => {
+    const r = evaluateGoalCheck({
+      inputRect: rect(720, 800),
+      lastRect: rect(600, 690),
+      listBottomPadding: 0,
+      vv: vv(0, 800),
+      windowHeight: 800,
+    })
+    expect(r.c1).toBe(true)
+  })
+
+  it('C3：恰好 20px 可见算过', () => {
+    const r = evaluateGoalCheck({
+      inputRect: rect(700, 780),
+      lastRect: rect(600, 620),
+      listBottomPadding: 80,
+      vv: vv(0, 800),
+      windowHeight: 800,
+    })
+    expect(r.c3).toBe(true)
+  })
+})
+
 describe('evaluateGoalCheck — reported extras', () => {
   it('echoes the pushed-up distance, view height and window height', () => {
     const r = evaluateGoalCheck({
@@ -99,7 +179,7 @@ describe('evaluateGoalCheck — reported extras', () => {
       vv: vv(150, 600),
       windowHeight: 800,
     })
-    expect(r.pushedUp).toBe(150)
+    expect(r.offsetTop).toBe(150)
     expect(r.viewHeight).toBe(600)
     expect(r.windowHeight).toBe(800)
   })
@@ -117,7 +197,9 @@ describe('formatReport', () => {
       gap: 10,
       overlap: 40,
       listBottomPadding: 80,
-      pushedUp: 0,
+      offsetTop: 0,
+      pageTop: 120,
+      scrollY: 0,
       viewHeight: 800,
       windowHeight: 800,
     })
@@ -125,6 +207,10 @@ describe('formatReport', () => {
     expect(line).toContain('C1')
     expect(line).toContain('C2')
     expect(line).toContain('C3')
+    // P2：三个数都要出现在读数里
+    expect(line).toContain('offsetTop 0')
+    expect(line).toContain('pageTop 120')
+    expect(line).toContain('scrollY 0')
   })
 })
 
@@ -133,11 +219,9 @@ describe('installGoalCheck — 聚焦后 800ms、2000ms 各量一次', () => {
   let getList
   let getLastMessage
   let uninstall
-  let doc
 
   beforeEach(() => {
     vi.useFakeTimers()
-    doc = document
     document.body.innerHTML = ''
     window.visualViewport = vv(0, 800)
 
@@ -213,5 +297,61 @@ describe('installGoalCheck — 聚焦后 800ms、2000ms 各量一次', () => {
     uninstall = null
     vi.advanceTimersByTime(2000)
     expect(overlay()).toBeNull()
+  })
+
+  // P1：浮层是 position:fixed，会跟着 layout viewport 走；页面被键盘顶起时
+  // 必须把 top 设成 visualViewport.offsetTop 才留在可视区内。
+  it('P1: 浮层 top 跟着 visualViewport.offsetTop', () => {
+    window.visualViewport.offsetTop = 120
+    document.querySelector('textarea').focus()
+    vi.advanceTimersByTime(800)
+    expect(overlay().style.top).toBe('120px')
+  })
+
+  it('P1: visual viewport scroll（offsetTop 变化）后 top 更新', () => {
+    document.querySelector('textarea').focus()
+    vi.advanceTimersByTime(800)
+    window.visualViewport.offsetTop = 260
+    window.visualViewport.emit('scroll')
+    expect(overlay().style.top).toBe('260px')
+  })
+
+  it('P1: visual viewport resize 后 top 更新', () => {
+    document.querySelector('textarea').focus()
+    vi.advanceTimersByTime(800)
+    window.visualViewport.offsetTop = 180
+    window.visualViewport.emit('resize')
+    expect(overlay().style.top).toBe('180px')
+  })
+
+  it('P1: 卸载时摘掉 visualViewport 监听', () => {
+    document.querySelector('textarea').focus()
+    vi.advanceTimersByTime(800)
+    // 装上了才谈得上摘（防「从没加过」误绿）
+    const attached = Object.values(window.visualViewport._listeners).flat().length
+    expect(attached).toBeGreaterThan(0)
+    uninstall()
+    uninstall = null
+    const left = Object.values(window.visualViewport._listeners).flat().length
+    expect(left).toBe(0)
+  })
+
+  // P2：读数里同时显示 offsetTop、pageTop、scrollY。
+  it('P2: 读数显示 offsetTop / pageTop / scrollY', () => {
+    window.visualViewport.offsetTop = 40
+    Object.defineProperty(window, 'scrollY', { value: 55, configurable: true })
+    const original = document.documentElement.getBoundingClientRect
+    document.documentElement.getBoundingClientRect = () => rect(-120, 0)
+    try {
+      document.querySelector('textarea').focus()
+      vi.advanceTimersByTime(800)
+      const t = overlay().textContent
+      expect(t).toContain('offsetTop 40')
+      expect(t).toContain('pageTop 120')
+      expect(t).toContain('scrollY 55')
+    } finally {
+      document.documentElement.getBoundingClientRect = original
+      Object.defineProperty(window, 'scrollY', { value: 0, configurable: true })
+    }
   })
 })
