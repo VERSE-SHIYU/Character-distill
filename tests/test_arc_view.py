@@ -177,10 +177,10 @@ def test_u17_no_phase_attitudes_kept_at_mid_phase():
 
 
 # ── U18 台词投影 + phase_of 边界 ───────────────────────────────
-def test_u18_dialogues_top_plus_phase_k():
-    # 本段 DA15 把对白示例归状态类：顶层 + 阶段 k（不再累加 1..k）。
+def test_u18_dialogues_phase_k_first_then_top():
+    # 本段 DA15 把对白示例归状态类：阶段 k 特有在前 + 顶层（不再累加 1..k；B3 顺序契约）。
     card, _ = av.project_card(_card(), 2)
-    assert card.dialogue_examples == ["dt", "d2"]
+    assert card.dialogue_examples == ["d2", "dt"]
 
 
 def test_u18_phase_of_boundary_is_later_phase():

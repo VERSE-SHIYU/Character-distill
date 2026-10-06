@@ -123,7 +123,7 @@ C27. 线上模型是 `deepseek-flash`（`adapters/llm_adapter.py:717` `_FALLBACK
 | 类别 | 投影规则 | 路径 |
 |---|---|---|
 | 稳定 | 原样 | `name`、`identity`、`background`、`speaking_style.vocabulary_level`、`speaking_style.taboo_words`、`cognitive.education_level`、`cognitive.vocabulary_level`、`psyche.openness/conscientiousness/extraversion/agreeableness/neuroticism/affinity_baseline/volatility/grudge_inertia`（数值归③再议） |
-| 状态（列表） | 顶层 + 阶段 k | `personality_traits`、`values`、`inner_tensions`、`emotional_patterns`、`speaking_style.catchphrases`、`psyche.triggers`、`psyche.soft_spots`、`dialogue_examples`（DA15） |
+| 状态（列表） | 阶段 k 特有在前 + 顶层（B3 顺序契约：读者按 `[:3]`/`[:2]` 取前几条时，阶段 k 的条目不被全程条目挤掉） | `personality_traits`、`values`、`inner_tensions`、`emotional_patterns`、`speaking_style.catchphrases`、`psyche.triggers`、`psyche.soft_spots`、`dialogue_examples`（DA15） |
 | 状态（单值） | 阶段 k 有值用之，否则顶层 | `decision_style`、`speaking_style.tone`、`speaking_style.sentence_pattern`、`cognitive.speech_style` |
 | 经历（列表） | 顶层 + 1..k | `key_memories` |
 | 经历（单值） | 顶层 + 1..k 用「；」连接 | `cognitive.knowledge_scope` |
@@ -376,6 +376,25 @@ experience 字段），修复后只在 `card_from_draft` 开头建一次。样�
 的靶子从结构锁 `S9`（源码字面）改为行为锁 `U28` —— 原判据把调用换成非流式也照绿，正是
 「变异打不红 = 判据不具分辨力」。均实测 RED。
 
+### B3 状态列表顺序契约（2026-10-06，本步一个提交）
+
+**缺陷**：投影把状态类列表拼成 `顶层 + 阶段 k`（全程在前）。但真正消费这些列表的 6 处读者都
+**按 N 取前几条**（`[:3]` / `[:2]`）——`chat_engine` 软肋 / 雷点 `[:3]`、`context_engine` 对话示范
+`[:3]`、`affinity_service` `values[:3]` / `inner_tensions[:2]`、`opening` 性格 `[:3]`。顶层条目一到
+N，阶段 k 才成立的人设就被整段切掉 —— 与「选阶段 k 只看到阶段 k 那个人」直接冲突，且从成品看不出来。
+
+**契约**（写进 `project_card` docstring，读者可依赖）：状态类列表 = **阶段 k 特有在前 + 全程在后**。
+经历类列表仍是顶层在前 + 1..k（读者整体使用，不取前 N），不受影响。
+
+**改法**（只动 `core/arc_view.py` 一行）：`set_path(proj, path, base + list(kth or []))`
+→ `set_path(proj, path, list(kth or []) + base)`。规则仍在 `REGISTRY` 循环里通用执行，不写字段名分支。
+
+**判据**：`U2`（改名 `test_state_list_is_phase_k_first_then_top`，断言 `["二", "全程"]`）、`U4`（嵌套
+路径 `catchphrases` / `triggers` 顺序）、`test_arc_view::U18`（`dialogue_examples == ["d2", "dt"]`）；
+读者侧新增 `tests/test_arc_phase_fields_readers.py::test_b3_*` 六条 —— 每处让顶层恰好 ≥N 条、阶段 k
+加一条独有标记，断言标记仍进得了读者产出（先证对 `base + kth` 老顺序全红、改后全绿）。变异 `MA1`
+（取 1..k 累加）/`MA2`（取全部阶段）/`MA3`（丢顶层）靶子与锚随之更新，均实测 RED。
+
 ### 偏离与旁证（随步记录）
 
 - **B2 组路径/档案路径的共享前缀**：spec 只点名了「一次读完路径拆 `book_prefix`」与「组路径
@@ -397,6 +416,10 @@ experience 字段），修复后只在 `card_from_draft` 开头建一次。样�
   → `_is_a_real_shared_prefix`，上一步改名时漏改，本步一并修正）、`MA20` 的前缀锚（`_run`
   多出的 `exact=exact` 实参）。另 `MA18` 的锚（`for i, fut in enumerate(futures):`，8 空格）
   经 `_fan_out` 后仍在同一缩进、恰一命中，未改。
+- **B3 顺序契约：两处既有测试改名（同段内必然）**：顺序翻转后 `test_state_list_is_top_plus_phase_k`
+  （状态）与 `test_u18_dialogues_top_plus_phase_k`（对白）两个名字已与事实相反，随内容一并改为
+  `..._phase_k_first_then_top`；`MA1`/`MA2`/`MA3` 的靶子名与载荷锚同步更新。这两处改名属本步改动
+  的直接后果，不另计偏离。
 - **旁证（非本段改动面）**：注册变异驱动 `tests/perf/arc_phase_anchoring_mutations.py` 有三条
   锚点已在更早的分支提交上失真（M17 锚 `row.occurrences`、M30 锚 `occurrences: list[...] = []`
   计数 3、M35 锚旧版 warning 文案），`_apply` 的「锚点恰一命中」会当场 assert，该驱动**跑不完**。

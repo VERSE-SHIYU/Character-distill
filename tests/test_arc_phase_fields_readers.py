@@ -126,6 +126,93 @@ def test_quotes_cover_overlay():
     assert "character_arc.phases[].overlay.key_memories[]" in VERIFIED_FIELDS
 
 
+# ── B3：顶层列表已满「取前 N」时，阶段 k 的条目仍进得了读者 ────────────────────
+#
+# 下面六处读者按 N 取前几条（`[:3]` / `[:2]`）。投影若把全程条目排在前，顶层条数一
+# 到 N，阶段 k 才成立的人设就被整段切掉。每处都让顶层 ≥N 条、阶段 k 加一条独有标记，
+# 断言标记仍出现在读者产出里（阶段 k 特有在前 + 全程在后）。
+
+def test_b3_chat_soft_spots_reach_reader():
+    """chat_engine `_build_affinity_persona_block`：软肋 `[:3]`。"""
+    from core.chat_engine import ChatEngine
+
+    c = make_card(2)
+    c.psyche.soft_spots = ["顶软1", "顶软2", "顶软3"]      # 顶层已 3 条 = 读者上界
+    set_overlay(c, 0, "psyche.soft_spots", ["阶段一软肋"])
+
+    eng = ChatEngine(None, None, c, arc_phase=1, storage=None,
+                     session_id="s", is_new_session=True)
+    assert "阶段一软肋" in eng._build_affinity_persona_block()
+
+
+def test_b3_chat_triggers_reach_reader():
+    """chat_engine `_build_affinity_persona_block`：雷点 `[:3]`。"""
+    from core.chat_engine import ChatEngine
+
+    c = make_card(2)
+    c.psyche.triggers = ["顶雷1", "顶雷2", "顶雷3"]
+    set_overlay(c, 0, "psyche.triggers", ["阶段一雷"])
+
+    eng = ChatEngine(None, None, c, arc_phase=1, storage=None,
+                     session_id="s", is_new_session=True)
+    assert "阶段一雷" in eng._build_affinity_persona_block()
+
+
+def test_b3_dialogue_examples_reach_reader():
+    """context_engine `_build_card_ext`：对话示范 `[:3]`。"""
+    from core.arc_view import project_card
+    from core.context_engine import ContextEngine
+
+    c = make_card(2)
+    c.dialogue_examples = ["顶对白1", "顶对白2", "顶对白3"]
+    set_overlay(c, 0, "dialogue_examples", ["阶段一对白"])
+
+    eng = ContextEngine(project_card(c, 1)[0], rag=None, storage=None)
+    text = eng._build_card_core() + eng._build_card_ext()
+    assert "阶段一对白" in text
+
+
+def test_b3_affinity_values_reach_reader():
+    """affinity_service `build_evaluation_prompt`：性格特征 `values[:3]`。"""
+    from core.affinity_service import AffinityService
+    from core.arc_view import project_card
+
+    c = make_card(2)
+    c.values = ["顶值1", "顶值2", "顶值3"]
+    set_overlay(c, 0, "values", ["阶段一价值"])
+
+    prompt = AffinityService().build_evaluation_prompt(
+        project_card(c, 1)[0], "你好", "回应", "甲", "一般")
+    assert "阶段一价值" in prompt
+
+
+def test_b3_affinity_tensions_reach_reader():
+    """affinity_service `build_evaluation_prompt`：内在矛盾 `inner_tensions[:2]`。"""
+    from core.affinity_service import AffinityService
+    from core.arc_view import project_card
+
+    c = make_card(2)
+    c.inner_tensions = ["顶矛1", "顶矛2"]                  # 顶层已 2 条 = 读者上界
+    set_overlay(c, 0, "inner_tensions", ["阶段一矛盾"])
+
+    prompt = AffinityService().build_evaluation_prompt(
+        project_card(c, 1)[0], "你好", "回应", "甲", "一般")
+    assert "阶段一矛盾" in prompt
+
+
+def test_b3_opening_traits_reach_reader():
+    """opening `build_opening_prompt`：性格 `personality_traits[:3]`。"""
+    from core.arc_view import project_card
+    from core.opening import build_opening_prompt
+
+    c = make_card(2)
+    c.personality_traits = ["顶性1", "顶性2", "顶性3"]
+    set_overlay(c, 0, "personality_traits", ["阶段一性格"])
+
+    prompt = build_opening_prompt(project_card(c, 1)[0], user_role="甲")
+    assert "阶段一性格" in prompt
+
+
 def test_guard_covers_overlay():
     from core.moderation.card_guard import leaf_texts
 

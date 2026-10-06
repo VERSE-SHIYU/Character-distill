@@ -70,19 +70,19 @@ def _loc(name: str) -> str:
 # (编号, 靶子测试, [(动作, 文件, 载荷)], 期望)
 MUTANTS = [
     # ── core/arc_view.py：通用投影 ──
-    ("MA1 放宽 状态取 1..k 累加", _u("test_state_list_is_top_plus_phase_k"),
+    ("MA1 放宽 状态取 1..k 累加（B3 顺序契约）", _u("test_state_list_is_phase_k_first_then_top"),
      [("repl", AV, [("                base = list(get_path(proj, path) or [])\n"
-                     "                set_path(proj, path, base + list(kth or []))",
+                     "                set_path(proj, path, list(kth or []) + base)",
                      "                base = list(get_path(proj, path) or [])\n"
-                     "                set_path(proj, path, base + [x for p in phases[:k]"
-                     " for x in (p.overlay.get(path) or [])])")])], "RED"),
-    ("MA2 放宽 状态取全部阶段", _u("test_state_list_is_top_plus_phase_k"),
-     [("repl", AV, [("                set_path(proj, path, base + list(kth or []))",
-                     "                set_path(proj, path, base + [x for p in phases"
-                     " for x in (p.overlay.get(path) or [])])")])], "RED"),
-    ("MA3 过严 状态丢顶层", _u("test_state_list_is_top_plus_phase_k"),
+                     "                set_path(proj, path, list(kth or []) + base"
+                     " + [x for p in phases[:k] for x in (p.overlay.get(path) or [])])")])], "RED"),
+    ("MA2 放宽 状态取全部阶段", _u("test_state_list_is_phase_k_first_then_top"),
+     [("repl", AV, [("                set_path(proj, path, list(kth or []) + base)",
+                     "                set_path(proj, path, [x for p in phases"
+                     " for x in (p.overlay.get(path) or [])] + base)")])], "RED"),
+    ("MA3 过严 状态丢顶层", _u("test_state_list_is_phase_k_first_then_top"),
      [("repl", AV, [("                base = list(get_path(proj, path) or [])\n"
-                     "                set_path(proj, path, base + list(kth or []))",
+                     "                set_path(proj, path, list(kth or []) + base)",
                      "                base = list(get_path(proj, path) or [])\n"
                      "                set_path(proj, path, list(kth or []))")])], "RED"),
     ("MA4 过严 标量阶段空时不回落顶层", _u("test_state_scalar_falls_back_to_top"),

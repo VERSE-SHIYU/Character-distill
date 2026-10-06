@@ -138,6 +138,11 @@ def project_card(card: CharacterCard, arc_phase: int | None) -> tuple[ProjectedC
 
     除弧线 / 关系 / 开场白这些专门投影（`_project_custom`）外，全按 `REGISTRY` 通用执行 ——
     不写字段名分支（S2）。
+
+    **列表顺序是读者依赖的契约（B3）**：状态类列表 = **阶段 k 特有在前 + 全程在后**。
+    读者按 N 取前几条（`[:3]` / `[:2]`）时，阶段 k 才成立的人设排在最前，不会被顶层的
+    全程条目挤掉（顶层条目 ≥N 时尤其）。经历类列表仍是顶层在前 + 1..k（读者整体使用，
+    不取前 N）。
     """
     view = arc_view(card, arc_phase)
     k = view.k
@@ -149,7 +154,7 @@ def project_card(card: CharacterCard, arc_phase: int | None) -> tuple[ProjectedC
         if spec.layer == "state":
             if spec.kind == "list":
                 base = list(get_path(proj, path) or [])
-                set_path(proj, path, base + list(kth or []))
+                set_path(proj, path, list(kth or []) + base)
             elif kth:
                 set_path(proj, path, kth)
         elif spec.layer == "experience":

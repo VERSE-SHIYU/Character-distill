@@ -66,8 +66,8 @@ def test_registry_every_entry_has_layer_and_kind():
 
 # ── U2/U3/U4/U5/U6 投影规则 ───────────────────────────────────────────────
 
-def test_state_list_is_top_plus_phase_k():
-    """U2：状态（列表）= 顶层 + 阶段 k，不累加、不取全书。"""
+def test_state_list_is_phase_k_first_then_top():
+    """U2：状态（列表）= 阶段 k 特有在前 + 全程在后，不累加、不取全书（B3 顺序契约）。"""
     from core.arc_view import project_card
 
     c = make_card(3)
@@ -76,8 +76,8 @@ def test_state_list_is_top_plus_phase_k():
     set_overlay(c, 1, "personality_traits", ["二"])
     set_overlay(c, 2, "personality_traits", ["三"])
 
-    assert project_card(c, 2)[0].personality_traits == ["全程", "二"]
-    assert project_card(c, 3)[0].personality_traits == ["全程", "三"]
+    assert project_card(c, 2)[0].personality_traits == ["二", "全程"]
+    assert project_card(c, 3)[0].personality_traits == ["三", "全程"]
 
 
 def test_state_scalar_falls_back_to_top():
@@ -103,8 +103,8 @@ def test_nested_path_projection():
     set_overlay(c, 1, "psyche.triggers", ["阶段二雷"])
 
     proj = project_card(c, 2)[0]
-    assert proj.speaking_style.catchphrases == ["顶层口癖", "阶段二口癖"]
-    assert proj.psyche.triggers == ["顶层雷", "阶段二雷"]
+    assert proj.speaking_style.catchphrases == ["阶段二口癖", "顶层口癖"]
+    assert proj.psyche.triggers == ["阶段二雷", "顶层雷"]
 
 
 def test_experience_takes_1_to_k():
