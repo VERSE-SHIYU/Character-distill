@@ -398,6 +398,10 @@ class _DraftStubDistiller:
     def finalize_card(self, card, content, name, aliases=(), roster=()):
         return card
 
+    def fill_relationships(self, draft, text, character_name):
+        # 路由在转卡前补关系（§4.5）。本 stub 的草稿没有关系名单，真实现此处也直接返回。
+        return None
+
 
 async def _stub_roster(storage, distiller, text_id, user_id, content):
     return distiller.identify_characters(content)
