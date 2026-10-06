@@ -501,3 +501,10 @@ useKeyboardFocus({ rootRef, enabled, onFocus, getRiseTarget, ua })
 **结论**：实现通过，可以进入真机验证。S1 的用例是一个小尾巴，单独一个提交补上，不阻塞真机验证。
 
 **一处注释措辞**：`useKeyboardFocus.js` 里写「iOS 26 键盘弹起瞬间 innerHeight 会短暂变小」，这是别的项目的记录，本仓没有复现过。补 S1 时顺手改成「据 svedit PR #352 记录」。
+
+## 补充 6（2026-10-06）：S1 用例提交审计（audit-59b8409）
+
+- 改动范围：`useKeyboardFocus.test.jsx` 加一条用例；`useKeyboardFocus.js` 只改了 3 行注释，逐行看过，无逻辑改动。
+- 亲手跑：该测试文件 16/16 通过；删掉「只增」那一行后只有 S1 这一条变红，还原后恢复。
+- 结论：通过。第一段的代码到此完成，下一步是第八节的第 6–8 步（上真机）。
+- 未查：分支 CI 的结果（匿名查询被拒），合并前由 Shiyu 在 GitHub 上确认是绿的。
