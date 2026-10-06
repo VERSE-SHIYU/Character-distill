@@ -1,0 +1,372 @@
+# -*- coding: utf-8 -*-
+"""arc-phase-fields §6.1：单元测试 U1–U19（先红后绿）。
+
+本段把「所有进 prompt 的字段」按阶段投影：经历类只含阶段 1..k，状态类是阶段 k 那个人的
+样子。〔arc-phase-fields §6.1〕
+"""
+from __future__ import annotations
+
+import typing
+
+import pytest
+from pydantic import BaseModel
+
+from core.schema import ArcPhase, CharacterArc, CharacterCard, PhaseAttitude, Relationship
+
+
+# ── 造卡助手 ────────────────────────────────────────────────────────────
+
+def make_card(n_phases: int = 3, *, starts: list[int] | None = None,
+              fingerprint: str = "fp", **overlay_per_phase) -> CharacterCard:
+    """造一张有 n 个阶段的卡；overlay_per_phase 形如 phases=[{...}, ...]。"""
+    phases = [ArcPhase(label=f"P{i + 1}", state=f"状态{i + 1}") for i in range(n_phases)]
+    if starts is not None:
+        for p, s in zip(phases, starts):
+            p.start = s
+    return CharacterCard(
+        name="甲", identity="身份", background="背景",
+        character_arc=CharacterArc(axis="从A到B", phases=phases, source_fingerprint=fingerprint),
+    )
+
+
+def set_overlay(card: CharacterCard, idx: int, path: str, value) -> None:
+    card.character_arc.phases[idx].overlay[path] = value
+
+
+# ── U1 登记表 = 叶子全集 ──────────────────────────────────────────────────
+
+def _leaves(model: type[BaseModel], prefix: str = "") -> list[str]:
+    """展开 BaseModel 子模型、不展开 list[BaseModel]（与附录 B 同口径）。"""
+    out: list[str] = []
+    for name, f in model.model_fields.items():
+        ann = f.annotation
+        if isinstance(ann, type) and issubclass(ann, BaseModel):
+            out += _leaves(ann, f"{prefix}{name}.")
+        else:
+            out.append(f"{prefix}{name}")
+    return out
+
+
+def test_registry_equals_leaf_set():
+    """U1：登记表 = `CharacterCard` 叶子全集（多、少都红）。"""
+    from core.card_layers import REGISTRY
+
+    assert set(REGISTRY) == set(_leaves(CharacterCard))
+    assert len(REGISTRY) == 37
+
+
+def test_registry_every_entry_has_layer_and_kind():
+    """U1：每条登记都带类别与形态，且取值在允许集合内。"""
+    from core.card_layers import REGISTRY, LAYERS, KINDS
+
+    for path, spec in REGISTRY.items():
+        assert spec.layer in LAYERS, path
+        assert spec.kind in KINDS, path
+
+
+# ── U2/U3/U4/U5/U6 投影规则 ───────────────────────────────────────────────
+
+def test_state_list_is_top_plus_phase_k():
+    """U2：状态（列表）= 顶层 + 阶段 k，不累加、不取全书。"""
+    from core.arc_view import project_card
+
+    c = make_card(3)
+    c.personality_traits = ["全程"]
+    set_overlay(c, 0, "personality_traits", ["一"])
+    set_overlay(c, 1, "personality_traits", ["二"])
+    set_overlay(c, 2, "personality_traits", ["三"])
+
+    assert project_card(c, 2)[0].personality_traits == ["全程", "二"]
+    assert project_card(c, 3)[0].personality_traits == ["全程", "三"]
+
+
+def test_state_scalar_falls_back_to_top():
+    """U3：状态（单值）阶段 k 有值用之，否则回落顶层。"""
+    from core.arc_view import project_card
+
+    c = make_card(3)
+    c.decision_style = "顶层"
+    set_overlay(c, 2, "decision_style", "阶段三")
+
+    assert project_card(c, 2)[0].decision_style == "顶层"
+    assert project_card(c, 3)[0].decision_style == "阶段三"
+
+
+def test_nested_path_projection():
+    """U4：嵌套路径（speaking_style.catchphrases / psyche.triggers）按登记表投影。"""
+    from core.arc_view import project_card
+
+    c = make_card(2)
+    c.speaking_style.catchphrases = ["顶层口癖"]
+    c.psyche.triggers = ["顶层雷"]
+    set_overlay(c, 1, "speaking_style.catchphrases", ["阶段二口癖"])
+    set_overlay(c, 1, "psyche.triggers", ["阶段二雷"])
+
+    proj = project_card(c, 2)[0]
+    assert proj.speaking_style.catchphrases == ["顶层口癖", "阶段二口癖"]
+    assert proj.psyche.triggers == ["顶层雷", "阶段二雷"]
+
+
+def test_experience_takes_1_to_k():
+    """U5：经历（列表）= 顶层 + 阶段 1..k；k 之后的不出现。"""
+    from core.arc_view import project_card
+
+    c = make_card(3)
+    c.key_memories = ["顶层记忆"]
+    set_overlay(c, 0, "key_memories", ["一"])
+    set_overlay(c, 1, "key_memories", ["二"])
+    set_overlay(c, 2, "key_memories", ["三"])
+
+    assert project_card(c, 1)[0].key_memories == ["顶层记忆", "一"]
+    assert project_card(c, 2)[0].key_memories == ["顶层记忆", "一", "二"]
+    assert project_card(c, 3)[0].key_memories == ["顶层记忆", "一", "二", "三"]
+
+
+def test_experience_scalar_joined_by_semicolon():
+    """U5：经历（单值）= 顶层 + 1..k 用「；」连接。"""
+    from core.arc_view import project_card
+
+    c = make_card(2)
+    c.cognitive.knowledge_scope = "顶层"
+    set_overlay(c, 0, "cognitive.knowledge_scope", "一")
+    set_overlay(c, 1, "cognitive.knowledge_scope", "二")
+
+    assert project_card(c, 1)[0].cognitive.knowledge_scope == "顶层；一"
+    assert project_card(c, 2)[0].cognitive.knowledge_scope == "顶层；一；二"
+
+
+def test_stable_fields_untouched_and_original_not_mutated():
+    """U6：稳定字段原样；投影不改原卡。"""
+    from core.arc_view import project_card
+
+    c = make_card(2)
+    c.values = ["顶层价值"]
+    set_overlay(c, 1, "values", ["二"])
+    c.psyche.openness = 4
+
+    proj = project_card(c, 3)[0]
+    assert proj.psyche.openness == 4
+    assert proj.name == "甲" and proj.identity == "身份" and proj.background == "背景"
+    # 原卡不被改
+    assert c.values == ["顶层价值"]
+    assert c.character_arc.phases[1].overlay["values"] == ["二"]
+
+
+# ── U9 关系 note 随阶段 ──────────────────────────────────────────────────
+
+def test_relationship_note_follows_phase():
+    """U9：关系口径 `note` 随阶段（取 ≤k 最新一条）。"""
+    from core.arc_view import project_card
+
+    c = make_card(2)
+    c.relationships = [Relationship(
+        target="乙", relation="同窗", attitude="平淡", note="普通同学",
+        phase_attitudes=[PhaseAttitude(phase=1, attitude="平淡", note="普通同学"),
+                         PhaseAttitude(phase=2, attitude="亲密", note="生死之交")],
+    )]
+
+    assert project_card(c, 1)[0].relationships[0].note == "普通同学"
+    assert project_card(c, 2)[0].relationships[0].note == "生死之交"
+    assert project_card(c, 2)[0].relationships[0].attitude == "亲密"
+
+
+# ── U10 selectable 与 valid_phase ────────────────────────────────────────
+
+def test_selectable_and_valid_phase():
+    """U10：起点齐全 + 指纹 → selectable；否则 valid_phase 恒 None。"""
+    from core.arc_view import valid_phase
+
+    good = make_card(3, starts=[0, 10, 20], fingerprint="fp")
+    assert good.character_arc.selectable is True
+    assert valid_phase(good, 2) == 2
+    assert valid_phase(good, None) is None
+
+    no_start = make_card(3, fingerprint="fp")           # 起点缺失
+    assert no_start.character_arc.selectable is False
+    assert valid_phase(no_start, 2) is None
+
+    no_fp = make_card(3, starts=[0, 10, 20], fingerprint="")  # 无指纹
+    assert no_fp.character_arc.selectable is False
+    assert valid_phase(no_fp, 2) is None
+
+
+# ── U11 ①格式卡迁移 ──────────────────────────────────────────────────────
+
+def test_legacy_phase_fields_migrate_to_overlay():
+    """U11：①格式（`phases[].memories` / `dialogue_examples`）加载时搬进 overlay，
+    且 C14 不再重复（`dispatch([[2,3]],3)` 的重复挂载形态）。"""
+    legacy = {
+        "name": "甲",
+        "character_arc": {"axis": "从A到B", "phases": [
+            {"state": "一", "memories": ["M1"], "dialogue_examples": ["D1"]},
+            {"state": "二", "memories": ["M2"], "dialogue_examples": ["D2"]},
+            {"state": "三", "memories": ["M3"], "dialogue_examples": ["D3"]},
+        ]},
+    }
+    card = CharacterCard.model_validate(legacy)
+    p2, p3 = card.character_arc.phases[1], card.character_arc.phases[2]
+    assert p2.overlay.get("key_memories") == ["M2"]
+    assert p3.overlay.get("key_memories") == ["M3"]
+    assert p2.overlay.get("dialogue_examples") == ["D2"]
+
+    from core.arc_view import project_card
+    assert project_card(card, 3)[0].key_memories == ["M1", "M2", "M3"]   # 不重复
+
+
+def test_behaviors_not_migrated():
+    """U11：`behaviors` 不动（留给②）。"""
+    legacy = {"name": "甲", "character_arc": {"phases": [
+        {"state": "一", "behaviors": [{"situation": "s", "behavior": "b"}]},
+    ]}}
+    card = CharacterCard.model_validate(legacy)
+    assert card.character_arc.phases[0].behaviors[0].behavior == "b"
+    assert "situation_behaviors" not in card.character_arc.phases[0].overlay
+
+
+# ── U12 overlay 校验 ─────────────────────────────────────────────────────
+
+def test_overlay_rejects_unregistered_key():
+    """U12：overlay 键必须 ∈ 登记表 state/experience 路径。"""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        ArcPhase(state="一", overlay={"nope": ["x"]})
+
+
+def test_overlay_rejects_type_mismatch():
+    """U12：overlay 值类型须与登记 kind 一致。"""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        ArcPhase(state="一", overlay={"personality_traits": "不是列表"})
+    with pytest.raises(ValidationError):
+        ArcPhase(state="一", overlay={"decision_style": ["不是单值"]})
+
+
+# ── U7/U8 分发按类别 ────────────────────────────────────────────────────
+
+def test_dispatch_state_hangs_every_valid_phase():
+    """U7：state → 每个最终阶段；覆盖全部 → 顶层。"""
+    from core.card_draft import dispatch
+
+    top, by_phase = dispatch([[2, 3]], 3, layer="state")
+    assert top == []
+    assert by_phase == [[], [0], [0]]
+    assert dispatch([[1, 2, 3]], 3, layer="state") == ([0], [[], [], []])
+
+
+def test_dispatch_experience_hangs_earliest_only():
+    """U7：experience → 只最早阶段；从阶段 1 起覆盖全部 → 顶层。"""
+    from core.card_draft import dispatch
+
+    top, by_phase = dispatch([[2, 3]], 3, layer="experience")
+    assert top == []
+    assert by_phase == [[], [0], []]                 # 只挂阶段 2
+    assert dispatch([[1, 2, 3]], 3, layer="experience") == ([0], [[], [], []])
+    assert dispatch([[1, 3]], 3, layer="experience") == ([], [[0], [], []])
+
+
+def test_dispatch_state_scalar_single_per_phase():
+    """U8：单值 state 同一阶段多条 → 保留第一条 + warning。"""
+    from core.card_draft import dispatch_single
+
+    out = dispatch_single([[2, 2]], 3, layer="state", label="decision_style")
+    assert out == [2]
+
+
+# ── U13 依赖组推导 ──────────────────────────────────────────────────────
+
+def test_phase_dependent_groups_derived():
+    """U13：依赖组由登记表推导 —— G2、G3、G4 依赖；G1、G5 不依赖。"""
+    from core.distiller import PHASE_DEPENDENT_GROUPS
+
+    assert PHASE_DEPENDENT_GROUPS == {"G2", "G3", "G4"}
+
+
+# ── U14 审核覆盖 overlay ────────────────────────────────────────────────
+
+def test_review_covers_overlay():
+    """U14：审核遍历必须覆盖 overlay 里的内容（不只顶层字段）。"""
+    from core.moderation.auto_review import _flatten_card
+
+    card = make_card(2)
+    set_overlay(card, 0, "key_memories", ["阶段一才有的记忆内容长度超过二十个字符"])
+    flat = _flatten_card(card.model_dump())
+    assert "阶段一才有的记忆内容长度超过二十个字符" in flat
+
+
+# ── U15 市场 @ 回复与导出读最后阶段 ──────────────────────────────────────
+
+def test_export_reads_last_phase_and_lists_overlay():
+    """U15：导出用最后阶段投影；阶段特有内容按阶段列出。"""
+    from core.export import to_tavern_json
+
+    c = make_card(3)
+    c.personality_traits = ["全程"]
+    set_overlay(c, 2, "personality_traits", ["三"])
+    set_overlay(c, 1, "key_memories", ["阶段二记忆"])
+    data = to_tavern_json(c)
+    blob = data["data"]["description"] + data["data"]["personality"]
+    assert "三" in blob
+    assert "阶段二记忆" in blob
+
+
+# ── U16/U17 关系分批 ────────────────────────────────────────────────────
+
+def test_relationship_batch_splits_and_merges():
+    """U16：23 人 → 3 批，每批 ≤10，全部汇总、顺序稳定。"""
+    from core.relationship_batch import batch_relationships, REL_BATCH_SIZE
+
+    assert REL_BATCH_SIZE == 10
+    targets = [f"人{i}" for i in range(23)]
+    calls: list[list[str]] = []
+
+    def fake_call(prompt: str, batch: list[str]):
+        calls.append(list(batch))
+        return [{"target": t, "relation": "友", "note": ""} for t in batch]
+
+    out = batch_relationships(targets, ["阶段一", "阶段二"],
+                              stream_call=fake_call, prefix="前缀")
+    assert [len(c) for c in calls] == [10, 10, 3]
+    assert [r["target"] for r in out] == targets
+
+
+def test_relationship_batch_fail_all_on_any_batch():
+    """U16：任一批失败 → 整步失败（不静默丢人）。"""
+    from core.relationship_batch import batch_relationships, RelationshipBatchError
+
+    def failing(prompt, batch):
+        raise RuntimeError("batch down")
+
+    with pytest.raises(RelationshipBatchError):
+        batch_relationships([f"人{i}" for i in range(12)], ["阶段一"],
+                            stream_call=failing, prefix="前缀")
+
+
+def test_relationship_batch_prefix_passed_verbatim():
+    """U16：每批用的前缀与主调用前缀逐字相同。"""
+    from core.relationship_batch import batch_relationships
+
+    seen: list[str] = []
+
+    def capture(prompt, batch):
+        seen.append(prompt)
+        return []
+
+    batch_relationships(["甲", "乙"], ["阶段一"], stream_call=capture, prefix="SHARED-PREFIX")
+    assert all("SHARED-PREFIX" in p for p in seen)
+
+
+# ── U18 类型隔离 ────────────────────────────────────────────────────────
+
+def test_projected_card_type_only_from_project_card():
+    """U18：拼角色扮演 prompt 的入口只收 `ProjectedCard`；收原卡抛 TypeError。"""
+    from core.arc_view import ProjectedCard, project_card
+    from core.context_engine import ContextEngine
+
+    c = make_card(2)
+    proj = project_card(c, 2)[0]
+    assert isinstance(proj, ProjectedCard)
+
+    with pytest.raises(TypeError):
+        ContextEngine(c, rag=None, storage=None)      # 原卡 → 抛

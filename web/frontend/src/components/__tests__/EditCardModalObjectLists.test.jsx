@@ -68,6 +68,24 @@ describe('EditCardModal 对象列表', () => {
     expect(saved.situation_behaviors).toEqual([])
   })
 
+  it('E16 阶段 overlay：不改直接保存时原样交回（不丢未知键）', async () => {
+    const OVERLAY = {
+      name: '孙悟空',
+      character_arc: {
+        axis: '',
+        phases: [{
+          label: '冷', state: '起初',
+          overlay: { personality_traits: ['疑心重'], 'speaking_style.catchphrases': ['哼'] },
+        }],
+      },
+    }
+    const { click } = await save(OVERLAY)
+    const saved = await click()
+    expect(saved.character_arc.phases[0].overlay).toEqual({
+      personality_traits: ['疑心重'], 'speaking_style.catchphrases': ['哼'],
+    })
+  })
+
   it('点了添加却没填的空行不保存', async () => {
     const { click } = await save(CARD)
     fireEvent.click(screen.getByText('+ 添加阶段做法'))
