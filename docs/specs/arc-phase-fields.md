@@ -917,8 +917,10 @@ web/routers/market.py:837:    char = CharacterCard.model_validate(_json.loads(ca
 |---|---|---|---|
 | R1 | 关系分批的 user 消息沿用主调用的「生成角色卡 / 输出角色卡」，与「只输出关系数组」冲突；一次读完路径的 system 里没写主角 | 与 B2 同根：本步指令有一半从调用方继承（B2 只修了 system 那一半） | `_batch_prompt` 产出 `(system, user)`，本步指令全归 `relationship_batch`；`_relationships_batched` 不再收 `messages`，改收 `character_name` 与 `material`（分组路径的分析档案进本步 user；一次读完路径为空，正文已在前缀） |
 | R2a | 投影卡里留着全部阶段的 `phase_attitudes`；k=n 时阶段表留着各阶段 overlay | 投影卡「只装阶段 k 能看到的」没在数据层兑现 | `phase_attitudes` 截到 ≤k；阶段表一律只留 1..k 的 label / state（k=n 同） |
-| R2b | 阶段口径为空时回落顶层（全书）口径；生成规则没要求第一条写在开始有交集的阶段 | 投影依赖的两条生成约定没写进规则 | 口径只取 ≤k 最近一条非空，不回落顶层；`RELATIONSHIP_RULES` 补第 3 条前半句与第 6、7 条 |
+| R2b | 阶段口径为空时回落顶层（全书）口径；生成规则没要求第一条写在开始有交集的阶段；顶层 attitude / note 写什么没有定义 | 投影依赖的两条生成约定没写进规则；顶层那句没有口径，模型多半写成全书（即后期）立场 | 口径只取 ≤k 最近一条非空，不回落顶层；`RELATIONSHIP_RULES` 补第 3 条前半句与第 6 条（投影依赖的两条约定）、第 7 条（顶层写最初的关系，让卡片页、导出这些不经投影的地方也不带后期立场；投影仍不读它） |
 
-新测试：`test_r1_*`（2 条）、`test_r2a_*`（2 条）、`test_r2b_*`（2 条）。变异驱动新增 MC1–MC5，并跟进 MA11 / MA19 / MA20 / MB5 锚点：42/42 全红、逐字节还原。
+新测试：`test_r1_*`（2 条）、`test_r2a_*`（2 条）、`test_r2b_*`（2 条）。变异驱动新增 MC1–MC6（6 条新测试各有一条），并跟进 MA11 / MA19 / MA20 / MB5 锚点：43/43 全红、逐字节还原。
+
+复核跟进（执行方复核 a4f2a5a9 提出）：MC6 补上；`arc_view._project_relationships` 的说明与规则第 7 条对齐；S13 锁的「五条规则」措辞更新；分批调用点实为 5 处（含 SSE 侧 `fill_relationships`），均已核对。
 
 **待办（低优先级，未修）**：R3 `out_card` 逐行校验弧线，一张坏卡会让整个列表 500；R4 导出丢了阶段特有的说话风格（阶段段落过滤 `speaking_style.*`，说话风格节只取顶层）。

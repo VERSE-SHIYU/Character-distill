@@ -189,6 +189,9 @@ MUTANTS = [
      _u("test_r2b_note_never_falls_back_to_top_level_note"),
      [("repl", AV, [('        r2.note = next((pa.note for pa in reversed(upto) if pa.note), "")',
                      '        r2.note = upto[-1].note or r2.note')])], "RED"),
+    ("MC6 关系规则删掉「每条阶段态度都写 note」（R2b 生成侧约定）",
+     _u("test_r2b_rules_pin_first_contact_and_per_phase_note"),
+     [("repl", RB, [('    "6. attitudes 里每一条都写 note：那一阶段的口径（同第 2 条）。\\n"\n', "")])], "RED"),
     # ── core/context_engine.py：类型隔离 ──
     ("MA21 ContextEngine 收原卡不抛错", _u("test_projected_card_type_only_from_project_card"),
      [("repl", CTX, [("        self.card = require_projected(card)   # 原卡不进注入层（DA18）",

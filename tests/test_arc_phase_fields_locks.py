@@ -224,12 +224,12 @@ def test_s12_opening_prompts_only_in_opening_module():
         "text_manager 的开场变体未走 core.opening.build_variation_prompt")
 
 
-# ── S13 关系生成口径（五条规则）只在 relationship_batch 一处（B7） ───────────
+# ── S13 关系生成口径（RELATIONSHIP_RULES）只在 relationship_batch 一处（B7） ──
 def test_s13_relationship_rules_defined_once():
     """关系生成的口径只此一处，且 `_batch_prompt` 确实引用它（不是死常量）。
 
-    五条规则（单向视角 / note 是注入立场 / 只写态度变了的阶段 / phase 0 / quote 是原文
-    摘录）讲的是**关系怎么写**；主调用维度 F 的「只出名单」讲的是**这一步先别写**，两步
+    关系规则（单向视角 / note 是注入立场 / 只写态度变了的阶段、第一条写开始有交集的阶段 /
+    phase 0 / quote 是原文摘录 / 每条阶段态度都写 note / 顶层写最初的关系）讲的是**关系怎么写**；主调用维度 F 的「只出名单」讲的是**这一步先别写**，两步
     的两句话。规则若也内联进 distiller 的维度说明，就成了「同一条规则两处」，改一处漏一处。
     """
     defs = _hits(_CORE, r"^RELATIONSHIP_RULES\s*(?::[^=]+)?=")
