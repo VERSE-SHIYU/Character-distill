@@ -28,7 +28,7 @@ from adapters.llm_adapter import (
     user_facing_error,
 )
 from core.card_quotes import retract_unverified
-from core.arc_view import has_positions, phase_of
+from core.arc_view import phase_of
 from core.llm_json import extract_json
 from core.card_relationships import dedupe_relationship_targets
 from core.chat_preprocessor import ChatPreprocessor
@@ -1819,7 +1819,7 @@ class Distiller:
         candidates = self.dialogue_candidates(content, name, aliases, roster)
         picked = self._pick_dialogue_examples(candidates, name, others)
         card_dict = card.model_dump()
-        if has_positions(card):
+        if card.character_arc.has_positions():
             pos = normalized_starts(content, [start for _, start in picked])
             card_dict["dialogue_examples"] = []
             for (text, _), norm_pos in zip(picked, pos):

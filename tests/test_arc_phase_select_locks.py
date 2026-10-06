@@ -56,7 +56,8 @@ def test_s2_phase_slicing_only_in_arc_view():
 
 
 def test_s2_phase_range_rule_only_in_arc_view():
-    """阶段号的范围规则只在 `arc_view.valid_phase`：别处不出现与 arc_phase 的大小比较（审计 A3）。"""
+    """阶段号的范围规则只在 `arc_view._phase_in_range`（`valid_phase` 的范围部分）：
+    别处不出现与 arc_phase 的大小比较（审计 A3）。"""
     hits = _hits(_BOTH, r"arc_phase\s*(<=|>=|<|>)|(<=|>=|<|>)\s*\w*arc_phase")
     assert {f for f, _ in hits} <= {"core/arc_view.py"}, f"阶段号范围比较散落在：{hits}"
 
@@ -128,15 +129,14 @@ def test_s11_position_backfill_scheduling_only_in_save_distilled_card():
         "save_distilled_card 里没有补位置调度")
 
 
-# ── S12 起点可用性的判定只在 arc_view.has_positions ─────────────────────────
-def test_s12_has_positions_is_the_only_start_completeness_check():
-    defs = _hits(_CORE, r"def has_positions\(")
-    assert len(defs) == 1 and defs[0][0] == "core/arc_view.py", (
-        f"has_positions 应只在 core/arc_view.py 定义一次，实得 {defs}")
+# ── S12 起点可用性的判定只此一处（定义位置由本段 S7 钉在 schema）──────────────
+def test_s12_has_positions_callers_are_allowlisted():
+    # 定义唯一性（挪到 CharacterArc.has_positions）由 test_arc_phase_fields_locks.py 的 S7 守；
+    # 本条只守「谁调用它」：调用不是重复判定，别处**自己写**齐全/递增检查才违反。
     callers = _files(_BOTH, r"\bhas_positions\(")
-    # 判定只此一处定义；调用方允许：存卡调度（text_manager）与示范台词归阶段（distiller）。
-    # 谁**调用**它不是重复判定，别处**自己写**齐全/递增检查才违反（S12 正文）。
-    assert callers <= {"core/arc_view.py", "core/text_manager.py", "core/distiller.py"}, (
+    # arc_view 是阶段的判断方（检索上界），text_manager / distiller 是①就有的两个调用方。
+    assert callers <= {"core/schema.py", "core/arc_view.py",
+                       "core/text_manager.py", "core/distiller.py"}, (
         f"has_positions 的调用方超出允许名单，实得 {callers}")
 
 

@@ -4,7 +4,7 @@ import logging
 import json
 from typing import Any, Literal, NamedTuple, TypedDict
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, computed_field, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +24,10 @@ class SpeakingStyle(BaseModel):
     taboo_words: list[str] = []       # 绝不会说的话
 
 class PhaseAttitude(BaseModel):
-    """关系在某一阶段的态度。投影到阶段 k 时，取 phase ≤ k 里最新的一条。"""
+    """关系在某一阶段的态度与单向口径。投影到阶段 k 时，取 phase ≤ k 里最新的一条。"""
     phase: int
     attitude: str = ""
+    note: str = ""               # 该阶段的单向口径；空则回落关系顶层的 note
 
 
 class Relationship(BaseModel):
@@ -117,10 +118,42 @@ class BoundaryExample(BaseModel):
 class ArcPhase(PhaseState):
     """弧线上的一个阶段。"""
     behaviors: list[SituationBehavior] = []   # 只在这一阶段成立的做法
-    memories: list[str] = []                  # 只在这一阶段成立的关键经历
+    # 阶段特有的状态/经历字段：键 = 登记表路径，值 = 列表或单值（规则见 core.card_layers）。
+    overlay: dict[str, list[str] | str] = {}
     start: int | None = None                  # 本阶段起点在**规范化原文**中的位置
     boundary_examples: list[BoundaryExample] = []  # 只在这一阶段成立的边界示范
-    dialogue_examples: list[str] = []         # 属于这一阶段的原文对话示例
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_phase_fields(cls, value: Any) -> Any:
+        """①格式的 `memories` / `dialogue_examples` 搬进 overlay —— **唯一转换点**（DA14）。"""
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        overlay = dict(value.get("overlay") or {})
+        for legacy, path in (("memories", "key_memories"),
+                             ("dialogue_examples", "dialogue_examples")):
+            moved = value.pop(legacy, None)
+            if moved and path not in overlay:
+                overlay[path] = moved
+        if overlay:
+            value["overlay"] = overlay
+        return value
+
+    @model_validator(mode="after")
+    def _check_overlay(self) -> "ArcPhase":
+        """overlay 键必须是登记表里的 state / experience 路径，值形态与 `kind` 一致。"""
+        from core.card_layers import REGISTRY
+
+        for path, val in self.overlay.items():
+            spec = REGISTRY.get(path)
+            if spec is None or spec.layer not in ("state", "experience"):
+                raise ValueError(f"overlay 键未登记（须为 state/experience 路径）：{path}")
+            if spec.kind == "list" and not isinstance(val, list):
+                raise ValueError(f"overlay[{path}] 应为列表")
+            if spec.kind == "scalar" and not isinstance(val, str):
+                raise ValueError(f"overlay[{path}] 应为字符串")
+        return self
 
 
 class ArcAxis(BaseModel):
@@ -138,6 +171,24 @@ class CharacterArc(ArcAxis):
     """角色弧线：一条变化轴 + 按故事顺序排列的阶段（「变的部分」）。"""
     phases: list[ArcPhase] = []
     source_fingerprint: str = ""   # 阶段起点所依据的正文指纹（§3.4 坐标的前提）
+
+    def has_positions(self) -> bool:
+        """阶段起点是否可用于按位置截断：齐全、严格递增、且有正文指纹。
+
+        存卡调度（是否补位置）与检索上界（是否启用过滤）**共用这一个判定**。
+        """
+        if not self.phases or not self.source_fingerprint:
+            return False
+        starts = [p.start for p in self.phases]
+        if any(s is None for s in starts):
+            return False
+        return all(starts[i] < starts[i + 1] for i in range(len(starts) - 1))
+
+    @computed_field
+    @property
+    def selectable(self) -> bool:
+        """能否在开聊时选阶段：起点齐全 + 有指纹（前端按它决定是否渲染选择框，DA8）。"""
+        return self.has_positions()
 
 
 class CharacterCard(BaseModel):

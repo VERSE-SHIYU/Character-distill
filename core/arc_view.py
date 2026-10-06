@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+from core.card_layers import REGISTRY, get_path, set_path
 from core.schema import ArcPhase, BoundaryExample, CharacterCard, Relationship, RetrievalWindow
 
 
@@ -35,35 +36,37 @@ class ArcView(NamedTuple):
         return RetrievalWindow(self.before, self.source_fingerprint)
 
 
-def valid_phase(card: CharacterCard, arc_phase: int | None) -> int | None:
-    """用户选的阶段号是否有效：1..n 原样返回；None / 越界 / 卡无阶段 → None。
+class ProjectedCard(CharacterCard):
+    """已投影到某阶段的卡 —— **只能由 `project_card` 构造**（DA18）。
 
-    **阶段号的范围规则只在这里**：路由存库前的校验与 `_normalize_k` 的归一都用它（审计 A3）。
+    拼角色扮演 prompt 的入口（`ChatEngine` 的注入、`ContextEngine`、开场白、苏醒台词、
+    市场 @ 回复）只收这个类型，把「拿原卡拼 prompt」在类型上堵死。
     """
+
+
+def _phase_in_range(card: CharacterCard, arc_phase: int | None) -> int | None:
+    """**阶段号的范围规则只在这里**：1..n 原样返回，None / 越界 → None（审计 A3）。"""
     n = len(card.character_arc.phases)
     if arc_phase is None or not 1 <= arc_phase <= n:
         return None
     return int(arc_phase)
 
 
+def valid_phase(card: CharacterCard, arc_phase: int | None) -> int | None:
+    """用户选的阶段号是否有效：1..n 原样返回；None / 越界 / 卡不可选阶段 → None。
+
+    路由存库前的校验用它。`selectable` 为假的卡（起点不全或缺指纹）恒不可选（DA8）——
+    归一（`_normalize_k`）不吃这个门：位置不全的旧卡照样投影到用户给的阶段号。
+    """
+    if not card.character_arc.selectable:
+        return None
+    return _phase_in_range(card, arc_phase)
+
+
 def _normalize_k(card: CharacterCard, arc_phase: int | None) -> int:
     """阶段号归一：有效 → 原样；否则 → n（最后阶段）；无阶段卡 → 0。"""
-    k = valid_phase(card, arc_phase)
+    k = _phase_in_range(card, arc_phase)
     return len(card.character_arc.phases) if k is None else k
-
-
-def has_positions(card: CharacterCard) -> bool:
-    """阶段起点是否可用于按位置截断：齐全、严格递增、且有正文指纹。
-
-    存卡调度（是否补位置）与检索上界（是否启用过滤）**共用这一个判定**。
-    """
-    phases = card.character_arc.phases
-    if not phases or not card.character_arc.source_fingerprint:
-        return False
-    starts = [p.start for p in phases]
-    if any(s is None for s in starts):
-        return False
-    return all(starts[i] < starts[i + 1] for i in range(len(starts) - 1))
 
 
 def arc_view(card: CharacterCard, arc_phase: int | None) -> ArcView:
@@ -71,11 +74,13 @@ def arc_view(card: CharacterCard, arc_phase: int | None) -> ArcView:
     phases = card.character_arc.phases
     n = len(phases)
     k = _normalize_k(card, arc_phase)
-    memories = list(card.key_memories) + [m for p in phases[:k] for m in p.memories]
+    memories = list(card.key_memories) + [
+        m for p in phases[:k] for m in (p.overlay.get("key_memories") or [])
+    ]
     boundary = k < n
     boundary_examples = list(phases[k - 1].boundary_examples) if boundary else []
     before: int | None = None
-    if boundary and has_positions(card):
+    if boundary and card.character_arc.has_positions():
         before = phases[k].start
     return ArcView(
         k=k, n=n, show_axis=(n > 0 and k == n), boundary=boundary,
@@ -85,11 +90,9 @@ def arc_view(card: CharacterCard, arc_phase: int | None) -> ArcView:
 
 
 def _project_relationships(
-    rels: list[Relationship], k: int, n: int,
+    rels: list[Relationship], k: int,
 ) -> list[Relationship]:
-    """关系投影：k<n 取 ≤k 里最新态度、之后才认识的去掉；k=n 一律用顶层态度。"""
-    if k == n:
-        return [r.model_copy(deep=True) for r in rels]
+    """关系投影：取 ≤k 里最新一条的态度与口径；之后才认识的去掉；无阶段态度原样（旧卡）。"""
     out: list[Relationship] = []
     for r in rels:
         if not r.phase_attitudes:
@@ -98,28 +101,56 @@ def _project_relationships(
         upto = [pa for pa in r.phase_attitudes if pa.phase <= k]
         if not upto:
             continue                               # 之后才认识 → 去掉
+        latest = max(upto, key=lambda pa: pa.phase)
         r2 = r.model_copy(deep=True)
-        r2.attitude = max(upto, key=lambda pa: pa.phase).attitude
+        r2.attitude = latest.attitude
+        if latest.note:
+            r2.note = latest.note
         out.append(r2)
     return out
 
 
-def project_card(card: CharacterCard, arc_phase: int | None) -> tuple[CharacterCard, ArcView]:
-    """把卡投影到阶段 k：返回（投影后的副本，阶段视图）。原卡不改。"""
-    view = arc_view(card, arc_phase)
-    k, n = view.k, view.n
-    proj = card.model_copy(deep=True)
+def _project_custom(proj: ProjectedCard, card: CharacterCard, k: int, n: int) -> None:
+    """专门投影（各自函数）：弧线截断、关系口径、情境做法原样。就地改 `proj`。"""
     if k < n:
         proj.character_arc.phases = [
             ArcPhase(label=p.label, state=p.state) for p in proj.character_arc.phases[:k]
         ]
         proj.character_arc.axis = ""
         proj.first_message = ""
-    proj.key_memories = list(view.memories)
-    proj.dialogue_examples = list(card.dialogue_examples) + [
-        d for p in card.character_arc.phases[:k] for d in p.dialogue_examples
-    ]
-    proj.relationships = _project_relationships(card.relationships, k, n)
+    proj.relationships = _project_relationships(card.relationships, k)
+
+
+def project_card(card: CharacterCard, arc_phase: int | None) -> tuple[ProjectedCard, ArcView]:
+    """把卡投影到阶段 k：返回（投影后的副本，阶段视图）。原卡不改。
+
+    除弧线 / 关系 / 开场白这些专门投影（`_project_custom`）外，全按 `REGISTRY` 通用执行 ——
+    不写字段名分支（S2）。
+    """
+    view = arc_view(card, arc_phase)
+    k = view.k
+    phases = card.character_arc.phases
+    proj = ProjectedCard(**card.model_dump())
+
+    for path, spec in REGISTRY.items():
+        kth = phases[k - 1].overlay.get(path) if k >= 1 else None
+        if spec.layer == "state":
+            if spec.kind == "list":
+                base = list(get_path(proj, path) or [])
+                set_path(proj, path, base + list(kth or []))
+            elif kth:
+                set_path(proj, path, kth)
+        elif spec.layer == "experience":
+            if spec.kind == "list":
+                base = list(get_path(proj, path) or [])
+                extra = [x for p in phases[:k] for x in (p.overlay.get(path) or [])]
+                set_path(proj, path, base + extra)
+            else:
+                parts = [get_path(proj, path) or ""]
+                parts += [p.overlay.get(path) or "" for p in phases[:k]]
+                set_path(proj, path, "；".join(x for x in parts if x))
+
+    _project_custom(proj, card, k, view.n)
     return proj, view
 
 

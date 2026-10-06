@@ -131,10 +131,11 @@ def test_u4_last_phase_gives_none():
 
 
 def test_has_positions_true_and_false():
-    assert av.has_positions(_card()) is True
-    assert av.has_positions(_card(starts=(0, None, 200))) is False
-    assert av.has_positions(_card(starts=(0, 200, 100))) is False
-    assert av.has_positions(_card(fp="")) is False
+    # 判定已挪进 `CharacterArc.has_positions`（本段 S7）；卡级语义不变。
+    assert _card().character_arc.has_positions() is True
+    assert _card(starts=(0, None, 200)).character_arc.has_positions() is False
+    assert _card(starts=(0, 200, 100)).character_arc.has_positions() is False
+    assert _card(fp="").character_arc.has_positions() is False
 
 
 # ── U17 关系投影 ───────────────────────────────────────────────
@@ -161,10 +162,11 @@ def test_u17_mid_phase_takes_latest_upto_k():
     assert by["丁"].attitude == "疼爱"      # 旧卡原样
 
 
-def test_u17_last_phase_uses_top_attitude():
+def test_u17_last_phase_takes_phase_attitude():
+    # 本段 DA5 改了①：口径一律取 ≤k 最新一条，k=n 也取阶段 n 的（不再回落顶层）。
     card, _ = av.project_card(_card(relationships=_rels()), 3)
     by = {r.target: r for r in card.relationships}
-    assert by["乙"].attitude == "顶层"      # k=n 用顶层（用户可编辑），非阶段 3 的「晚」
+    assert by["乙"].attitude == "晚"
     assert "丙" in by
 
 
@@ -175,9 +177,10 @@ def test_u17_no_phase_attitudes_kept_at_mid_phase():
 
 
 # ── U18 台词投影 + phase_of 边界 ───────────────────────────────
-def test_u18_dialogues_top_plus_upto_k():
+def test_u18_dialogues_top_plus_phase_k():
+    # 本段 DA15 把对白示例归状态类：顶层 + 阶段 k（不再累加 1..k）。
     card, _ = av.project_card(_card(), 2)
-    assert card.dialogue_examples == ["dt", "d1", "d2"]
+    assert card.dialogue_examples == ["dt", "d2"]
 
 
 def test_u18_phase_of_boundary_is_later_phase():

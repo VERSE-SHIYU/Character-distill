@@ -67,7 +67,8 @@ def test_u8_memories_dispatched_by_phase_with_starts_and_fingerprint():
     card = card_from_draft(draft, _SRC)
 
     assert card.key_memories == ["全程都有的事"], "全程成立的记忆没留在顶层"
-    assert [p.memories for p in card.character_arc.phases] == [["只在早期"], ["只在后来"]]
+    assert [p.overlay.get("key_memories") for p in card.character_arc.phases] == [
+        ["只在早期"], ["只在后来"]]
     assert [p.start for p in card.character_arc.phases] == [0, 10], (
         f"阶段起点不是规范化坐标：{[p.start for p in card.character_arc.phases]}")
     assert card.character_arc.source_fingerprint == content_fingerprint(_SRC)

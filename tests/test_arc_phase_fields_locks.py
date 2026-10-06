@@ -57,7 +57,7 @@ def _imports(path: Path) -> set[str]:
             mods |= {a.name.split(".")[0] for a in n.names}
         elif isinstance(n, ast.ImportFrom):
             mods.add((n.module or "").split(".")[0] or "core")
-    return mods
+    return mods - {"__future__"}
 
 
 # ── S1 登记表 = `CharacterCard` 叶子全集（与 U1 同源，这里只锁「定义在 card_layers」） ──
