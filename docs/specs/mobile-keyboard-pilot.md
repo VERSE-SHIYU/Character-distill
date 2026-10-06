@@ -289,3 +289,182 @@ skill：第 2、4 步 `tdd`；第 3、5 步 `code-review-and-quality`；各一�
 | P9 | 监听挂在页面根节点上，所以根节点内任何文字输入框聚焦（例如记忆面板里的输入框）也会把消息列表滚到底 | 已知行为，本段接受 | 本段还没有「输入区」这个边界 | 不改。第三段抽出聊天骨架后监听收窄到输入区插槽 |
 
 **结论**：不通过，修完 P6、P7、P8 再部署。P7 最要紧，而且出在本文件自己。修正只动 `useKeyboardFocus.js`、它的测试、`ChatArea.jsx` 里的一个参数和接线测试的一条断言；不改接口的既有部分，不扩范围。
+
+## 补充 4（2026-10-06）：P6、P7、P8 的修正要求（取代补充 3 表格里这三条的「处理」一栏）
+
+补充 3 发出时附带的指令作废，原因三条：P7 让执行方照抄一份不在本仓库里的源码；P6 的接口没定，且「输入栏是 `.composer-bar`」未核实；P8 没核实测试环境。下面逐条补全，**源码原文由程序从 `@chatui/core@3.8.0` 的发布包直接抄入，未经转述**。
+
+### 出处原文（`@chatui/core@3.8.0`，MIT）
+
+`es/components/Composer/index.js:130-157`（键盘收起但未失焦时让输入框失焦）
+```js
+  useEffect(function () {
+    var _window = window,
+      visualViewport = _window.visualViewport;
+    if (!visualViewport) return;
+    var winHeight = window.innerHeight;
+    function toggleFocusing() {
+      if (window.innerHeight > winHeight) {
+        // iOS 下第一次的时候 winHeight 有可能不准
+        winHeight = window.innerHeight;
+      }
+      // 视窗变高做失焦处理
+      // 场景：键盘收起键盘时并没有失去焦点
+      if (focused.current && visualViewport.height >= winHeight) {
+        var _inputRef$current;
+        (_inputRef$current = inputRef.current) === null || _inputRef$current === void 0 || _inputRef$current.blur();
+      }
+    }
+    function resizeHandler() {
+      // Android 没有下面安全区且可以悬浮键盘，故不做收起失焦处理
+      if (isIOS || isArkWeb && isAliApp) {
+        toggleFocusing();
+      }
+    }
+    visualViewport.addEventListener('resize', resizeHandler);
+    return function () {
+      visualViewport.removeEventListener('resize', resizeHandler);
+    };
+  }, []);
+```
+
+`es/components/Composer/index.js:225-247`（聚焦 / 失焦时的状态类）
+```js
+  var handleInputFocus = useCallback(function (e) {
+    clearTimeout(blurTimer.current);
+    toggleClass(CLASS_NAME_FOCUSING, true);
+    focused.current = true;
+    if (isIOS) {
+      updateViewportTop();
+    }
+    if (onFocus) {
+      onFocus(e);
+    }
+  }, [onFocus]);
+  var handleInputBlur = useCallback(function (e) {
+    blurTimer.current = setTimeout(function () {
+      toggleClass(CLASS_NAME_FOCUSING, false);
+      focused.current = false;
+    }, 0);
+    if (isIOS) {
+      setViewportTop(0);
+    }
+    if (onBlur) {
+      onBlur(e);
+    }
+  }, [onBlur]);
+```
+
+`es/components/Composer/ComposerInput.js:35-40`（调用点：第二个参数是整个输入区）
+```js
+  useEffect(function () {
+    if (canTouch && inputRef.current) {
+      var $composer = document.querySelector('.Composer');
+      riseInput(inputRef.current, $composer);
+    }
+  }, [inputRef]);
+```
+
+`es/components/Composer/riseInput.js:1-48`
+```js
+import { isIOS, isSafariOrIOS11, getIOSMajorVersion } from '../../utils/ua';
+function testScrollType() {
+  if (isIOS) {
+    if (isSafariOrIOS11) {
+      /**
+       * 不处理
+       * - Safari
+       * - iOS 11.0-11.3（`scrollTop`/`scrolIntoView` 有 bug）
+       */
+      return 0;
+    }
+    var major = getIOSMajorVersion();
+    // iOS 12及以下用 `scrollTop` 的方式
+    if (major < 13) {
+      return 1;
+    }
+  }
+  // 其它的用 `scrollIntoView` 的方式
+  return 2;
+}
+export default function riseInput(input, wrap) {
+  var scrollType = testScrollType();
+  var scrollTimer;
+  var target = wrap || input;
+  var scrollIntoView = function scrollIntoView() {
+    if (scrollType === 0) return;
+    if (scrollType === 1) {
+      document.body.scrollTop = document.body.scrollHeight;
+    } else {
+      target.scrollIntoView(false);
+    }
+  };
+  input.addEventListener('focus', function () {
+    setTimeout(scrollIntoView, 300);
+    scrollTimer = setTimeout(scrollIntoView, 1000);
+  });
+  input.addEventListener('blur', function () {
+    clearTimeout(scrollTimer);
+
+    // 某些情况下收起键盘后输入框不收回，页面下面空白
+    // 比如：闲鱼、大麦、乐动力、微信
+    if (scrollType && isIOS) {
+      // 以免点击快捷短语无效
+      setTimeout(function () {
+        document.body.scrollIntoView();
+      });
+    }
+  });
+```
+
+### P7 的修正要求
+
+按上面第一段原文实现，对应关系：
+
+| 原文 | 本仓 `useKeyboardFocus.js` |
+|---|---|
+| `var winHeight = window.innerHeight;`（在 effect 里、处理函数外） | effect 内、`handleVVResize` 外声明 `let winHeight = window.innerHeight` |
+| `if (window.innerHeight > winHeight) { winHeight = window.innerHeight; }` | 处理函数开头原样保留 |
+| `focused.current && visualViewport.height >= winHeight` | `inputEl && vv.height >= winHeight` |
+| `inputRef.current.blur()` | `inputEl.blur()` |
+| `isIOS \|\| isArkWeb && isAliApp` | 只保留 iOS（现有的 `blurOnKbdClose`），ArkWeb / AliApp 不搬 |
+
+必须有的两条用例（都在 iOS 的 UA 下、输入框已聚焦）：
+1. `winHeight` = 800，可视高度变为 400 并触发 `resize` → 不调用 `blur`。
+2. 接着 `window.innerHeight` 变为 400（短暂变小）并触发 `resize` → 仍不调用 `blur`。
+已有的「可视高度恢复到 800 → 调用 `blur`」保留。
+
+### P6 的修正要求
+
+已核实（`15b0b7c` 与分支一致）：输入区最外层元素是 `div.composer-bar-wrap`（`src/components/common/ChatInputBar.jsx:54`），引用条 `.reply-preview-bar`（`:57`）在它里面、`.composer-bar`（`:231`）之上。所以要滚进视野的是 `.composer-bar-wrap`，不是 `.composer-bar`。
+
+接口（只增不改）：
+
+```js
+useKeyboardFocus({ rootRef, enabled, onFocus, getRiseTarget, ua })
+// getRiseTarget?: (inputEl: Element) => Element | null
+// 返回要滚进视野的元素；不传或返回 null 时用 inputEl 本身。
+```
+
+- hook 内：`(getRiseTarget?.(inputEl) ?? inputEl).scrollIntoView(false)`，时刻仍是 300ms、1000ms。hook 里不出现任何类名。
+- `ChatArea.jsx`：在模块顶层定义 `const getComposerWrap = (el) => el.closest('.composer-bar-wrap')` 并传入（放在模块顶层是为了引用稳定，不触发 effect 重装）。
+- 用例：安卓 UA 下传了 `getRiseTarget` → 300ms、1000ms 各对返回的元素调用 `scrollIntoView(false)`，输入框自己的不被调用；不传时行为与现在相同。
+
+### P8 的修正要求
+
+已核实：测试环境（jsdom）里元素没有 `scrollTo` 和 `scrollIntoView`（两者都是 `undefined`）；接线测试 `ChatAreaGoalCheckWiring.test.jsx:19-20` 已经给原型打了空桩。
+
+- 在接线测试里对 `Element.prototype.scrollTo` 使用 `vi.spyOn`，native 下让输入框聚焦，断言它以 `{ top: <列表的 scrollHeight>, behavior: 'instant' }` 被调用，且调用对象是带 `data-kbd-lift` 的列表元素。
+- **不要为了让断言通过而改 `ChatArea.jsx` 的实现**；如果断言写不出来，停下报告。
+
+### 自查
+
+本节每条要求在各状态下的表现：
+
+| 状态 | P7 | P6 |
+|---|---|---|
+| iPhone Safari，键盘弹起中 | `resize` 触发，可视高度小于 `winHeight`，不失焦 | 不滚（iOS 且 UA 含 `Safari/`） |
+| iPhone Safari，键盘收起但仍聚焦 | 可视高度回到 `winHeight`，失焦，`kbd-focusing` 随之移除 | — |
+| 安卓 / 内嵌浏览器，聚焦 | 不挂这个监听（非 iOS） | 300ms、1000ms 把 `.composer-bar-wrap` 滚到可视区底部 |
+
+未核实：iOS 26 上 `innerHeight` 短暂变小这一现象来自 svedit PR #352 的记录，本仓没有复现过；用例 2 守的是「即使发生也不误判」。
