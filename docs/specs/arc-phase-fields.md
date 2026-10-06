@@ -193,7 +193,7 @@ C27. 线上模型是 `deepseek-flash`（`adapters/llm_adapter.py:717` `_FALLBACK
 ## 6. 测试（先在 `15b0b7c2` 上红，再绿；两侧）
 
 ### 6.1 单元
-U1 登记表 = 叶子全集（多、少都红）；U2 状态列表取「顶层 + k」；U3 状态单值回落；U4 嵌套路径；U5 经历 1..k；U6 稳定原样、不改原卡；U7 分发按类别（[2,3] 两侧）；U8 单值同阶段两条；U9 关系 note 随阶段；U10 `selectable` 与 `valid_phase`；U11 ①格式卡迁移后投影与①一致（且 C14 不再重复）；U12 overlay 非法键 / 类型；U13 依赖组推导与等待（G2、G3、G4 依赖；G1、G5 不依赖）；U14 审核覆盖 overlay 等；U15 市场 @ 回复与导出读最后阶段；**U16 关系分批**：23 人 → 3 批，每批 ≤10，全部汇总、顺序稳定；任一批失败整步失败；每批走流式；前缀与主调用前缀逐字相同；**U17** B 由常量定义一次；**U18** 原卡传给 `ContextEngine` / `opening` 抛 `TypeError`，`ProjectedCard` 通过；**U19** 两处开场白走同一函数、读投影卡（选阶段 1 时提示里没有后期口头禅）；**U21** 导出里阶段记忆 / 阶段性格各只出现一次，且落在对应阶段的段落里（B6；`test_export_phase_content_appears_once_in_its_section`）；**U22** 导出正文的字段名取自登记表 `label`（改登记表即改导出，B5；`test_export_field_names_come_from_registry`）。
+U1 登记表 = 叶子全集（多、少都红）；U2 状态列表取「顶层 + k」；U3 状态单值回落；U4 嵌套路径；U5 经历 1..k；U6 稳定原样、不改原卡；U7 分发按类别（[2,3] 两侧）；U8 单值同阶段两条；U9 关系 note 随阶段；U10 `selectable` 与 `valid_phase`；U11 ①格式卡迁移后投影与①一致（且 C14 不再重复）；U12 overlay 非法键 / 类型；U13 依赖组推导与等待（G2、G3、G4 依赖；G1、G5 不依赖）；U14 审核覆盖 overlay 等；U15 市场 @ 回复与导出读最后阶段；**U16 关系分批**：23 人 → 3 批，每批 ≤10，全部汇总、顺序稳定；任一批失败整步失败；每批走流式；前缀与主调用前缀逐字相同；**U17** B 由常量定义一次；**U18** 原卡传给 `ContextEngine` / `opening` 抛 `TypeError`，`ProjectedCard` 通过；**U19** 两处开场白走同一函数、读投影卡（选阶段 1 时提示里没有后期口头禅）；**U29** 导出里阶段记忆 / 阶段性格各只出现一次，且落在对应阶段的段落里（B6；`test_export_phase_content_appears_once_in_its_section`）；**U30** 导出正文的字段名取自登记表 `label`（改登记表即改导出，B5；`test_export_field_names_come_from_registry`）。
 
 ### 6.2 调用点矩阵
 | 入口 \ 输出 | 状态取 k | 经历取 1..k | 关系口径按阶段 | 关系不截断不丢人 | 测试 |
@@ -205,7 +205,7 @@ U1 登记表 = 叶子全集（多、少都红）；U2 状态列表取「顶层 +
 | E5 好感评估 | ✓ | — | — | — | `test_affinity_reads_projected` |
 | E6 开场白 | ✓ | ✓ | — | — | `test_opening_projected_fields` |
 | E7 市场 @ 回复 | 最后阶段 | ✓ | — | — | `test_market_reply_reads_projected_card`（行为面，替换 MA15 的结构锁兜底） |
-| E8 导出 | 全程 + 逐阶段 | ✓ | — | — | U21、U22 |
+| E8 导出 | 全程 + 逐阶段 | ✓ | — | — | U29、U30 |
 | E9 前端选择框 | `selectable` | — | — | — | `RoleSetupModalSelectable.test.jsx` + e2e |
 | E10 前端弧线列表 | overlay 展示 | — | — | — | `ArcListOverlay.test.jsx` + e2e |
 | E11 `distill` | 草稿 → overlay | ✓ | ✓ | ✓ | `test_entry_distill_fields` |
@@ -233,15 +233,15 @@ S1 登记表 = 叶子全集；S2 `project_card` 不出现具体字段名分支�
 | MA11 | 关系 note 不随阶段 | U9 | 实现后 |
 | MA13 | 依赖组不等 G6 | U13 | 实现后 |
 | MA14 | 审核跳过 overlay | U14 | 实现后 |
-| MA15 | 市场 @ 回复不投影 | U15 | 实现后 |
+| MA15 | 市场 @ 回复不投影 | `test_market_reply_reads_projected_card`（E7 行为面） | ✅（本段） |
 | MA16 | ①格式卡不迁移 | U11 | 实现后 |
 | MA17 | overlay 接受未登记键 | U12 | 实现后 |
 | MA18 | 分批丢最后一批 / 批大小越界 | U16 | 实现后 |
-| MA19 | 分批走非流式 | U16、S9 | 实现后 |
+| MA19 | 分批走非流式 | U28（`test_relationships_batched_goes_through_stream`，行为面） | ✅（本段） |
 | MA20 | 分批前缀与主调用不同 | U16 | 实现后 |
 | MA21 | `ContextEngine` 收原卡不抛错 | U18 | ✅（原型三） |
 | MA22 | `relationship_batch` 导入 `distiller` | S11 | ✅（原型三） |
-| MA23 | 新会话开场变体绕过 `opening.py` 用原卡 | E19、S12 | 实现后 |
+| MA23 | 新会话开场变体绕过 `opening.py` 用原卡 | `test_opening_variation_reads_projected_card`（E19 行为面） | ✅（本段） |
 | MA1–MA3 / MB1–MB3（改） | 状态顺序契约（阶段 k 在前）/ 分发只有一套（`kind` 定格子容量） | U2、U8 | ✅（B1、B3） |
 | MB4 | 每个字段各自归一化整本原文 | U20 | ✅（效率 #1） |
 | MB5–MB7 | 分批前缀退回主调用系统提示 / 关系口径内联回维度 F / 组前缀塞进整段格式提示 | U22、S13、S14 | ✅（B2 提示词、B7） |
@@ -249,8 +249,8 @@ S1 登记表 = 叶子全集；S2 `project_card` 不出现具体字段名分支�
 | MB9 / MB10 | 缺人不补跑 / 补跑后仍缺只丢人不报错 | U24、U25 | ✅（B2 关系完整性） |
 | **MB11** | **出卡不重算 `selectable`（退回透传存量值，B4 的旧形态）** | **E20** | **✅（本步）** |
 
-B5/B6（步骤 7）的判别性另由一次性脚本核实（导出把各阶段内容塞进全程段 → U21 红；导出写死字段
-中文名 → U22 红；登记表两条 `label` 重复 → S16 红），脚本入库
+B5/B6（步骤 7）的判别性另由一次性脚本核实（导出把各阶段内容塞进全程段 → U29 红；导出写死字段
+中文名 → U30 红；登记表两条 `label` 重复 → S16 红），脚本入库
 `docs/specs/artifacts/arc_phase_fields_b5b6_mutations.py`。按 Shiyu 口径本轮**只往常设驱动加 4 条
 跨模块规则**（步骤 1/3/4/6），步骤 7 的这三条不入常设驱动，仅作本步判别性凭据。MA15/MA23 的靶子
 指回本节 §6.2 的行为测试名，由步骤 8 随驱动一并改。
@@ -447,7 +447,82 @@ model_validator`）；② 新增 `core/card_out.py::out_card(row)` —— 存储
 
 **改法**：① `FieldSpec` 加 `label`，37 条各配唯一中文名；② `arc_view` 加 `phase_header(index, label)`（表头唯一写法）与 `card_outline(card) -> (全程, 逐阶段)`（两层视图，按登记表遍历，行 = `(路径, 中文名, 文本)`）；③ 导出改用这两者，不再经 `project_card`；`context_engine` / `distiller` / `opening` 的阶段表头改调 `phase_header`；④ 删 `ArcView.memories`（记忆只在投影卡上算一次），同步改 `tests/test_arc_view.py::test_u3_memories_top_plus_upto_k`。
 
-**判据**：`U21`（阶段记忆 / 性格各只出现一次且在对应段落）、`U22`（改登记表 `label` 即改导出）、`E7`/`E19` 两条行为测试（`test_market_reply_reads_projected_card` / `test_opening_variation_reads_projected_card`，替换 MA15 / MA23 原来只靠结构锁兜底）；结构锁 `S16`（label 唯一、`phase_header` 一处、`card_outline` 只由 export 用、`ArcView` 无 `memories`）。判别性由一次性脚本核实（导出把各阶段内容也塞进全程段 → U21 红；导出写死字段名 → U22 红；label 重复 → S16 红），三条均实测 RED、逐字节还原；脚本入库 `docs/specs/artifacts/arc_phase_fields_b5b6_mutations.py`（按 Shiyu 口径，步骤 7 的变异不入常设驱动）。受影响的既有测试：`test_arc_view.py::test_u3`、`test_arc_phase_select_locks.py::S12`（`has_positions` 调用方名单补 `card_out.py`，B4 的后果）。本步测试：`tests/test_arc_phase_fields_unit.py`（U21/U22）、`readers`（E7/E19）、`locks`（S16）全绿；受影响套件 185 + 272 条全绿。
+**判据**：`U29`（阶段记忆 / 性格各只出现一次且在对应段落）、`U30`（改登记表 `label` 即改导出）、`E7`/`E19` 两条行为测试（`test_market_reply_reads_projected_card` / `test_opening_variation_reads_projected_card`，替换 MA15 / MA23 原来只靠结构锁兜底）；结构锁 `S16`（label 唯一、`phase_header` 一处、`card_outline` 只由 export 用、`ArcView` 无 `memories`）。判别性由一次性脚本核实（导出把各阶段内容也塞进全程段 → U29 红；导出写死字段名 → U30 红；label 重复 → S16 红），三条均实测 RED、逐字节还原；脚本入库 `docs/specs/artifacts/arc_phase_fields_b5b6_mutations.py`（按 Shiyu 口径，步骤 7 的变异不入常设驱动）。受影响的既有测试：`test_arc_view.py::test_u3`、`test_arc_phase_select_locks.py::S12`（`has_positions` 调用方名单补 `card_out.py`，B4 的后果）。本步测试：`tests/test_arc_phase_fields_unit.py`（U21/U22）、`readers`（E7/E19）、`locks`（S16）全绿；受影响套件 185 + 272 条全绿。
+
+### 本轮审计（B1–B7 收尾，2026-10-06）
+
+**全绿证据（本机 `.venv`，现跑现数）**：§6 四份基线 —— `test_arc_phase_fields_unit.py` 40 passed
+(3.29s) / `_readers.py` 23 passed (6.02s) / `_entries.py` 5 passed (0.46s) / `_locks.py` 19 passed
+(6.68s)；本轮受影响套件（arc/phase + select + arc_view + card_arc_behaviors + arc_positions）
+**185 passed (23.69s)**；另跑 distiller / context_engine / chat / card_draft / phase_anchoring 等
+相关套件 **272 passed (49.78s)**。
+
+**变异驱动**（`docs/specs/artifacts/arc_phase_fields_mutations.py`）：**37/37 条全红、逐字节还原**。
+其中本轮新增的**跨模块 4 条**（Shiyu 口径）：`MB1–MB3`（步骤 1：分发只有 `dispatch` 一处、单值
+格子容量由 `kind` 定）、`MB5–MB7`（步骤 3：分批前缀与关系口径各只写一处）、`MB9–MB10`（步骤 4：
+缺人补跑一次、补不齐点名）、`MB11`（步骤 6：出卡 helper 现算）。`MA15` / `MA19` / `MA23` 的靶子
+已从结构锁指回行为测试（`test_market_reply_reads_projected_card` /
+`test_relationships_batched_goes_through_stream` / `test_opening_variation_reads_projected_card`）。
+步骤 7 的三条（B5/B6）按口径不入常设驱动，另存
+`docs/specs/artifacts/arc_phase_fields_b5b6_mutations.py`（3/3 全红）。
+
+**B1–B7 对账（本表只做索引，细节在各自小节）**：
+
+| 缺陷 | 步 | 修复 | 判据 | 变异 | 小节 |
+|---|---|---|---|---|---|
+| B1 分发两套（`dispatch` / `dispatch_single`） | 1 | 单值/列表同一套分发，格子容量由 `kind` 定 | U7/U8、S6（`by_phase[` 只在 `dispatch`） | MB1–MB3 | §10 |
+| 效率 #1 位置核对上下文每字段各建一次 | 2 | `build_anchors` 只在 `card_from_draft` 开头建一次 | U20（次数=1） | MB4 | 效率 #1 实测 |
+| B2 提示词 = 共享前缀 + 本步指令 | 3 | `book_prefix` / `format_prompt_shared`；分批前缀同源 | U22、S13/S14/S14b | MB5–MB7 | B2 提示词 / B7 |
+| B7 关系生成口径五条只写一处 | 3 | 常量入 `relationship_batch`，`_batch_prompt` 引用它 | S13 | MB6 | B2 提示词 / B7 |
+| B2 关系完整性（缺人静默丢） | 4 | 缺人补调一次、补不齐 `RelationshipBatchError` 点名 | U24/U25/U26/U28 | MB9–MB10 | B2 关系完整性 |
+| B3 投影后状态列表顺序无关 | 5 | 契约：阶段 k 特有在前、全程在后 | U2 等、`test_b3_*` 六处 | MA1–MA3 | B3 状态列表顺序契约 |
+| B4 出卡 `selectable` 陈值落库 | 6 | 派生值不落库，出卡 `out_card` 现算 | E20 六条、S15 | MB11 | B4 出卡只有一处 |
+| B5 字段中文名两处/散落 | 7 | `FieldSpec.label` 唯一来源；删 `ArcView.memories` | U30、S16 | B5/B6 脚本 | B5 / B6 |
+| B6 阶段内容导出重复 + 表头四处写 | 7 | `phase_header` + `card_outline` 两层视图 | U29、S16 | B5/B6 脚本 | B5 / B6 |
+
+**扫描一：每条规则只许一处**（`core/`，2026-10-06）：
+
+```
+-- by_phase[ --
+core/card_draft.py:216:    ... **`by_phase[` 只在这里出现**
+core/card_draft.py:226:                by_phase[p - 1].append(i)
+core/phase_anchoring.py:59:    return {p: by_phase[p][0] for p in phases if by_phase.get(p)}
+-- out_card( --
+core/card_out.py:22:def out_card(row) -> ...:
+web/routers/distill.py:1290:    return [out_card(r) for r in result]
+web/routers/distill.py:1301:    return [out_card(r) for r in rows]
+-- phase_header( --
+core/arc_view.py:100:def phase_header(index, label="") -> str:      # 定义唯一一处
+core/context_engine.py:390 / core/distiller.py:448 / core/export.py:43 / core/opening.py:24
+-- card_outline( --
+core/arc_view.py:106:def card_outline(card):                        # 定义唯一一处
+core/export.py:33:    lifelong, per_phase = card_outline(card)   # 只由 export 用
+-- has_positions( --
+定义 core/schema.py:175；调用 arc_view ×2 / card_out.py / distiller.py / text_manager.py（均在 S12 名单内）
+```
+
+**扫描二：拼 prompt 的入口只读投影卡**（`core/` + `web/`，2026-10-06）：
+
+```
+-- project_card( 调用 --
+core/chat_engine.py:146:        self.card, self.arc_view = project_card(card, arc_phase)
+core/opening.py:80:    proj, _view = project_card(card, arc_phase)
+core/text_manager.py:529:                variation_prompt = build_variation_prompt(project_card(card, None)[0])
+web/routers/distill.py:307:        prompt = build_awakening_prompt(project_card(card, None)[0])
+web/routers/market.py:840:    char = project_card(char, None)[0]
+-- require_projected( 守卫 --
+core/context_engine.py:210 / core/opening.py:29,54,65
+```
+
+注：`core/export.py` 已不在 `project_card(` 名单里（B6 改走 `card_outline`，见偏离）。
+
+**耗时数字**：效率 #1 的判别器计数 16 → 1、样本耗时中位 17.47 → 5.12 ms（原始表见「效率 #1
+实测」）。本段新增测试的耗时并入上面各套件的总耗时（无单独计时）。
+
+**本轮偏离索引**（详见「偏离与旁证」）：① 导出不再经 `project_card`（B6 的正确形态，§4.6 同步
+改写）；② `mes_example` 仍从原卡 `speaking_style` 取（避免导出内部新造重复）；③ `_phase_labels`
+保持裸名；④ 前端两张标签表合一 + 前后端名字一致的锁本轮不做（待办）；⑤ `MA8/MA8b/MA8c` 锚点
+随 `FieldSpec` 加 `label` 同步更新；⑥ `S12` 名单补 `card_out.py`（B4 的后果）。
 
 ### 偏离与旁证（随步记录）
 
@@ -486,6 +561,15 @@ model_validator`）；② 新增 `core/card_out.py::out_card(row)` —— 存储
 - **B5/B6：`mes_example`（说话风格）仍从原卡 `speaking_style` 取（本步解释性选择）**：`card_outline` 的全程/逐阶段行会在导出正文里渲染，若把 `speaking_style.*` 也纳入，说话风格会**既进正文又进 `mes_example`**，等于在导出内部新造一处 B6 形态的重复。故 `body()` 过滤 `speaking_style.` 前缀，`mes_example` 仍单列、但字段名改取 `_label(...)`（B5）。`speaking_style.*` 的中文名因此只在 `mes_example` 出现一次。
 - **B5/B6：`_phase_labels`（`distiller.py`）保持裸名（本步解释性选择）**：它给关系分批的提示词列出「阶段 1 / 阶段 2 …」的**裸名列表**（供模型按编号指认），与「阶段 i·label」表头是两种用途；未改用 `phase_header`。结构锁 `S16` 只要求四个**产表头**的模块经 `phase_header`，`_phase_labels` 不产表头，不在其列。
 - **B5/B6：前端两张标签表合一 + 前后端名字一致的锁 —— 本轮不做（Shiyu 定，记 §10 待办）**：spec 步骤 7 原文要求「前端两张标签表合成 `utils/card.js` 一张；加一个测试，核对它的键和名字与登记表一致」。Shiyu 明确本轮不做，只做后端三件（FieldSpec 加 label、导出用视图函数、删 `ArcView.memories`）。**待办**：前端 `utils/card.js` 合并两张标签表，并加一条前端测试断言其键与后端登记表一致（跨语言，可用一份 JSON 导出的登记表快照做对照）。
+- **B5 连带：变异锚点 `MA8/MA8b/MA8c` 随 `FieldSpec` 加 `label` 同步更新（同段内必然）**：
+  登记表每行多了第三个实参，三条锚的 `old` 字面（`FieldSpec("state", "list")` 等）命中数变 0，
+  `_apply` 当场 assert。这是本步改 `FieldSpec` 的直接后果，按新字面更新锚点，不另计偏离。
+- **B4 连带：`S12`（`test_arc_phase_select_locks.py`）`has_positions` 调用方名单补 `card_out.py`**：
+  步骤 6 的出卡 helper 是 `has_positions` 的新调用方，名单不补即红。同段内必然，不另计偏离。
+- **本轮收尾：`MA15/MA19/MA23` 靶子改指行为测试（Shiyu 口径）**：三条原以结构锁（S3/S9/S12）
+  为靶；行为面测试就位后改指 `test_market_reply_reads_projected_card` /
+  `test_relationships_batched_goes_through_stream` / `test_opening_variation_reads_projected_card`，
+  驱动 37/37 全红、逐字节还原。
 - **旁证（非本段改动面）**：注册变异驱动 `tests/perf/arc_phase_anchoring_mutations.py` 有三条
   锚点已在更早的分支提交上失真（M17 锚 `row.occurrences`、M30 锚 `occurrences: list[...] = []`
   计数 3、M35 锚旧版 warning 文案），`_apply` 的「锚点恰一命中」会当场 assert，该驱动**跑不完**。

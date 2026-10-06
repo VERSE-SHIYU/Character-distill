@@ -14,10 +14,9 @@
 的一次性对账，不是常设守卫 —— 覆盖域是四份新测试，判别器数目远多于 23 条变异能撞到的
 集合，闭合在此不可能（同 `arc_phase_select_mutations.py` / `mutate_profile_outbox.py`）。
 
-MA15/MA22/MA23 的靶子是**结构锁**（`test_arc_phase_fields_locks.py` 的 S3 / S11 / S12），
-不是 §7 表里写的行为测试：MA15 的 `U15` 只覆盖了导出一半（市场半由 S3 拦），MA22/MA23
-的 `S11`/`S12` 原实现对 `core.*` 子模块导入塌成 `core`、且不扫 text_manager —— 已在本段
-修正（见 commit message）。见报告里的偏离声明。
+MA15/MA23 的靶子已指回 §6.2 的行为测试（`test_market_reply_reads_projected_card` /
+`test_opening_variation_reads_projected_card`，步骤 7 补），不再只靠结构锁兜底；MA22 仍以
+结构锁 `S11`（`test_arc_phase_fields_locks.py` 的导入方向）为靶。
 
 退出码：0 = 全部红；1 = 有存活；2 = 基线红（拒跑）。
 """
@@ -103,13 +102,13 @@ MUTANTS = [
      [("repl", AV, [("    proj = ProjectedCard(**card.model_dump())", "    proj = card")])], "RED"),
     # ── core/card_layers.py：登记表 ──
     ("MA8 漏注册字段（personality_traits）", _u("test_registry_equals_leaf_set"),
-     [("repl", CL, [('    "personality_traits": FieldSpec("state", "list"),\n', "")])], "RED"),
+     [("repl", CL, [('    "personality_traits": FieldSpec("state", "list", "性格特征"),\n', "")])], "RED"),
     ("MA8b 漏注册字段（cognitive.knowledge_scope）", _u("test_registry_equals_leaf_set"),
-     [("repl", CL, [('    "cognitive.knowledge_scope": FieldSpec("experience", "scalar"),\n', "")])], "RED"),
+     [("repl", CL, [('    "cognitive.knowledge_scope": FieldSpec("experience", "scalar", "知识范围"),\n', "")])], "RED"),
     ("MA8c 多注册一个不存在的路径", _u("test_registry_equals_leaf_set"),
-     [("repl", CL, [('    "character_arc.source_fingerprint": FieldSpec("none", "scalar"),',
-                     '    "character_arc.source_fingerprint": FieldSpec("none", "scalar"),\n'
-                     '    "nope_field": FieldSpec("stable", "scalar"),')])], "RED"),
+     [("repl", CL, [('    "character_arc.source_fingerprint": FieldSpec("none", "scalar", "源码指纹"),',
+                     '    "character_arc.source_fingerprint": FieldSpec("none", "scalar", "源码指纹"),\n'
+                     '    "nope_field": FieldSpec("stable", "scalar", "不存在"),')])], "RED"),
     # ── core/card_draft.py：按类别分发 ──
     ("MA9 放宽 experience 挂每个阶段", _u("test_dispatch_experience_hangs_earliest_only"),
      [("repl", CD, [("        return [f if (count and len(f) == count) else f[:1] for f in final_phases]",
@@ -144,8 +143,8 @@ MUTANTS = [
      [("repl", AREV, [('    parts = [f"{path}: {text[:500]}" for path, text in iter_texts(card_json)]',
                        '    parts = [f"{path}: {text[:500]}" for path, text in iter_texts(card_json)'
                        ' if ".overlay" not in path]')])], "RED"),
-    # ── web/routers/market.py：@ 回复投影（靶子 = S3 结构锁）──
-    ("MA15 市场 @ 回复不投影", _loc("test_s3_prompt_builders_go_through_project_card"),
+    # ── web/routers/market.py：@ 回复投影（靶子 = §6.2 E7 行为测试）──
+    ("MA15 市场 @ 回复不投影", _r("test_market_reply_reads_projected_card"),
      [("repl", MARKET, [("    char = project_card(char, None)[0]", "    pass  # 变异：不投影")])], "RED"),
     # ── core/relationship_batch.py：切批 / 前缀 ──
     ("MA18 分批丢最后一批", _u("test_relationship_batch_splits_and_merges"),
@@ -171,8 +170,8 @@ MUTANTS = [
     # ── core/relationship_batch.py：导入方向（靶子 = S11）──
     ("MA22 relationship_batch 导入 distiller", _loc("test_s11_import_direction"),
      [("append", RB, "\nfrom core.distiller import Distiller  # 变异：导入越界\n")], "RED"),
-    # ── core/text_manager.py：变体绕过 opening.py（靶子 = S12）──
-    ("MA23 新会话开场变体绕过 opening.py 用原卡", _loc("test_s12_opening_prompts_only_in_opening_module"),
+    # ── core/text_manager.py：变体绕过 opening.py（靶子 = §6.2 E19 行为测试）──
+    ("MA23 新会话开场变体绕过 opening.py 用原卡", _r("test_opening_variation_reads_projected_card"),
      [("repl", TM, [("                from core.arc_view import project_card\n"
                      "                from core.opening import build_variation_prompt\n\n"
                      "                variation_prompt = build_variation_prompt(project_card(card, None)[0])",
