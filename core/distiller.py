@@ -28,7 +28,7 @@ from adapters.llm_adapter import (
     user_facing_error,
 )
 from core.card_quotes import retract_unverified
-from core.arc_view import phase_of
+from core.arc_view import phase_header, phase_of
 from core.llm_json import extract_json
 from core.card_relationships import dedupe_relationship_targets
 from core.chat_preprocessor import ChatPreprocessor
@@ -445,7 +445,7 @@ def _phase_list_note(g6: dict) -> str:
     if not phases:
         return "本角色没有阶段：需要按阶段标注的字段只写一条，phase 填 0。"
     lines = ["本角色弧线的阶段（维度 L 已定，按阶段标注的字段用这些编号）："]
-    lines += [f"  阶段 {i} · {p.get('label', '')} · {p.get('state', '')}"
+    lines += [f"  {phase_header(i, p.get('label', ''))} · {p.get('state', '')}"
               for i, p in enumerate(phases, 1)]
     return "\n".join(lines)
 

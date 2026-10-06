@@ -93,10 +93,10 @@ def test_u2_last_phase_keeps_axis_no_boundary():
 
 # ── U3 记忆 = 顶层 + 阶段 1..k ─────────────────────────────────
 def test_u3_memories_top_plus_upto_k():
-    card, view = av.project_card(_card(), 2)
+    # 记忆只在投影卡上算一次（`ArcView.memories` 已删，B5：同一份记忆不存两处）。
+    card, _ = av.project_card(_card(), 2)
     assert card.key_memories == ["top", "m1", "m2"]
     assert "m3" not in card.key_memories
-    assert view.memories == ["top", "m1", "m2"]
 
 
 def test_u3_memories_at_last_include_all():

@@ -134,9 +134,11 @@ def test_s12_has_positions_callers_are_allowlisted():
     # 定义唯一性（挪到 CharacterArc.has_positions）由 test_arc_phase_fields_locks.py 的 S7 守；
     # 本条只守「谁调用它」：调用不是重复判定，别处**自己写**齐全/递增检查才违反。
     callers = _files(_BOTH, r"\bhas_positions\(")
-    # arc_view 是阶段的判断方（检索上界），text_manager / distiller 是①就有的两个调用方。
+    # arc_view 是阶段的判断方（检索上界），text_manager / distiller 是①就有的两个调用方，
+    # card_out 是出卡这一处（B4：`selectable` 现算）。
     assert callers <= {"core/schema.py", "core/arc_view.py",
-                       "core/text_manager.py", "core/distiller.py"}, (
+                       "core/text_manager.py", "core/distiller.py",
+                       "core/card_out.py"}, (
         f"has_positions 的调用方超出允许名单，实得 {callers}")
 
 

@@ -4,8 +4,16 @@ from __future__ import annotations
 
 import json
 
-from core.arc_view import project_card
+from core.arc_view import card_outline, phase_header
+from core.card_layers import REGISTRY
 from core.schema import CharacterCard
+
+_SPEECH_PREFIX = "speaking_style."          # 说话风格单列进 mes_example，不重复进人设正文
+
+
+def _label(path: str) -> str:
+    """字段中文名的唯一来源：登记表（B5）。"""
+    return REGISTRY[path].label
 
 
 def to_tavern_json(card: CharacterCard, first_message: str = "") -> dict:
@@ -18,26 +26,22 @@ def to_tavern_json(card: CharacterCard, first_message: str = "") -> dict:
     Returns:
         Dict conforming to ``chara_card_v2`` / ``spec_version: "2.0"``.
 
-    导出的是**投影到最后一个阶段**的卡（阶段 k 那个人的样子 + 一到 k 的经历），阶段特有的
-    内容再按阶段另起一行列出 —— 单给原卡会是「全书混在一起」的人设。
+    全程成立的部分写一遍，阶段特有的内容**只在其所属阶段的段落里**出现一次（`card_outline`
+    的全程 + 逐阶段两层；字段名一律取登记表的 ``label``）。
     """
-    card = project_card(card, None)[0]
     style = card.speaking_style
+    lifelong, per_phase = card_outline(card)
 
-    personality_lines: list[str] = []
-    if card.personality_traits:
-        personality_lines.append("性格：" + "；".join(card.personality_traits))
-    if card.values:
-        personality_lines.append("价值观：" + "；".join(card.values))
-    if card.key_memories:
-        personality_lines.append("关键记忆：" + "；".join(card.key_memories))
-    for i, phase in enumerate(card.character_arc.phases, 1):
-        phase_memories = phase.overlay.get("key_memories") or []
-        if phase_memories:                       # 只在那阶段成立的记忆，别从导出里消失
-            head = f"阶段 {i} · {phase.label}" if phase.label else f"阶段 {i}"
-            personality_lines.append(f"{head}记忆：" + "；".join(phase_memories))
-    if card.inner_tensions:
-        personality_lines.append("内在矛盾：" + "；".join(card.inner_tensions))
+    def body(rows) -> list[str]:
+        return [f"{label}：{text}" for path, label, text in rows
+                if not path.startswith(_SPEECH_PREFIX)]
+
+    personality_lines = body(lifelong)
+    for i, (phase, rows) in enumerate(zip(card.character_arc.phases, per_phase), 1):
+        phase_body = body(rows)
+        if phase_body:                           # 只在那阶段成立的内容，别从导出里消失
+            personality_lines.append(phase_header(i, phase.label))
+            personality_lines += phase_body
     personality_text = "\n".join(personality_lines)
 
     description_lines: list[str] = [card.identity]
@@ -48,15 +52,15 @@ def to_tavern_json(card: CharacterCard, first_message: str = "") -> dict:
 
     speech_lines: list[str] = []
     if style.tone:
-        speech_lines.append(f"语气：{style.tone}")
+        speech_lines.append(f"{_label('speaking_style.tone')}：{style.tone}")
     if style.sentence_pattern:
-        speech_lines.append(f"句式：{style.sentence_pattern}")
+        speech_lines.append(f"{_label('speaking_style.sentence_pattern')}：{style.sentence_pattern}")
     if style.vocabulary_level:
-        speech_lines.append(f"用词：{style.vocabulary_level}")
+        speech_lines.append(f"{_label('speaking_style.vocabulary_level')}：{style.vocabulary_level}")
     if style.catchphrases:
-        speech_lines.append("口癖：" + "、".join(style.catchphrases))
+        speech_lines.append(f"{_label('speaking_style.catchphrases')}：" + "、".join(style.catchphrases))
     if style.taboo_words:
-        speech_lines.append("禁忌用词：" + "、".join(style.taboo_words))
+        speech_lines.append(f"{_label('speaking_style.taboo_words')}：" + "、".join(style.taboo_words))
     mes_example = "\n".join(speech_lines)
 
     greeting = first_message or card.first_message or f"你好，我是{card.name}。"

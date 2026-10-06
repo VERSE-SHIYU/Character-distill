@@ -16,7 +16,7 @@ from core.schema import (
     memory_evidence,
     web_evidence,
 )
-from core.arc_view import ProjectedCard, require_projected
+from core.arc_view import ProjectedCard, phase_header, require_projected
 from core.rag import RAGEngine
 from core.scene_indexer import _detect_emotion
 from core.tokens import count_tokens
@@ -387,8 +387,7 @@ class ContextEngine:
         lines = [f"\n## 此刻的你\n你现在处在阶段 {view.k}/{view.n}。"]
         # 投影卡只留 1..k 个阶段（投影保证），迭代即可，不在此切片（S2）。
         for i, p in enumerate(self.card.character_arc.phases, 1):
-            head = f"阶段 {i}·{p.label}" if p.label else f"阶段 {i}"
-            lines.append(f"- {head}：{p.state}")
+            lines.append(f"- {phase_header(i, p.label)}：{p.state}")
         if view.show_axis and self.card.character_arc.axis:
             lines.append(f"变化轴：{self.card.character_arc.axis}")
         if view.boundary:

@@ -439,6 +439,64 @@ def test_export_reads_last_phase_and_lists_overlay():
     assert "阶段二记忆" in blob
 
 
+# ── U21 B6：阶段内容只出现一次，且落在对应阶段的段落里 ──────────────────────
+
+def _sections(text: str) -> dict[str, str]:
+    """按阶段表头把导出正文切段；全程段（无表头）键为 ``""``。"""
+    out: dict[str, list[str]] = {"": []}
+    cur = ""
+    for line in text.splitlines():
+        if line.startswith("阶段 "):
+            cur = line
+            out[cur] = []
+        else:
+            out.setdefault(cur, []).append(line)
+    return {k: "\n".join(v) for k, v in out.items()}
+
+
+def test_export_phase_content_appears_once_in_its_section():
+    """B6：阶段记忆 / 阶段性格各只出现一次，且在**对应阶段的段落**里。"""
+    from core.arc_view import phase_header
+    from core.export import to_tavern_json
+
+    c = make_card(3)
+    c.personality_traits = ["全程性格"]
+    c.key_memories = ["全程记忆"]
+    set_overlay(c, 0, "personality_traits", ["早期才有的性格"])
+    set_overlay(c, 1, "key_memories", ["中期才有的记忆"])
+
+    text = to_tavern_json(c)["data"]["personality"]
+    assert text.count("早期才有的性格") == 1, "阶段性格重复出现或消失"
+    assert text.count("中期才有的记忆") == 1, "阶段记忆重复出现或消失"
+
+    labels = [p.label for p in c.character_arc.phases]
+    secs = _sections(text)
+    assert "早期才有的性格" in secs[phase_header(1, labels[0])]
+    assert "中期才有的记忆" in secs[phase_header(2, labels[1])]
+    assert "早期才有的性格" not in secs[""], "阶段内容漏进了全程段"
+    assert "中期才有的记忆" not in secs[""], "阶段内容漏进了全程段"
+
+
+# ── U22 B5：导出正文的字段名取自登记表 ────────────────────────────────────
+
+def test_export_field_names_come_from_registry(monkeypatch):
+    """B5：正文里的字段名是登记表 ``label`` —— 改登记表即改导出（不是各自写死）。"""
+    import core.card_layers as cl
+    import core.arc_view as av
+    from core.export import to_tavern_json
+
+    patched = dict(cl.REGISTRY)
+    patched["key_memories"] = cl.FieldSpec("experience", "list", "独家记忆名")
+    monkeypatch.setattr(cl, "REGISTRY", patched)
+    monkeypatch.setattr(av, "REGISTRY", patched)          # arc_view 顶层已绑定自己那份
+
+    c = make_card(2)
+    c.key_memories = ["一段记忆"]
+    text = to_tavern_json(c)["data"]["personality"]
+    assert "独家记忆名：一段记忆" in text
+    assert "关键记忆" not in text, "导出还写着旧字段名"
+
+
 # ── U16/U17 关系分批 ────────────────────────────────────────────────────
 
 def test_relationship_batch_splits_and_merges():

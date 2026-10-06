@@ -316,3 +316,40 @@ def test_s15_out_card_is_the_only_card_out():
     # 4) `"selectable"` 字面只在出卡这一处（core/web 的 .py）
     lit = _files(_BOTH, r"""["']selectable["']""")
     assert lit <= {"core/card_out.py"}, f"`selectable` 字面逸出出卡模块：{lit}"
+
+
+# ── S16 字段名只在登记表登记一次；阶段表头只由 `phase_header` 产出（B5、B6）────
+def test_s16_field_labels_only_in_registry():
+    """字段中文名的唯一来源是登记表 ``FieldSpec.label``：非空、互不相同。
+
+    导出正文经 ``card_outline`` 遍历登记表取名字（不自己写字段名）；阶段表头一律由
+    ``phase_header`` 产出（内联的 ``f"阶段 {i}·…"`` 已清）。
+    """
+    from core.card_layers import REGISTRY
+
+    labels = [s.label for s in REGISTRY.values()]
+    assert all(lb.strip() for lb in labels), "有字段没登记中文名（都是后端唯一来源的一部分）"
+    dupes = sorted({lb for lb in labels if labels.count(lb) > 1})
+    assert not dupes, f"字段中文名有重复：{dupes}"
+
+    # 表头函数只定义一次
+    defs = _hits(_CORE, r"^def phase_header\(")
+    assert [f for f, _ in defs] == ["core/arc_view.py"], f"phase_header 定义处不唯一：{defs}"
+
+    # 四个产表头的模块都经它；内联的「阶段 i·…」已清
+    for rel in ("core/export.py", "core/context_engine.py",
+                "core/distiller.py", "core/opening.py"):
+        assert "phase_header" in _read(_REPO / rel), f"{rel} 的阶段表头未走 phase_header"
+    inline = [h for h in _hits(_CORE, r'f"阶段 \{[^"]*·')
+              if h[0] != "core/arc_view.py"]          # arc_view 是 phase_header 本体
+    assert not inline, f"还有内联的阶段表头（未走 phase_header）：{inline}"
+
+    # 导出正文经 card_outline 遍历登记表
+    assert "card_outline" in _read(_CORE / "export.py"), "导出未走 card_outline"
+
+    # `ArcView` 不再自带 memories（记忆只在投影卡上算一次，别算两处）
+    tree = ast.parse(_read(_CORE / "arc_view.py"))
+    arcview = next(n for n in tree.body
+                   if isinstance(n, ast.ClassDef) and n.name == "ArcView")
+    fields = {n.target.id for n in arcview.body if isinstance(n, ast.AnnAssign)}
+    assert "memories" not in fields, "ArcView 又带上了 memories（同一份记忆算两处）"

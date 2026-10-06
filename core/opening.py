@@ -11,7 +11,7 @@
 """
 from __future__ import annotations
 
-from core.arc_view import ProjectedCard, project_card, require_projected
+from core.arc_view import ProjectedCard, phase_header, project_card, require_projected
 from core.clock import UserClock, describe_time_period
 
 
@@ -21,8 +21,7 @@ def _phase_note(card: ProjectedCard) -> str:
     if not phases:
         return ""
     cur = phases[-1]
-    head = cur.label or f"阶段 {len(phases)}"
-    return f"此刻你处在这个阶段：{head}（{cur.state}）\n"
+    return f"此刻你处在这个阶段：{phase_header(len(phases), cur.label)}（{cur.state}）\n"
 
 
 def build_opening_prompt(card: ProjectedCard, *, user_role: str = "") -> str:

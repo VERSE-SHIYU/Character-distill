@@ -308,3 +308,141 @@ def test_out_card_without_card_json_is_untouched():
 
     row = {"id": 1, "name": "甲"}
     assert out_card(row) == row
+
+
+# ── E7 市场 @ 回复读投影卡（行为面，替换 MA15 的结构锁兜底）──────────────────
+#
+# 结构锁 S3 只能证明源码里有 `project_card(`；行为面要证明**拼进 system_prompt 的确实是
+# 投影卡**（最后阶段才成立的性格在提示里、顶层没有的也在）。
+
+def test_market_reply_reads_projected_card(monkeypatch):
+    import deps
+    import server
+    from fastapi.testclient import TestClient
+    import web.routers.market as M
+
+    recorded: list[str] = []
+
+    class _LLM:
+        model = "stub"
+        last_usage: dict = {}
+
+        def preflight(self):
+            return None
+
+        def chat(self, system, messages, *a, **kw):
+            recorded.append(system)
+            return "收到"
+
+    card = make_card(2)
+    card.personality_traits = ["全程性格"]
+    set_overlay(card, 1, "personality_traits", ["末阶段才有的性格"])
+    row = {"text_id": "t1", "name": "甲", "visibility": "public",
+           "author_username": "u", "card_json": card.model_dump_json()}
+
+    class _Store:
+        async def get_card_unscoped(self, card_id):
+            return {**row, "id": card_id}
+
+        async def add_ai_reply_comment(self, *a, **kw):
+            return {"ok": True}
+
+    async def _user_llm(*a, **kw):
+        return _LLM()
+
+    monkeypatch.setattr(deps, "get_user_llm", _user_llm)
+    monkeypatch.setattr(M, "try_record_usage", lambda *a, **kw: None)
+
+    from deps import get_storage
+    from routers.auth import get_current_user
+
+    app = server.app
+    app.dependency_overrides[get_storage] = lambda: _Store()
+    app.dependency_overrides[get_current_user] = lambda: {"id": "u1", "username": "u"}
+    try:
+        resp = TestClient(app, raise_server_exceptions=False).post(
+            "/api/market/card_src/comments/at-reply",
+            json={"at_card_id": "card_at", "comment_content": "在吗"})
+    finally:
+        app.dependency_overrides.pop(get_storage, None)
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert resp.status_code == 200, resp.text
+    assert recorded and "末阶段才有的性格" in recorded[0], (
+        "市场 @ 回复的 system_prompt 里没有最后阶段才成立的人设 —— 没走投影卡")
+
+
+# ── E19 新会话开场变体读投影卡（行为面，替换 MA23 的结构锁兜底）───────────────
+
+def test_opening_variation_reads_projected_card(monkeypatch):
+    import asyncio
+
+    import core.opening as opening
+    from core.arc_view import ProjectedCard
+    from core.text_manager import TextManager
+
+    seen: dict = {}
+    real = opening.build_variation_prompt
+
+    def spy(card, **kw):
+        seen["card"] = card
+        return real(card, **kw)
+
+    monkeypatch.setattr(opening, "build_variation_prompt", spy)
+
+    card = make_card(2)
+    card.first_message = "原始开场白"
+
+    class _LLM:
+        model = "stub"
+        last_usage: dict = {}
+
+        def preflight(self):
+            return None
+
+        def chat(self, *a, **kw):
+            return "换个说法的开场白"
+
+    class _Store:
+        async def get_text_owned(self, text_id, user_id):
+            return {"id": "t1", "content": "正文", "user_id": user_id}
+
+        async def get_card_owned(self, card_id, user_id):
+            return self.card
+
+        async def list_cards(self, text_id, user_id):
+            return [self.card]
+
+        async def get_user_api_config(self, user_id):
+            return {"embedding_key": "", "embedding_region": "cn"}
+
+        async def get_session_owned(self, session_id, user_id):
+            return {"id": session_id, "card_id": "c1", "user_role": "", "user_id": user_id}
+
+        async def save_session(self, *a, **kw):
+            return None
+
+        async def save_card(self, card_id, text_id, name, card_json, user_id):
+            return {"id": "c1"}
+
+    store = _Store()
+    store.card = {"id": "c1", "text_id": "t1", "name": card.name,
+                  "card_json": card.model_dump_json()}
+    tm = TextManager(lambda: store, None, _LLM(), {}, indexing_service=None,
+                     memory_manager=None)
+
+    async def _chars(*a, **kw):
+        return [{"name": card.name, "aliases": []}]
+
+    async def _guard(_card):
+        from core.moderation.card_guard import GuardVerdict
+        return GuardVerdict()
+
+    tm._build_all_characters = _chars
+    tm._guard_card = _guard
+    tm.memory_for = lambda *a, **kw: None
+
+    asyncio.run(tm.get_or_distill("t1", card.name, user_id="u1"))
+
+    assert "card" in seen, "开场变体没走 core.opening.build_variation_prompt"
+    assert isinstance(seen["card"], ProjectedCard), "变体提示词拿到的不是投影卡"

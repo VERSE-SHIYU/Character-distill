@@ -23,7 +23,6 @@ class ArcView(NamedTuple):
     n: int                                  # 卡的阶段总数
     show_axis: bool                         # k==n（不截断）→ 注入变化轴
     boundary: bool                          # k<n（截断了）→ 注入边界说明与示范
-    memories: list[str]                     # 要注入的记忆：顶层 + 阶段 1..k
     boundary_examples: list[BoundaryExample]  # 阶段 k 的边界示范（k<n 才有）
     before: int | None                      # 检索上界（规范化坐标）；不截断或缺位置时 None
     source_fingerprint: str = ""            # 起点所依据的正文指纹
@@ -86,9 +85,6 @@ def arc_view(card: CharacterCard, arc_phase: int | None) -> ArcView:
     phases = card.character_arc.phases
     n = len(phases)
     k = _normalize_k(card, arc_phase)
-    memories = list(card.key_memories) + [
-        m for p in phases[:k] for m in (p.overlay.get("key_memories") or [])
-    ]
     boundary = k < n
     boundary_examples = list(phases[k - 1].boundary_examples) if boundary else []
     before: int | None = None
@@ -96,9 +92,45 @@ def arc_view(card: CharacterCard, arc_phase: int | None) -> ArcView:
         before = phases[k].start
     return ArcView(
         k=k, n=n, show_axis=(n > 0 and k == n), boundary=boundary,
-        memories=memories, boundary_examples=boundary_examples, before=before,
+        boundary_examples=boundary_examples, before=before,
         source_fingerprint=card.character_arc.source_fingerprint,
     )
+
+
+def phase_header(index: int, label: str = "") -> str:
+    """阶段表头「阶段 i·label」（无 label 则「阶段 i」）—— 表头写法只此一处（B6）。"""
+    label = (label or "").strip()
+    return f"阶段 {index}·{label}" if label else f"阶段 {index}"
+
+
+def card_outline(card: CharacterCard):
+    """整卡的两层视图：``(全程, 逐阶段)`` —— 导出与展示共用的唯一字段名来源（B5）。
+
+    - **全程** = 原卡顶层的 state / experience 字段；
+    - **逐阶段** = 第 i 个阶段的 ``overlay``（每个阶段一份）。
+
+    两层都按登记表遍历，一行是 ``(路径, 中文名, 文本)``：字段名一律取 ``FieldSpec.label``
+    （不在此拼字段名），列表「；」连接、单值原样，无值跳过。只取 state / experience 两类
+    —— 它们是会随阶段变的人设；stable 全程不变、custom 各自渲染、none 不进 prompt。
+    """
+    def rows(read) -> list[tuple[str, str, str]]:
+        out: list[tuple[str, str, str]] = []
+        for path, spec in REGISTRY.items():
+            if spec.layer not in ("state", "experience"):
+                continue
+            value = read(path)
+            if spec.kind == "list":
+                text = "；".join(str(x) for x in (value or []))
+            else:
+                text = str(value or "").strip()
+            if text:
+                out.append((path, spec.label, text))
+        return out
+
+    lifelong = rows(lambda path: get_path(card, path))
+    per_phase = [rows(lambda path, o=p.overlay: o.get(path))
+                 for p in card.character_arc.phases]
+    return lifelong, per_phase
 
 
 def _project_relationships(
