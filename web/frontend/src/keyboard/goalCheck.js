@@ -7,6 +7,8 @@
  * every later segment reuses it. Temporary: deleted when the migration ends.
  */
 
+import { isTextEntry } from './textEntry'
+
 export const MEASURE_AT_MS = [800, 2000]
 
 // C2 上界：列表底部留白 + 这 24px。阈值是初值，真机首跑后按需调整。
@@ -58,12 +60,6 @@ export function formatReport(label, r) {
     `输入栏 ${r.inputTop.toFixed(0)}–${r.inputBottom.toFixed(0)}  末条底 ${r.lastBottom.toFixed(0)}  间距 ${r.gap.toFixed(0)}  留白 ${r.listBottomPadding}`,
     `offsetTop ${r.offsetTop.toFixed(0)}  pageTop ${r.pageTop.toFixed(0)}  scrollY ${r.scrollY.toFixed(0)}  可视高 ${r.viewHeight.toFixed(0)}  窗口高 ${r.windowHeight}`,
   ].join('\n')
-}
-
-const isTextEntry = (el) => {
-  if (!el || !el.tagName) return false
-  if (el.tagName === 'TEXTAREA') return true
-  return el.tagName === 'INPUT' && (el.getAttribute('type') || 'text') === 'text'
 }
 
 /**

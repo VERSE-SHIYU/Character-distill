@@ -26,8 +26,10 @@ import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 import ChatSessionList from './common/ChatSessionList'
 import SplitLayout, { PaneToggle } from './common/SplitLayout'
-import { applyKeyboardUrlOverrides, isGoalCheckEnabled } from '../keyboard/keyboardMode'
+import { isGoalCheckEnabled } from '../keyboard/keyboardMode'
 import { installGoalCheck } from '../keyboard/goalCheck'
+import useNativeKeyboardPage from '../keyboard/useNativeKeyboardPage'
+import useKeyboardFocus from '../keyboard/useKeyboardFocus'
 
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
@@ -412,7 +414,6 @@ function ChatView() {
 
   // §1 目标检查：B1 开关 + C1–C3。默认关，?kbdcheck=1 才装。
   useEffect(() => {
-    applyKeyboardUrlOverrides()
     if (!isGoalCheckEnabled()) return undefined
     return installGoalCheck({
       getInputBar: () => rootRef.current?.querySelector('.composer-bar') ?? null,
@@ -420,6 +421,15 @@ function ChatView() {
       getLastMessage: () => bottomRef.current?.previousElementSibling ?? null,
     })
   }, [])
+
+  // B2 + B5/B7/B8：native 模式下由键盘层接管。B7 的「滚到底」在这里通过回调做，
+  // 列表设了平滑滚动，必须显式 instant。
+  const nativeKbd = useNativeKeyboardPage()
+  const handleKbdFocus = useCallback(() => {
+    const el = listRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
+  }, [])
+  useKeyboardFocus({ rootRef, enabled: nativeKbd, onFocus: handleKbdFocus })
 
   const loadMemories = useCallback(async () => {
     if (!cardId) return
@@ -685,7 +695,7 @@ function ChatView() {
         </div>
       )}
 
-          <div className="chat-messages" ref={listRef} onScroll={handleScroll}>
+          <div className="chat-messages" ref={listRef} onScroll={handleScroll} data-kbd-lift>
             {messages.map((msg, i) => {
               if (msg.role === 'summary') {
                 return <SummaryBubble key={msg._cid ?? msg.id} content={msg.content} />

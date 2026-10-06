@@ -17,6 +17,7 @@ if (typeof window !== 'undefined') {
     })
   }
   if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {}
+  if (!Element.prototype.scrollTo) Element.prototype.scrollTo = () => {}
 }
 
 const { mockState } = vi.hoisted(() => {
@@ -126,5 +127,66 @@ describe('ChatArea 接线：目标检查', () => {
 
     vi.advanceTimersByTime(1200)
     expect(overlay().textContent).toContain('2000ms')
+  })
+})
+
+describe('ChatArea 接线：native 键盘层 + P5', () => {
+  let origMatchMedia
+  let origInnerWidth
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    origMatchMedia = window.matchMedia
+    origInnerWidth = window.innerWidth
+    window.visualViewport = {
+      offsetTop: 0,
+      height: 800,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+    window.matchMedia = origMatchMedia
+    Object.defineProperty(window, 'innerWidth', { value: origInnerWidth, configurable: true, writable: true })
+    document.documentElement.removeAttribute('data-kbd')
+    document.body.className = ''
+    delete window.visualViewport
+    localStorage.clear()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('P5：ChatArea 不再处理网址参数（?kbd=native&kbdcheck=1 不落盘）', () => {
+    window.history.pushState({}, '', '/?kbd=native&kbdcheck=1')
+    localStorage.clear()
+    render(<ChatArea />)
+    expect(localStorage.getItem('kbd_mode')).toBeNull()
+    expect(localStorage.getItem('kbd_check')).toBeNull()
+  })
+
+  it('kbd_mode=native 且手机宽度：html 加 data-kbd，聚焦加 kbd-focusing，列表有 data-kbd-lift', () => {
+    localStorage.setItem('kbd_mode', 'native')
+    window.matchMedia = (q) => ({
+      matches: true, media: q,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, onchange: null,
+      dispatchEvent: () => false,
+    })
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true })
+
+    const { container } = render(<ChatArea />)
+    expect(document.documentElement.getAttribute('data-kbd')).toBe('native')
+    expect(container.querySelector('.chat-messages')?.hasAttribute('data-kbd-lift')).toBe(true)
+
+    const ta = container.querySelector('.chat-textarea')
+    expect(ta, '真 ChatInputBar 没渲染').not.toBeNull()
+    ta.focus()
+    expect(document.body.classList.contains('kbd-focusing')).toBe(true)
+
+    ta.blur()
+    vi.advanceTimersByTime(0)
+    expect(document.body.classList.contains('kbd-focusing')).toBe(false)
   })
 })
