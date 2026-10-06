@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from adapters.llm_adapter import LLMAdapter
+from core.arc_view import has_positions
 from core.character_roster import aliases_for, cached_characters, resolve_characters
 from core.chat_engine import ChatEngine
 from core.chat_preprocessor import ChatPreprocessor
@@ -627,11 +628,23 @@ class TextManager:
 
         # Fire-and-forget scene index (non-blocking, degraded silently)
         if self._indexing_service:
+            # 带起点的卡：场景索引额外要位置（指纹相同但集合无 pos_schema 时也重建），
+            # 且 `text_` 集合缺位置时按当前名单补建 —— **补位置的调度只在这里**（存卡
+            # 汇合点，它自己就有原文内容）。会话入口一律不调度。
+            need_pos = has_positions(card)
             self._indexing_service.schedule_scene_index(
                 text_id, actual_card_id, content, card.name,
                 all_characters=all_chars,
                 embedding_key=embedding_key, embedding_region=embedding_region,
+                need_positions=need_pos,
             )
+            if need_pos:
+                self._indexing_service.schedule_text_reindex(
+                    text_id, content,
+                    all_characters=all_chars,
+                    embedding_key=embedding_key, embedding_region=embedding_region,
+                    only_if_missing_positions=True,
+                )
         return result
 
     # ---- Internal helpers ----
@@ -673,6 +686,7 @@ class TextManager:
         user_id: str = "",
         user_role: str = "",
         session_id: str | None = None,
+        arc_phase: int | None = None,
         memory: Any,
     ) -> str:
         """Build ChatEngine in memory; rag=None means no retrieval (pure card prompt). (sync)
@@ -714,9 +728,20 @@ class TextManager:
             memory_manager=memory,
             card_id=card_id,
             user_role=user_role,
+            arc_phase=arc_phase,
             storage=self._storage,
             session_id=session_id,
             is_new_session=is_new_session,
         )
         self._sessions[session_id] = new_session_entry(engine, card, user_id)
         return session_id
+
+
+def session_identity(db_row: dict | None) -> dict[str, Any]:
+    """会话行 → 引擎身份（`user_role`、`arc_phase`）。**唯一出口**。
+
+    自动重建（`chat.py`）与恢复存档（`history.py`）都从这里取，别处不许再事后给引擎赋身份
+    （S5）。`arc_phase` 缺列 / 为 NULL 时保留 None（= 用最后阶段）。
+    """
+    row = db_row or {}
+    return {"user_role": row.get("user_role") or "", "arc_phase": row.get("arc_phase")}

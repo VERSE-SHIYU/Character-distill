@@ -14,6 +14,7 @@ from collections.abc import Generator
 from typing import Any
 
 from adapters.llm_adapter import LLMAdapter
+from core.arc_view import project_card
 from core.clock import UserClock, describe_time_period
 from core.context_engine import ContextEngine
 from core.rag import RAGEngine
@@ -111,6 +112,7 @@ class ChatEngine:
         card: CharacterCard,
         all_characters: list[dict[str, Any]] | None = None,
         user_role: str = "",
+        arc_phase: int | None = None,
         memory_manager=None,
         card_id: str = "",
         context_window: int = 100,
@@ -134,10 +136,15 @@ class ChatEngine:
         ``is_new_session`` 必须是**显式入参**，不能拿 ``session_id`` 有无去推：构造函数
         里那个 id 曾经恒为空串，于是「新会话才算初始好感度」永远为真；身份改由构造注入
         之后，这条推断会静默反过来（续接的引擎也带 id），把库里恢复出来的状态盖掉。
+
+        ``arc_phase`` 是这次会话选的阶段：**投影只在这里做一次**（`project_card`），
+        `self.card` 即投影后的卡，下游的关系消费方、卡片扩展层、群聊都天然读到阶段 k 的
+        版本，不必改。None / 越界 / 卡无阶段 → 用最后阶段（投影等于原卡）。
         """
         self.llm: LLMAdapter = llm
         self.rag: RAGEngine = rag
-        self.card: CharacterCard = card
+        self.card, self.arc_view = project_card(card, arc_phase)
+        self.arc_phase: int | None = arc_phase
         self._all_characters = all_characters
         self.user_role: str = user_role
         self._memory = memory_manager
@@ -163,7 +170,7 @@ class ChatEngine:
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
         if is_new_session:
             try:
-                init_data = self._compute_initial_affinity(card, user_role)
+                init_data = self._compute_initial_affinity(self.card, user_role)
                 self._affinity = max(0, min(100, init_data.get("affinity", 50)))
                 self._trust = max(0, min(100, init_data.get("trust", 30)))
                 self._mood = init_data.get("mood", "平静")
@@ -183,7 +190,8 @@ class ChatEngine:
         self.last_traces: list[SourceTrace] = []
         self.last_summary: str | None = None  # legacy compat for chat.py
         self._ctx_engine = ContextEngine(
-            card=card,
+            card=self.card,
+            arc_view=self.arc_view,
             rag=rag,
             memory_manager=memory_manager,
             card_id=card_id,

@@ -48,20 +48,20 @@ MUTATIONS = [
     # 撞到 [69, 95, 103]
     ('M1  分发：只要有一条做法落在某个阶段就放顶层（「所有阶段都标了」退化成「标了任一阶段」）',
      TARGET, [("repl", DRAFT, [
-         ('if len(final) == count:',
-          'if len(final) >= 1:'),
+         ('if count == 0 or len(final) == count:',
+          'if count == 0 or len(final) >= 1:'),
      ])], "RED"),
     # 撞到 [68, 89, 90]
     ('M2  顶层判据写成 len(final) > count：标了所有阶段的做法永远进不了顶层',
      TARGET, [("repl", DRAFT, [
-         ('if len(final) == count:',
-          'if len(final) > count:'),
+         ('if count == 0 or len(final) == count:',
+          'if count == 0 or len(final) > count:'),
      ])], "RED"),
     # 撞到 [69, 96, 97]
     ('M3  挂阶段时下标算反：最终阶段 p 的做法挂到倒数第 p 个阶段',
      TARGET, [("repl", DRAFT, [
-         ('by_phase[p - 1].append(',
-          'by_phase[count - p].append('),
+         ('by_phase[p - 1].append(i)',
+          'by_phase[count - p].append(i)'),
      ])], "RED"),
     # 撞到 [70]
     ('M4  转卡时丢掉阶段的 label',
@@ -72,14 +72,14 @@ MUTATIONS = [
     # 撞到 [68, 89, 96, 148]
     ('M5  位置校正的结果一律丢空：每条做法都当成「编号全废」整条撤回',
      TARGET, [("repl", DRAFT, [
-         ('final = result.phases[i]',
-          'final = []'),
+         ('    b_top, b_slots = dispatch(b.phases, count)',
+          '    b_top, b_slots = dispatch([[] for _ in b.phases], count)'),
      ])], "RED"),
     # 撞到 [104, 113]
     ('M6  删掉非法编号的 warning',
      TARGET, [("repl", DRAFT, [
-         ('            logger.warning("[card_draft] 做法的阶段编号不合法（共 %d 个阶段）%s：%s",\n'
-          '                           count, nums, row.situation)\n',
+         ('            logger.warning("[card_draft] %s的阶段编号不合法（共 %d 个阶段）%s：%s",\n'
+          '                           kind, count, _row_label(item), nums)\n',
           '            pass\n'),
      ])], "RED"),
     # 撞到 [119, 120]
@@ -97,10 +97,14 @@ MUTATIONS = [
     # 撞到 [111]
     ('M9  编号全部作废的做法改放顶层，而不是整条撤回',
      TARGET, [("repl", DRAFT, [
-         ('        if not final:\n            continue',
-          '        if not final:\n'
-          '            general.append({**base, "source_quote": _first_quote(row)})\n'
-          '            continue'),
+         ('        elif final:\n'
+          '            for p in final:\n'
+          '                by_phase[p - 1].append(i)',
+          '        elif final:\n'
+          '            for p in final:\n'
+          '                by_phase[p - 1].append(i)\n'
+          '        else:\n'
+          '            top.append(i)'),
      ])], "RED"),
     # 撞到 [130, 202, 210, 218, 303, 304, 338]
     ('M10  形态不对时宽容兜底（situation_behaviors 不是列表就当空列表），不再抛 ValidationError',
@@ -125,8 +129,11 @@ MUTATIONS = [
     # 撞到 [137, 298, 331]
     ('M13  草稿做法丢掉 occurrences 字段',
      TARGET, [("repl", DRAFT, [
-         ('    occurrences: list[DraftOccurrence] = []\n',
-          ''),
+         ('class DraftBehavior(BehaviorCore):\n'
+          '    """情境→行为：此人遇到某类情境时的具体做法；occurrences 是它在各阶段的原文摘录。"""\n'
+          '    occurrences: list[DraftOccurrence] = []\n',
+          'class DraftBehavior(BehaviorCore):\n'
+          '    """情境→行为：此人遇到某类情境时的具体做法；occurrences 是它在各阶段的原文摘录。"""\n'),
      ])], "RED"),
     # 撞到 [138]
     ('M14  草稿阶段丢掉 anchor 字段',
@@ -139,8 +146,8 @@ MUTATIONS = [
      TARGET, [("repl", DRAFT, [
          ('class DraftPhase(PhaseState):',
           'class DraftPhase(ArcPhase):'),
-         ('from core.schema import FORMAT_GROUPS, ArcAxis, BehaviorCore, CharacterCard, PhaseState',
-          'from core.schema import FORMAT_GROUPS, ArcAxis, ArcPhase, BehaviorCore, CharacterCard, PhaseState'),
+         ('from core.schema import (\n    FORMAT_GROUPS,\n    ArcAxis,\n',
+          'from core.schema import (\n    FORMAT_GROUPS,\n    ArcAxis,\n    ArcPhase,\n'),
      ])], "RED"),
     # 撞到 [141]
     ('M16  分组 schema 漏进组外字段（name 进了每一组）',
@@ -210,9 +217,10 @@ MUTATIONS = [
     # 撞到 [255, 262]
     ('M24  分组流式每组回来就交出一段 JSON：交出的字符串不止一个',
      TARGET, [("repl", DIST, [
-         ('            group_data[group] = payload\n            yield {"heartbeat": True}',
+         ('            group_data[group] = payload\n'
+          '            yield {"heartbeat": True}   # 每组回来一次心跳，不新增状态值',
           '            group_data[group] = payload\n'
-          '            yield json.dumps(payload, ensure_ascii=False)'),
+          '            yield json.dumps(payload, ensure_ascii=False)   # 每组回来一次心跳，不新增状态值'),
      ])], "RED"),
     # 撞到 [258]
     ('M25  分组流式交出的 JSON 不是合法草稿（character_arc 被写成字符串）',
@@ -281,10 +289,12 @@ MUTATIONS = [
     # 撞到 [343]
     ('M35  G6 提示词模板（含维度 O 示例）去掉 occurrences 的阶段编号',
      TARGET, [("repl", DIST, [
-         ('写成 [{"phase": 1, "quote": "…"}]',
-          '写成 [{"phase": 9, "quote": "…"}]'),
-         ('[{"phase": 1, "quote": "该阶段里的原文摘录"}',
-          '[{"phase": 9, "quote": "该阶段里的原文摘录"}'),
+         ('[{"phase": 1, "quote": "…"}]；只填原文里确实这样过的阶段；',
+          '[{"phase": 9, "quote": "…"}]；只填原文里确实这样过的阶段；'),
+         ('    {"memory": "关键经历（原文出处）", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]}\\n',
+          '    {"memory": "关键经历（原文出处）", "occurrences": [{"phase": 9, "quote": "该阶段原文摘录"}]}\\n'),
+         ('    {"situation": "一类情境", "behavior": "具体做法", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}, {"phase": 2, "quote": "该阶段原文摘录"}]}\\n',
+          '    {"situation": "一类情境", "behavior": "具体做法", "occurrences": [{"phase": 9, "quote": "该阶段原文摘录"}, {"phase": 2, "quote": "该阶段原文摘录"}]}\\n'),
      ])], "RED"),
     # 撞到 [366]
     ('M36  distiller 另起一处 model_json_schema（schema 不再单一出处）',
@@ -296,10 +306,8 @@ MUTATIONS = [
     # 撞到 [119]
     ('M37  无阶段的卡丢掉全部做法（count==0 的直通分支被拆掉）',
      TARGET, [("repl", DRAFT, [
-         ('        if count == 0:\n'
-          '            general.append({**base, "source_quote": _first_quote(row)})\n'
-          '            continue\n',
-          ''),
+         ('        if count == 0 or len(final) == count:',
+          '        if count > 0 and len(final) == count:'),
      ])], "RED"),
     # 撞到 [96, 97]
     ('M38  有合法编号就挂到所有阶段，不看最终标了哪几个',

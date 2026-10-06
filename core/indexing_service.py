@@ -28,7 +28,7 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from core.rag import CollectionUnusableError, EvidenceHits, RAGEngine
+from core.rag import POS_SCHEMA, POS_SCHEMA_KEY, CollectionUnusableError, EvidenceHits, RAGEngine
 from core.scene_indexer import SceneIndexer
 
 logger = logging.getLogger(__name__)
@@ -133,6 +133,8 @@ class SessionRag:
         self._probe, self._stamp = rag, stamp
 
     def query_with_emotion_ex(self, query_text: str, **kwargs: Any) -> EvidenceHits:
+        """透传给已装载的引擎。时间窗（``window``）的适用性判断在 `RAGEngine` 里做（审计 A1），
+        本层不读也不改它 —— 与裸 `RAGEngine` 同一个签名。"""
         self._refresh()
         if self._unavailable is not None:
             raise self._unavailable.with_traceback(None)
@@ -252,7 +254,7 @@ class IndexingService:
     def _scene_index_job(
         self, text_id: str, card_id: str, content: str, char_name: str,
         all_characters: list[dict[str, Any]] | None,
-        embedding_key: str, embedding_region: str,
+        embedding_key: str, embedding_region: str, need_positions: bool = False,
     ) -> None:
         """后台场景预索引的整个作业（建原文集合 → 建本卡场景集合）。(sync)"""
         rag = self._build_text_collection(
@@ -264,7 +266,10 @@ class IndexingService:
         # rag 是本作业私有的，`index_scenes` 把它改指到场景集合不影响任何会话。
         name = f"scenes_{card_id}"
         with _builds.building(name):
-            SceneIndexer().index_scenes(content, rag, char_name, collection_name=name)
+            SceneIndexer().index_scenes(
+                content, rag, char_name, collection_name=name,
+                need_positions=need_positions,
+            )
 
     def _run_in_background(
         self, dedup_key: str, label: str, job: Callable[..., Any], *args: Any,
@@ -302,10 +307,13 @@ class IndexingService:
         all_characters: list[dict[str, Any]] | None = None,
         embedding_key: str = "",
         embedding_region: str = "",
+        need_positions: bool = False,
     ) -> None:
         """Fire-and-forget scene index（同一张卡的作业一个接一个跑）。
 
-        没有 embedding key 时不调度（理由同 `get_rag_for_session`）。
+        没有 embedding key 时不调度（理由同 `get_rag_for_session`）。``need_positions``
+        只在带起点的卡存卡时由 `save_distilled_card` 传 True（指纹相同但集合无 pos_schema
+        时也重建），其余调度照旧幂等。
         """
         if not embedding_key:
             logger.info("Scene index skipped: user has no embedding key (card_id=%s)", card_id)
@@ -313,7 +321,28 @@ class IndexingService:
         self._run_in_background(
             f"scenes_{card_id}", f"Scene index card_id={card_id}", self._scene_index_job,
             text_id, card_id, content, char_name, all_characters,
-            embedding_key, embedding_region,
+            embedding_key, embedding_region, need_positions,
+        )
+
+    def _reposition_text_collection(
+        self,
+        text_id: str,
+        text: str,
+        all_characters: list[dict[str, Any]] | None,
+        *,
+        embedding_key: str,
+        embedding_region: str,
+        rebuild: bool = True,
+    ) -> RAGEngine | None:
+        """后台专用：`text_{id}` 存在且缺位置时才重建。(sync)"""
+        rag = self._new_rag(embedding_key, embedding_region)
+        if not rag.load_existing(f"text_{text_id}"):
+            return None
+        if (rag.collection.metadata or {}).get(POS_SCHEMA_KEY) == POS_SCHEMA:
+            return rag
+        return self._build_text_collection(
+            text_id, text, all_characters,
+            embedding_key=embedding_key, embedding_region=embedding_region, rebuild=rebuild,
         )
 
     def schedule_text_reindex(
@@ -324,14 +353,19 @@ class IndexingService:
         all_characters: list[dict[str, Any]] | None,
         embedding_key: str,
         embedding_region: str,
+        only_if_missing_positions: bool = False,
     ) -> None:
-        """Fire-and-forget：按新名单重建 `text_{id}`（角色标记）。
+        """Fire-and-forget：重建 `text_{id}`（按新名单打角色标记，或补位置）。
 
+        ``only_if_missing_positions`` 为 True 时（存卡汇合点为带起点的卡调度），判断放在
+        **后台作业里**：集合不存在（场景作业会新建、自带位置）或已带位置 → 不动；缺位置才
+        重建（审计 A2：不在请求路径上同步读 chroma，也不把「查」与「做」拆成两步）。
         不碰任何会话：绑在原文集合上的会话，重建期间本轮检索记为失败，建完后下一轮
         自己重读到新集合。
         """
         job = functools.partial(
-            self._build_text_collection,
+            self._reposition_text_collection if only_if_missing_positions
+            else self._build_text_collection,
             embedding_key=embedding_key, embedding_region=embedding_region, rebuild=True,
         )
         self._run_in_background(

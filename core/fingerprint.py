@@ -19,3 +19,12 @@ def key_fingerprint(key: str) -> str:
     if not key:
         return ""
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
+def content_fingerprint(text: str) -> str:
+    """正文的不可逆指纹（整段 SHA-256 十六进制）。
+
+    场景索引的幂等键与「这条索引讲的是不是同一份正文」的判据（卡上 `source_fingerprint`
+    与集合元数据用同一个值）。**只此一处** —— `scene_indexer` 与 `card_draft` 都调它。
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()

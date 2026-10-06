@@ -26,10 +26,11 @@ MAX_OCCURRENCES = 3
 
 
 class Verification(NamedTuple):
-    """位置检查结果：每条做法的最终阶段、每阶段落卡用的摘录，以及监测计数。
+    """位置检查结果：每条条目的最终阶段、每阶段落卡用的摘录，以及监测计数。
 
-    `phases` / `phase_quotes` 与草稿 `situation_behaviors` 等长（按序号对应）。`phase_quotes[i]`
-    是第 i 条做法在每个最终阶段下该用的 `source_quote`（顶层不用它，取第一条摘录）。计数口径见
+    `phases` / `phase_quotes` 与传入的条目列表等长（按序号对应）。`phase_quotes[i]`
+    是第 i 条条目在每个最终阶段下该用的 `source_quote`（顶层不用它，取第一条摘录）。
+    `starts` 是各阶段起点在规范化原文里的位置（整卡跳过 / 无阶段时 None）。计数口径见
     spec §3.2 规则 6 —— 由 `card_from_draft` 打监测行（本模块不打，避免日志出处分家）。
     """
     phases: list[list[int]]
@@ -40,11 +41,17 @@ class Verification(NamedTuple):
     ambiguous: int
     unverified_quotes: int
     fallback: int
+    starts: list[int] | None
 
 
 def _anchor_of(phase) -> str:
     """阶段对象的锚点文本（草稿是 `DraftPhase`，测试里也用字典）。"""
     return getattr(phase, "anchor", "") if not isinstance(phase, dict) else phase.get("anchor", "")
+
+
+def _situation_label(item) -> str:
+    """条目的识别文本：做法取 `situation`，记忆取 `memory`（警告文案里点出是哪一条）。"""
+    return getattr(item, "situation", "") or getattr(item, "memory", "")
 
 
 def _first_quotes(by_phase: dict[int, list[str]], phases: list[int]) -> dict[int, str]:
@@ -81,33 +88,37 @@ def phase_ranges(phases, source_norm: str) -> tuple[list[tuple[int, int]], str]:
     return ranges, ""
 
 
-def verify(draft, source_text: str, valid_rows: list[list[int]]) -> Verification:
-    """按原文位置校正每条做法的阶段。
+def verify(items, valid_rows: list[list[int]], phases, source_text: str, *,
+           kind: str = "做法", label=_situation_label, name: str = "",
+           warn_skip: bool = True) -> Verification:
+    """按原文位置校正每条条目的阶段 —— **对任意带 `occurrences` 的条目列表**工作。
 
-    `valid_rows`：`card_from_draft` 先做规则 0（编号合法性过滤）后，每条做法剩下的合法阶段编号
+    做法（`DraftBehavior`）与记忆（`DraftMemory`）各调一次：两者的位置检查口径完全一样，
+    差异只在监测/警告文案里的 `kind` 与 `label`。「整卡跳过」是卡级的，调用方对第二类条目
+    传 `warn_skip=False` 免得同一原因打两条；没有条目时也不打（这里根本没检查过东西）。
+
+    `valid_rows`：`card_from_draft` 先做规则 0（编号合法性过滤）后，每条条目剩下的合法阶段编号
     （升序、去重）。本函数只对合法编号做位置检查；顺序、兜底、取值口径见 spec §3.2。
     """
-    phases = draft.character_arc.phases
-    rows = draft.situation_behaviors
     n = len(phases)
-
     if n == 0:                                   # 规则 5：无阶段的卡不做位置检查
-        return Verification([[] for _ in rows], [{} for _ in rows],
-                            False, 0, 0, 0, 0, 0)
+        return Verification([[] for _ in items], [{} for _ in items],
+                            False, 0, 0, 0, 0, 0, None)
 
     source_norm = normalize(source_text)
     ranges, reason = phase_ranges(phases, source_norm)
     skipped = bool(reason)
-    if skipped:                                  # 规则 2：保留模型标注，warning 一条
-        logger.warning("整卡跳过位置检查（%s）：%s", reason, draft.name)
+    starts = None if skipped else [r[0] for r in ranges]
+    if skipped and items and warn_skip:          # 规则 2：保留模型标注，warning 一条
+        logger.warning("整卡跳过位置检查（%s）：%s", reason, name)
 
     final: list[list[int]] = []
     phase_quotes: list[dict[int, str]] = []
     tags = dropped = ambiguous = unverified = fallback = 0
 
-    for row, valid in zip(rows, valid_rows):
+    for item, valid in zip(items, valid_rows):
         by_phase: dict[int, list[str]] = {}
-        for occ in row.occurrences:
+        for occ in item.occurrences:
             by_phase.setdefault(occ.phase, []).append(occ.quote)
 
         if not valid:                            # 规则 0 已整条撤回
@@ -122,7 +133,7 @@ def verify(draft, source_text: str, valid_rows: list[list[int]]) -> Verification
 
         standing: list[int] = []
         chosen: dict[int, str] = {}
-        for p in valid:                          # 计数单位是标注（做法, 阶段），不是摘录
+        for p in valid:                          # 计数单位是标注（条目, 阶段），不是摘录
             tags += 1
             picked = ""
             for quote in by_phase.get(p, []):    # 规则 3：同阶段多段摘录，任一段通过即成立
@@ -141,13 +152,13 @@ def verify(draft, source_text: str, valid_rows: list[list[int]]) -> Verification
                 chosen[p] = picked
             else:                                # 规则 3：去掉的标注各打一条 warning
                 dropped += 1
-                logger.warning("去掉标注：做法 %r 在阶段 %d 没有落在该阶段的摘录",
-                               row.situation, p)
+                logger.warning("去掉标注：%s %r 在阶段 %d 没有落在该阶段的摘录",
+                               kind, label(item), p)
 
         if not standing:                         # 规则 4：全部被去掉 → 兜底，退回合法标注
             fallback += 1
-            logger.warning("兜底：做法 %r 的标注全部被去掉，退回原标注 %s",
-                           row.situation, valid)
+            logger.warning("兜底：%s %r 的标注全部被去掉，退回原标注 %s",
+                           kind, label(item), valid)
             final.append(list(valid))
             phase_quotes.append(_first_quotes(by_phase, valid))
         else:
@@ -155,4 +166,4 @@ def verify(draft, source_text: str, valid_rows: list[list[int]]) -> Verification
             phase_quotes.append(chosen)
 
     return Verification(final, phase_quotes, skipped, tags, dropped, ambiguous,
-                        unverified, fallback)
+                        unverified, fallback, starts)

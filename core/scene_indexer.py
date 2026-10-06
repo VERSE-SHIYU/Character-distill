@@ -5,12 +5,16 @@
 """
 from __future__ import annotations
 
-import hashlib
 import re
 
 from chromadb.errors import NotFoundError
 
-from core.rag import CollectionUnusableError, RAGEngine, characters_tag, mark_built
+from core.fingerprint import content_fingerprint
+from core.quotes import leading_ws, normalized_starts
+from core.rag import (
+    FINGERPRINT_KEY, POS_SCHEMA, POS_SCHEMA_KEY,
+    CollectionUnusableError, RAGEngine, characters_tag, mark_built,
+)
 
 # 简单情感关键词映射（可扩充）
 _EMOTION_KEYWORDS: dict[str, list[str]] = {
@@ -30,13 +34,27 @@ def _detect_emotion(text: str) -> str:
     return "平静"
 
 
+def _span_texts(pattern, text: str, base: int = 0) -> list[tuple[int, int]]:
+    """`text` 被 `pattern` 分隔后各段的半开区间 `[起, 止)`，相对 `base` 偏移。
+
+    分隔符本身不计入 —— 与 `re.split` 丢分隔符同形，但保留下标（切分坐标的来源）。
+    """
+    out: list[tuple[int, int]] = []
+    pos = 0
+    for m in pattern.finditer(text):
+        out.append((base + pos, base + m.start()))
+        pos = m.end()
+    out.append((base + pos, base + len(text)))
+    return out
+
+
+
+
 # 集合 metadata 里存场景幂等键的那个键名（含它的集合即「本正文已建好」）。
-_FINGERPRINT_KEY = "content_fingerprint"
-
-
-def _content_fingerprint(text: str) -> str:
-    """幂等键 —— 场景是正文的纯函数，故指纹只取正文。"""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+_FINGERPRINT_KEY = FINGERPRINT_KEY
+# 位置坐标的格局标记：集合元数据带它，条目带 `npos`（规范化坐标）。
+_POS_SCHEMA_KEY = POS_SCHEMA_KEY
+_POS_SCHEMA_VERSION = POS_SCHEMA
 
 
 class SceneIndexer:
@@ -55,6 +73,7 @@ class SceneIndexer:
         rag: RAGEngine,
         character_name: str,
         collection_name: str | None = None,
+        need_positions: bool = False,
     ) -> int:
         """切分场景并写入 RAG，返回场景数量。**幂等**：正文没变即复用已建好的集合。
 
@@ -70,18 +89,25 @@ class SceneIndexer:
         `delete_collection` 先于 `create_collection` 的那段空窗 —— 这期间会话
         检索跳过本集合（回落原文集合，或本轮记为失败）。故先按正文指纹复用；
         正文变了（重解析）或维度不符才重建。
+
+        ``need_positions`` 只在**带起点的卡存卡**时由 `save_distilled_card` 传 True：
+        指纹相同但集合没有 `pos_schema`（这条 feature 之前建的）时也重建一次，把
+        `npos` 补上（覆盖重蒸同名卡沿用 card_id 的情况）。不带该标志的既有调度
+        （打开卡片等）幂等规则不变 —— 旧卡不会被重新嵌入。
         """
         scenes = self._split_scenes(text)
         if not scenes:
             return 0
 
         name = collection_name or f"scenes_{character_name}"
-        fingerprint = _content_fingerprint(text)
+        fingerprint = content_fingerprint(text)
 
         try:
             if rag.load_existing(name):
-                if (rag.collection.metadata or {}).get(_FINGERPRINT_KEY) == fingerprint:
-                    return rag.collection.count()
+                meta = rag.collection.metadata or {}
+                if meta.get(_FINGERPRINT_KEY) == fingerprint:
+                    if not (need_positions and meta.get(_POS_SCHEMA_KEY) != _POS_SCHEMA_VERSION):
+                        return rag.collection.count()
         except CollectionUnusableError:
             # 维度与当前 embedder 不符（换过 embedding 配置）：旧集合查询恒失败，
             # 不是「已建好」，落到下面按当前 embedder 重建。
@@ -96,11 +122,12 @@ class SceneIndexer:
         collection = rag._client.create_collection(
             name=name,
             embedding_function=rag._embedding_function,
-            metadata={_FINGERPRINT_KEY: fingerprint},
+            metadata={_FINGERPRINT_KEY: fingerprint, _POS_SCHEMA_KEY: _POS_SCHEMA_VERSION},
         )
 
+        npos = normalized_starts(text, [start for start, _ in scenes])
         ids, docs, metas = [], [], []
-        for i, scene in enumerate(scenes):
+        for i, (start, scene) in enumerate(scenes):
             emotion = _detect_emotion(scene)
             ids.append(f"scene_{i}")
             docs.append(scene[:800])
@@ -109,6 +136,7 @@ class SceneIndexer:
                 # 格式唯一出处：core.rag.characters_tag（与 text_* 集合写入一致）
                 "characters": characters_tag([character_name]),
                 "scene_index": str(i),
+                "npos": npos[i],
             })
 
         collection.add(documents=docs, ids=ids, metadatas=metas)
@@ -120,46 +148,61 @@ class SceneIndexer:
 
         return len(scenes)
 
-    def _split_scenes(self, text: str) -> list[str]:
-        """按场景边界切分，每段保持 200-1000 字。"""
+    def _split_scenes(self, text: str) -> list[tuple[int, str]]:
+        """按场景边界切分，返回 `(原文起点, 片段)`，每段 200-1000 字。
+
+        起点在切分时就知道（切分本来就是按下标切），**不回找** —— `text.find` 对重复
+        段落会取到第一处，起点就错了（C25）。
+        """
         if re.search(r'^\[\d{4}-\d{2}-\d{2}\]', text, re.MULTILINE):
             return self._split_chat_scenes(text)
 
-        parts = self.SCENE_BREAKS.split(text)
-        scenes: list[str] = []
-        for p in parts:
-            p = p.strip()
+        scenes: list[tuple[int, str]] = []
+        for s, e in _span_texts(self.SCENE_BREAKS, text):
+            p = text[s:e].strip()
             if len(p) < 50:
                 continue
             if len(p) > 1000:
-                sub = [s.strip() for s in p.split("\n\n") if len(s.strip()) > 50]
-                scenes.extend(sub)
+                for a, b in _span_texts(re.compile(r"\n\n"), text[s:e], base=s):
+                    seg = text[a:b].strip()
+                    if len(seg) > 50:
+                        scenes.append((a + leading_ws(text[a:b]), seg))
             else:
-                scenes.append(p)
+                scenes.append((s + leading_ws(text[s:e]), p))
         return scenes
 
-    def _split_chat_scenes(self, text: str) -> list[str]:
-        """按日期分组，每天一个场景。"""
-        lines = text.strip().split('\n')
-        scenes: list[str] = []
+    def _split_chat_scenes(self, text: str) -> list[tuple[int, str]]:
+        """按日期分组，每天一个场景，返回 `(原文起点, 片段)`。"""
+        date_re = re.compile(r'^\[(\d{4}-\d{2}-\d{2})\]')
+        stripped = text.strip()
+        lead = len(text) - len(text.lstrip())
+        lines = stripped.split('\n')
+        starts: list[int] = []
+        pos = lead
+        for line in lines:
+            starts.append(pos)
+            pos += len(line) + 1
+
+        scenes: list[tuple[int, str]] = []
         current_day = None
         current_lines: list[str] = []
-
-        date_re = re.compile(r'^\[(\d{4}-\d{2}-\d{2})\]')
-        for line in lines:
+        current_start = 0
+        for idx, line in enumerate(lines):
             m = date_re.match(line)
             day = m.group(1) if m else current_day
             if day != current_day and current_lines:
                 scene = '\n'.join(current_lines)
                 if len(scene.strip()) > 50:
-                    scenes.append(scene)
+                    scenes.append((current_start, scene))
                 current_lines = []
+            if not current_lines:
+                current_start = starts[idx]
             current_day = day
             current_lines.append(line)
 
         if current_lines:
             scene = '\n'.join(current_lines)
             if len(scene.strip()) > 50:
-                scenes.append(scene)
+                scenes.append((current_start, scene))
 
         return scenes

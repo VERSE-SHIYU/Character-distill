@@ -23,6 +23,7 @@ from core.message_outbox import (
 )
 from core.nonfatal import nonfatal
 from core.schema import evidence_snapshots, evidence_to_json
+from core.text_manager import session_identity
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
 from adapters.llm_adapter import llm_error_payload, user_facing_error
 from web.llm_resolution import resolve_embedding
@@ -195,11 +196,14 @@ async def _ensure_session(
     )
     memory = await asyncio.to_thread(text_manager.memory_for, user_id, emb.key, emb.region)
     # 原会话 id 直接进构造：引擎一出生就在原 id 名下，不再「新 id 造好再搬过来」。
+    # 身份（user_role + arc_phase）经唯一出口 `session_identity` 在构造时注入 —— 缺陷 55
+    # 射程的边界：脏角色值 / 阶段只能经构造进引擎，不再有事后赋值（S5）。
     await asyncio.to_thread(
         text_manager._create_session, card,
         all_characters=all_characters, rag=rag,
         card_id=card_id, user_id=user_id,
         session_id=session_id,
+        **session_identity(db_session),
         memory=memory,
     )
 
@@ -215,10 +219,6 @@ async def _ensure_session(
         if m["role"] == "summary":
             engine.last_summary = m["content"]
             break
-    # 重建会话时把角色从库里恢复回来。这句也是缺陷 55（凭据落进 `user_role`）射程的边界：
-    # 进程内的旧会话一没，脏角色值就只能经这里重新流回引擎、再随 prompt 进模型。
-    if db_session.get("user_role"):
-        engine.user_role = db_session["user_role"]
     # Restore affinity from DB
     try:
         data, source = await read_persisted_affinity(session_id, storage)

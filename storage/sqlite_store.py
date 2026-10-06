@@ -155,6 +155,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "098_rename_outbox.sql",
     # 099：PG 034 新增列的孪生（AGENTS.md「SQLite 冻结」的唯一例外：只补列，不补代码）。
     "099_remote_profile_disabled.sql",
+    # 100：PG 035 新增列的孪生，同上。
+    "100_session_arc_phase.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -1922,7 +1924,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """
-                    SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.user_id, s.deleted_at, c.text_id, c.name AS character_name
+                    SELECT s.id, s.card_id, s.user_role, s.arc_phase, s.avatar_data, s.created_at, s.updated_at, s.user_id, s.deleted_at, c.text_id, c.name AS character_name
                     FROM sessions s
                     JOIN cards c ON s.card_id = c.id
                     WHERE s.id = ?
@@ -1941,7 +1943,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """
-                    SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.user_id, s.deleted_at, c.text_id, c.name AS character_name
+                    SELECT s.id, s.card_id, s.user_role, s.arc_phase, s.avatar_data, s.created_at, s.updated_at, s.user_id, s.deleted_at, c.text_id, c.name AS character_name
                     FROM sessions s
                     JOIN cards c ON s.card_id = c.id
                     WHERE s.id = ? AND s.user_id = ?
@@ -1952,6 +1954,20 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get session (owned) failed: {exc}")
+            raise
+
+    async def set_session_arc_phase(self, id: str, user_id: str, phase: int | None) -> bool:
+        """Set the session's chosen arc phase (ownership-checked). See base.py."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE sessions SET arc_phase = ? WHERE id = ? AND user_id = ?",
+                    (phase, id, user_id),
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Set session arc phase failed: {exc}")
             raise
 
     async def update_session_avatar(self, session_id: str, user_id: str, avatar_data: str) -> bool:
@@ -2037,7 +2053,7 @@ class SQLiteStore(StorageBase):
                     SELECT
                         s.id,
                         s.card_id,
-                        s.user_role,
+                        s.user_role, s.arc_phase,
                         s.avatar_data,
                         s.created_at,
                         s.updated_at,
@@ -2125,7 +2141,7 @@ class SQLiteStore(StorageBase):
                 if user_id:
                     cursor = await conn.execute(
                         """
-                        SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.deleted_at,
+                        SELECT s.id, s.card_id, s.user_role, s.arc_phase, s.avatar_data, s.created_at, s.updated_at, s.deleted_at,
                                c.text_id, c.name AS character_name
                         FROM sessions s
                         JOIN cards c ON s.card_id = c.id
@@ -2137,7 +2153,7 @@ class SQLiteStore(StorageBase):
                 else:
                     cursor = await conn.execute(
                         """
-                        SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.deleted_at,
+                        SELECT s.id, s.card_id, s.user_role, s.arc_phase, s.avatar_data, s.created_at, s.updated_at, s.deleted_at,
                                c.text_id, c.name AS character_name
                         FROM sessions s
                         JOIN cards c ON s.card_id = c.id

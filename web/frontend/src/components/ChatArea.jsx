@@ -149,6 +149,12 @@ function ChatView() {
   const charName = cardData.name || currentCard.name || '?'
   const charIdentity = cardData.identity || ''
   const userRole = sessionUserRole || userRolesByCard[currentCard?.id || currentCard?.card_id] || ''
+  // 头部只读显示本次会话的阶段；sessionArcPhase 为 null / 越界 → 最后阶段；无阶段卡不显示。
+  const sessionArcPhase = useAppStore((s) => s.sessionArcPhase)
+  const arcPhases = cardData.character_arc?.phases || []
+  const phaseCount = arcPhases.length
+  const phaseK = sessionArcPhase >= 1 && sessionArcPhase <= phaseCount ? sessionArcPhase : phaseCount
+  const phaseLabel = phaseCount ? (arcPhases[phaseK - 1]?.label || '') : ''
 
   const [cropFile, setCropFile] = useState(null)
   const [error, setError] = useState(null)
@@ -638,6 +644,11 @@ function ChatView() {
       <div className="user-role-bar">
         <span className="user-role-label">我扮演：</span>
         <span className="user-role-locked">{userRole || '未设定'}</span>
+        {phaseCount > 0 && (
+          <span className="user-role-phase">
+            阶段 {phaseK}/{phaseCount}{phaseLabel ? ` · ${phaseLabel}` : ''}
+          </span>
+        )}
       </div>
 
       {/* Source text context */}

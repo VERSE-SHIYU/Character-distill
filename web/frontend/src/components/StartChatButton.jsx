@@ -38,6 +38,7 @@ export default function StartChatButton({ card, resolveCard, label, icon, classN
         characterName={data.name || target?.name || '?'}
         characterId={target?.id || target?.card_id}
         relationships={data.relationships || []}
+        arcPhases={data.character_arc?.phases || []}
         onConfirm={enterChat}
         onSkip={enterChat}
       />

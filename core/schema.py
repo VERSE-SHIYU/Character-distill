@@ -23,12 +23,19 @@ class SpeakingStyle(BaseModel):
     vocabulary_level: str = ""        # 用词水平，如"文雅""粗俗""学术"
     taboo_words: list[str] = []       # 绝不会说的话
 
+class PhaseAttitude(BaseModel):
+    """关系在某一阶段的态度。投影到阶段 k 时，取 phase ≤ k 里最新的一条。"""
+    phase: int
+    attitude: str = ""
+
+
 class Relationship(BaseModel):
     """人际关系"""
     target: str                  # 对方名字
     relation: str                # 关系类型
     attitude: str = ""           # 态度描述
     note: str = ""               # 注入用的单向口径：站在本角色视角，一句话讲清我和ta的关系/我怎么看ta
+    phase_attitudes: list[PhaseAttitude] = []  # 各阶段的态度；投影时按阶段取 ≤k 的最新一条
 
 class ChatSession(BaseModel):
     """对话会话元数据（P5 预留，暂不接入逻辑）"""
@@ -101,9 +108,19 @@ class PhaseState(BaseModel):
         return {"state": value} if isinstance(value, str) else value
 
 
+class BoundaryExample(BaseModel):
+    """边界示范：此阶段不可能知道的提问 + 该阶段的回应。只学应对方式，不照抄措辞。"""
+    ask: str = ""
+    reply: str = ""
+
+
 class ArcPhase(PhaseState):
     """弧线上的一个阶段。"""
     behaviors: list[SituationBehavior] = []   # 只在这一阶段成立的做法
+    memories: list[str] = []                  # 只在这一阶段成立的关键经历
+    start: int | None = None                  # 本阶段起点在**规范化原文**中的位置
+    boundary_examples: list[BoundaryExample] = []  # 只在这一阶段成立的边界示范
+    dialogue_examples: list[str] = []         # 属于这一阶段的原文对话示例
 
 
 class ArcAxis(BaseModel):
@@ -120,6 +137,7 @@ class ArcAxis(BaseModel):
 class CharacterArc(ArcAxis):
     """角色弧线：一条变化轴 + 按故事顺序排列的阶段（「变的部分」）。"""
     phases: list[ArcPhase] = []
+    source_fingerprint: str = ""   # 阶段起点所依据的正文指纹（§3.4 坐标的前提）
 
 
 class CharacterCard(BaseModel):
@@ -158,11 +176,11 @@ FORMAT_GROUPS: dict[str, tuple[str, ...]] = {
     # relationships 从 G4 拆出来单独成组：关系条数随登场人数增长（宝玉这种主角几十
     # 条），与其余字段同组会把这组的输出顶到 token 上限；分组之间各给各的上限，
     # 拆开后关系再长也只挤自己那一组。
-    "G4": ("key_memories", "psyche"),
+    "G4": ("psyche",),
     "G5": ("relationships",),
-    # 弧线与情境→行为同组：做法标的是阶段编号，阶段和做法必须在同一次调用里产出。
-    # 单独成组的理由同 G5：条数随角色增长，不挤其他组的输出上限。
-    "G6": ("character_arc", "situation_behaviors"),
+    # 弧线与情境→行为、关键记忆同组：做法/记忆标的是阶段编号，必须和阶段在同一次调用
+    # 里产出（key_memories 从 G4 挪来这里，D8/本段 §3.2）。单独成组的理由同 G5。
+    "G6": ("character_arc", "situation_behaviors", "key_memories"),
 }
 
 # 后置步骤产出的字段（_auto_tag / _generate_awakening / 挑选对话示例），不进分组。
@@ -281,6 +299,13 @@ class EvidenceItem(BaseModel):
                 f"少={sorted(declared - actual)}（契约见 EVIDENCE_META[{self.kind!r}]）"
             )
         return self
+
+
+class RetrievalWindow(NamedTuple):
+    """检索时间窗：只取规范化坐标 `npos < before` 的片段，且只对讲同一份正文（指纹相符）、
+    带位置（`pos_schema`）的集合生效。由 `core/arc_view` 产出，`RAGEngine` 一处消费。"""
+    before: int
+    source_fingerprint: str
 
 
 class SourceTrace(NamedTuple):

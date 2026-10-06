@@ -22,6 +22,7 @@ from core.message_outbox import SaveState, save_field
 from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
 from adapters.llm_adapter import LLMAdapter, user_facing_error
+from core.arc_view import project_card, valid_phase
 from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core.embeddings import EMBEDDING_KEY_REQUIRED
@@ -61,6 +62,7 @@ class StartSessionRequest(BaseModel):
     text_id: str = ""
     card_id: str
     user_role: str = ""
+    arc_phase: int | None = None
 
 
 class IdentifyRequest(BaseModel):
@@ -1359,6 +1361,9 @@ async def start_session(
 
     card = CharacterCard.model_validate_json(card_rec["card_json"])
 
+    # 阶段校验：卡无阶段或编号越界 → None（= 用最后阶段）。选中的阶段只在本次会话生效。
+    arc_phase = valid_phase(card, req.arc_phase)
+
     # 两条分支（原文 / 独立卡片）都要：检索用 embedding，长期记忆用 LLM + embedding。
     try:
         user_cfg = await storage.get_user_api_config(user_id) or {}
@@ -1388,7 +1393,7 @@ async def start_session(
             text_manager._create_session, card,
             all_characters=all_characters, rag=rag,
             card_id=req.card_id, user_id=user_id,
-            user_role=req.user_role, memory=memory,
+            user_role=req.user_role, arc_phase=arc_phase, memory=memory,
         )
         # Fire-and-forget scene index via isolated service
         if indexing_service:
@@ -1405,7 +1410,7 @@ async def start_session(
             text_manager._create_session, card,
             all_characters=[], rag=None,
             card_id=req.card_id, user_id=user_id,
-            user_role=req.user_role, memory=memory,
+            user_role=req.user_role, arc_phase=arc_phase, memory=memory,
         )
         all_characters = []
 
@@ -1413,15 +1418,28 @@ async def start_session(
         await storage.save_session(session_id, req.card_id, req.user_role, user.get("avatar_data", ""), user_id)
     except Exception as exc:
         logger.warning("Persist session failed (non-fatal): %s", exc, exc_info=True)
+    # 阶段**只在建会话这一处**写一次（C13）：`save_session` 不碰它，聊天中改身份也不会冲掉。
+    try:
+        await storage.set_session_arc_phase(session_id, user_id, arc_phase)
+    except Exception as exc:
+        logger.warning("Persist session arc_phase failed (non-fatal): %s", exc, exc_info=True)
 
     # ── Inject opening line ──
     # 本函数开头的 503 门保证 `per_user_llm` 不为 None（`get_text_manager(llm=None)` 恒返
     # None），故原先这里那层 `if per_user_llm is not None:` 恒真、它的 else 不可达。
     opening = ""
     try:
-        style = card.speaking_style
-        traits = "，".join(card.personality_traits[:3])
-        seed = card.first_message or ""
+        # 开场白也要按阶段投影（S14 只此两处）：截断时 `first_message` 已被清空，改由
+        # 阶段描述生成（D10）。`proj_card` 与引擎里的那张是同一投影口径。
+        proj_card, _phase_view = project_card(card, arc_phase)
+        style = proj_card.speaking_style
+        traits = "，".join(proj_card.personality_traits[:3])
+        seed = proj_card.first_message or ""
+        phase_note = ""
+        if _phase_view.n > 0:
+            _cur = proj_card.character_arc.phases[_phase_view.k - 1]
+            _head = _cur.label or f"阶段 {_phase_view.k}"
+            phase_note = f"此刻你处在这个阶段：{_head}（{_cur.state}）\n"
         user_context = f"对「{req.user_role}」" if req.user_role else "对初次见面的陌生人"
         from core.clock import UserClock, describe_time_period
         _now = UserClock.now()
@@ -1433,6 +1451,7 @@ async def start_session(
             f"性格：{traits}\n"
             f"语气：{style.tone}\n"
             f"口癖：{', '.join(style.catchphrases) if style.catchphrases else '无'}\n"
+            f"{phase_note}"
             f"{seed_line}"
             f"当前时段：{_period}（{_now.hour}点）\n\n"
             f"先用不超过15字的括号动作把自己放进当下场景，再说话。"

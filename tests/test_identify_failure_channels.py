@@ -35,6 +35,7 @@ from httpx import ASGITransport, AsyncClient
 
 import deps
 import server
+from core.card_draft import CardDraft
 from core.distiller import DISTILL_PROMPT_BEFORE_NAME, DistillError, Distiller
 from core.schema import FORMAT_GROUPS, CharacterCard
 from core.text_manager import TextManager
@@ -126,6 +127,12 @@ def _seed_text(store, uid, body=_BODY):
     tid = f"txt_{uuid.uuid4().hex}"
     _run_async(store.save_text(tid, "src.txt", body, user_id=uid))
     return tid
+
+
+def _all_dialogue_examples(card) -> list[str]:
+    """卡上全部对话示例：顶层 + 各阶段 —— 有起点的卡按位置归到阶段下（本段 §3.9）。"""
+    return list(card.dialogue_examples) + [
+        d for p in card.character_arc.phases for d in p.dialogue_examples]
 
 
 def _build_app(store, uid, monkeypatch, *, distiller, tm=None):
@@ -542,12 +549,17 @@ class TestOneParseableCardOnBothChannels:
     不另抄一份字段样例 —— 抄一份就是第二处「组字段表」。
     """
 
-    def _assert_all_groups_landed(self, card: CharacterCard) -> None:
-        """各组各自的代表字段都得在卡上 —— 少一组说明那个组的帧没并进来。"""
+    def _assert_all_groups_landed(self, card) -> None:
+        """各组各自的代表字段都得在卡上 —— 少一组说明那个组的帧没并进来。
+
+        草稿（流式帧，`key_memories` 的元素是带 occurrences 的对象）与存卡（`key_memories`
+        的元素是字符串）两种形态都收。
+        """
         assert card.name == "角色"                                    # G1
         assert card.decision_style == "谨慎型"                         # G2
         assert card.speaking_style.tone == "冷淡"                      # G3
-        assert card.key_memories == ["关键经历"]                       # G4
+        assert [m if isinstance(m, str) else m.memory
+                for m in card.key_memories] == ["关键经历"]             # G6
         assert [r.target for r in card.relationships] == ["某人"]        # G5
 
     def test_bg_task_accumulates_one_card(self, store, user_id, monkeypatch):
@@ -581,10 +593,11 @@ class TestOneParseableCardOnBothChannels:
                   if l.startswith("data: ")]
         tokens = [f["token"] for f in frames if "token" in f]
         assert len(tokens) == 1, f"成品卡的 str 帧不是恰 1 个：{len(tokens)}"
-        self._assert_all_groups_landed(CharacterCard.model_validate(json.loads(tokens[0])))
-        # 对话示例是落卡前的后置步骤（WP17），**不在流出的 token 帧里**（那是格式化阶段
-        # 的原始 JSON）；落库的那张卡上必须有它 —— 本通道漏接这一步就是静默空示例。
-        assert tm.saved[0].dialogue_examples == ["路人：先前的话。\n角色：我说一句话。"]
+        # 流出的 token 帧是**格式化阶段的草稿 JSON**（做法/记忆带 occurrences），不是存卡。
+        self._assert_all_groups_landed(CardDraft.model_validate(json.loads(tokens[0])))
+        # 对话示例是落卡前的后置步骤（WP17），**不在流出的 token 帧里**；落库的那张卡上
+        # 必须有它 —— 本通道漏接这一步就是静默空示例。有起点的卡按位置归到阶段下（§3.9）。
+        assert _all_dialogue_examples(tm.saved[0]) == ["路人：先前的话。\n角色：我说一句话。"]
 
 
 # ── 7. 预检前移：原文里挑不出对话句 → 长步骤之前失败，不花钱（补充 1-第 4 步） ────
@@ -856,7 +869,7 @@ class TestQuoteRetractionOnEveryChannel:
 
         assert row["status"] == "done", row
         assert tm.saved[0].key_memories == [RETRACTED_MEMORY]
-        assert tm.saved[0].dialogue_examples == ["路人：先前的话。\n角色：我说一句话。"]
+        assert _all_dialogue_examples(tm.saved[0]) == ["路人：先前的话。\n角色：我说一句话。"]
 
     def test_sse(self, store, user_id, monkeypatch):
         tid = _seed_text(store, user_id)

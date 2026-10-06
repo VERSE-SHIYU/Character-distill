@@ -26,6 +26,13 @@ from core import concurrency as C  # 派生与上下文传播
 logger = logging.getLogger(__name__)
 
 
+# 边界说明：选了非最后阶段（k<n）时告诉模型「之后的事一概不知」。常量**只此一处**（S15）。
+_BOUNDARY_NOTICE = (
+    "你只知道到此刻为止发生过的事。之后会发生什么，你一概不知：别人提起你没经历过的事、"
+    "没见过的人、还没发生的变故，你会困惑、追问或否认，绝不顺着往下说，也不预言自己的将来。"
+)
+
+
 def _truncate(text: str, max_tokens: int) -> str:
     """按 token 估算截断文本。"""
     limit = int(max_tokens / 0.8)
@@ -197,8 +204,10 @@ class ContextEngine:
         model: str = "",
         *,
         storage: Any,
+        arc_view: Any = None,
     ) -> None:
         self.card = card
+        self.arc_view = arc_view
         self.rag = rag
         self.memory = memory_manager
         self.card_id = card_id
@@ -363,7 +372,31 @@ class ContextEngine:
             f"禁忌：{taboo}\n"
         )
 
+        core += self._build_phase_block()
         return core
+
+    def _build_phase_block(self) -> str:
+        """「## 此刻的你」：k/n、阶段 1..k 的 label 与 state（k=n 附变化轴）。
+
+        k<n 再附边界说明与阶段 k 的示范（旧卡无示范则只放说明）。卡无阶段 / 无视图 → 空。
+        """
+        view = self.arc_view
+        if view is None or view.n <= 0:
+            return ""
+        lines = [f"\n## 此刻的你\n你现在处在阶段 {view.k}/{view.n}。"]
+        # 投影卡只留 1..k 个阶段（投影保证），迭代即可，不在此切片（S2）。
+        for i, p in enumerate(self.card.character_arc.phases, 1):
+            head = f"阶段 {i}·{p.label}" if p.label else f"阶段 {i}"
+            lines.append(f"- {head}：{p.state}")
+        if view.show_axis and self.card.character_arc.axis:
+            lines.append(f"变化轴：{self.card.character_arc.axis}")
+        if view.boundary:
+            lines.append(_BOUNDARY_NOTICE)
+            if view.boundary_examples:
+                exs = "\n".join(
+                    f"对方：{b.ask}\n你：{b.reply}" for b in view.boundary_examples)
+                lines.append("示范（只学应对方式，不照抄措辞）：\n" + exs)
+        return "\n".join(lines) + "\n"
 
     def _build_card_ext(self) -> str:
         """扩展层：记忆+关系+示范+情感+决策，参与动态预算竞争。
@@ -494,6 +527,7 @@ class ContextEngine:
             current_emotion=_detect_emotion(query),
             character_name=self.card.name,
             top_k=3,
+            window=self.arc_view.window if self.arc_view is not None else None,
         )
         return list(hits), None
 

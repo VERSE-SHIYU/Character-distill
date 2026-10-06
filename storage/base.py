@@ -405,6 +405,13 @@ class StorageBase(ABC):
         """Save a chat session and return the stored record."""
 
     @abstractmethod
+    async def set_session_arc_phase(self, id: str, user_id: str, phase: int | None) -> bool:
+        """Set the session's chosen arc phase. Returns False if ownership check fails.
+
+        只在 `/start_session` 调用一次；`save_session` 不碰这一列（C13）。
+        """
+
+    @abstractmethod
     async def get_session_unscoped(self, id: str) -> dict | None:
         """Get a session record by ID, with no ownership filter.
 

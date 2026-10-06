@@ -783,13 +783,13 @@ class _FakeAsyncClient:
         pass
 
 
-# 组模板里的键名互不重叠，故拿它认「这条调用是哪一组」。relationships 已从 G4 拆到
-# G5，两组各用各的模板键作标记。
+# 组模板里的键名互不重叠，故拿它认「这条调用是哪一组」。key_memories 已随阶段编号从
+# G4 挪到 G6（本段 §3.2），G4 只剩 psyche。
 _FORMAT_GROUP_MARKERS = (
     ("G1", '"name": "角色名"'),
     ("G2", '"personality_traits"'),
     ("G3", '"speaking_style"'),
-    ("G4", '"key_memories"'),
+    ("G4", '"psyche"'),
     ("G5", '"relationships"'),
     ("G6", '"situation_behaviors"'),
 )
@@ -819,7 +819,8 @@ _SAMPLE_FIELD_VALUES = {
                   "speech_style": "平实", "vocabulary_level": "日常"},
     "relationships": [{"target": "某人", "relation": "朋友", "attitude": "亲近",
                        "note": "认识很久的朋友"}],
-    "key_memories": ["关键经历"],
+    "key_memories": [{"memory": "关键经历",
+                      "occurrences": [{"phase": 1, "quote": "开头甲甲甲"}]}],
     "character_arc": {"axis": "从甲到乙", "phases": [{"label": "阶段一", "state": "开头时的状态"}]},
     "situation_behaviors": [{"situation": "被人质疑", "behavior": "先反问再解释",
                              "source_quote": ""}],
@@ -838,22 +839,24 @@ def _group_reply(group: str) -> str:
 
 
 class TestFormatGroupsRunInParallel:
-    """WP7 F1：各组并行、各记各账、`formatting` 帧恰 1 次且在各组之前。
+    """WP7 F1 + 本段 §3.2：除 G5 外的组并行，G5 在 G6 返回后才启动。
 
-    并行判据是 `threading.Barrier(len(FORMAT_GROUPS))` —— 串行实现等不齐，2 s 后破障，
-    该组失败，成品卡就出不来（无 str 帧）。记账判据是每组一条 `distill_format`、各带不同
-    usage。组数从 `FORMAT_GROUPS` 读，不写死 —— 关系拆到 G5 时这里不该跟着改。
+    并行判据是 `threading.Barrier(len(FORMAT_GROUPS) - 1)`（G5 不参与）—— 除 G5 外的组必须
+    同时在跑，串行实现等不齐、2 s 后破障、该组失败，成品卡出不来（无 str 帧）。G5 的判据是
+    它的提示词带上了 G6 定出的阶段列表（G6 没先返回就拿不到），与 U20 同口径。记账判据是每组
+    一条 `distill_format`、各带不同 usage。组数从 `FORMAT_GROUPS` 读，不写死。
 
-    变异：① 改回串行 ② 每组各发一次 `formatting`。
+    变异：① 所有组改回串行 ② G5 不等 G6 就启动（提示词缺 G6 的阶段列表）。
     """
 
     CHUNK = 3000
     TEXT = "AB" * (1500 * 50)   # 150000 字符 → 50 片（≤80，走单次合并）
 
-    def test_four_groups_run_in_parallel_and_account_separately(self, monkeypatch):
+    def test_groups_run_in_parallel_and_g5_waits_for_g6(self, monkeypatch):
         n_groups = len(FORMAT_GROUPS)
-        barrier = threading.Barrier(n_groups, timeout=2)
+        barrier = threading.Barrier(n_groups - 1, timeout=2)   # G5 不参与破障
         events: list[str] = []
+        g5_systems: list[str] = []
         rows: list[tuple[str, dict | None]] = []
 
         def _record(*, storage, llm, action, usage, source):
@@ -876,9 +879,13 @@ class TestFormatGroupsRunInParallel:
                     yield "合并结果"
                     return {"prompt_tokens": 1, "completion_tokens": 1}
                 group = _format_group_of(system)
-                barrier.wait()            # 串行实现到这里等不齐 → 破障
                 idx = _FORMAT_GROUP_ORDER.index(group) if group else -1
-                events.append(f"group:{group}")
+                if group == "G5":         # G5 单独一条线，不参与破障
+                    g5_systems.append(system)
+                    events.append("group:G5")
+                else:
+                    barrier.wait()        # 串行实现到这里等不齐 → 破障
+                    events.append(f"group:{group}")
                 yield _group_reply(group)
                 return {"prompt_tokens": 10 + idx, "completion_tokens": idx}
 
@@ -903,6 +910,8 @@ class TestFormatGroupsRunInParallel:
         assert events[0] == "formatting", f"formatting 帧不在各组调用之前：{events}"
         assert sum(1 for e in events if e.startswith("group:")) == n_groups, events
         assert sum(1 for f in frames if isinstance(f, str)) == 1, "成品卡不是恰 1 个 str 帧"
+        # G5 等到了 G6：提示词带上了 G6 定出的阶段（G6 没先返回就拿不到）
+        assert g5_systems and "阶段一" in g5_systems[0], f"G5 没等 G6：{g5_systems[:1]}"
 
 
 class TestBatchCountDecidesTotalMerge:

@@ -85,11 +85,11 @@ def test_prestep_and_dimension_f_ride_with_G5_while_dimension_M_stays_in_G4():
 
 
 def test_relationships_and_key_memories_land_in_different_groups():
-    """卡模板里的 relationships 只出现在 G5、key_memories 只出现在 G4。
+    """卡模板里的 relationships 只出现在 G5、key_memories 只出现在 G6（本段 §3.2：记忆随阶段编号走）。
 
-    挡住：relationships 只从分组表移走、卡模板仍留在 G4 —— G4 提示词会同时带两个模板
-    键，本断言红。这条不重复上一条：模板键是输出形态，落错组会让 G4 照旧吐关系。
+    挡住：relationships 只从分组表移走、卡模板仍留在 G5 之外 —— 模板键是输出形态，落错组
+    会让那一组照旧吐关系；key_memories 没跟着阶段（G6）走则记忆缺阶段编号。
     """
-    g5, g4 = format_prompt_after("G5"), format_prompt_after("G4")
+    g5, g6 = format_prompt_after("G5"), format_prompt_after("G6")
     assert '"relationships"' in g5 and '"key_memories"' not in g5
-    assert '"key_memories"' in g4 and '"relationships"' not in g4
+    assert '"key_memories"' in g6 and '"relationships"' not in g6

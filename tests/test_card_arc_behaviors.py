@@ -24,12 +24,19 @@ def test_object_arc_keeps_axis_labels_and_phase_behaviors():
         "behaviors": [{"situation": "被人轻视", "behavior": "当场动手", "source_quote": ""}],
     }]}
     card = CharacterCard.model_validate({"name": "x", "character_arc": arc})
-    assert card.character_arc.model_dump() == arc
+    assert card.character_arc.model_dump() == {
+        "axis": "从桀骜到担当", "source_fingerprint": "",
+        "phases": [{
+            "label": "桀骜不服", "state": "大闹天宫前后，动辄动手",
+            "behaviors": [{"situation": "被人轻视", "behavior": "当场动手", "source_quote": ""}],
+            "memories": [], "start": None, "boundary_examples": [], "dialogue_examples": [],
+        }],
+    }
 
 
 def test_card_without_new_fields_gets_empty_defaults():
     card = CharacterCard.model_validate({"name": "x"})
-    assert card.character_arc.model_dump() == {"axis": "", "phases": []}
+    assert card.character_arc.model_dump() == {"axis": "", "phases": [], "source_fingerprint": ""}
     assert card.situation_behaviors == []
 
 
@@ -38,7 +45,11 @@ def test_dump_roundtrip_is_stable_and_canonicalizes_legacy_arc():
     legacy = {"name": "x", "character_arc": ["a"],
               "situation_behaviors": [{"situation": "s", "behavior": "b"}]}
     once = CharacterCard.model_validate(legacy).model_dump()
-    assert once["character_arc"] == {"axis": "", "phases": [{"label": "", "state": "a", "behaviors": []}]}
+    assert once["character_arc"] == {
+        "axis": "", "source_fingerprint": "",
+        "phases": [{"label": "", "state": "a", "behaviors": [], "memories": [],
+                    "start": None, "boundary_examples": [], "dialogue_examples": []}],
+    }
     assert once["situation_behaviors"] == [{"situation": "s", "behavior": "b", "source_quote": ""}]
     assert CharacterCard.model_validate(once).model_dump() == once
 
@@ -54,7 +65,7 @@ def test_g6_prompt_carries_arc_and_behaviors_together():
     assert "L. 角色弧线" in g6 and "O. 情境→行为" in g6
     assert '"axis"' in g6 and '"phases"' in g6 and '"situation_behaviors"' in g6
     assert '"behaviors"' not in g6   # 做法的阶段编号见 test_card_draft 的 G6 模板用例
-    assert "character_arc 是【对象】" in g6 and "situation_behaviors 的每个元素是【对象】" in g6
+    assert "character_arc 是【对象】" in g6 and "situation_behaviors / key_memories 的每个元素是【对象】" in g6
     assert "L. 角色弧线" not in g4 and "O. 情境→行为" not in g4
     assert '"character_arc"' not in g4 and '"situation_behaviors"' not in g4
 

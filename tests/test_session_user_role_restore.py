@@ -2,17 +2,20 @@
 """缺陷 57：重建会话时把 `user_role` 从库里恢复回来（两条独立的重建路径，各一条锁）。
 
 `web/routers/chat.py::_ensure_session`（发消息时后端发现内存里没有这个会话 → 懒重建）与
-`web/routers/history.py::resume_session`（用户点重连 → 重建）各有一处
-`if db_session.get("user_role"): engine.user_role = db_session["user_role"]`。
+`web/routers/history.py::resume_session`（用户点重连 → 重建）两条入口各自重建引擎，身份
+（`user_role` + `arc_phase`）都经唯一出口 `core.text_manager.session_identity(db_row)` 在
+**构造时**注入 —— 本段（§3.6/S5）把原先的事后赋值
+`if db_session.get("user_role"): engine.user_role = db_session["user_role"]` 收拢到这一处。
 
 两处不是「可以合并的重复代码」：触发的入口不同（一个是发消息顺带、一个是显式重连），谁先
 跑取决于客户端行为，只锁一条等于只锁了一半。故本文件一个路径一条用例，互不代偿。
 
-这两句同时是缺陷 55（凭据落进了 `user_role`）射程的边界：进程内的旧会话一旦被驱逐，脏值就
+这两处同时是缺陷 55（凭据落进了 `user_role`）射程的边界：进程内的旧会话一旦被驱逐，脏值就
 只能经这里重新流回引擎、再随 prompt 进模型。所以本文件断言的是「重建后引擎的角色 == 库里
 那一份」—— 库里是什么就恢复什么，恢复这条路本身是通的。
 
-变异：删掉任一处兜底 → 对应那条用例红（引擎角色停在初值 `""`，不是库里的值）。
+变异：任一重建路径漏掉 `session_identity` 的注入 → 对应那条用例红（引擎角色停在初值 `""`，
+不是库里的值）。
 """
 
 from __future__ import annotations
@@ -113,6 +116,11 @@ def _stub_text_manager(sessions, engine) -> object:
 
         def _create_session(self, *_a, **kw):
             sid = kw["session_id"]
+            # 真 `_create_session` 把身份（user_role / arc_phase）在**构造时**注进引擎（S5），
+            # 替身必须照样应用 —— 否则「重建后引擎的角色 == 库里的那一份」验的是替身的初值，
+            # 真路径的身份注入有没有生效，用例看不出来。
+            engine.user_role = kw.get("user_role", "")
+            engine.arc_phase = kw.get("arc_phase")
             sessions[sid] = new_session_entry(engine, None, "")
             return sid
 
@@ -189,14 +197,18 @@ class TestEnsureSessionRestoresUserRole:
 
 
 class TestEmptyRoleStaysEmpty:
-    def test_blank_role_in_db_does_not_clobber_the_engine(
+    def test_blank_role_in_db_yields_blank_engine_role(
         self, store, user_id, monkeypatch,
     ):
-        """兜底是 `if db_session.get("user_role")`：空角色不该把引擎的既有值抹成空串。"""
+        """身份从库里原样进构造：库里角色为空 → 引擎角色就是空，不做特殊兜底。
+
+        旧实现靠事后赋值 + `if db_session.get("user_role")` 守卫来「空则不覆盖」；本段改成
+        构造时注入后守卫不复存在 —— 新引擎本就该以库里的身份出生，预置的脏值必须被空值覆盖。
+        """
         sid = _seed(store, user_id, role="")
         sessions: dict = {}
         engine = _StubEngine()
-        engine.user_role = "保留我"
+        engine.user_role = "脏值"   # 预置：重建后应被库里的空值覆盖，而不是留存
 
         import deps
         monkeypatch.setattr(deps, "get_user_llm", _fake_user_llm)
@@ -205,4 +217,4 @@ class TestEmptyRoleStaysEmpty:
             lambda *_a, **_kw: _stub_text_manager(sessions, engine))
 
         _run_async(_ensure_session(sid, store, sessions, user_id))
-        assert engine.user_role == "保留我"
+        assert engine.user_role == ""
