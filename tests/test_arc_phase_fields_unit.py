@@ -266,12 +266,79 @@ def test_dispatch_experience_hangs_earliest_only():
     assert dispatch([[1, 3]], 3, layer="experience") == ([], [[0], [], []])
 
 
-def test_dispatch_state_scalar_single_per_phase():
-    """U8：单值 state 同一阶段多条 → 保留第一条 + warning。"""
-    from core.card_draft import dispatch_single
+def test_dispatch_scalar_one_per_slot():
+    """U8：单值字段一个格子只留第一条 —— 同一阶段两条，第二条丢弃。"""
+    from core.card_draft import dispatch
 
-    out = dispatch_single([[2, 2]], 3, layer="state", label="decision_style")
-    assert out == [2]
+    top, by_phase = dispatch([[2], [2]], 3, layer="state", kind="scalar")
+    assert top == []
+    assert by_phase == [[], [0], []]
+
+
+def test_dispatch_scalar_multi_phase_fills_each_slot():
+    """U8：单值字段标注多个阶段 → 每个阶段各得该值（不是只取第一个阶段）。"""
+    from core.card_draft import dispatch
+
+    top, by_phase = dispatch([[2, 3]], 3, layer="state", kind="scalar")
+    assert top == []
+    assert by_phase == [[], [0], [0]]
+
+
+def test_dispatch_scalar_all_phases_top_takes_first():
+    """U8：单值字段两条都覆盖全部 → 顶层只留第一条。"""
+    from core.card_draft import dispatch
+
+    top, by_phase = dispatch([[1, 2, 3], [1, 2, 3]], 3, kind="scalar")
+    assert top == [0]
+    assert by_phase == [[], [], []]
+
+
+def test_dispatch_count_zero():
+    """U8：无阶段的卡全部落顶层；单值字段顶层格子同样只留第一条。"""
+    from core.card_draft import dispatch
+
+    assert dispatch([[1, 2], [1, 2]], 0, kind="list") == ([0, 1], [])
+    assert dispatch([[1, 2], [1, 2]], 0, kind="scalar") == ([0], [])
+
+
+def test_scalar_same_phase_second_dropped_not_promoted():
+    """U8：单值字段同一阶段两条 —— 第二条丢弃，**不进顶层**（B1，分发只有一套）。"""
+    from core.card_draft import card_from_draft
+
+    src = "开头甲甲甲。中间乙乙乙。"
+    data = {
+        "name": "甲",
+        "character_arc": {"phases": [
+            {"label": "一", "state": "s1", "anchor": ""},
+            {"label": "二", "state": "s2", "anchor": "中间乙乙乙"}]},
+        "decision_style": [
+            {"value": "早期谨慎", "occurrences": [{"phase": 1, "quote": "开头甲甲甲"}]},
+            {"value": "重复条目", "occurrences": [{"phase": 1, "quote": "开头甲甲甲"}]}],
+    }
+    card = card_from_draft(data, src)
+    assert card.decision_style == ""
+    assert card.character_arc.phases[0].overlay.get("decision_style") == "早期谨慎"
+
+
+def test_scalar_multi_phase_lands_in_each_phase():
+    """U8：单值字段一条标 [2,3] → 阶段 2、3 各有该值（B1）。"""
+    from core.card_draft import card_from_draft
+
+    src = "开头甲甲甲。中间乙乙乙。结尾丙丙丙。"
+    data = {
+        "name": "甲",
+        "character_arc": {"phases": [
+            {"label": "一", "state": "s1", "anchor": ""},
+            {"label": "二", "state": "s2", "anchor": "中间乙乙乙"},
+            {"label": "三", "state": "s3", "anchor": "结尾丙丙丙"}]},
+        "decision_style": [{"value": "中期起果断", "occurrences": [
+            {"phase": 2, "quote": "中间乙乙乙"},
+            {"phase": 3, "quote": "结尾丙丙丙"}]}],
+    }
+    card = card_from_draft(data, src)
+    assert card.decision_style == ""
+    assert card.character_arc.phases[1].overlay.get("decision_style") == "中期起果断"
+    assert card.character_arc.phases[2].overlay.get("decision_style") == "中期起果断"
 
 
 # ── U7b 草稿形态由登记表派生（§4.2）─────────────────────────────────────

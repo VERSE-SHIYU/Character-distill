@@ -198,12 +198,17 @@ def _layer_phases(final_phases: list[list[int]], count: int, layer: str) -> list
 
 
 def dispatch(final_phases: list[list[int]], count: int, *,
-             layer: str = "state") -> tuple[list[int], list[list[int]]]:
-    """按最终阶段把条目分发到顶层与各阶段 —— 分发只此一处（S6）。
+             layer: str = "state", kind: str = "list",
+             label: str = "") -> tuple[list[int], list[list[int]]]:
+    """按最终阶段把条目分发到顶层与各阶段 —— 分发只此一处（S6 / B1）。
 
     `layer` 决定「挂到哪些阶段」：``state``（默认，做法走这条）→ 每个最终阶段都挂；
     ``experience``（记忆）→ 只挂最早阶段（`_layer_phases`）。共同规则：无阶段的卡
     （`count == 0`）或标注覆盖全部阶段 → 顶层；编号全部被撤回（`final` 空）→ 整条不出现。
+
+    `kind` 决定「一个格子放几条」（登记表说了算）：``list`` → 全放；``scalar`` → 顶层与
+    每个阶段都只留第一条，其余丢弃 + warning（单值字段一个格子存不下两条）。
+
     返回 `(顶层序号, by_phase)`，`by_phase[p-1]` 是挂到阶段 p 的序号，**`by_phase[` 只在这里出现**。
     """
     final_phases = _layer_phases(final_phases, count, layer)
@@ -215,34 +220,18 @@ def dispatch(final_phases: list[list[int]], count: int, *,
         elif final:
             for p in final:
                 by_phase[p - 1].append(i)
+    if kind == "scalar":
+        top = _cap_slot(top, label, "顶层")
+        by_phase = [_cap_slot(slot, label, f"阶段 {p}") if slot else slot
+                    for p, slot in enumerate(by_phase, 1)]
     return top, by_phase
 
 
-def dispatch_single(final_phases: list[list[int]], count: int, *,
-                    layer: str, label: str) -> list[int | None]:
-    """单值状态字段的分发：每条条目只落**一个**阶段（同阶段多条 → 保留第一条 + warning）。
-
-    返回与条目同序的阶段号；`None` = 不落阶段（覆盖全部 → 顶层；无合法编号 → 丢弃）。
-    与 `dispatch` 同源（`_layer_phases` + 「覆盖全部 → 顶层」），只是单值字段一个阶段存不下两条。
-    """
-    out: list[int | None] = []
-    taken: set[int] = set()
-    for final in _layer_phases(final_phases, count, layer):
-        if count and len(final) == count:
-            out.append(None)                      # 覆盖全部 → 顶层
-            continue
-        one = final[:1]
-        if not one:
-            out.append(None)
-            continue
-        p = one[0]
-        if p in taken:
-            logger.warning("[card_draft] %s 的阶段 %d 有多条取值，保留第一条", label, p)
-            out.append(None)
-            continue
-        taken.add(p)
-        out.append(p)
-    return out
+def _cap_slot(slot: list[int], label: str, where: str) -> list[int]:
+    """单值字段的一个格子只留第一条，其余丢弃 + warning（顶层格子同此规则）。"""
+    for _ in slot[1:]:
+        logger.warning("[card_draft] %s 的%s有多条取值，保留第一条", label, where)
+    return slot[:1]
 
 
 def _convert_relationships(rels, phases, source_text: str, count: int,
@@ -317,22 +306,18 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
         res = phase_anchoring.verify(
             rows, _valid_number_rows(rows, count, path), phases, source_text,
             kind=path, label=lambda x: x.value, name=draft.name, warn_skip=False)
-        if spec.kind == "list":
-            top, slots = dispatch(res.phases, count, layer=spec.layer)
-            set_path(card, path, [rows[i].value for i in top])
-            for idx, slot in enumerate(slots):
-                vals = [rows[i].value for i in slot]
-                if vals:
-                    overlays.setdefault(idx, {})[path] = vals
-        else:
-            placed = dispatch_single(res.phases, count, layer=spec.layer, label=path)
-            top_val = rows[0].value if (count == 0 and rows) else next(
-                (rows[i].value for i, p in enumerate(placed)
-                 if p is None and res.phases[i]), "")
-            set_path(card, path, top_val)
-            for i, p in enumerate(placed):
-                if p is not None:
-                    overlays.setdefault(p - 1, {})[path] = rows[i].value
+        # 列表与单值走同一个循环：`kind` 在 `dispatch` 里决定格子容量（scalar 每格只留第一条），
+        # 这里只按 `kind` 决定取值形态（list → 列表，scalar → 单值）。
+        top, slots = dispatch(res.phases, count, layer=spec.layer, kind=spec.kind,
+                              label=path)
+        top_vals = [rows[i].value for i in top]
+        set_path(card, path,
+                 top_vals if spec.kind == "list" else (top_vals[0] if top_vals else ""))
+        for idx, slot in enumerate(slots):
+            vals = [rows[i].value for i in slot]
+            if not vals:
+                continue
+            overlays.setdefault(idx, {})[path] = vals if spec.kind == "list" else vals[0]
 
     card["situation_behaviors"] = [
         {"situation": draft.situation_behaviors[i].situation,

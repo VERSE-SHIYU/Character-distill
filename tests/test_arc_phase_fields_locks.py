@@ -125,6 +125,12 @@ def test_s6_by_phase_index_only_in_dispatch():
     assert holders == ["dispatch"], f"`by_phase[` 出现在这些函数里：{holders}"
 
 
+def test_s6b_dispatch_is_the_only_dispatcher():
+    """分发只有 `dispatch` 一个（B1）：列表与单值走同一个函数，`kind` 决定格子容量。"""
+    names = [n for n in _funcs(_CORE / "card_draft.py") if n.startswith("dispatch")]
+    assert names == ["dispatch"], f"card_draft 里分发函数应只有 dispatch：{names}"
+
+
 # ── S7 起点判定只在 `CharacterArc.has_positions` ────────────────────────────
 def test_s7_has_positions_only_in_schema():
     defs = _hits(_CORE, r"def has_positions\(")

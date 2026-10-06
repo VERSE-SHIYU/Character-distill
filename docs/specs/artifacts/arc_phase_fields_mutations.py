@@ -1,4 +1,4 @@
-"""变异预跑（spec `arc-phase-fields` §7 对账表 MA1–MA23）。
+"""变异预跑（spec `arc-phase-fields` §7 对账表 MA1–MA23 + 本轮修复 B1–B7 的 MB1…）。
 
 逐条把改后代码改坏一处，对应测试必须红；跑完逐字节还原。
 
@@ -169,6 +169,27 @@ MUTANTS = [
                      "                variation_prompt = (\n"
                      '                    f"你是{card.name}。请重新说一句意思相近但措辞不同的开场白。"\n'
                      '                    f"标准开场白：「{card.first_message}」")')])], "RED"),
+    # ── 本轮修复（B1–B7）新增的变异条 ────────────────────────────────────────
+    # MB1–MB3：B1 分发只有一套 —— 单值字段的格子容量由 `kind` 决定。
+    ("MB1 单值不做格子容量限制", _u("test_dispatch_scalar_one_per_slot"),
+     [("repl", CD, [('    if kind == "scalar":', "    if False:")])], "RED"),
+    ("MB2 单值多余条目提升到顶层（B1 旧缺陷）",
+     _u("test_scalar_same_phase_second_dropped_not_promoted"),
+     [("repl", CD, [('        by_phase = [_cap_slot(slot, label, f"阶段 {p}") if slot else slot\n'
+                     '                    for p, slot in enumerate(by_phase, 1)]',
+                     '        for p, slot in enumerate(by_phase, 1):\n'
+                     '            if len(slot) > 1:\n'
+                     '                logger.warning("[card_draft] %s 的阶段 %d 有多条取值，保留第一条", label, p)\n'
+                     '                top = top + slot[1:]\n'
+                     '            by_phase[p - 1] = slot[:1]')])], "RED"),
+    ("MB3 单值多阶段条目只落最早阶段", _u("test_dispatch_scalar_multi_phase_fills_each_slot"),
+     [("repl", CD, [('        by_phase = [_cap_slot(slot, label, f"阶段 {p}") if slot else slot\n'
+                     '                    for p, slot in enumerate(by_phase, 1)]',
+                     '        seen: set[int] = set()\n'
+                     '        for p, slot in enumerate(by_phase, 1):\n'
+                     '            kept = [i for i in slot[:1] if i not in seen]\n'
+                     '            seen.update(kept)\n'
+                     '            by_phase[p - 1] = kept')])], "RED"),
 ]
 
 BASELINE_TARGETS = (U, READERS, "tests/test_arc_phase_fields_entries.py", LOC)
