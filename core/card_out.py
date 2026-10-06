@@ -2,7 +2,7 @@
 """出卡 —— 存储行 → 前端卡片负载的**唯一一处**（B4）。
 
 `character_arc.selectable`（前端据此决定是否渲染阶段选择框，DA8）是**算出来的**：起点齐全 +
-有正文指纹（`CharacterArc.has_positions`）。它不是卡里的固有内容，所以**不随卡落库** —— 存库
+有正文指纹（与 `CharacterArc.has_positions` 同一判据，经 `ArcPositions` 只读这两样）。它不是卡里的固有内容，所以**不随卡落库** —— 存库
 那一刻算一遍写进 `card_json` 就会过期（旧卡没这个键；位置是后台作业补的，补完那张卡存下的
 仍是 false），前端读到的便是陈值，该能选阶段的卡不显示选择框。
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from core.schema import CharacterArc
+from core.schema import ArcPositions
 
 
 def out_card(row: dict[str, Any]) -> dict[str, Any]:
@@ -31,8 +31,8 @@ def out_card(row: dict[str, Any]) -> dict[str, Any]:
     card = json.loads(raw) if isinstance(raw, str) else dict(raw)
     arc = card.get("character_arc")
     if isinstance(arc, dict):
-        # 只这一处按登记的口径判定，不再各处各判一次。
-        card["character_arc"] = {**arc, "selectable": CharacterArc.model_validate(arc).has_positions()}
+        # 只这一处判定；只解析判据要读的起点与指纹（`ArcPositions`），别的字段不合法也不影响出卡（R3）。
+        card["character_arc"] = {**arc, "selectable": ArcPositions.model_validate(arc).has_positions()}
     if isinstance(raw, str):
         return {**row, "card_json": json.dumps(card, ensure_ascii=False)}
     return {**row, "card_json": card}

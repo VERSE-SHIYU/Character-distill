@@ -924,3 +924,12 @@ web/routers/market.py:837:    char = CharacterCard.model_validate(_json.loads(ca
 复核跟进（执行方复核 a4f2a5a9 提出）：MC6 补上；`arc_view._project_relationships` 的说明与规则第 7 条对齐；S13 锁的「五条规则」措辞更新；分批调用点实为 5 处（含 SSE 侧 `fill_relationships`），均已核对。
 
 **待办（低优先级，未修）**：R3 `out_card` 逐行校验弧线，一张坏卡会让整个列表 500；R4 导出丢了阶段特有的说话风格（阶段段落过滤 `speaking_style.*`，说话风格节只取顶层）。
+
+### 待办 R3 / R4 已修（2026-10-06，Claude，分支 fix/arc-r3-r4）
+
+| 编号 | 根因 | 修法 |
+|---|---|---|
+| R3 | 出卡为算一个只依赖「起点 + 正文指纹」的判据，校验了整条 `CharacterArc`（含各阶段 overlay）；无关字段不合法就抛错，整个列表接口跟着失败 | 判据抽成 `schema._positions_usable` 唯一实现；新增只解析这两样的 `ArcPositions`，出卡改用它；`CharacterArc.has_positions` 同调这一个实现。S7 锁改为「判据实现恰好一处、两个入口都只调用它」 |
+| R4 | mes_example 的说话风格是手列的五个顶层字段，既绕开了登记表，也没有阶段那一层 | 说话风格与人设正文走同一套 `card_outline` 全程 + 逐阶段；`card_outline` 加 `layers` 参数，说话风格整组列出（含 stable 的用词水平、禁忌用词）。删掉手列代码与不再使用的 `_label`。口癖等列表的连接符随登记表统一为「；」 |
+
+新测试：`test_r3_*`（2 条）、`test_r4_*`（1 条）。变异驱动加 MD1–MD3（并把 `core/export.py` 纳入靶子），跟进 MA12、MB11 锚点：46/46 全红、逐字节还原。

@@ -145,9 +145,19 @@ def test_s6b_dispatch_is_the_only_dispatcher():
 
 # ── S7 起点判定只在 `CharacterArc.has_positions` ────────────────────────────
 def test_s7_has_positions_only_in_schema():
+    """起点判据只在 schema 一处实现（`_positions_usable`）。
+
+    `has_positions` 有两个入口（`CharacterArc` 与只读起点的 `ArcPositions`，R3），都只能在
+    schema 里、且都只是调用 `_positions_usable` —— 判据本身不许出现第二份。
+    """
     defs = _hits(_CORE, r"def has_positions\(")
-    assert [f for f, _ in defs] == ["core/schema.py"], f"has_positions 应只在 schema 定义一次：{defs}"
+    assert {f for f, _ in defs} == {"core/schema.py"}, f"has_positions 应只在 schema 定义：{defs}"
     assert "def has_positions(" not in _read(_CORE / "arc_view.py"), "arc_view 里还留着 has_positions"
+    schema = _read(_CORE / "schema.py")
+    assert len(re.findall(r"^def _positions_usable\(", schema, re.M)) == 1, "判据实现不是恰好一处"
+    bodies = re.findall(r"def has_positions\(self\)[^\n]*\n(?:\s+\"\"\"[\s\S]*?\"\"\"\n)?(\s+[^\n]+)", schema)
+    assert len(bodies) == len(defs) and all("_positions_usable(" in b for b in bodies), (
+        f"has_positions 不是直接调用 _positions_usable：{bodies}")
 
 
 # ── S8 关系分批只有 `_relationships_batched` 一处、批大小常量一次 ─────────────

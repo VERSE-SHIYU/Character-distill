@@ -52,8 +52,9 @@ TM = ROOT / "core" / "text_manager.py"
 PA = ROOT / "core" / "phase_anchoring.py"
 CARD_OUT = ROOT / "core" / "card_out.py"
 WDISTILL = ROOT / "web" / "routers" / "distill.py"
+EXPORT = ROOT / "core" / "export.py"
 
-TARGETS = (AV, CL, CD, SCHEMA, DIST, AREV, MARKET, RB, CTX, TM, PA, CARD_OUT, WDISTILL)
+TARGETS = (AV, CL, CD, SCHEMA, DIST, AREV, MARKET, RB, CTX, TM, PA, CARD_OUT, WDISTILL, EXPORT)
 
 U = "tests/test_arc_phase_fields_unit.py"
 LOC = "tests/test_arc_phase_fields_locks.py"
@@ -121,8 +122,8 @@ MUTANTS = [
                      "        pass")])], "RED"),
     # ── core/schema.py：起点判定 / 迁移 / overlay 校验 ──
     ("MA12 起点判定不看指纹", _u("test_selectable_and_valid_phase"),
-     [("repl", SCHEMA, [("        if not self.phases or not self.source_fingerprint:",
-                         "        if not self.phases:")])], "RED"),
+     [("repl", SCHEMA, [("    if not starts or not fingerprint:",
+                         "    if not starts:")])], "RED"),
     ("MA16 ①格式卡不迁移", _u("test_legacy_phase_fields_migrate_to_overlay"),
      [("repl", SCHEMA, [("            if moved and path not in overlay:", "            if False:")])], "RED"),
     ("MA17 overlay 接受未登记键", _u("test_overlay_rejects_unregistered_key"),
@@ -192,6 +193,21 @@ MUTANTS = [
     ("MC6 关系规则删掉「每条阶段态度都写 note」（R2b 生成侧约定）",
      _u("test_r2b_rules_pin_first_contact_and_per_phase_note"),
      [("repl", RB, [('    "6. attitudes 里每一条都写 note：那一阶段的口径（同第 2 条）。\\n"\n', "")])], "RED"),
+    # ── 审计待办 R3 / R4（Claude 修）──
+    ("MD1 出卡改回校验整条弧线（R3 旧形态：无关字段坏了整页报错）",
+     _u("test_r3_out_card_ignores_fields_the_criterion_does_not_read"),
+     [("repl", CARD_OUT, [("ArcPositions.model_validate(arc).has_positions()",
+                           "__import__('core.schema', fromlist=['CharacterArc'])"
+                           ".CharacterArc.model_validate(arc).has_positions()")])], "RED"),
+    ("MD2 起点视图另写一份判据（R3：判据两处）",
+     _loc("test_s7_has_positions_only_in_schema"),
+     [("repl", SCHEMA, [("    def has_positions(self) -> bool:\n"
+                         "        return _positions_usable([p.start for p in self.phases], self.source_fingerprint)\n",
+                         "    def has_positions(self) -> bool:\n"
+                         "        return bool(self.phases) and bool(self.source_fingerprint)\n")])], "RED"),
+    ("MD3 导出的说话风格不按阶段列（R4 旧形态）",
+     _u("test_r4_export_lists_phase_speaking_style_in_its_section"),
+     [("repl", EXPORT, [("            if phase_lines:", "            if phase_lines and not speech:")])], "RED"),
     # ── core/context_engine.py：类型隔离 ──
     ("MA21 ContextEngine 收原卡不抛错", _u("test_projected_card_type_only_from_project_card"),
      [("repl", CTX, [("        self.card = require_projected(card)   # 原卡不进注入层（DA18）",
@@ -278,7 +294,7 @@ MUTANTS = [
     # 的形态（接口把存量行原样透传，陈值 `false` / 缺键照旧），只有 E19 的三条撞得到。
     ("MB11 出卡不重算 selectable（B4 的旧形态）",
      _r("test_out_card_recomputes_stale_false_to_true"),
-     [("repl", CARD_OUT, [('        card["character_arc"] = {**arc, "selectable": CharacterArc.model_validate(arc).has_positions()}',
+     [("repl", CARD_OUT, [('        card["character_arc"] = {**arc, "selectable": ArcPositions.model_validate(arc).has_positions()}',
                            '        card["character_arc"] = arc  # 变异：不重算，透传存量值')])], "RED"),
 ]
 

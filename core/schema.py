@@ -167,6 +167,15 @@ class ArcAxis(BaseModel):
         return {"phases": value} if isinstance(value, list) else value
 
 
+def _positions_usable(starts: list[int | None], fingerprint: str) -> bool:
+    """起点判据的唯一实现：有阶段、有正文指纹、起点齐全且严格递增。"""
+    if not starts or not fingerprint:
+        return False
+    if any(s is None for s in starts):
+        return False
+    return all(starts[i] < starts[i + 1] for i in range(len(starts) - 1))
+
+
 class CharacterArc(ArcAxis):
     """角色弧线：一条变化轴 + 按故事顺序排列的阶段（「变的部分」）。"""
     phases: list[ArcPhase] = []
@@ -177,12 +186,27 @@ class CharacterArc(ArcAxis):
 
         存卡调度（是否补位置）与检索上界（是否启用过滤）**共用这一个判定**。
         """
-        if not self.phases or not self.source_fingerprint:
-            return False
-        starts = [p.start for p in self.phases]
-        if any(s is None for s in starts):
-            return False
-        return all(starts[i] < starts[i + 1] for i in range(len(starts) - 1))
+        return _positions_usable([p.start for p in self.phases], self.source_fingerprint)
+
+
+class _PhaseStart(BaseModel):
+    """阶段里起点判据唯一要读的字段；其余（overlay、做法…）不解析。"""
+    start: int | None = None
+
+
+class ArcPositions(ArcAxis):
+    """弧线的「起点视图」：只解析起点判据要读的 `phases[].start` 与 `source_fingerprint`。
+
+    出卡（`core.card_out`）给前端算 `selectable` 用它，而不是校验整条 `CharacterArc`：判据
+    只依赖这两样，没理由因为别的字段（例如某个阶段的 overlay）不合法就判定失败 —— 否则一张
+    卡的无关字段坏了，整个卡片列表接口都会报错（R3）。判据本身与 `CharacterArc` 共用
+    `_positions_usable`，不另写一份。
+    """
+    phases: list[_PhaseStart] = []
+    source_fingerprint: str = ""
+
+    def has_positions(self) -> bool:
+        return _positions_usable([p.start for p in self.phases], self.source_fingerprint)
 
 
 class CharacterCard(BaseModel):

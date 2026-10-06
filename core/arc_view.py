@@ -103,20 +103,22 @@ def phase_header(index: int, label: str = "") -> str:
     return f"阶段 {index}·{label}" if label else f"阶段 {index}"
 
 
-def card_outline(card: CharacterCard):
+def card_outline(card: CharacterCard, layers: tuple[str, ...] = ("state", "experience")):
     """整卡的两层视图：``(全程, 逐阶段)`` —— 导出与展示共用的唯一字段名来源（B5）。
 
     - **全程** = 原卡顶层的 state / experience 字段；
     - **逐阶段** = 第 i 个阶段的 ``overlay``（每个阶段一份）。
 
     两层都按登记表遍历，一行是 ``(路径, 中文名, 文本)``：字段名一律取 ``FieldSpec.label``
-    （不在此拼字段名），列表「；」连接、单值原样，无值跳过。只取 state / experience 两类
+    （不在此拼字段名），列表「；」连接、单值原样，无值跳过。默认只取 state / experience 两类
     —— 它们是会随阶段变的人设；stable 全程不变、custom 各自渲染、none 不进 prompt。
+    要整组列出某类字段（如导出的说话风格，含 stable 的用词水平、禁忌用词）时，用 `layers`
+    放宽；阶段 overlay 里只会有 state / experience 路径，放宽不会多出阶段内容。
     """
     def rows(read) -> list[tuple[str, str, str]]:
         out: list[tuple[str, str, str]] = []
         for path, spec in REGISTRY.items():
-            if spec.layer not in ("state", "experience"):
+            if spec.layer not in layers:
                 continue
             value = read(path)
             if spec.kind == "list":

@@ -891,3 +891,64 @@ def test_r2b_rules_pin_first_contact_and_per_phase_note():
 
     assert "开始有交集的那个阶段" in RELATIONSHIP_RULES
     assert "每一条都写 note" in RELATIONSHIP_RULES
+
+
+# ── 审计待办 R3 / R4（Claude 修）─────────────────────────────────────────
+
+def test_r3_out_card_ignores_fields_the_criterion_does_not_read():
+    """R3：出卡只解析起点判据要读的起点与指纹；别的字段不合法，selectable 照算、不抛错。
+
+    以前出卡校验整条 CharacterArc：任何一张卡某个阶段的 overlay 不合法，整个卡片列表接口
+    都会报错。判据只依赖 `phases[].start` 与 `source_fingerprint`。
+    """
+    import json
+    from core.card_out import out_card
+
+    arc = {"source_fingerprint": "fp", "phases": [
+        {"label": "前", "state": "s1", "start": 0, "overlay": {"未登记的路径": ["坏值"]}},
+        {"label": "后", "state": "s2", "start": 10}]}
+    row = {"id": "c1", "card_json": json.dumps({"name": "甲", "character_arc": arc}, ensure_ascii=False)}
+    got = json.loads(out_card(row)["card_json"])
+    assert got["character_arc"]["selectable"] is True
+
+
+def test_r3_out_card_and_model_share_one_criterion():
+    """R3：出卡的判据与 CharacterArc.has_positions 是同一个（缺指纹、起点缺失、不递增都为假）。"""
+    from core.schema import ArcPositions, CharacterArc
+
+    cases = [
+        {"source_fingerprint": "fp", "phases": [{"label": "a", "state": "", "start": 0},
+                                                {"label": "b", "state": "", "start": 5}]},
+        {"source_fingerprint": "", "phases": [{"label": "a", "state": "", "start": 0}]},
+        {"source_fingerprint": "fp", "phases": [{"label": "a", "state": "", "start": None}]},
+        {"source_fingerprint": "fp", "phases": [{"label": "a", "state": "", "start": 5},
+                                                {"label": "b", "state": "", "start": 5}]},
+        {"source_fingerprint": "fp", "phases": []},
+    ]
+    for arc in cases:
+        assert (ArcPositions.model_validate(arc).has_positions()
+                == CharacterArc.model_validate(arc).has_positions()), arc
+
+
+def test_r4_export_lists_phase_speaking_style_in_its_section():
+    """R4：阶段特有的说话风格（语气、口癖…）导出到 mes_example 对应阶段的段落里；
+    全程的说话风格（含 stable 的用词水平、禁忌用词）在全程段；说话风格不进人设正文。"""
+    from core.arc_view import phase_header
+    from core.export import to_tavern_json
+
+    c = make_card(3)
+    c.speaking_style.tone = "全程语气"
+    c.speaking_style.vocabulary_level = "白话"
+    c.speaking_style.taboo_words = ["忌讳词"]
+    set_overlay(c, 1, "speaking_style.tone", "中期才有的语气")
+    set_overlay(c, 2, "speaking_style.catchphrases", ["后期口癖"])
+
+    data = to_tavern_json(c)["data"]
+    secs = _sections(data["mes_example"])
+    labels = [p.label for p in c.character_arc.phases]
+    assert "中期才有的语气" in secs[phase_header(2, labels[1])], "阶段 2 的语气没导出到它的段落"
+    assert "后期口癖" in secs[phase_header(3, labels[2])], "阶段 3 的口癖没导出到它的段落"
+    for lifelong in ("全程语气", "白话", "忌讳词"):
+        assert lifelong in secs[""], f"全程说话风格缺了：{lifelong}"
+    assert data["mes_example"].count("中期才有的语气") == 1
+    assert "中期才有的语气" not in data["personality"], "说话风格混进了人设正文"
