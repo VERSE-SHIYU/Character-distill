@@ -48,6 +48,7 @@ from storage.sqlite_store import SQLiteStore
 # 抄一份就是第二处「组字段表」，组一变就漂。cross-module import 在本仓有先例
 # （test_postgres_store 引 test_published_from_backfill）。
 from test_distiller_routing import (
+    REL_BATCH_GROUP,
     _FakeAsyncClient,
     _SAMPLE_FIELD_VALUES,
     _format_group_of,
@@ -130,9 +131,10 @@ def _seed_text(store, uid, body=_BODY):
 
 
 def _all_dialogue_examples(card) -> list[str]:
-    """卡上全部对话示例：顶层 + 各阶段 —— 有起点的卡按位置归到阶段下（本段 §3.9）。"""
+    """卡上全部对话示例：顶层 + 各阶段 overlay —— 有起点的卡按位置归到阶段下（本段 §3.9）。"""
     return list(card.dialogue_examples) + [
-        d for p in card.character_arc.phases for d in p.dialogue_examples]
+        d for p in card.character_arc.phases
+        for d in (p.overlay.get("dialogue_examples") or [])]
 
 
 def _build_app(store, uid, monkeypatch, *, distiller, tm=None):
@@ -508,7 +510,8 @@ class _FormattingLLM:
             yield "合并档案"
             return {"prompt_tokens": 1, "completion_tokens": 1}
         group = _format_group_of(system)
-        self.format_groups.append(group)
+        if group != REL_BATCH_GROUP:          # 关系分批那一跳不是字段组，不进「各组都跑了」的盘
+            self.format_groups.append(group)
         yield _group_reply(group)
         return {"prompt_tokens": 1, "completion_tokens": 1}
 
@@ -552,12 +555,15 @@ class TestOneParseableCardOnBothChannels:
     def _assert_all_groups_landed(self, card) -> None:
         """各组各自的代表字段都得在卡上 —— 少一组说明那个组的帧没并进来。
 
-        草稿（流式帧，`key_memories` 的元素是带 occurrences 的对象）与存卡（`key_memories`
-        的元素是字符串）两种形态都收。
+        草稿（流式帧，状态类字段是「一条取值 + occurrences」的对象）与存卡（同名字段是字符串）
+        两种形态都收。
         """
+        def _val(x):
+            return x[0].value if isinstance(x, list) else x
+
         assert card.name == "角色"                                    # G1
-        assert card.decision_style == "谨慎型"                         # G2
-        assert card.speaking_style.tone == "冷淡"                      # G3
+        assert _val(card.decision_style) == "谨慎型"                   # G2
+        assert _val(card.speaking_style.tone) == "冷淡"                # G3
         assert [m if isinstance(m, str) else m.memory
                 for m in card.key_memories] == ["关键经历"]             # G6
         assert [r.target for r in card.relationships] == ["某人"]        # G5

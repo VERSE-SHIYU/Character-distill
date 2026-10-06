@@ -542,8 +542,8 @@ def test_start_route_lands_usage_rows(monkeypatch):
             # 读，不写死 —— 关系拆到 G5 时这里不该跟着改。`_wait_for_rows` 的 expected
             # 必须给足，给少了会在跑到一半时快照返回，下面那条 == 断言就成了竞态。
             # 识别逐片 1 笔 + 全书分组判定 1 笔 + 逐片蒸馏/归并/挑选对话/自动标签/苏醒台词
-            # 各 1 笔
-            n_rows = 7 + len(FORMAT_GROUPS)
+            # 各 1 笔 + 关系分批 1 笔（§4.5：主调用只出名单，细节那一跳自己记一笔）
+            n_rows = 8 + len(FORMAT_GROUPS)
             rows = _wait_for_rows(str(db), expected=n_rows)
     finally:
         C.ctx_thread = real_ctx_thread
@@ -558,7 +558,7 @@ def test_start_route_lands_usage_rows(monkeypatch):
     assert all(u == uid for _, u in rows), f"落库归属不是请求身份：{rows}"
     assert sorted(actions) == sorted([
         "distill_identify", "distill_identify", "distill_map", "distill_reduce",
-        "distill_dialogue",
+        "distill_dialogue", "distill_relationships",
         *["distill_format"] * len(FORMAT_GROUPS),
         "distill_autotag", "chat_awakening",
     ]), f"落库的 action 面不对：{actions}"
