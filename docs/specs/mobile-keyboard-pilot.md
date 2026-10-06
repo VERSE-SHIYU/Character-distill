@@ -1,0 +1,174 @@
+# Spec：手机键盘适配重构 · 第一段（键盘层最小集 + 角色聊天）
+
+## 状态（2026-10-06）
+
+- **Shiyu 已过目并同意（2026-10-06）。由本地实现，作者审计。**
+- 本文件取代同名的上一版（那一版把三个模块、17 条测试、12 个变异压在一次交付里，且没有目标检查；按 `rework-lessons.md` 第 2、9、10、7 条重写）。
+- 计划见 `mobile-keyboard-plan.md`。后续段落见文末。
+
+## 头部
+
+- 前置 spec：无。基线：main `15b0b7c`，全部坐标读自该提交。
+- 实现分支：`feat/keyboard-native-s1`（本地在其上提交）。
+- 已拍板（Shiyu，2026-10-06）：顺着 Safari；ChatUI 留白式；试点 = 角色聊天；默认关闭的开关；部署到服务器后真机验。
+
+## 一、目标检查（先于一切实现）
+
+**目标**：角色聊天页点输入框、键盘弹起后，最后一条消息贴着输入栏，输入栏在键盘上方，消息区不是空白。
+
+**检查方式**：网址带 `?kbdcheck=1` 时，页面在输入框聚焦后 800ms 和 2000ms 各量一次，把结果显示在屏幕顶部。Shiyu 截图即为结果。
+
+| 项 | 判据 |
+|---|---|
+| C1 输入栏在键盘上方 | 输入栏的上下边都落在可视区内（可视区 = `visualViewport` 的 `offsetTop` 到 `offsetTop + height`） |
+| C2 最后一条消息贴着输入栏 | 0 ≤ 输入栏顶边 − 最后一条消息底边 ≤ 列表底部留白 + 24px |
+| C3 消息区不是空白 | 最后一条消息至少有 20px 落在可视区内 |
+| 附带显示（不判对错） | 页面被 Safari 推上去的距离；可视高度；窗口高度 |
+
+阈值是初值，首跑后如需调整，写进本文件「补充」。
+
+**检查本身要先被证明有效**：开关关闭（现有逻辑）时跑一次，预期 C2 或 C3 不通过，与 Shiyu 看到的空白一致。如果现状下三项全过，说明检查看不出问题，**停下报告，不继续实现**。
+
+**顺序**：第 1 个提交只有目标检查；第 2 个提交才是键盘层。部署后同一台手机先关开关跑、再开开关跑，两张截图就是改前改后。
+
+## 二、目标与非目标
+
+| # | 目标 | 怎么验 |
+|---|---|---|
+| G1 | 开关打开时，目标检查 C1–C3 全过 | 真机截图 |
+| G2 | 过程顺滑，页面没有被弹开再拽回 | 真机，Shiyu 主观判断，对照 `web.telegram.org/a` |
+| G3 | 开关关闭时角色聊天与现在一致；其他页面不受影响 | 单测 + Playwright |
+
+非目标（各在后续段落）：消息列表组件与回到底部按钮；聊天骨架；群聊、私信、登录页接入；删除旧逻辑；顶栏固定。
+
+## 三、行为清单
+
+| # | 行为 | 生效条件 |
+|---|---|---|
+| B1 | 开关：网址带 `?kbd=native` / `?kbd=legacy` 时写入本地存储键 `kbd_mode`，之后读该键；默认 `legacy`。`?kbdcheck=1` / `0` 同理，键 `kbd_check` | 始终 |
+| B2 | 页面声明键盘交给浏览器：挂载时 `<html data-kbd="native">` 并清掉 `--vvh`，卸载时移除属性 | 开关 = native 且手机宽度 |
+| B3 | 有 `data-kbd="native"` 时，旧 hook 不写 `--vvh`、不拽页面、不派发 `vvchange` | 同上 |
+| B4 | 有 `data-kbd="native"` 时 `body` 不固定（其余铺满和禁止滚动的规则仓库已有，不重复写） | 同上 |
+| B5 | 页面内的文字输入框聚焦时给 `<body>` 加 `kbd-focusing`，失焦后下一个事件循环移除 | 同上 |
+| B6 | `kbd-focusing` 期间：底部安全区留白归零；仅 iPhone 上，标了 `data-kbd-lift` 的列表其第一个子元素顶部加 75% 屏高留白 | 同上 |
+| B7 | 聚焦时把列表立即滚到底（不带动画） | 同上 |
+| B8 | 非 Safari 的内嵌浏览器：聚焦后 300ms、1000ms 各把输入栏滚进视野一次；iOS 上失焦时页面滚回顶部。iPhone 上键盘收起但输入框未失焦时，让它失焦 | 同上 |
+
+## 四、已查实的约束（S0 逐条复核，任一条不成立就停下报告）
+
+| # | 事实 | 坐标 @ `15b0b7c` |
+|---|---|---|
+| F1 | 角色聊天根节点是 `div.chat-view.chat-area`；列表是 `div.chat-messages`，子元素直接是各条消息，末尾一个空的占位 `div` | `web/frontend/src/components/ChatArea.jsx:499`、`:674`、`:691`、`:751` |
+| F2 | 贴底靠 `useAutoScroll`（消息变化、`vvchange`、滚动三处）；本页另有一份键盘监听 | `ChatArea.jsx:395`、`:397-408`；`src/hooks/useAutoScroll.js:11`、`:18`、`:27` |
+| F3 | 列表设了平滑滚动，所以 B7 必须显式指定不带动画 | `src/styles/global.css:4558` |
+| F4 | 旧 hook 全站生效：写 `--vvh`、拽页面、派发 `vvchange` | `src/utils/useVisualViewport.js:25`、`:28-30`、`:32-34`；`src/App.jsx:109` |
+| F5 | 外壳高度 `var(--vvh, 100dvh)`，`--vvh` 不存在时回落 | `global.css:18575-18577` |
+| F6 | `html, body, #root` 已是铺满并禁止滚动；手机端另把 `body` 固定 | `global.css:905`；`:18568-18572` |
+| F7 | 手机断点 768，已有 `useIsMobile` | `src/hooks/useIsMobile.js:3` |
+| F8 | 没有功能开关工具和读网址参数的先例；本地存储有布尔开关先例 `affinity_enabled`，现有键里没有 `kbd_` 开头的 | 现有键：`affinity_enabled affinity_open auth_token charsim-font-level distill_tasks nav_* tts_voice` |
+| F9 | 只有 main 上的提交会构建镜像；部署可只选新加坡；支持按旧镜像回滚；没有测试环境 | `.github/workflows/build.yml:272`；`deploy.yml:20-35`；`DEPLOY.md` |
+| F10 | 前端 lint + vitest 是分支合并门；Playwright 不在 CI | `build.yml:238-267`；`web/frontend/vite.config.js:83` |
+
+### 这条路径上已有的机制
+
+| 机制 | 本段怎么处理 | 说明 |
+|---|---|---|
+| 旧 hook（F4） | 加一处判断（B3） | 临时，全部页面迁完后随旧逻辑删除 |
+| `useAutoScroll` 的 `vvchange` 监听 | 不改 | native 时旧 hook 不派发，它自然不触发 |
+| `ChatArea` 自己的键盘监听（F2） | 不改 | **未核实**：native 时它仍会在可视高度变小时把列表滚到底（带动画），与 B7 方向相同，是否干扰看目标检查结果；第二段换消息列表组件时删除 |
+| `body` 固定（F6） | native 时取消（B4） | **未核实**是否必要：ChatUI 的 `body` 不固定。只能真机看 |
+
+### 全仓碰视口的地方（跨模块规则，贴原文）
+
+`git grep -n -E "visualViewport|vvchange" 15b0b7c -- web/frontend/src web/frontend/index.html`
+```
+src/components/ChatArea.jsx:397:  // Mobile: scroll messages to bottom when keyboard opens (visualViewport resize)
+src/components/ChatArea.jsx:399:    if (!window.visualViewport) return
+src/components/ChatArea.jsx:401:      if (window.visualViewport.height < window.screen.height * 0.8) {
+src/components/ChatArea.jsx:406:    window.visualViewport.addEventListener('resize', handler)
+src/components/ChatArea.jsx:407:    return () => window.visualViewport.removeEventListener('resize', handler)
+src/hooks/useAutoScroll.js:29:    window.addEventListener('vvchange', onVVChange)
+src/hooks/useAutoScroll.js:30:    return () => window.removeEventListener('vvchange', onVVChange)
+src/utils/useVisualViewport.js:4: * Track window.visualViewport height and expose it as --vvh CSS variable.
+src/utils/useVisualViewport.js:5: * Also dispatch a 'vvchange' custom event so message containers can
+src/utils/useVisualViewport.js:8: * Only active when visualViewport is available (mobile browsers).
+src/utils/useVisualViewport.js:13:    const vv = window.visualViewport
+src/utils/useVisualViewport.js:16:    const SYNC_EVENT = 'vvchange'
+src/utils/useVisualViewport.js:31:      // Dispatch vvchange only when keyboard opens (height shrinks)
+```
+本段之后新增碰视口的只有 `src/keyboard/` 目录。
+
+### 起环境与样本
+
+- 真机验收：合并进 main → 构建 → 部署新加坡（`sg-only`）。开关默认关，线上用户不受影响。
+- Playwright 起 vite 占 7860，原生后端也用 7860，跑之前先停（`web/frontend/playwright.config.js:13-16`、`start_all.bat:21`）。本段不加新依赖。
+- 样本只有 Shiyu 的 iPhone 14 Pro（iOS 26.6.2），Safari 标签页与主屏幕各一遍。安卓与内嵌浏览器无设备，B8 照 ChatUI 原样搬，**未验证**。
+- B6 的留白规则只在 iPhone 上生效，模拟里测不到。
+
+## 五、改动
+
+| 文件 | 内容 | 它消掉什么 / 何时删 |
+|---|---|---|
+| 新增 `src/keyboard/keyboardMode.js` | B1 | 迁移期开关；全部迁完后删 |
+| 新增 `src/keyboard/goalCheck.js` | 第一节的检查与屏幕显示 | 每一段的验收都用它；全部迁完后删 |
+| 新增 `src/keyboard/useNativeKeyboardPage.js` | B2，返回是否生效 | 长期保留：页面接入键盘层的入口 |
+| 新增 `src/keyboard/useKeyboardFocus.js` | B5、B7（通过回调）、B8；用事件委托监听根节点 | 长期保留。不改 `ChatInputBar` |
+| 新增 `src/keyboard/keyboard.css` | B4、B6 | 长期保留 |
+| `src/main.jsx` | 引入 `keyboard.css` | — |
+| `src/utils/useVisualViewport.js` | `sync` 开头加一处判断（B3） | 临时；消掉「两套逻辑同时动视口」 |
+| `ChatArea.jsx` | 调用两个 hook；根节点挂 ref；列表加 `data-kbd-lift`；聚焦回调里把列表滚到底 | 第三段抽出聊天骨架后，这几行收进骨架，页面里不再有键盘代码 |
+
+以后新页面接入要改几处：一处（调用 `useNativeKeyboardPage` 与 `useKeyboardFocus`）；第三段之后是零处，换上骨架即可。
+以后加一条键盘规则要改几处：一处（`src/keyboard/`）。
+
+## 六、出处对照
+
+| 行为 | 出处（`@chatui/core@3.8.0`，MIT，`https://github.com/alibaba/ChatUI`） |
+|---|---|
+| B4 | `es/components/Chat/style.less:2` 起：`html`、`body`、`#root` 铺满，`body` 只禁止滚动 |
+| B5 | `es/components/Composer/index.js:225-235`（`handleInputFocus`）、`:236-247`（`handleInputBlur`） |
+| B6 | `Chat/style.less:39-41`（`--safe-bottom: 0px`）、`:44-48`（`@supports (-webkit-touch-callout: none)` 下 `margin-top: 75vh`） |
+| B7 | `es/components/Chat/index.js:59-65`（聚焦时 `scrollToEnd`） |
+| B8 | `es/components/Composer/riseInput.js:1-48`；`es/utils/ua.js:4`；`Composer/index.js:130-156` |
+
+照搬的文件在文件头注明出处与 MIT 许可。与 ChatUI 的一处差异：它的留白加在列表内的内容容器上；本仓列表没有内容容器（F1），加在第一个子元素上，效果相同，**未核实**。
+
+## 七、测试（与风险相称）
+
+- **目标检查**：见第一节。它守 G1。
+- **单测**（vitest，进 CI，约 9 条）：开关读写与默认值；`useNativeKeyboardPage` 在 native 且手机时加属性、卸载移除，否则不加；`useKeyboardFocus` 的加类、移除、只认文字输入框、聚焦回调被调用；旧 hook 在有属性时三件事都不做、没有时照旧。
+- **一把锁**：「native 时旧 hook 不动作」是本段唯一跨模块的规则。实现方预跑一个变异（去掉那处判断），确认对应单测变红，输出贴进报告；作者审计时亲手再跑。
+- **Playwright**（2 条，不在 CI）：开关关闭时无 `data-kbd`、列表进入后贴底；开关打开时有属性，点输入框后 `body` 有 `kbd-focusing`、失焦后没有。
+- 其余不设变异、不设调用点矩阵。
+
+本地只跑受影响文件加 `npm test`；本段不碰后端，不起 PG。合并前提是分支 CI 绿；合并只做 git 操作，合并后不等 main 的 CI。
+
+## 八、执行（本地实现，作者审计；一步一报，前一步审计过了才给下一步）
+
+| 步 | 谁 | 做什么 | 完成判据 |
+|---|---|---|---|
+| 1 | 本地 | 拉分支，`Test-Path docs/specs/mobile-keyboard-pilot.md`，S0 复核 F1–F10 | 逐条写明成立 / 不成立 |
+| 2 | 本地 | **提交 1：只做目标检查**——开关读写（B1）、`goalCheck.js`、在角色聊天页接上检查、对应单测。推分支 | 受影响的测试与 `npm test` 全绿 |
+| 3 | 作者 | 审计提交 1：**先看它是否真能量出第一节的三项**，再对照本文件；逐文件写结论 | 每个问题注明是实现偏离还是本文件设计错 |
+| 4 | 本地 | 提交 2：键盘层其余部分（B2–B8）与接线、测试；预跑那一个变异并贴输出。推分支 | 全绿；变异被打红 |
+| 5 | 作者 | 审计提交 2；测试和那个变异亲手再跑一遍 | 同第 3 步 |
+| 6 | Shiyu | 分支 CI 绿后合并，部署新加坡 | 开关关闭时线上无变化 |
+| 7 | Shiyu | 手机打开 `…?kbdcheck=1`，进角色聊天点输入框，截图（基线） | 预期 C2 或 C3 不通过；若全过则停 |
+| 8 | Shiyu | 再打开 `…?kbd=native`，同样操作，截图 | C1–C3 全过；顺滑程度主观判断 |
+
+改动面内的小问题直接修并写明；事实不成立、需要改判据、接口或增减范围时停下报告，不自行记账。
+skill：第 2、4 步 `tdd`；第 3、5 步 `code-review-and-quality`；各一个。
+退出试点：手机打开 `…?kbd=legacy&kbdcheck=0`。
+
+## 九、未核实 / 未验证
+
+1. 这套做法在 iOS 26 上是否成立：正是本段要回答的问题。
+2. `body` 不固定是否必要；`ChatArea` 自带的键盘监听是否干扰；留白加在第一个子元素上是否等效（均见上文标注）。
+3. 列表手机端底部有 80px 留白（`global.css:18621-18626`），本段不动，所以 C2 的判据把它算了进去。开关打开后「贴着」的实际间距是否太大，由 Shiyu 看截图后定，再决定是否在第二段改。
+4. 安卓与内嵌浏览器。
+
+## 十、后续段落（各自单独一份 spec，前一段过了目标检查才开下一段）
+
+- **1b 顶栏留在原位（需 Shiyu 拍板是否要做）**：已读清 ChatUI 的 `--viewport-top`（`es/components/Composer/viewportTop.js`）：聚焦后逐帧量出页面被推上去的距离并写成变量，失焦归零；ChatUI 自己的样式不使用它，是留给应用把顶栏移回视野用的。用它可以让顶栏在键盘弹起时留在屏幕顶部，但它是推上去之后才量到的，顶栏会晚一拍归位，做不到与键盘完全同步。
+- **2 消息列表组件**：`use-stick-to-bottom`，贴底与回到底部按钮；删掉 `ChatArea` 自带的键盘监听和平滑滚动依赖。
+- **3 聊天骨架 + 群聊接入**；之后私信、登录页；最后删旧逻辑与开关。
