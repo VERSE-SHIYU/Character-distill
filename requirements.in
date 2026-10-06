@@ -73,3 +73,6 @@ opentelemetry-api>=1.41.1,<1.42.0
 opentelemetry-sdk>=1.41.1,<1.42.0
 opentelemetry-exporter-otlp-proto-http>=1.41.1,<1.42.0
 sentry-sdk>=2.0.0
+# `core/card_layers.py` 按登记表里的路径通用读写嵌套字段（点号路径 get/set）。选型见
+# docs/specs/arc-phase-fields.md（DA12）。
+pydash>=8.1.0

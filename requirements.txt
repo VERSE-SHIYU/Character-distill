@@ -269,6 +269,8 @@ pydantic-core==2.46.5
     # via pydantic
 pydantic-settings==2.15.0
     # via chromadb
+pydash==8.1.0
+    # via -r requirements.in
 pygments==2.21.0
     # via rich
 pyjwt==2.14.0
@@ -381,6 +383,7 @@ typing-extensions==4.16.0
     #   posthog
     #   pydantic
     #   pydantic-core
+    #   pydash
     #   python-docx
     #   referencing
     #   resend
