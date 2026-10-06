@@ -12,16 +12,23 @@ from chromadb.errors import NotFoundError
 
 from core.embeddings import create_safe_embedding_fn
 from core.fingerprint import content_fingerprint
-from core.quotes import normalized_starts
-from core.schema import scene_evidence
+from core.quotes import leading_ws, normalized_starts
+from core.schema import RetrievalWindow, scene_evidence
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 logger = logging.getLogger(__name__)
 
 
-def _lead_ws(s: str) -> int:
-    """前导空白长度：`s.strip()` 相对原串右移这么多。"""
-    return len(s) - len(s.lstrip())
+# 集合元数据里与「按位置截断」有关的键 —— **只在这里定义**，建集合（本模块 `index`、
+# `scene_indexer`）与判适用性（`_fetch_candidates`）都用它们（审计 A1）。
+FINGERPRINT_KEY = "content_fingerprint"   # 集合讲的是哪份正文（整段 sha256）
+POS_SCHEMA_KEY = "pos_schema"             # 条目带 `npos`（规范化坐标）的格局标记
+POS_SCHEMA = 1
+
+
+def positions_metadata(text: str) -> dict[str, Any]:
+    """带位置的集合应有的元数据：格局标记 + 正文指纹。"""
+    return {POS_SCHEMA_KEY: POS_SCHEMA, FINGERPRINT_KEY: content_fingerprint(text)}
 
 
 def _set_hits(sp, result) -> None:
@@ -253,7 +260,7 @@ class RAGEngine:
             raw = text[start:end]
             segment = raw.strip()
             if segment:
-                chunks.append((start + _lead_ws(raw), segment))
+                chunks.append((start + leading_ws(raw), segment))
 
             if end >= n:
                 break
@@ -309,7 +316,7 @@ class RAGEngine:
             collection = self._client.create_collection(
                 name=name,
                 embedding_function=self._embedding_function,
-                metadata={"pos_schema": 1, "content_fingerprint": content_fingerprint(text)},
+                metadata=positions_metadata(text),
             )
         except Exception as exc:
             print(f"创建 Chroma collection 失败：{exc}")
@@ -346,7 +353,7 @@ class RAGEngine:
     @T.spanned("rag.query", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
     def query(
         self, query_text: str, character_name: str | None = None, top_k: int | None = None,
-        before: int | None = None,
+        window: RetrievalWindow | None = None,
     ) -> SceneHits:
         """对当前集合执行相似度检索，可按角色名过滤。
 
@@ -355,8 +362,7 @@ class RAGEngine:
             character_name: 可选角色名，传入后仅返回该角色出场的片段。过滤在 Python
                 侧做（chroma 的 ``$contains`` 对字符串元数据不命中，见模块顶部实测）。
             top_k: 返回片段数，默认使用配置值 ``self._top_k``。
-            before: 规范化坐标上界；非 None 时只返回 `npos < before` 的片段（阶段投影的
-                检索截断）。
+            window: 检索时间窗（阶段投影的检索截断）；None 不截断。
 
         Returns:
             SceneHits；未索引时返回空。过滤后取不满时 ``candidates_exhausted`` 为
@@ -370,7 +376,7 @@ class RAGEngine:
             character_name,
             top_k or self._top_k,
             ["documents", "metadatas"],
-            before=before,
+            window=window,
         )
         return SceneHits(cand.docs, candidates_exhausted=cand.exhausted)
 
@@ -380,14 +386,15 @@ class RAGEngine:
         character_name: str | None,
         need: int,
         include: list[str],
-        before: int | None = None,
+        window: RetrievalWindow | None = None,
     ) -> _Candidates:
         """取候选并按 characters 过滤，过滤后不足则扩大候选重取。
 
-        ``before`` 非 None 时加 `where={"npos": {"$lt": before}}` —— **阶段截断的机制
-        只在这一处**：两个公开出口（``query`` / ``_rank_with_emotion``）都透传到这。不带
-        `npos` 键的旧条目在这个 where 下会被排除（C8）—— 只能对已带位置的集合加过滤，由
-        调用方（`SessionRag`）先用 `pos_schema` 判适用性。
+        ``window`` 非 None 时按时间窗截断 —— **适用性判断与过滤机制都只在这一处**（两个
+        公开出口透传到这；`SessionRag` 只透传，审计 A1）：集合须带位置（`pos_schema == 1`）
+        且正文指纹与窗口相符，否则返回空候选并 warning（不带 `npos` 的旧条目在 where 下会被
+        全部排除，C8 —— 宁可不检索，也不给「之后的」内容）；适用时加
+        `where={"npos": {"$lt": window.before}}`。
 
         Returns:
             ``_Candidates``：ids / docs / dists / metas 均已用**同一套 keep 下标**
@@ -402,8 +409,18 @@ class RAGEngine:
         want = max(need, 1)
         # 有角色过滤才要超取：无过滤时多取没有意义，徒增候选。
         n = want * CHARACTER_FILTER_MULTIPLIER if character_name else want
-        # 只有被上界约束时才加 where：无上界＝不筛，连 where=None 都不传，保持旧调用形态。
-        extra = {"where": {"npos": {"$lt": before}}} if before is not None else {}
+        # 无时间窗＝不筛，连 where=None 都不传，保持旧调用形态。
+        extra: dict[str, Any] = {}
+        if window is not None:
+            meta = self.collection.metadata or {}
+            if (meta.get(POS_SCHEMA_KEY) != POS_SCHEMA
+                    or meta.get(FINGERPRINT_KEY) != window.source_fingerprint):
+                logger.warning(
+                    "RAG 阶段截断不适用（集合 %s 无 %s 或正文指纹不符），本次检索为空",
+                    self.collection_name, POS_SCHEMA_KEY,
+                )
+                return _Candidates([], [], [], [], True)
+            extra = {"where": {"npos": {"$lt": window.before}}}
         refetches = 0
         while True:
             try:
@@ -450,7 +467,7 @@ class RAGEngine:
         current_emotion: str,
         character_name: str | None,
         top_k: int,
-        before: int | None = None,
+        window: RetrievalWindow | None = None,
     ) -> tuple[list[_ScoredScene], bool]:
         """情感加权排序的**唯一实现**，两个公开出口都从这里取序。
 
@@ -473,7 +490,7 @@ class RAGEngine:
             character_name,
             top_k,
             ["documents", "distances", "metadatas"],
-            before=before,
+            window=window,
         )
 
         if not cand.docs:
@@ -528,7 +545,7 @@ class RAGEngine:
         current_emotion: str = "平静",
         character_name: str | None = None,
         top_k: int = 3,
-        before: int | None = None,
+        window: RetrievalWindow | None = None,
     ) -> list[str]:
         """情感加权检索：语义相似度 0.7 + 情感匹配 0.3。
 
@@ -537,14 +554,14 @@ class RAGEngine:
             current_emotion: 当前对话情感（由调用方判断）。
             character_name: 按角色过滤。
             top_k: 最终返回数量。
-            before: 规范化坐标上界（阶段投影的检索截断）。
+            window: 检索时间窗（阶段投影的检索截断）；None 不截断。
 
         Returns:
             按 final_score 排序的 SceneHits。过滤后取不满时 ``candidates_exhausted``
             为 True（日志同时如实报告），不静默少返回。
         """
         ranked, exhausted = self._rank_with_emotion(
-            query_text, current_emotion, character_name, top_k, before
+            query_text, current_emotion, character_name, top_k, window
         )
         return SceneHits([s.text for s in ranked], candidates_exhausted=exhausted)
 
@@ -555,7 +572,7 @@ class RAGEngine:
         current_emotion: str = "平静",
         character_name: str | None = None,
         top_k: int = 3,
-        before: int | None = None,
+        window: RetrievalWindow | None = None,
     ) -> EvidenceHits:
         """``query_with_emotion`` 的结构化出口：同一份排序，附解释字段。
 
@@ -568,7 +585,7 @@ class RAGEngine:
         指标口径不因多一条出口而分叉。
         """
         ranked, exhausted = self._rank_with_emotion(
-            query_text, current_emotion, character_name, top_k, before
+            query_text, current_emotion, character_name, top_k, window
         )
         items = [
             scene_evidence(

@@ -10,8 +10,11 @@ import re
 from chromadb.errors import NotFoundError
 
 from core.fingerprint import content_fingerprint
-from core.quotes import normalized_starts
-from core.rag import CollectionUnusableError, RAGEngine, characters_tag, mark_built
+from core.quotes import leading_ws, normalized_starts
+from core.rag import (
+    FINGERPRINT_KEY, POS_SCHEMA, POS_SCHEMA_KEY,
+    CollectionUnusableError, RAGEngine, characters_tag, mark_built,
+)
 
 # 简单情感关键词映射（可扩充）
 _EMOTION_KEYWORDS: dict[str, list[str]] = {
@@ -45,16 +48,13 @@ def _span_texts(pattern, text: str, base: int = 0) -> list[tuple[int, int]]:
     return out
 
 
-def _lead_ws(s: str) -> int:
-    """前导空白长度：`s.strip()` 相对原串右移这么多。"""
-    return len(s) - len(s.lstrip())
 
 
 # 集合 metadata 里存场景幂等键的那个键名（含它的集合即「本正文已建好」）。
-_FINGERPRINT_KEY = "content_fingerprint"
+_FINGERPRINT_KEY = FINGERPRINT_KEY
 # 位置坐标的格局标记：集合元数据带它，条目带 `npos`（规范化坐标）。
-_POS_SCHEMA_KEY = "pos_schema"
-_POS_SCHEMA_VERSION = 1
+_POS_SCHEMA_KEY = POS_SCHEMA_KEY
+_POS_SCHEMA_VERSION = POS_SCHEMA
 
 
 class SceneIndexer:
@@ -166,9 +166,9 @@ class SceneIndexer:
                 for a, b in _span_texts(re.compile(r"\n\n"), text[s:e], base=s):
                     seg = text[a:b].strip()
                     if len(seg) > 50:
-                        scenes.append((a + _lead_ws(text[a:b]), seg))
+                        scenes.append((a + leading_ws(text[a:b]), seg))
             else:
-                scenes.append((s + _lead_ws(text[s:e]), p))
+                scenes.append((s + leading_ws(text[s:e]), p))
         return scenes
 
     def _split_chat_scenes(self, text: str) -> list[tuple[int, str]]:

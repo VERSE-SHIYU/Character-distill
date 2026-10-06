@@ -25,9 +25,9 @@ from chromadb.errors import NotFoundError
 
 import core.indexing_service as IS
 from core.quotes import normalize, normalized_starts
-from core.rag import RAGEngine
+from core.rag import RAGEngine, positions_metadata
 from core.scene_indexer import SceneIndexer
-from core.schema import CharacterCard
+from core.schema import CharacterCard, RetrievalWindow
 from core.text_manager import TextManager
 
 NAME = "scenes_c1"
@@ -178,9 +178,13 @@ _ROWS = [
 ]
 
 
+_MARKED = {"pos_schema": 1, "content_fingerprint": "FP"}
+_WIN = RetrievalWindow(600, "FP")
+
+
 def test_u6_bound_excludes_entries_at_or_after_it():
-    col = _PosCollection(_ROWS)
-    hits = _engine(col).query("q", before=600, top_k=10)
+    col = _PosCollection(_ROWS, _MARKED)
+    hits = _engine(col).query("q", window=_WIN, top_k=10)
     assert [str(h) for h in hits] == ["d100", "d599"], f"实得 {list(hits)}"
     assert col.calls[0]["where"] == {"npos": {"$lt": 600}}, f"where 不对：{col.calls[0]['where']}"
 
@@ -194,12 +198,12 @@ def test_u6_no_bound_returns_everything():
 
 def test_u6_entries_without_npos_are_excluded_when_bound_given():
     """C8：不带 npos 键的条目在加 where 时被排除（只能对已带位置的集合加过滤）。"""
-    col = _PosCollection([("legacy", {"emotion": "平静"}), ("d10", {"npos": 10})])
-    hits = _engine(col).query("q", before=600, top_k=10)
+    col = _PosCollection([("legacy", {"emotion": "平静"}), ("d10", {"npos": 10})], _MARKED)
+    hits = _engine(col).query("q", window=_WIN, top_k=10)
     assert [str(h) for h in hits] == ["d10"], f"实得 {list(hits)}"
 
 
-# ══ U7 适用性判断只在 SessionRag ═══════════════════════════════════════════
+# ══ U7 适用性判断只在 RAGEngine（审计 A1：SessionRag 只透传，裸引擎同样把关）══════
 
 class _Embedder:
     _dimensions = 8
@@ -247,42 +251,49 @@ def _session_view(monkeypatch, client: _Client):
 _POS_ROWS = [("d100", {"npos": 100}), ("d599", {"npos": 599}), ("d700", {"npos": 700})]
 
 
-def test_u7_matching_fingerprint_filters_by_bound(monkeypatch):
-    client = _Client()
-    client.seed("text_t1", _POS_ROWS,
-                {"pos_schema": 1, "content_fingerprint": "FP"})
-    view = _session_view(monkeypatch, client)
-    hits = view.query_with_emotion_ex("q", before=600, source_fingerprint="FP", top_k=5)
+def test_u7_bare_engine_matching_fingerprint_filters_by_bound():
+    col = _PosCollection(_POS_ROWS, _MARKED)
+    hits = _engine(col).query_with_emotion_ex("q", window=_WIN, top_k=5)
     assert [h.text for h in hits] == ["d100", "d599"], f"实得 {[h.text for h in hits]}"
 
 
-def test_u7_missing_pos_schema_returns_empty_and_warns(monkeypatch, caplog):
+def test_u7_bare_engine_missing_pos_schema_returns_empty_and_warns(caplog):
+    """裸 `RAGEngine`（离线测评等）同样把关：无位置的集合不被查（A1）。"""
+    col = _PosCollection(_POS_ROWS, {"content_fingerprint": "FP"})
+    with caplog.at_level(logging.WARNING):
+        hits = _engine(col).query_with_emotion_ex("q", window=_WIN, top_k=5)
+    assert (list(hits), col.calls,
+            any(r.levelno == logging.WARNING for r in caplog.records)) == ([], [], True)
+
+
+def test_u7_bare_engine_fingerprint_mismatch_returns_empty():
+    col = _PosCollection(_POS_ROWS, {"pos_schema": 1, "content_fingerprint": "OTHER"})
+    hits = _engine(col).query_with_emotion_ex("q", window=_WIN, top_k=5)
+    assert (list(hits), col.calls) == ([], [])
+
+
+def test_u7_no_window_bypasses_the_check():
+    """无时间窗（最后阶段 / 旧卡）→ 不看 pos_schema，照常检索（今天的行为）。"""
+    col = _PosCollection(_POS_ROWS, {})
+    hits = _engine(col).query_with_emotion_ex("q", top_k=5)
+    assert [h.text for h in hits] == ["d100", "d599", "d700"]
+
+
+def test_u7_session_rag_passes_window_through(monkeypatch):
+    """`SessionRag` 与裸引擎同签名、只透传：经会话检索时，判定与截断照样生效。"""
+    client = _Client()
+    client.seed("text_t1", _POS_ROWS, _MARKED)
+    view = _session_view(monkeypatch, client)
+    hits = view.query_with_emotion_ex("q", window=_WIN, top_k=5)
+    assert [h.text for h in hits] == ["d100", "d599"], f"实得 {[h.text for h in hits]}"
+
+
+def test_u7_session_rag_unmarked_collection_returns_empty(monkeypatch):
     client = _Client()
     client.seed("text_t1", _POS_ROWS, {"content_fingerprint": "FP"})
     view = _session_view(monkeypatch, client)
-    with caplog.at_level(logging.WARNING):
-        hits = view.query_with_emotion_ex("q", before=600, source_fingerprint="FP", top_k=5)
-    assert list(hits) == [], f"无位置的集合不该被照常检索：{list(hits)}"
-    assert client.cols["text_t1"].calls == [], "不适用的集合仍然被查了（会泄露之后的情节）"
-    assert any(r.levelno == logging.WARNING for r in caplog.records), caplog.records
-
-
-def test_u7_fingerprint_mismatch_returns_empty(monkeypatch):
-    client = _Client()
-    client.seed("text_t1", _POS_ROWS, {"pos_schema": 1, "content_fingerprint": "OTHER"})
-    view = _session_view(monkeypatch, client)
-    hits = view.query_with_emotion_ex("q", before=600, source_fingerprint="FP", top_k=5)
-    assert list(hits) == []
-    assert client.cols["text_t1"].calls == []
-
-
-def test_u7_no_bound_bypasses_the_check(monkeypatch):
-    """上界 None（最后阶段 / 旧卡）→ 不看 pos_schema，照常检索（今天的行为）。"""
-    client = _Client()
-    client.seed("text_t1", _POS_ROWS, {})  # 没有 pos_schema
-    view = _session_view(monkeypatch, client)
-    hits = view.query_with_emotion_ex("q", source_fingerprint="", top_k=5)
-    assert [h.text for h in hits] == ["d100", "d599", "d700"]
+    hits = view.query_with_emotion_ex("q", window=_WIN, top_k=5)
+    assert (list(hits), client.cols["text_t1"].calls) == ([], [])
 
 
 # ══ U15 存卡调度 ═══════════════════════════════════════════════════════════
@@ -300,10 +311,9 @@ def _card_with_positions() -> CharacterCard:
 
 
 class _Idx:
-    def __init__(self, text_needs: bool = False) -> None:
+    def __init__(self) -> None:
         self.scene_calls: list[dict] = []
-        self.reindexed: list[str] = []
-        self._text_needs = text_needs
+        self.reindexed: list[dict] = []
 
     def get_rag_for_session(self, *_a, **_kw):
         return None
@@ -312,10 +322,7 @@ class _Idx:
         self.scene_calls.append(kw)
 
     def schedule_text_reindex(self, text_id, content, **kw):
-        self.reindexed.append(text_id)
-
-    def text_needs_reindex(self, text_id, **_kw) -> bool:
-        return self._text_needs
+        self.reindexed.append({"text_id": text_id, **kw})
 
 
 class _LLM:
@@ -369,24 +376,19 @@ def _save(tm: TextManager, card: CharacterCard) -> None:
         "t1", card, "u1", embedding_key="k", embedding_region="cn"))
 
 
-def test_u15_card_with_positions_schedules_need_positions_and_reindex():
-    idx = _Idx(text_needs=True)
+def test_u15_card_with_positions_schedules_need_positions_and_reposition():
+    """带起点的卡：场景作业带 need_positions；text_ 补位置交给后台作业判断（A2）。"""
+    idx = _Idx()
     _save(_tm(idx, _Store()), _card_with_positions())
     assert idx.scene_calls, "根本没调度场景索引"
     assert idx.scene_calls[-1].get("need_positions") is True, (
         f"带起点的卡没带 need_positions：{idx.scene_calls[-1]}")
-    assert idx.reindexed == ["t1"], f"text_ 无位置时应补建，实得 {idx.reindexed}"
-
-
-def test_u15_card_with_positions_and_text_already_positioned_no_reindex():
-    idx = _Idx(text_needs=False)
-    _save(_tm(idx, _Store()), _card_with_positions())
-    assert idx.scene_calls[-1].get("need_positions") is True
-    assert idx.reindexed == [], f"text_ 已有位置不该重建，实得 {idx.reindexed}"
+    assert [(r["text_id"], r.get("only_if_missing_positions")) for r in idx.reindexed] == [
+        ("t1", True)], f"应以「缺位置才重建」调度一次，实得 {idx.reindexed}"
 
 
 def test_u15_card_without_positions_schedules_neither():
-    idx = _Idx(text_needs=True)
+    idx = _Idx()
     card = CharacterCard.model_validate({
         "name": "魏无羡",
         "character_arc": {"axis": "从冷到热", "phases": [{"label": "L1", "state": "S1"}]},
@@ -399,7 +401,7 @@ def test_u15_card_without_positions_schedules_neither():
 
 def test_u15_card_with_starts_but_no_fingerprint_schedules_neither():
     """起点齐全但**指纹缺失**不是「有位置」：不能只查起点是否齐全（M22）。"""
-    idx = _Idx(text_needs=True)
+    idx = _Idx()
     card = CharacterCard.model_validate({
         "name": "魏无羡",
         "character_arc": {"axis": "从冷到热", "phases": [
@@ -502,3 +504,45 @@ def test_u15_scene_job_writes_npos_and_pos_schema_on_first_build():
     SceneIndexer().index_scenes(TEXT, _scene_rag(client), "魏无羡", collection_name=NAME)
     assert client.collections[NAME].metadata.get("pos_schema") == 1
     assert client.collections[NAME].metadata.get("content_fingerprint")
+
+
+# ── A2：text_ 补位置的判断在后台作业里 ─────────────────────────────────────
+
+def _reposition(monkeypatch, client: _Client) -> list[str]:
+    """跑一次 `_reposition_text_collection`，返回真正整本重建了的集合名。"""
+    built: list[str] = []
+
+    def _factory(_config, *_a, **_kw):
+        eng = object.__new__(RAGEngine)
+        eng._client = client
+        eng._embedding_function = _Embedder()
+        eng._chunk_size, eng._chunk_overlap, eng._top_k = 200, 20, 3
+        eng.collection = None
+        eng.collection_name = None
+        eng.index = lambda text, collection_name=None, all_characters=None: built.append(
+            collection_name)
+        return eng
+
+    monkeypatch.setattr(IS, "RAGEngine", _factory)
+    svc = IS.IndexingService({"chunk_size": 200, "chunk_overlap": 20, "top_k": 3})
+    svc._reposition_text_collection(
+        "t1", TEXT, None, embedding_key="k", embedding_region="cn")
+    return built
+
+
+def test_a2_reposition_rebuilds_only_when_positions_missing(monkeypatch):
+    client = _Client()
+    client.seed("text_t1", _POS_ROWS, {"characters": "x"})          # 旧集合：无 pos_schema
+    assert _reposition(monkeypatch, client) == ["text_t1"]
+
+
+def test_a2_reposition_leaves_positioned_collection_alone(monkeypatch):
+    client = _Client()
+    client.seed("text_t1", _POS_ROWS, positions_metadata(TEXT))
+    assert _reposition(monkeypatch, client) == []
+
+
+def test_a2_reposition_skips_missing_collection(monkeypatch):
+    """集合不存在 → 不建（场景作业会新建、自带位置），避免两个作业抢着建同一集合。"""
+    assert _reposition(monkeypatch, _Client()) == []
+

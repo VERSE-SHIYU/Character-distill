@@ -28,7 +28,7 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from core.rag import CollectionUnusableError, EvidenceHits, RAGEngine
+from core.rag import POS_SCHEMA, POS_SCHEMA_KEY, CollectionUnusableError, EvidenceHits, RAGEngine
 from core.scene_indexer import SceneIndexer
 
 logger = logging.getLogger(__name__)
@@ -133,35 +133,18 @@ class SessionRag:
         self._probe, self._stamp = rag, stamp
 
     def query_with_emotion_ex(self, query_text: str, **kwargs: Any) -> EvidenceHits:
-        before = kwargs.get("before")
-        source_fingerprint = kwargs.pop("source_fingerprint", "")
+        """透传给已装载的引擎。时间窗（``window``）的适用性判断在 `RAGEngine` 里做（审计 A1），
+        本层不读也不改它 —— 与裸 `RAGEngine` 同一个签名。"""
         self._refresh()
         if self._unavailable is not None:
             raise self._unavailable.with_traceback(None)
         if self._engine is None:
-            return EvidenceHits([])
-        # **适用性判断只在这一处**：要按坐标截断，已装载集合须带位置（pos_schema）且讲的
-        # 是同一份正文（指纹相符）。否则加 where 会把旧条目全排除、静默搜不到 —— 宁可不
-        # 检索，也不给「之后的」内容。上界 None（最后阶段 / 旧卡）时照常检索。
-        if before is not None and not self._applicable(source_fingerprint):
-            logger.warning(
-                "RAG 阶段截断不适用（集合 %s 无 pos_schema 或指纹不符），本轮检索为空："
-                "text_id=%s card_id=%s",
-                self.collection_name, self._text_id, self._card_id,
-            )
             return EvidenceHits([])
         try:
             return self._engine.query_with_emotion_ex(query_text, **kwargs)
         except CollectionUnusableError:
             self._stamp = None
             raise
-
-    def _applicable(self, source_fingerprint: str) -> bool:
-        """已装载集合能否按坐标截断：带 `pos_schema` 且 `content_fingerprint` 相符。"""
-        col = self._engine.collection if self._engine is not None else None
-        meta = (col.metadata or {}) if col is not None else {}
-        return (meta.get("pos_schema") == 1
-                and meta.get("content_fingerprint") == source_fingerprint)
 
 
 class IndexingService:
@@ -341,23 +324,26 @@ class IndexingService:
             embedding_key, embedding_region, need_positions,
         )
 
-    def text_needs_reindex(
-        self, text_id: str, *, embedding_key: str = "", embedding_region: str = "",
-    ) -> bool:
-        """`text_{id}` 集合是否**缺位置**（不带 `pos_schema`）到需要按当前名单重建。(sync)
-
-        只读集合元数据（不嵌入、不查询）。没有集合 / 没 key / 集合不可用 → False：
-        首次建立时自然会带位置，不该在这里调度。真缺位置的存量集合才返回 True。
-        """
-        if not embedding_key:
-            return False
+    def _reposition_text_collection(
+        self,
+        text_id: str,
+        text: str,
+        all_characters: list[dict[str, Any]] | None,
+        *,
+        embedding_key: str,
+        embedding_region: str,
+        rebuild: bool = True,
+    ) -> RAGEngine | None:
+        """后台专用：`text_{id}` 存在且缺位置时才重建。(sync)"""
         rag = self._new_rag(embedding_key, embedding_region)
-        try:
-            if not rag.load_existing(f"text_{text_id}"):
-                return False
-        except CollectionUnusableError:
-            return False
-        return (rag.collection.metadata or {}).get("pos_schema") != 1
+        if not rag.load_existing(f"text_{text_id}"):
+            return None
+        if (rag.collection.metadata or {}).get(POS_SCHEMA_KEY) == POS_SCHEMA:
+            return rag
+        return self._build_text_collection(
+            text_id, text, all_characters,
+            embedding_key=embedding_key, embedding_region=embedding_region, rebuild=rebuild,
+        )
 
     def schedule_text_reindex(
         self,
@@ -367,14 +353,19 @@ class IndexingService:
         all_characters: list[dict[str, Any]] | None,
         embedding_key: str,
         embedding_region: str,
+        only_if_missing_positions: bool = False,
     ) -> None:
-        """Fire-and-forget：按新名单重建 `text_{id}`（角色标记）。
+        """Fire-and-forget：重建 `text_{id}`（按新名单打角色标记，或补位置）。
 
+        ``only_if_missing_positions`` 为 True 时（存卡汇合点为带起点的卡调度），判断放在
+        **后台作业里**：集合不存在（场景作业会新建、自带位置）或已带位置 → 不动；缺位置才
+        重建（审计 A2：不在请求路径上同步读 chroma，也不把「查」与「做」拆成两步）。
         不碰任何会话：绑在原文集合上的会话，重建期间本轮检索记为失败，建完后下一轮
         自己重读到新集合。
         """
         job = functools.partial(
-            self._build_text_collection,
+            self._reposition_text_collection if only_if_missing_positions
+            else self._build_text_collection,
             embedding_key=embedding_key, embedding_region=embedding_region, rebuild=True,
         )
         self._run_in_background(

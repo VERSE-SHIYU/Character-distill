@@ -21,7 +21,7 @@ from pathlib import Path
 from core.card_draft import card_from_draft
 from core.chat_engine import ChatEngine
 from core.export import export_tavern_json
-from core.schema import FORMAT_GROUPS, POST_FORMAT_FIELDS, CharacterCard
+from core.schema import FORMAT_GROUPS, POST_FORMAT_FIELDS, CharacterCard, RetrievalWindow
 
 _REPO = Path(__file__).resolve().parent.parent
 
@@ -325,10 +325,8 @@ def test_m15_scene_items_passes_the_bound_and_fingerprint():
     ce = ContextEngine(card=card, rag=_RAG(), storage=None, arc_view=view)
     ce._scene_items("某段查询")
 
-    assert seen.get("before") == view.before, f"检索没带上界：{seen.get('before')!r}"
-    assert view.before == 10
-    assert seen.get("source_fingerprint") == "FP", (
-        f"检索没带正文指纹：{seen.get('source_fingerprint')!r}")
+    assert seen.get("window") == RetrievalWindow(10, "FP"), (
+        f"检索没带时间窗（上界 + 正文指纹）：{seen.get('window')!r}")
 
 
 # ── E3 恢复存档：history.py 的重建路恢复身份与阶段 ───────────────────────────
@@ -389,9 +387,8 @@ def test_agent_search_respects_window():
     ce = ContextEngine(card=card, rag=_RAG(), storage=None, arc_view=view)
     ce._retrieve_scenes_ex("某段查询")
 
-    assert seen.get("before") == 10, f"agent 检索没带上界：{seen.get('before')!r}"
-    assert seen.get("source_fingerprint") == "FP", (
-        f"agent 检索没带正文指纹：{seen.get('source_fingerprint')!r}")
+    assert seen.get("window") == RetrievalWindow(10, "FP"), (
+        f"agent 检索没带时间窗：{seen.get('window')!r}")
 
 
 # ── E5 / E11 群聊：无阶段列 → k=n 投影，无上界 ──────────────────────────────
@@ -512,7 +509,7 @@ def test_opening_uses_phase():
 def test_save_card_schedules_positions():
     from test_arc_positions import _Idx, _Store, _tm, _save, _card_with_positions
 
-    idx = _Idx(text_needs=False)
+    idx = _Idx()
     _save(_tm(idx, _Store()), _card_with_positions())
     assert idx.scene_calls, "根本没调度场景索引"
     assert idx.scene_calls[-1].get("need_positions") is True, (

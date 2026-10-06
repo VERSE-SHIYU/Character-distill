@@ -1,4 +1,4 @@
-"""变异预跑（spec `arc-phase-select` §6 对账表，M1–M31 + M7b/M11b/M26b，共 34 条）。
+"""变异预跑（spec `arc-phase-select` §6 对账表 M1–M31 + M7b/M11b/M26b，加审计 A1–A3 的 M9b/M10b/M32–M36）。
 
 逐条把改后代码改坏一处，对应测试必须红；跑完逐字节还原。
 
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import pathlib
+import shutil
 import subprocess
 import sys
 
@@ -75,10 +76,15 @@ def _s(name: str) -> str:
 
 def _run_js() -> tuple[str, list[str], list[str], list[str]]:
     """跑前端那个出口文件（全部用例）；非 0 退出码 = RED。"""
+    # 不经 shell（审计 A4）：POSIX 上「列表 + shell=True」只执行 `npx` 本身、其余参数成了
+    # shell 的位置参数 —— 挂住或假 RED。`shutil.which` 在 Windows 上解析到 `npx.cmd`。
+    npx = shutil.which("npx")
+    if npx is None:
+        raise SystemExit("找不到 npx：前端变异需要 Node 环境")
     r = subprocess.run(
-        ["npx", "vitest", "run", JS],
+        [npx, "vitest", "run", JS],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        cwd=str(ROOT / "web" / "frontend"), shell=True)
+        cwd=str(ROOT / "web" / "frontend"))
     out = r.stdout + r.stderr
     keep = [ln.strip()[:300] for ln in out.splitlines()
             if ln.strip().startswith(("FAIL", "×", "AssertionError"))][:6]
@@ -94,11 +100,11 @@ MUTANTS = [
     ("M2  过严 k=n 也加边界说明", _v("test_u2_last_phase_keeps_axis_no_boundary"),
      [("repl", AV, [("    boundary = k < n", "    boundary = True")])], "RED"),
     ("M3  放宽 越界编号原样用", _v("test_u1_phase_number_normalizes"),
-     [("repl", AV, [("    if arc_phase is None or arc_phase < 1 or arc_phase > n:",
+     [("repl", AV, [("    if arc_phase is None or not 1 <= arc_phase <= n:",
                      "    if arc_phase is None:")])], "RED"),
     ("M4  过严 下界写成 2", _v("test_u1_phase_number_normalizes"),
-     [("repl", AV, [("    if arc_phase is None or arc_phase < 1 or arc_phase > n:",
-                     "    if arc_phase is None or arc_phase < 2 or arc_phase > n:")])], "RED"),
+     [("repl", AV, [("    if arc_phase is None or not 1 <= arc_phase <= n:",
+                     "    if arc_phase is None or not 2 <= arc_phase <= n:")])], "RED"),
     ("M5  放宽 阶段 k+1 的记忆也注入", _v("test_u3_memories_top_plus_upto_k"),
      [("repl", AV, [("[m for p in phases[:k] for m in p.memories]",
                      "[m for p in phases[:k + 1] for m in p.memories]")])], "RED"),
@@ -111,15 +117,21 @@ MUTANTS = [
      [("repl", AV, [("    return all(starts[i] < starts[i + 1] for i in range(len(starts) - 1))",
                      "    return True")])], "RED"),
     ("M8  边界 $lt 改 $lte", _p("test_u6_bound_excludes_entries_at_or_after_it"),
-     [("repl", RAG, [('        extra = {"where": {"npos": {"$lt": before}}} if before is not None else {}',
-                      '        extra = {"where": {"npos": {"$lte": before}}} if before is not None else {}')])], "RED"),
-    ("M9  放宽 无位置集合照常检索", _p("test_u7_missing_pos_schema_returns_empty_and_warns"),
-     [("repl", ISVC, [("        if before is not None and not self._applicable(source_fingerprint):",
-                       "        if False:")])], "RED"),
-    ("M10 过严 指纹相符也返回空", _p("test_u7_matching_fingerprint_filters_by_bound"),
-     [("repl", ISVC, [('        return (meta.get("pos_schema") == 1\n'
-                       '                and meta.get("content_fingerprint") == source_fingerprint)',
-                       "        return False")])], "RED"),
+     [("repl", RAG, [('            extra = {"where": {"npos": {"$lt": window.before}}}',
+                      '            extra = {"where": {"npos": {"$lte": window.before}}}')])], "RED"),
+    ("M9  放宽 无位置集合照常检索（裸引擎）", _p("test_u7_bare_engine_missing_pos_schema_returns_empty_and_warns"),
+     [("repl", RAG, [("            if (meta.get(POS_SCHEMA_KEY) != POS_SCHEMA\n",
+                      "            if False and (meta.get(POS_SCHEMA_KEY) != POS_SCHEMA\n")])], "RED"),
+    ("M9b 放宽 不比指纹（裸引擎）", _p("test_u7_bare_engine_fingerprint_mismatch_returns_empty"),
+     [("repl", RAG, [("                    or meta.get(FINGERPRINT_KEY) != window.source_fingerprint):",
+                      "                    ):")])], "RED"),
+    ("M10 过严 指纹相符也返回空", _p("test_u7_bare_engine_matching_fingerprint_filters_by_bound"),
+     [("repl", RAG, [("            if (meta.get(POS_SCHEMA_KEY) != POS_SCHEMA\n",
+                      "            if True or (meta.get(POS_SCHEMA_KEY) != POS_SCHEMA\n")])], "RED"),
+    ("M10b 接线 SessionRag 吞掉 window（不透传）", _p("test_u7_session_rag_unmarked_collection_returns_empty"),
+     [("repl", ISVC, [("            return self._engine.query_with_emotion_ex(query_text, **kwargs)",
+                       "            kwargs.pop(\"window\", None)\n"
+                       "            return self._engine.query_with_emotion_ex(query_text, **kwargs)")])], "RED"),
     ("M11 放宽 场景作业忽略 need_positions（指纹相同就跳过）",
      _p("test_u15_scene_job_rebuilds_when_need_positions_and_no_pos_schema"),
      [("repl", SCN, [("                    if not (need_positions and meta.get(_POS_SCHEMA_KEY) != _POS_SCHEMA_VERSION):",
@@ -141,8 +153,8 @@ MUTANTS = [
      [("repl", TM, [('    return {"user_role": row.get("user_role") or "", "arc_phase": row.get("arc_phase")}',
                      '    return {"user_role": row.get("user_role") or ""}')])], "RED"),
     ("M15 接线 _scene_items 不传上界", _s("test_m15_scene_items_passes_the_bound_and_fingerprint"),
-     [("repl", CTX, [("            before=before,\n            **fingerprint,",
-                      "            before=None,\n            **fingerprint,")])], "RED"),
+     [("repl", CTX, [("            window=self.arc_view.window if self.arc_view is not None else None,",
+                      "            window=None,")])], "RED"),
     ("M16 接线 记忆留在 G4", _s("test_u9_key_memories_moved_from_g4_to_g6"),
      [("repl", SCHEMA, [('    "G4": ("psyche",),', '    "G4": ("psyche", "key_memories"),'),
                         ('    "G6": ("character_arc", "situation_behaviors", "key_memories"),',
@@ -161,7 +173,7 @@ MUTANTS = [
      [("repl", EXPORT, [("        if phase.memories:                       # 只在那阶段成立的记忆，别从导出里消失",
                          "        if False:")])], "RED"),
     ("M21 坐标 切分后用 text.find 回找起点", _p("test_u16b_split_scenes_start_matches_segment"),
-     [("repl", SCN, [("                scenes.append((s + _lead_ws(text[s:e]), p))",
+     [("repl", SCN, [("                scenes.append((s + leading_ws(text[s:e]), p))",
                       "                scenes.append((text.find(p), p))")])], "RED"),
     ("M22 复用 存卡调度另写「起点齐全」判定（漏指纹检查）",
      _p("test_u15_card_with_starts_but_no_fingerprint_schedules_neither"),
@@ -197,6 +209,29 @@ MUTANTS = [
     ("M31 放宽 之后阶段的台词也注入", _v("test_u18_dialogues_top_plus_upto_k"),
      [("repl", AV, [("        d for p in card.character_arc.phases[:k] for d in p.dialogue_examples",
                      "        d for p in card.character_arc.phases for d in p.dialogue_examples")])], "RED"),
+    # ── 审计 A2：text_ 补位置的判断在后台作业里（两个方向） ──
+    ("M32 放宽 补位置作业不看 pos_schema（已有位置也重建）",
+     _p("test_a2_reposition_leaves_positioned_collection_alone"),
+     [("repl", ISVC, [("        if (rag.collection.metadata or {}).get(POS_SCHEMA_KEY) == POS_SCHEMA:\n            return rag\n", "")])], "RED"),
+    ("M33 过严 补位置作业缺位置也不重建",
+     _p("test_a2_reposition_rebuilds_only_when_positions_missing"),
+     [("repl", ISVC, [("        if (rag.collection.metadata or {}).get(POS_SCHEMA_KEY) == POS_SCHEMA:\n            return rag\n",
+                       "        return rag\n")])], "RED"),
+    ("M34 放宽 集合不存在也整本新建（与场景作业抢建）",
+     _p("test_a2_reposition_skips_missing_collection"),
+     [("repl", ISVC, [('        if not rag.load_existing(f"text_{text_id}"):\n            return None\n',
+                       '        rag.load_existing(f"text_{text_id}")\n'
+                       '        if rag.collection is None:\n'
+                       '            return self._build_text_collection(\n'
+                       '                text_id, text, all_characters,\n'
+                       '                embedding_key=embedding_key, embedding_region=embedding_region, rebuild=rebuild)\n')])], "RED"),
+    ("M35 接线 存卡调度不带 only_if_missing_positions（无条件重建）",
+     _p("test_u15_card_with_positions_schedules_need_positions_and_reposition"),
+     [("repl", TM, [("                    only_if_missing_positions=True,\n", "")])], "RED"),
+    # ── 审计 A3：阶段号范围规则只在 arc_view ──
+    ("M36 放宽 valid_phase 不查上界（越界编号原样存库）", _v("test_u1_phase_number_normalizes"),
+     [("repl", AV, [("    if arc_phase is None or not 1 <= arc_phase <= n:",
+                     "    if arc_phase is None or not 1 <= arc_phase:")])], "RED"),
 ]
 
 

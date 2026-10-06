@@ -49,6 +49,11 @@ def normalize(s) -> str:
     return "".join(ch for ch in folded if not ch.isspace() and ch not in _DROP_CHARS).translate(_VARIANT_FOLD)
 
 
+def leading_ws(s: str) -> int:
+    """前导空白长度：`s.strip()` 相对原串右移这么多（切分时给出片段起点用）。"""
+    return len(s) - len(s.lstrip())
+
+
 def normalized_starts(text: str, raw_starts: Sequence[int]) -> list[int]:
     """升序原文起点 → 规范化坐标：即 `normalize(text[:r])` 的长度。
 

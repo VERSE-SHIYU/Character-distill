@@ -466,6 +466,42 @@ arc_phase_select_locks/card_draft/phase_anchoring/distiller_routing/lock_coverag
 schema_parity`）= **207 passed**。本机 Windows 全量跑到真 Chroma 段必 SIGSEGV（已知），全量以
 Linux CI 为准。
 
+### 审计（Claude，2026-10-06，分支 `7e348cd4`）——结论：未通过
+
+**复现**：沙箱 PG 16 上新测试与受影响测试 `218 passed`；前端 5 个新测试文件 `17 passed`。变异 34 条逐条亲手跑：Python 侧 32 条全 RED；前端 M18、M19 用不经 shell 的 `npx vitest run src/store/arcPhase.test.js` 跑，两条 RED（基线 rc=0）。
+
+**已逐行看过**：`core/arc_view.py`、`core/chat_engine.py`、`core/context_engine.py`、`core/rag.py`、`core/indexing_service.py`、`core/text_manager.py`、`core/distiller.py`（diff）、`web/routers/{chat,history,distill}.py`（diff）、`docs/specs/artifacts/arc_phase_select_mutations.py`。
+**尚未逐行看**（修完 A1–A4 后复审时补齐，此前不下「通过」）：`core/{card_draft,phase_anchoring,scene_indexer,schema,quotes,export,fingerprint,card_quotes}.py`、`storage/*`（5 个）、前端 10 个文件、9 个测试文件。
+
+**A1（接口分叉，源头是本 spec §3.5 的设计错误）**：适用性判断放在 `SessionRag`，导致 `SessionRag` 与 `RAGEngine` 的 `query_with_emotion_ex` 不再同签名 —— `SessionRag` 要 `source_fingerprint`，裸 `RAGEngine` 不认；于是 `_scene_items` 只好「有上界才传指纹」拼条件 kwargs（§9 E）。这是在绕接口不一致。且裸 `RAGEngine`（离线测评）拿到 `before` 时**不做适用性判断**，对不带位置的集合会静默检索为空。
+**修法**：时间窗作为一个值对象 `RetrievalWindow(before, source_fingerprint)` 传给两者同一个参数 `window`；适用性判断挪进集合的拥有者 `RAGEngine._fetch_candidates`（它本来就持有 `self.collection.metadata`）：不适用 → 返回空候选并 warning，适用 → 加 `where`。`SessionRag` 只透传，不再 pop / 判断。`_scene_items` 无条件传 `window=arc_view 给出的窗口或 None`。`ArcView` 带上 `window`（含指纹），不再从卡上另取。
+
+**A2（异步路径里的同步 IO + 先查后做）**：`save_distilled_card` 是 `async`，却同步调 `text_needs_reindex`（新建 `RAGEngine`、`load_existing` 读 chroma）—— 在事件循环上做阻塞 IO；且「查缺位置 → 再调度」拆成两步，查与做之间状态可变。
+**修法**：与场景作业的 `need_positions` 同一个口径：`schedule_text_reindex(..., only_if_missing_positions=True)`，判断挪进后台作业内部（作业里读元数据，缺 `pos_schema` 才重建）。删掉 `text_needs_reindex`。
+
+**A3（阶段号规则写了两份）**：`web/routers/distill.py` 自己写 `1 <= req.arc_phase <= _n_phases` 校验，与 `arc_view._normalize_k` 的范围规则重复，违反「阶段取舍只在 `arc_view`」。
+**修法**：`arc_view` 公开 `valid_phase(card, arc_phase) -> int | None`（越界 / 卡无阶段 → None），路由与 `_normalize_k` 都用它；结构锁 S2 补「路由不出现阶段范围比较」。
+
+**A4（驱动不可移植）**：`_run_js` 用 `subprocess.run([...], shell=True)`。POSIX 上列表 + `shell=True` 只执行 `npx`（其余参数成了 shell 的位置参数），实测挂住直到超时；若 `npx` 无参数直接退出非 0，则会**假 RED**。Windows 上碰巧可用。
+**修法**：去掉 `shell=True`，用 `shutil.which("npx")`（Windows 下解析到 `npx.cmd`）拼绝对路径。
+
+**A5（流程偏离，需 Shiyu 拍板）**：驱动放 `docs/specs/artifacts/`、不进覆盖闭合元锁。新测试 76 个 / 149 条断言，34 条变异撞到的只是其中一部分；有先例（`mutate_profile_outbox.py`），但这 34 条只在本次手跑，CI 不守。建议：按先例接受，不追加变异。
+
+**其余确认无误**：投影只在 `ChatEngine.__init__` 与开场白两处（S14）；`session_identity` 消除了两处事后赋值；G5 等 G6、其余并行；`_chunk_text` 在切分时给出起点（`_lead_ws` 修正 strip）；`where` 只在 `_fetch_candidates`；`save_session` 不碰 `arc_phase`；M9 重锚后产物逐字节相同。
+
+### 审计修复记录（Claude 在沙箱直接实现，2026-10-06；Shiyu 授权推分支）
+
+- **A1**：`core/schema.py` 新增 `RetrievalWindow(before, source_fingerprint)`；`ArcView` 带 `source_fingerprint`，`.window` 给出时间窗。`RAGEngine` 的检索出口统一收 `window`，**适用性判断与 `where` 都在 `_fetch_candidates` 一处**（不适用 → 空候选 + warning）；`SessionRag.query_with_emotion_ex` 只透传，删掉 `_applicable` 与 `source_fingerprint` 的 pop；`_scene_items` 无条件传 `window`，删掉条件 kwargs。
+- **A1 顺带**：集合元数据键 `FINGERPRINT_KEY` / `POS_SCHEMA_KEY` / `POS_SCHEMA` 与 `positions_metadata(text)` 只在 `core/rag.py` 定义，`scene_indexer` 的同名常量改为引用；`_lead_ws` 在 `rag.py` 与 `scene_indexer.py` 各有一份 → 收为 `core/quotes.py:leading_ws`。
+- **A2**：`schedule_text_reindex(..., only_if_missing_positions=True)` → 后台作业 `_reposition_text_collection`：集合不存在 → 不建（场景作业会新建、自带位置）；已带位置 → 不动；缺位置 → 重建。删掉 `text_needs_reindex`，`save_distilled_card` 不再同步读 chroma。
+- **A3**：`arc_view.valid_phase(card, arc_phase)` 是阶段号范围规则的唯一实现；`_normalize_k` 与 `/start_session` 都用它。
+- **A4**：`_run_js` 去掉 `shell=True`，用 `shutil.which("npx")`；在 Linux 沙箱实测 M18、M19 经驱动自身的 runner 打红。
+- **测试**：U6/U7 改为对裸 `RAGEngine` 测两侧（相符 → 截断；无 `pos_schema` / 指纹不符 → 空且不查集合）+ `SessionRag` 透传两侧；U15 改断言调度参数；新增 A2 作业三条（缺位置重建 / 有位置不动 / 无集合不建）；结构锁加 `test_s2_phase_range_rule_only_in_arc_view`、`test_s1b_window_applicability_only_in_rag`。新测试在 `7ad49d69` 上收集即报错（新符号不存在）。
+- **变异**：重锚 M3、M4、M8、M9、M10、M15、M21；新增 M9b（不比指纹）、M10b（`SessionRag` 吞掉 window）、M32–M35（A2 两方向 + 接线）、M36（`valid_phase` 不查上界）。沙箱亲手跑：Python 侧 39 条全 RED，前端 M18、M19 RED，靶子文件逐字节还原。共 41 条。
+- **受影响测试**：新测试与受影响测试 293 passed；RAG / 会话 / 存储相关 15 个文件 443 passed（沙箱 PG 16）。
+- **A5**：Shiyu 未另行表态，按先例处理（驱动不进覆盖闭合元锁）。
+- **复审补完**：`scene_indexer`、存储层（PG / SQLite 各四处 SELECT 都已带 `arc_phase`，迁移 035 / 100）已看过，未发现新问题。`card_draft`、`phase_anchoring`、前端 10 个文件仍待独立复核方逐行看。
+
 ## 10. 自检表
 
 | 标准 | 落点 | 状态 |

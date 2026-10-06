@@ -638,13 +638,12 @@ class TextManager:
                 embedding_key=embedding_key, embedding_region=embedding_region,
                 need_positions=need_pos,
             )
-            if need_pos and self._indexing_service.text_needs_reindex(
-                text_id, embedding_key=embedding_key, embedding_region=embedding_region,
-            ):
+            if need_pos:
                 self._indexing_service.schedule_text_reindex(
                     text_id, content,
                     all_characters=all_chars,
                     embedding_key=embedding_key, embedding_region=embedding_region,
+                    only_if_missing_positions=True,
                 )
         return result
 

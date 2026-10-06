@@ -522,18 +522,12 @@ class ContextEngine:
         """rag 的结构化出口。rag 未配置 → 空（真无，不是失败）。"""
         if self.rag is None:
             return [], None
-        before = self.arc_view.before if self.arc_view is not None else None
-        # 指纹只在真有上界时传：无上界时 `SessionRag` 根本不看它，而裸 `RAGEngine`
-        # （离线测评等）不认这个 kwarg —— 传了会 TypeError。
-        fingerprint = ({"source_fingerprint": self.card.character_arc.source_fingerprint}
-                       if before is not None else {})
         hits = self.rag.query_with_emotion_ex(
             query,
             current_emotion=_detect_emotion(query),
             character_name=self.card.name,
             top_k=3,
-            before=before,
-            **fingerprint,
+            window=self.arc_view.window if self.arc_view is not None else None,
         )
         return list(hits), None
 

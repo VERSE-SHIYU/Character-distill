@@ -301,6 +301,13 @@ class EvidenceItem(BaseModel):
         return self
 
 
+class RetrievalWindow(NamedTuple):
+    """检索时间窗：只取规范化坐标 `npos < before` 的片段，且只对讲同一份正文（指纹相符）、
+    带位置（`pos_schema`）的集合生效。由 `core/arc_view` 产出，`RAGEngine` 一处消费。"""
+    before: int
+    source_fingerprint: str
+
+
 class SourceTrace(NamedTuple):
     """一次检索调用的可追溯记录 —— agent 工具与直调两条路径共用这一个形状。
 

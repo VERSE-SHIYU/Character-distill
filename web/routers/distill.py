@@ -22,7 +22,7 @@ from core.message_outbox import SaveState, save_field
 from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
 from adapters.llm_adapter import LLMAdapter, user_facing_error
-from core.arc_view import project_card
+from core.arc_view import project_card, valid_phase
 from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core.embeddings import EMBEDDING_KEY_REQUIRED
@@ -1362,8 +1362,7 @@ async def start_session(
     card = CharacterCard.model_validate_json(card_rec["card_json"])
 
     # 阶段校验：卡无阶段或编号越界 → None（= 用最后阶段）。选中的阶段只在本次会话生效。
-    _n_phases = len(card.character_arc.phases)
-    arc_phase = req.arc_phase if (req.arc_phase and 1 <= req.arc_phase <= _n_phases) else None
+    arc_phase = valid_phase(card, req.arc_phase)
 
     # 两条分支（原文 / 独立卡片）都要：检索用 embedding，长期记忆用 LLM + embedding。
     try:

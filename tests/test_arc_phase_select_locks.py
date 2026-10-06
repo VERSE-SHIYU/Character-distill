@@ -55,6 +55,20 @@ def test_s2_phase_slicing_only_in_arc_view():
     assert files <= {"core/arc_view.py"}, f"阶段切片散落在：{files}"
 
 
+def test_s2_phase_range_rule_only_in_arc_view():
+    """阶段号的范围规则只在 `arc_view.valid_phase`：别处不出现与 arc_phase 的大小比较（审计 A3）。"""
+    hits = _hits(_BOTH, r"arc_phase\s*(<=|>=|<|>)|(<=|>=|<|>)\s*\w*arc_phase")
+    assert {f for f, _ in hits} <= {"core/arc_view.py"}, f"阶段号范围比较散落在：{hits}"
+
+
+def test_s1b_window_applicability_only_in_rag():
+    """时间窗适用性（pos_schema / 指纹比对）只在 `core/rag.py`；`SessionRag` 只透传（审计 A1）。"""
+    hits = _hits(_BOTH, r"\.get\((POS_SCHEMA_KEY|FINGERPRINT_KEY|\"pos_schema\"|\"content_fingerprint\")\)")
+    assert {f for f, _ in hits} <= {"core/rag.py", "core/scene_indexer.py", "core/indexing_service.py"}, hits
+    assert "_applicable" not in _read(_CORE / "indexing_service.py")
+    assert "source_fingerprint" not in _read(_CORE / "indexing_service.py")
+
+
 # ── S4 save_session 的 SQL 不碰 arc_phase ──────────────────────────────────
 def test_s4_save_session_sql_has_no_arc_phase():
     offenders = []

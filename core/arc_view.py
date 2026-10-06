@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from core.schema import ArcPhase, BoundaryExample, CharacterCard, Relationship
+from core.schema import ArcPhase, BoundaryExample, CharacterCard, Relationship, RetrievalWindow
 
 
 class ArcView(NamedTuple):
@@ -25,15 +25,31 @@ class ArcView(NamedTuple):
     memories: list[str]                     # 要注入的记忆：顶层 + 阶段 1..k
     boundary_examples: list[BoundaryExample]  # 阶段 k 的边界示范（k<n 才有）
     before: int | None                      # 检索上界（规范化坐标）；不截断或缺位置时 None
+    source_fingerprint: str = ""            # 起点所依据的正文指纹
+
+    @property
+    def window(self) -> RetrievalWindow | None:
+        """检索时间窗；不截断时 None。检索方只认这一个值，不另取上界与指纹。"""
+        if self.before is None:
+            return None
+        return RetrievalWindow(self.before, self.source_fingerprint)
 
 
-def _normalize_k(n: int, arc_phase: int | None) -> int:
-    """阶段号归一：None / 越界（<1 或 >n）→ n；无阶段卡 → 0。"""
-    if n <= 0:
-        return 0
-    if arc_phase is None or arc_phase < 1 or arc_phase > n:
-        return n
+def valid_phase(card: CharacterCard, arc_phase: int | None) -> int | None:
+    """用户选的阶段号是否有效：1..n 原样返回；None / 越界 / 卡无阶段 → None。
+
+    **阶段号的范围规则只在这里**：路由存库前的校验与 `_normalize_k` 的归一都用它（审计 A3）。
+    """
+    n = len(card.character_arc.phases)
+    if arc_phase is None or not 1 <= arc_phase <= n:
+        return None
     return int(arc_phase)
+
+
+def _normalize_k(card: CharacterCard, arc_phase: int | None) -> int:
+    """阶段号归一：有效 → 原样；否则 → n（最后阶段）；无阶段卡 → 0。"""
+    k = valid_phase(card, arc_phase)
+    return len(card.character_arc.phases) if k is None else k
 
 
 def has_positions(card: CharacterCard) -> bool:
@@ -54,7 +70,7 @@ def arc_view(card: CharacterCard, arc_phase: int | None) -> ArcView:
     """算出阶段视图（不复制卡）。"""
     phases = card.character_arc.phases
     n = len(phases)
-    k = _normalize_k(n, arc_phase)
+    k = _normalize_k(card, arc_phase)
     memories = list(card.key_memories) + [m for p in phases[:k] for m in p.memories]
     boundary = k < n
     boundary_examples = list(phases[k - 1].boundary_examples) if boundary else []
@@ -64,6 +80,7 @@ def arc_view(card: CharacterCard, arc_phase: int | None) -> ArcView:
     return ArcView(
         k=k, n=n, show_axis=(n > 0 and k == n), boundary=boundary,
         memories=memories, boundary_examples=boundary_examples, before=before,
+        source_fingerprint=card.character_arc.source_fingerprint,
     )
 
 
