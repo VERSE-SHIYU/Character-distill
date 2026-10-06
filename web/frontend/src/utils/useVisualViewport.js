@@ -19,6 +19,9 @@ export default function useVisualViewport() {
 
     const sync = () => {
       rafId = null
+      // B3：页面声明键盘交给浏览器时（data-kbd="native"），旧 hook 三件事都不做
+      // ——不写 --vvh、不拽页面、不派发 vvchange。避免两套逻辑同时动视口。
+      if (document.documentElement.getAttribute('data-kbd') === 'native') return
       const h = vv.height
       const off = vv.offsetTop
       const root = document.documentElement

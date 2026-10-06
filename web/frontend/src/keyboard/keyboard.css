@@ -1,0 +1,27 @@
+/*
+ * 键盘层样式（B4/B6）。仅在 <html data-kbd="native"> 时生效（由
+ * useNativeKeyboardPage 在 native 且手机宽度时挂上）。
+ *
+ * 规则照 @chatui/core@3.8.0（MIT, https://github.com/alibaba/ChatUI）
+ * 的 es/components/Chat/style.less：body 只禁止滚动、聚焦期间底部安全区归零、
+ * 仅 iOS 给列表首个子元素加 75vh 顶部留白（把消息顶到键盘上方）。
+ */
+
+/* B4：body 回到基础规则的值（global.css:917），覆盖手机端的 fixed（:18568）。 */
+html[data-kbd="native"] body {
+  position: relative;
+  inset: auto;
+}
+
+/* B6：聚焦期间底部安全区留白归零，键盘会顶上来，留白多余。 */
+html[data-kbd="native"] body.kbd-focusing {
+  --safe-bottom: 0px;
+}
+
+/* B6：只有 iPhone 需要把列表内容顶上去（安卓键盘悬浮/内嵌不同），照 ChatUI 用
+   -webkit-touch-callout 这条 iOS 特征探测，而不是 JS 判 UA。 */
+@supports (-webkit-touch-callout: none) {
+  html[data-kbd="native"] body.kbd-focusing [data-kbd-lift] > :first-child {
+    margin-top: 75vh;
+  }
+}
