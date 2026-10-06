@@ -507,12 +507,12 @@ def test_relationship_batch_splits_and_merges():
     targets = [f"人{i}" for i in range(23)]
     calls: list[list[str]] = []
 
-    def fake_call(prompt: str, batch: list[str]):
+    def fake_call(system: str, user: str, batch: list[str]):
         calls.append(list(batch))
         return [{"target": t, "relation": "友", "note": ""} for t in batch]
 
     out = batch_relationships(targets, ["阶段一", "阶段二"],
-                              stream_call=fake_call, prefix="前缀")
+                              stream_call=fake_call, prefix="前缀", name="主角")
     assert [len(c) for c in calls] == [10, 10, 3]
     assert [r["target"] for r in out] == targets
 
@@ -521,12 +521,12 @@ def test_relationship_batch_fail_all_on_any_batch():
     """U16：任一批失败 → 整步失败（不静默丢人）。"""
     from core.relationship_batch import batch_relationships, RelationshipBatchError
 
-    def failing(prompt, batch):
+    def failing(system, user, batch):
         raise RuntimeError("batch down")
 
     with pytest.raises(RelationshipBatchError):
         batch_relationships([f"人{i}" for i in range(12)], ["阶段一"],
-                            stream_call=failing, prefix="前缀")
+                            stream_call=failing, prefix="前缀", name="主角")
 
 
 def test_relationship_batch_prefix_passed_verbatim():
@@ -535,11 +535,11 @@ def test_relationship_batch_prefix_passed_verbatim():
 
     seen: list[str] = []
 
-    def capture(prompt, batch):
-        seen.append(prompt)
+    def capture(system, user, batch):
+        seen.append(system)
         return [{"target": t, "relation": "友"} for t in batch]
 
-    batch_relationships(["甲", "乙"], ["阶段一"], stream_call=capture, prefix="SHARED-PREFIX")
+    batch_relationships(["甲", "乙"], ["阶段一"], stream_call=capture, prefix="SHARED-PREFIX", name="主角")
     assert all("SHARED-PREFIX" in p for p in seen)
     assert len(seen) == 1, "没人缺失就不该补跑（前缀判据只需看首批）"
 
@@ -679,14 +679,14 @@ def test_relationship_batch_recovers_missing_once():
 
     calls: list[list[str]] = []
 
-    def fake(prompt: str, batch: list[str]):
+    def fake(system: str, user: str, batch: list[str]):
         calls.append(list(batch))
         # 首批漏掉「乙」，补跑那批（只含「乙」）就答得出来。
         return [{"target": t, "relation": "友"}
                 for t in batch if t != "乙" or len(calls) > 1]
 
     out = batch_relationships(["甲", "乙", "丙"], ["阶段一"],
-                              stream_call=fake, prefix="P")
+                              stream_call=fake, prefix="P", name="主角")
 
     assert calls[0] == ["甲", "乙", "丙"], "首批不是全体"
     assert calls[1] == ["乙"], "补跑的不是且只是缺的那个人"
@@ -704,12 +704,12 @@ def test_relationship_batch_missing_after_retry_raises():
 
     calls: list[list[str]] = []
 
-    def fake(prompt: str, batch: list[str]):
+    def fake(system: str, user: str, batch: list[str]):
         calls.append(list(batch))
         return [{"target": t, "relation": "友"} for t in batch if t != "乙"]
 
     with pytest.raises(RelationshipBatchError, match="乙"):
-        batch_relationships(["甲", "乙"], ["阶段一"], stream_call=fake, prefix="P")
+        batch_relationships(["甲", "乙"], ["阶段一"], stream_call=fake, prefix="P", name="主角")
     assert len(calls) == 2, "应只补跑一次就失败"
 
 
@@ -723,7 +723,7 @@ def test_relationship_batch_wrong_name_is_missing_and_extra_dropped():
 
     calls: list[list[str]] = []
 
-    def fake(prompt: str, batch: list[str]):
+    def fake(system: str, user: str, batch: list[str]):
         calls.append(list(batch))
         if len(calls) == 1:
             # 首批：甲 回了，乙 被写成了名单外的「宝玉」。
@@ -731,7 +731,7 @@ def test_relationship_batch_wrong_name_is_missing_and_extra_dropped():
                     {"target": "宝玉", "relation": "亲人"}]
         return [{"target": t, "relation": "友"} for t in batch]
 
-    out = batch_relationships(["甲", "乙"], ["阶段一"], stream_call=fake, prefix="P")
+    out = batch_relationships(["甲", "乙"], ["阶段一"], stream_call=fake, prefix="P", name="主角")
 
     assert calls == [["甲", "乙"], ["乙"]], "写错名没算缺人（或补跑的不是缺的那个）"
     assert [r["target"] for r in out] == ["甲", "乙"], "名单外的条目混进来了 / 缺人没补齐"
@@ -765,9 +765,129 @@ def test_relationships_batched_goes_through_stream():
 
     d = Distiller(llm=_LLM(), config_path=None)
     draft = {"name": "甲", "relationships": [{"target": "乙"}]}
-    d._relationships_batched(draft, prefix="P",
-                            messages=[{"role": "user", "content": "x"}])
+    d._relationships_batched(draft, prefix="P", character_name="甲", material="")
 
     assert streamed, "关系分批没走流式（判据失去意义）"
     assert not chatted, "关系分批走了非流式的 chat"
     assert draft["relationships"][0]["relation"] == "同窗", "分批结果没写回草稿"
+
+
+# ── 本轮审计 R1 / R2（Claude 修）────────────────────────────────────────
+
+def _capture_llm(seen: list):
+    """记下每次流式调用的 (system, messages)，答一条合法关系。"""
+    import json
+
+    class _LLM:
+        model = "stub-rel"
+        last_usage = None
+
+        def chat_stream_long(self, system, messages, max_tokens=None, **kw):
+            seen.append((system, messages))
+            yield json.dumps([{"target": "乙", "relation": "同窗", "attitude": "亲近",
+                               "note": "老同学", "attitudes": []}], ensure_ascii=False)
+            return {"prompt_tokens": 1, "completion_tokens": 1}
+
+    return _LLM()
+
+
+def test_r1_batch_user_message_is_the_steps_own_longcontext():
+    """R1：一次读完路径的分批，user 消息是关系这一步自己的请求，不是主调用的「生成角色卡」。
+
+    主调用的 user 是「请基于以上全文为「X」生成角色卡」；带进分批就与「只输出关系数组」冲突，
+    模型会照它输出整张卡。system 前缀只认正文（缓存），user 换成本步自己的不影响命中。
+    """
+    from core.distiller import Distiller
+
+    seen: list = []
+    d = Distiller(llm=_capture_llm(seen), config_path=None)
+    draft = {"name": "甲", "relationships": [{"target": "乙"}]}
+    d.fill_relationships(draft, "开头甲甲甲。中间乙乙乙。", "甲")
+
+    assert seen, "关系分批没调模型（判据失去意义）"
+    system, messages = seen[0]
+    user = messages[-1]["content"]
+    assert "角色卡" not in user, f"分批的 user 消息带着主调用的指令：{user}"
+    assert "「甲」" in user and "乙" in user, "user 消息没点名主角与本批人物"
+    assert "主角是「甲」" in system, "system 里没写主角是谁（正文前缀之后只剩关系规则）"
+
+
+def test_r1_batch_grouped_path_carries_material_not_main_instruction():
+    """R1：分组路径的分批，素材（分析档案）进本步的 user 消息，主调用那句「输出角色卡」不进。"""
+    from core.distiller import Distiller, format_prompt_shared
+
+    seen: list = []
+    d = Distiller(llm=_capture_llm(seen), config_path=None)
+    draft = {"name": "甲", "relationships": [{"target": "乙"}]}
+    d._relationships_batched(draft, prefix=format_prompt_shared("甲"),
+                             character_name="甲", material="档案正文ABC")
+
+    system, messages = seen[0]
+    user = messages[-1]["content"]
+    assert "档案正文ABC" in user, "分组路径的分析档案没进分批（模型没有素材可写）"
+    assert "角色卡" not in user, f"分批的 user 消息带着主调用的指令：{user}"
+    assert system.startswith(format_prompt_shared("甲")), "分组路径前缀不是组共享段"
+
+
+def _rel_card(phase_attitudes, top_note="全书口径（后期）"):
+    from core.schema import CharacterCard
+    return CharacterCard.model_validate({
+        "name": "甲",
+        "character_arc": {"phases": [{"label": f"阶段{i}", "state": f"s{i}"} for i in (1, 2, 3)]},
+        "relationships": [{"target": "乙", "relation": "旧识", "attitude": "全书态度",
+                           "note": top_note, "phase_attitudes": phase_attitudes}],
+    })
+
+
+def test_r2a_projected_relationship_keeps_only_phases_up_to_k():
+    """R2a：投影卡里的 phase_attitudes 截到 ≤k —— 投影卡只装阶段 k 能看到的东西。"""
+    from core.arc_view import project_card
+
+    card = _rel_card([{"phase": p, "attitude": f"态度{p}", "note": f"口径{p}"} for p in (1, 2, 3)])
+    for k in (1, 2, 3):
+        proj, _ = project_card(card, k)
+        phases = [pa.phase for pa in proj.relationships[0].phase_attitudes]
+        assert phases == list(range(1, k + 1)), f"k={k} 投影卡里留着后期态度：{phases}"
+
+
+def test_r2a_projected_phases_carry_label_state_only_at_last_phase_too():
+    """R2a：k=n 时阶段表也只留 label/state —— overlay 已并进顶层，留着就是第二份来源。"""
+    from core.arc_view import project_card
+    from core.schema import CharacterCard
+
+    card = CharacterCard.model_validate({"name": "甲", "character_arc": {"phases": [
+        {"label": "前", "state": "s1", "overlay": {"personality_traits": ["前期性格"]}},
+        {"label": "后", "state": "s2", "overlay": {"personality_traits": ["后期性格"]}}]}})
+    proj, _ = project_card(card, 2)
+    assert [p.overlay for p in proj.character_arc.phases] == [{}, {}], "k=n 时阶段里还留着 overlay"
+    assert "前期性格" not in proj.model_dump_json(), "k=n 时投影卡里还有前一阶段的状态"
+    assert proj.personality_traits[0] == "后期性格"
+
+
+def test_r2b_note_never_falls_back_to_top_level_note():
+    """R2b：有阶段态度时，口径只取 ≤k 里最近一条非空的；全部为空就是空，不回落顶层那句。
+
+    顶层 note 由模型写，可能是全书（即后期）的立场；回落到它就把后期带进了早期阶段。
+    """
+    from core.arc_view import project_card
+
+    card = _rel_card([{"phase": 1, "attitude": "疏远", "note": "初识口径"},
+                      {"phase": 2, "attitude": "亲近", "note": ""}])
+    proj, _ = project_card(card, 2)
+    assert proj.relationships[0].note == "初识口径", "阶段 2 口径为空时没取 ≤k 最近的非空口径"
+
+    blank = _rel_card([{"phase": 1, "attitude": "疏远", "note": ""}])
+    proj, _ = project_card(blank, 1)
+    assert proj.relationships[0].note == "", "回落到了顶层的全书口径"
+
+
+def test_r2b_rules_pin_first_contact_and_per_phase_note():
+    """R2b：关系口径写明「第一条写在开始有交集的阶段」「每条阶段态度都写 note」。
+
+    投影靠「最早一条态度的阶段」判断两人何时认识、靠阶段 note 取口径 —— 生成侧不这么写，
+    投影就会把人提前/推后，或拿不到阶段口径。
+    """
+    from core.relationship_batch import RELATIONSHIP_RULES
+
+    assert "开始有交集的那个阶段" in RELATIONSHIP_RULES
+    assert "每一条都写 note" in RELATIONSHIP_RULES

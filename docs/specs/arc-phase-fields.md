@@ -908,3 +908,17 @@ web/routers/group.py:359:        card = CharacterCard.model_validate_json(card_r
 web/routers/history.py:207:    card = CharacterCard.model_validate_json(card_rec["card_json"])
 web/routers/market.py:837:    char = CharacterCard.model_validate(_json.loads(card_json_str))
 ```
+
+### 第二轮审计（2026-10-06，Claude；R1、R2 由 Claude 修）
+
+**目标检查（先跑）**：一张 3 阶段卡，每个 state / experience 路径在顶层与各阶段放可辨认标记，k=1..3 用真实代码拼 `card_core` + `card_ext` + 开场白。修前：prompt 层 0 违规；投影卡数据层有后期关系态度（k<n）与前几阶段 overlay（k=n）。修后：两层均 0 违规。
+
+| 编号 | 问题 | 根因 | 修法 |
+|---|---|---|---|
+| R1 | 关系分批的 user 消息沿用主调用的「生成角色卡 / 输出角色卡」，与「只输出关系数组」冲突；一次读完路径的 system 里没写主角 | 与 B2 同根：本步指令有一半从调用方继承（B2 只修了 system 那一半） | `_batch_prompt` 产出 `(system, user)`，本步指令全归 `relationship_batch`；`_relationships_batched` 不再收 `messages`，改收 `character_name` 与 `material`（分组路径的分析档案进本步 user；一次读完路径为空，正文已在前缀） |
+| R2a | 投影卡里留着全部阶段的 `phase_attitudes`；k=n 时阶段表留着各阶段 overlay | 投影卡「只装阶段 k 能看到的」没在数据层兑现 | `phase_attitudes` 截到 ≤k；阶段表一律只留 1..k 的 label / state（k=n 同） |
+| R2b | 阶段口径为空时回落顶层（全书）口径；生成规则没要求第一条写在开始有交集的阶段 | 投影依赖的两条生成约定没写进规则 | 口径只取 ≤k 最近一条非空，不回落顶层；`RELATIONSHIP_RULES` 补第 3 条前半句与第 6、7 条 |
+
+新测试：`test_r1_*`（2 条）、`test_r2a_*`（2 条）、`test_r2b_*`（2 条）。变异驱动新增 MC1–MC5，并跟进 MA11 / MA19 / MA20 / MB5 锚点：42/42 全红、逐字节还原。
+
+**待办（低优先级，未修）**：R3 `out_card` 逐行校验弧线，一张坏卡会让整个列表 500；R4 导出丢了阶段特有的说话风格（阶段段落过滤 `speaking_style.*`，说话风格节只取顶层）。

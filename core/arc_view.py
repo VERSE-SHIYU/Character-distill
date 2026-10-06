@@ -136,30 +136,40 @@ def card_outline(card: CharacterCard):
 def _project_relationships(
     rels: list[Relationship], k: int,
 ) -> list[Relationship]:
-    """关系投影：取 ≤k 里最新一条的态度与口径；之后才认识的去掉；无阶段态度原样（旧卡）。"""
+    """关系投影：只留阶段 ≤k 的态度；之后才认识的去掉；无阶段态度原样（旧卡）。
+
+    - 态度取 ≤k 里最新的一条；口径取 ≤k 里最近一条**非空**的口径。都只看 ≤k，**不回落**到
+      关系顶层的 note —— 顶层那句由模型写，可能是全书（即后期）的立场。
+    - 投影卡里的 `phase_attitudes` 也截到 ≤k：投影卡只装阶段 k 能看到的东西（R2），
+      读者以后读这个字段也不会读到后期。
+    """
     out: list[Relationship] = []
     for r in rels:
         if not r.phase_attitudes:
             out.append(r.model_copy(deep=True))   # 旧卡：原样
             continue
-        upto = [pa for pa in r.phase_attitudes if pa.phase <= k]
+        upto = sorted((pa for pa in r.phase_attitudes if pa.phase <= k),
+                      key=lambda pa: pa.phase)
         if not upto:
             continue                               # 之后才认识 → 去掉
-        latest = max(upto, key=lambda pa: pa.phase)
         r2 = r.model_copy(deep=True)
-        r2.attitude = latest.attitude
-        if latest.note:
-            r2.note = latest.note
+        r2.phase_attitudes = [pa.model_copy() for pa in upto]
+        r2.attitude = upto[-1].attitude
+        r2.note = next((pa.note for pa in reversed(upto) if pa.note), "")
         out.append(r2)
     return out
 
 
 def _project_custom(proj: ProjectedCard, card: CharacterCard, k: int, n: int) -> None:
-    """专门投影（各自函数）：弧线截断、关系口径、情境做法原样。就地改 `proj`。"""
+    """专门投影（各自函数）：弧线截断、关系口径、情境做法原样。就地改 `proj`。
+
+    阶段表一律只留 1..k 的 label / state（k=n 也一样）：各阶段的 overlay 已经按登记表并进
+    顶层字段，留在阶段里就是同一份内容的第二个来源，k=n 时还会带着前几个阶段的状态（R2）。
+    """
+    proj.character_arc.phases = [
+        ArcPhase(label=p.label, state=p.state) for p in proj.character_arc.phases[:k]
+    ]
     if k < n:
-        proj.character_arc.phases = [
-            ArcPhase(label=p.label, state=p.state) for p in proj.character_arc.phases[:k]
-        ]
         proj.character_arc.axis = ""
         proj.first_message = ""
     proj.relationships = _project_relationships(card.relationships, k)

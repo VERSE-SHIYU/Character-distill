@@ -117,8 +117,8 @@ MUTANTS = [
      [("repl", CD, [('    if layer == "experience":', "    if True:")])], "RED"),
     # ── core/arc_view.py：关系口径 ──
     ("MA11 关系 note 不随阶段", _u("test_relationship_note_follows_phase"),
-     [("repl", AV, [("        if latest.note:\n            r2.note = latest.note",
-                     "        if latest.note:\n            pass")])], "RED"),
+     [("repl", AV, [('        r2.note = next((pa.note for pa in reversed(upto) if pa.note), "")',
+                     "        pass")])], "RED"),
     # ── core/schema.py：起点判定 / 迁移 / overlay 校验 ──
     ("MA12 起点判定不看指纹", _u("test_selectable_and_valid_phase"),
      [("repl", SCHEMA, [("        if not self.phases or not self.source_fingerprint:",
@@ -157,12 +157,38 @@ MUTANTS = [
     # 非流式入口）—— 与 MB13 同一条变异，两个编号各留一行，对账表与 §7 编号都能对上。
     ("MA19 分批走非流式", _u("test_relationships_batched_goes_through_stream"),
      [("repl", DIST, [("            reply, truncated = self._collect_stream(\n"
-                       '                prompt, messages, "关系生成", "distill_relationships")',
+                       '                system, messages, "关系生成", "distill_relationships")',
                        "            reply, truncated = self._chat_accounted(\n"
-                       '                prompt, messages, "关系生成", "distill_relationships")')])], "RED"),
+                       '                system, messages, "关系生成", "distill_relationships")')])], "RED"),
     ("MA20 分批前缀与主调用不同", _u("test_relationship_batch_prefix_passed_verbatim"),
-     [("repl", RB, [("        return list(stream_call(_batch_prompt(prefix, batch, phases, exact=exact), batch) or [])",
-                     "        return list(stream_call(_batch_prompt(prefix[:3], batch, phases, exact=exact), batch) or [])")])], "RED"),
+     [("repl", RB, [("        system, user = _batch_prompt(prefix, name, batch, phases,",
+                     "        system, user = _batch_prompt(prefix[:3], name, batch, phases,")])], "RED"),
+    # ── 本轮审计 R1 / R2（Claude 修）──
+    ("MC1 分批 user 改回主调用的「生成角色卡」（R1 旧形态）",
+     _u("test_r1_batch_user_message_is_the_steps_own_longcontext"),
+     [("repl", RB, [('    user = f"{source}请写出「{name}」与这几个人物的关系：{people}。只输出 JSON 数组。"',
+                     '    user = f"{source}请基于以上全文为「{name}」生成角色卡。"')])], "RED"),
+    ("MC2 分组路径不带分析档案（R1：素材丢失）",
+     _u("test_r1_batch_grouped_path_carries_material_not_main_instruction"),
+     [("repl", RB, [('    source = f"以下是关于「{name}」的分析档案：\\n\\n{material}\\n\\n" if material else ""',
+                     '    source = ""')])], "RED"),
+    ("MC3 投影卡留着全部阶段态度（R2a 旧形态）",
+     _u("test_r2a_projected_relationship_keeps_only_phases_up_to_k"),
+     [("repl", AV, [("        r2.phase_attitudes = [pa.model_copy() for pa in upto]\n", "")])], "RED"),
+    ("MC4 k=n 时阶段表留着 overlay（R2a 旧形态）",
+     _u("test_r2a_projected_phases_carry_label_state_only_at_last_phase_too"),
+     [("repl", AV, [("    proj.character_arc.phases = [\n"
+                     "        ArcPhase(label=p.label, state=p.state) for p in proj.character_arc.phases[:k]\n"
+                     "    ]\n"
+                     "    if k < n:\n",
+                     "    if k < n:\n"
+                     "        proj.character_arc.phases = [\n"
+                     "            ArcPhase(label=p.label, state=p.state) for p in proj.character_arc.phases[:k]\n"
+                     "        ]\n")])], "RED"),
+    ("MC5 口径回落到顶层全书口径（R2b 旧形态）",
+     _u("test_r2b_note_never_falls_back_to_top_level_note"),
+     [("repl", AV, [('        r2.note = next((pa.note for pa in reversed(upto) if pa.note), "")',
+                     '        r2.note = upto[-1].note or r2.note')])], "RED"),
     # ── core/context_engine.py：类型隔离 ──
     ("MA21 ContextEngine 收原卡不抛错", _u("test_projected_card_type_only_from_project_card"),
      [("repl", CTX, [("        self.card = require_projected(card)   # 原卡不进注入层（DA18）",
@@ -209,10 +235,11 @@ MUTANTS = [
     # MB5/MB6/MB7：B2 提示词、B7 —— 分批前缀与关系口径各只写一处。
     ("MB5 分批前缀改回主调用系统提示（B2 的旧形态）",
      _u("test_relationship_batch_prefix_is_shared_step_free"),
-     [("repl", DIST, [("        self._relationships_batched(draft, prefix=book_prefix(text), messages=messages)",
+     [("repl", DIST, [("        self._relationships_batched(draft, prefix=book_prefix(text),\n"
+                       "                                    character_name=character_name, material=\"\")",
                        "        self._relationships_batched(\n"
                        "            draft, prefix=self._longcontext_prompt(text, character_name)[0],\n"
-                       "            messages=messages)")])], "RED"),
+                       "            character_name=character_name, material=\"\")")])], "RED"),
     ("MB6 关系口径内联回主提示维度 F（B7 的旧形态）",
      _loc("test_s13_relationship_rules_defined_once"),
      [("repl", DIST, [("        '   关系的类型、态度与阶段变化由后续单独生成，这里**不要**写。'",

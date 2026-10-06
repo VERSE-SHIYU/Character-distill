@@ -30,9 +30,12 @@ RELATIONSHIP_RULES = (
     "## 关系生成口径\n"
     "1. 单向视角：只写主角怎么看对方，不写对方怎么看主角。\n"
     "2. note 是喂给聊天模型的固定立场：一句话讲清我和ta是什么关系、我怎么看ta。\n"
-    "3. 只写态度变了的阶段：态度没变的阶段不写；从头到尾一个态度就只写一条。\n"
+    "3. 只写态度变了的阶段：第一条写在两人开始有交集的那个阶段；之后态度没变的阶段不写；"
+    "从头到尾一个态度就只写一条。\n"
     "4. 没有阶段时 phase 填 0。\n"
-    "5. quote 是该阶段里的原文摘录（10-40字，逐字照抄）。"
+    "5. quote 是该阶段里的原文摘录（10-40字，逐字照抄）。\n"
+    "6. attitudes 里每一条都写 note：那一阶段的口径（同第 2 条）。\n"
+    "7. 顶层的 attitude / note 写两人最初的关系，不写后来的变化。"
 )
 
 
@@ -41,27 +44,36 @@ RELATIONSHIP_RULES = (
 _EXACT_TARGET_NOTE = "target 逐字使用上面名单里的写法：不要改名、不要用别称。"
 
 
-def _batch_prompt(prefix: str, batch: list[str], phases: list[str], *,
-                  exact: bool = False) -> str:
-    """本批的提示词：调用方的 `prefix` 逐字在前（前缀一致缓存才命中），后面只换本批人物。
+def _batch_prompt(prefix: str, name: str, batch: list[str], phases: list[str], *,
+                  material: str = "", exact: bool = False) -> tuple[str, str]:
+    """本批的 ``(system, user)``：关系这一步的指令**全部**在这里，调用方只给共享前缀。
 
-    `prefix` 是**共享前缀**（正文 / 组共享段），不含本步指令 —— 见 `_relationships_batched`
-    的调用点与锁 S14：把主调用的系统提示整段拿来，维度 F 的「只出名单」会被带进来。
+    - system = 调用方的 `prefix`（共享段：正文 / 组共享段，逐字在前，缓存才命中）+ 本步指令；
+    - user = 本步自己的请求（点名主角与本批人物）；`material` 非空时（分组路径的分析档案）
+      放在请求前面 —— 一次读完路径的素材是正文，已在 prefix 里，这里为空。
 
-    `exact=True` 时多一句「逐字照抄名单里的写法」（补跑那次用；首次没缺人就不加，避免
-    无谓地改动主路径的提示词）。
+    不接收调用方的 messages：主调用的用户消息是「生成角色卡 / 输出角色卡」，带进来就和
+    「只输出关系数组」冲突（R1，与 B2 同根：本步指令不能有一半是从调用方继承的）。缓存只认
+    前缀，user 换成本步自己的不影响命中。
+
+    `exact=True` 时多一句「逐字照抄名单里的写法」（补跑那次用）。
     """
     stage = "、".join(p for p in phases if p) or "（无阶段）"
+    people = "、".join(batch)
     exact_line = f"{_EXACT_TARGET_NOTE}\n" if exact else ""
-    return (
+    system = (
         f"{prefix}\n\n"
-        f"只产出这几个人物与主角的关系，其余人不要出现：{'、'.join(batch)}\n"
+        f"## 本步：写「{name}」的人际关系\n"
+        f"主角是「{name}」。只产出这几个人物与主角的关系，其余人不要出现：{people}\n"
         f"{exact_line}"
         f"阶段依次为：{stage}；每条关系按阶段给态度。\n"
         f"{RELATIONSHIP_RULES}\n"
         "输出 JSON 数组，每个元素含 target / relation / attitude / note，"
         "以及 attitudes: [{phase, attitude, quote, note}]。"
     )
+    source = f"以下是关于「{name}」的分析档案：\n\n{material}\n\n" if material else ""
+    user = f"{source}请写出「{name}」与这几个人物的关系：{people}。只输出 JSON 数组。"
+    return system, user
 
 
 def _fan_out(batches: list[list[str]], run: Callable[[list[str]], list]) -> list:
@@ -78,11 +90,13 @@ def _fan_out(batches: list[list[str]], run: Callable[[list[str]], list]) -> list
 
 
 def batch_relationships(targets: list[str], phases: list[str], *,
-                        stream_call: Callable[[str, list[str]], Any],
-                        prefix: str, batch_size: int = REL_BATCH_SIZE) -> list[dict]:
+                        stream_call: Callable[[str, str, list[str]], Any],
+                        prefix: str, name: str, material: str = "",
+                        batch_size: int = REL_BATCH_SIZE) -> list[dict]:
     """按 `batch_size` 切批、批间并行，汇总成一份关系列表（顺序与 `targets` 一致）。
 
-    `stream_call(prompt, batch)` 由调用方注入，返回本批的关系条目（dict 列表）。
+    `stream_call(system, user, batch)` 由调用方注入，返回本批的关系条目（dict 列表）；
+    `system` / `user` 都由本模块的 `_batch_prompt` 产出，调用方只发不改。
     任一批抛异常 → `RelationshipBatchError`，整步失败。
 
     **完整性**（B2）：名单是**我们发出的**，模型只需逐字照抄 `target`（提示词里就这么写）。
@@ -111,7 +125,9 @@ def batch_relationships(targets: list[str], phases: list[str], *,
                 found[key] = dict(row)
 
     def _run(batch: list[str], *, exact: bool = False) -> list:
-        return list(stream_call(_batch_prompt(prefix, batch, phases, exact=exact), batch) or [])
+        system, user = _batch_prompt(prefix, name, batch, phases,
+                                     material=material, exact=exact)
+        return list(stream_call(system, user, batch) or [])
 
     _merge(_fan_out([want[i:i + batch_size] for i in range(0, len(want), batch_size)], _run))
     missing = [k for k in want if k not in found]

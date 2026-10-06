@@ -956,7 +956,7 @@ class Distiller:
         return "".join(parts), False
 
     def _relationships_batched(self, draft: dict[str, Any], *,
-                               prefix: str, messages: list[dict[str, Any]]) -> None:
+                               prefix: str, character_name: str, material: str) -> None:
         """把草稿里主调用只出的关系名单，按批换成完整关系（原地写回 `relationships`）。
 
         §4.5：关系条数随登场人数增长、没有代码上限（C18），一次出全部会把输出顶到 token
@@ -967,24 +967,30 @@ class Distiller:
 
         名单已补全（或主调用本就没照名单来）时直接返回：本函数只吃「只有 target、
         还没 relation」的条目。
+
+        本步的 system 尾部与 user 消息都由 `relationship_batch._batch_prompt` 产出；这里只给
+        共享前缀与素材，**不传主调用的 messages**（那句「生成角色卡」会与「只输出关系数组」冲突，
+        R1）。`material`：一次读完路径为空（正文已在 `prefix` 里）；分组路径是分析档案。
         """
         targets = [r["target"] for r in (draft.get("relationships") or [])
                    if r.get("target") and not r.get("relation")]
         if not targets:
             return
 
-        def _call(prompt: str, batch: list[str]) -> list[dict[str, Any]]:
+        def _call(system: str, user: str, batch: list[str]) -> list[dict[str, Any]]:
+            messages = [{"role": "user", "content": user}]
             reply, truncated = self._collect_stream(
-                prompt, messages, "关系生成", "distill_relationships")
+                system, messages, "关系生成", "distill_relationships")
             return self._parse_json_with_retry(
-                reply, prompt, messages, action_label="distill_relationships",
+                reply, system, messages, action_label="distill_relationships",
                 upstream_truncated=truncated, list_item_keys=("target", "relation"),
                 stream=True)
 
         try:
             draft["relationships"] = batch_relationships(
                 targets, _phase_labels(draft), stream_call=_call,
-                prefix=prefix, batch_size=REL_BATCH_SIZE)
+                prefix=prefix, name=character_name, material=material,
+                batch_size=REL_BATCH_SIZE)
         except RelationshipBatchError as exc:
             print(f"关系分批失败：{exc}")
             raise DistillError("蒸馏失败：关系生成失败，请重试", str(exc)) from exc
@@ -996,8 +1002,8 @@ class Distiller:
         其余入口的草稿在 distiller 内部成型，入口自己调 `_relationships_batched`；这里只是
         同一条链在消费方那一侧的入口，前缀与主调用同源（`book_prefix` 共享段）。
         """
-        _, messages = self._longcontext_prompt(text, character_name)
-        self._relationships_batched(draft, prefix=book_prefix(text), messages=messages)
+        self._relationships_batched(draft, prefix=book_prefix(text),
+                                    character_name=character_name, material="")
 
     def _chat_accounted(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str, action: str,
@@ -1654,7 +1660,8 @@ class Distiller:
             reply, system_prompt, user_messages,
             action_label="distill", upstream_truncated=upstream_truncated,
         )
-        self._relationships_batched(data, prefix=book_prefix(text), messages=user_messages)
+        self._relationships_batched(data, prefix=book_prefix(text),
+                                    character_name=character_name, material="")
         try:
             return card_from_draft(data, text)
         except ValidationError as exc:
@@ -1757,7 +1764,8 @@ class Distiller:
             reply, system_prompt, user_messages,
             action_label="distill_longcontext", upstream_truncated=upstream_truncated,
         )
-        self._relationships_batched(data, prefix=book_prefix(text), messages=user_messages)
+        self._relationships_batched(data, prefix=book_prefix(text),
+                                    character_name=character_name, material="")
         try:
             return card_from_draft(data, text)
         except ValidationError as exc:
@@ -2384,7 +2392,8 @@ class Distiller:
             action_label="distill_format", upstream_truncated=upstream_truncated,
         )
         self._relationships_batched(
-            data, prefix=format_prompt_shared(character_name), messages=user_messages)
+            data, prefix=format_prompt_shared(character_name), character_name=character_name,
+            material=profile_draft)
         try:
             card = card_from_draft(data, text)
         except ValidationError as exc:
@@ -2741,9 +2750,7 @@ class Distiller:
             self._relationships_batched(
                 merged,
                 prefix=format_prompt_shared(character_name),
-                messages=[{"role": "user", "content":
-                    f"以下是关于「{character_name}」的完整分析档案，"
-                    f"严格按 JSON 格式输出：\n\n{format_input}"}])
+                character_name=character_name, material=format_input)
             draft = CardDraft.model_validate(merged)
         except ValidationError as exc:
             # 模块 logger，不是 print：print 只进容器 stdout（不进日志面板、不发告警），
