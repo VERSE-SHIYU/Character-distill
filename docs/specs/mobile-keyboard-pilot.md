@@ -201,3 +201,59 @@ skill：第 2、4 步 `tdd`；第 3、5 步 `code-review-and-quality`；各一�
 | P5 | 网址参数在 `ChatArea` 挂载时才处理（执行方已声明） | 可接受的临时偏离 | — | 提交 2 移到应用入口，只此一处。**未核实**：带参数打开后经过登录跳转，参数是否还在 |
 
 **结论**：判据实现正确；P1–P3 修完才能用于真机。修正只动 `goalCheck.js` 的显示部分和它的测试，不改判据、不改接口。
+
+## 补充 2（2026-10-06）：修正提交（`2c5de65`）审计，以及键盘层提交发出前对 B2–B8 的复查
+
+### 修正提交审计
+
+亲手跑：受影响测试 37/37；lint 退出码 0。变异 7 个全部被打红：上一轮存活的 3 个，加上 P1 的 3 个（写入时不同步 `top`、`top` 恒为 0、不监听视口 `scroll`）和 P2 的 1 个（`scrollY` 恒为 0）。
+
+| 文件 | 结论 |
+|---|---|
+| `src/keyboard/goalCheck.js` | 通过。P1、P2 按补充 1 修正；判据未动。字段 `pushedUp` 改名为 `offsetTop` 属模块内部，接受 |
+| `src/keyboard/goalCheck.test.js` | 通过。P3 的翻转用例与两个边界用例已补 |
+
+浮层在各状态下的位置（本应在提交 1 之前就写出来）：
+
+| 状态 | 浮层在哪 |
+|---|---|
+| 键盘收起 | `top: 0`，加安全区内边距，可见 |
+| 开关关闭、键盘弹起（页面被旧逻辑钉住，`visualViewport.offsetTop` = 0） | `top: 0`，可见 |
+| 开关打开、键盘弹起、页面以 `visualViewport.offsetTop` > 0 的方式被推上去 | `top` = `offsetTop`，落在可视区顶端 |
+| 开关打开、键盘弹起、页面以文档滚动（`scrollY` > 0）的方式被推上去 | fixed 相对布局视口，`top: 0` 即可视区顶端 |
+
+未覆盖的一种情况，**未核实**：Safari 如果滚动的是 `body` 或 `#root` 这类禁止滚动的容器，三个读数都会是 0。此时 C1–C3 仍然成立（它们比较的是矩形与可视区），只是「怎么被推上去的」读不出来；真机若出现三数全 0 而画面确实上移，报告后再加读数。
+
+### 对 B2–B8 的复查（做法：状态表、有歧义的词落到具体属性、核心用例逐条点名）
+
+**状态表**
+
+| 状态 | `<html data-kbd>` | `--vvh` | `body` 定位 | `body.kbd-focusing` | 列表首个子元素的顶部留白 |
+|---|---|---|---|---|---|
+| 开关关闭 | 无 | 旧 hook 写入 | `fixed`（现状） | 无 | 无 |
+| 开关打开，键盘收起 | `native` | 无，外壳回落 `100dvh` | `relative` | 无 | 无 |
+| 开关打开，文字输入框聚焦 | `native` | 无 | `relative` | 有 | iPhone：`75vh`；其他：无 |
+| 开关打开，离开角色聊天 | 无 | 下一次视口事件时旧 hook 重新写入 | `fixed` | 无 | 无 |
+
+**对正文的更正与补全**
+
+| # | 正文写法 | 问题 | 更正 |
+|---|---|---|---|
+| D1 | B4「`body` 不固定」 | 没写成具体属性 | `html[data-kbd="native"] body { position: relative; inset: auto; }`——回到基础规则的值（`global.css:917`），覆盖手机端的 `fixed`（`:18568-18572`） |
+| D2 | B5「失焦后下一个事件循环移除」 | 漏了两种情况 | 照 ChatUI `Composer/index.js:226`：聚焦时先取消尚未执行的移除（焦点从一个输入框换到另一个时类不能闪掉）；页面卸载时如仍聚焦，移除该类 |
+| D3 | B6 | 没写选择器 | `html[data-kbd="native"] body.kbd-focusing { --safe-bottom: 0px; }`；`@supports (-webkit-touch-callout: none) { html[data-kbd="native"] body.kbd-focusing [data-kbd-lift] > :first-child { margin-top: 75vh; } }` |
+| D4 | B7「聚焦时把列表立即滚到底」 | 没写顺序和调用 | 必须在 `kbd-focusing` 加上之后执行（留白生效后 `scrollHeight` 才是新的）；调用 `list.scrollTo({ top: list.scrollHeight, behavior: 'instant' })`（列表设了平滑滚动，`global.css:4558`） |
+| D5 | B8「非 Safari 的内嵌浏览器」 | **写错了范围** | 照 ChatUI `riseInput.js` 与 `utils/ua.js:4` 的原判断：iOS 且 UA 含 `Safari/` → 不处理；**其余全部**（含所有安卓浏览器、iOS 内嵌浏览器）→ 聚焦后 300ms、1000ms 各对输入栏调用 `scrollIntoView(false)`。失焦时的 `document.body.scrollIntoView()` 只在 iOS 且 UA 不含 `Safari/` 时执行。iOS 12 及以下的分支不搬；ArkWeb / AliApp 的分支不搬 |
+| D6 | B8「键盘收起但未失焦时让它失焦」 | 没写判据 | 仅 iOS：`visualViewport` 的 `resize` 事件里，若仍聚焦且 `visualViewport.height >= window.innerHeight`，对该输入框调用 `blur()`（`Composer/index.js:130-156`） |
+
+**一处新发现的风险，未核实**：开关打开、键盘开着时如果来了新消息，现有的 `useAutoScroll.js:11` 会调用原生 `scrollIntoView`（带动画），它可能连页面一起滚。本段不改（第二段换消息列表组件时消除）。真机验收时顺手看一眼：键盘开着发一条消息，页面是否跳动；跳了就记下来，不算本段不通过。
+
+**键盘层提交必须点名的用例**
+
+- 开关与声明：native 且手机宽度时加 `data-kbd` 并清掉 `--vvh`，卸载移除；legacy 或桌面宽度不加。
+- 锁：有 `data-kbd="native"` 时旧 hook 不写 `--vvh`、不调 `scrollTo`、不派发 `vvchange`；预跑变异「去掉该判断」必须变红。
+- 聚焦类：聚焦加、失焦移除；**从一个文字输入框换到另一个时不闪掉**；卸载时移除；非文字控件不触发。
+- 顺序：聚焦回调执行时 `kbd-focusing` 已经在 `body` 上。
+- UA 三种：iOS Safari 的 UA 不滚；iOS 微信的 UA 在 300ms、1000ms 各滚一次；安卓 Chrome 的 UA 同样滚。
+- P4：「是否文字输入框」只有一个函数，`goalCheck.js` 与聚焦逻辑共用；text、password、email、search、tel、url、number 与 `textarea` 为真，checkbox、button 为假。
+- P5：网址参数在应用入口处理一次，`ChatArea` 不再调用。
