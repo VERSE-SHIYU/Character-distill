@@ -468,3 +468,36 @@ useKeyboardFocus({ rootRef, enabled, onFocus, getRiseTarget, ua })
 | 安卓 / 内嵌浏览器，聚焦 | 不挂这个监听（非 iOS） | 300ms、1000ms 把 `.composer-bar-wrap` 滚到可视区底部 |
 
 未核实：iOS 26 上 `innerHeight` 短暂变小这一现象来自 svedit PR #352 的记录，本仓没有复现过；用例 2 守的是「即使发生也不误判」。
+
+## 补充 5（2026-10-06）：P6–P8 修正提交审计（audit-bae4a0d）
+
+**亲手跑**：受影响测试 81/81 通过；CI 的 lint 命令对改动文件退出码 0。变异 10 个：7 个被打红（含上一轮存活的两个），3 个存活。
+
+**逐文件结论**
+
+| 文件 | 结论 |
+|---|---|
+| `src/keyboard/useKeyboardFocus.js` | 通过。P6 的接口与补充 4 一致，hook 内没有类名；P7 与 ChatUI 原文逐行对应 |
+| `src/keyboard/useKeyboardFocus.test.jsx` | 补充 4 点名的用例都在。缺一条，见 S1 |
+| `src/components/ChatArea.jsx` | 通过。`getComposerWrap` 在模块顶层，选的是 `.composer-bar-wrap` |
+| `src/components/__tests__/ChatAreaGoalCheckWiring.test.jsx` | 通过。P8 的断言已补，没有为此改实现 |
+
+**存活的变异**
+
+| # | 变异 | 属于 | 根因 | 处理 |
+|---|---|---|---|---|
+| S1 | 去掉 `if (window.innerHeight > winHeight) winHeight = window.innerHeight` 这一行，测试不红 | **本文件补充 4 的用例清单漏了**，执行方按清单做的 | 我只点名了「变小时不误判」，没点名原文注释里写的另一种情况：安装时取到的窗口高度偏小 | 必须补一条用例（见下）。这一行守的仍是「键盘弹起后自己收回去」这个方向 |
+| S2 | `ChatArea` 不传 `getRiseTarget`，测试不红 | 接线没有测试 | 局部接线，只影响安卓和内嵌浏览器 | 不强制补。两个元素的底边重合，`scrollIntoView(false)` 的结果相同；等有安卓设备验证时再定 |
+| S3 | `getComposerWrap` 选成 `.composer-bar`，测试不红 | 同 S2 | 同 S2 | 同 S2 |
+
+**S1 要补的用例**（iOS 的 UA，输入框已聚焦，写在 `useKeyboardFocus.test.jsx`）
+
+1. 安装 hook 之前把 `window.innerHeight` 设为 400（模拟第一次取值偏小）。
+2. 安装后把 `window.innerHeight` 设为 800，可视高度设为 400，触发 `visualViewport` 的 `resize` → 不调用 `blur`。
+3. 再把可视高度设为 800，触发 `resize` → 调用 `blur` 一次。
+
+去掉「只增」那一行时，第 2 步会因为 400 >= 400 而调用 `blur`，用例变红。
+
+**结论**：实现通过，可以进入真机验证。S1 的用例是一个小尾巴，单独一个提交补上，不阻塞真机验证。
+
+**一处注释措辞**：`useKeyboardFocus.js` 里写「iOS 26 键盘弹起瞬间 innerHeight 会短暂变小」，这是别的项目的记录，本仓没有复现过。补 S1 时顺手改成「据 svedit PR #352 记录」。
