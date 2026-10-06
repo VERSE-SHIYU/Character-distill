@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from adapters.llm_adapter import LLMAdapter
-from core.arc_view import has_positions
 from core.character_roster import aliases_for, cached_characters, resolve_characters
 from core.chat_engine import ChatEngine
 from core.chat_preprocessor import ChatPreprocessor
@@ -522,12 +521,12 @@ class TextManager:
         generated_opening = ""
         if card.first_message and self._llm:
             try:
-                variation_prompt = (
-                    f"你是「{card.name}」。以下是你的标准开场白：\n"
-                    f"「{card.first_message}」\n\n"
-                    f"请用同样的语气、口癖和风格，重新说一句意思相近但措辞不同的开场白。"
-                    f"只输出开场白本身，不要解释。保持{card.name}的说话习惯。50字以内。"
-                )
+                # 提示词**只此一处**（锁 S12）：变体的措辞不换口吻，故按最后一个阶段投影
+                # （k=n 不截断，`first_message` 原样留着）。
+                from core.arc_view import project_card
+                from core.opening import build_variation_prompt
+
+                variation_prompt = build_variation_prompt(project_card(card, None)[0])
                 opening = await asyncio.to_thread(
                     self._llm.chat,
                     f"你是{card.name}，保持角色风格。",
@@ -631,7 +630,7 @@ class TextManager:
             # 带起点的卡：场景索引额外要位置（指纹相同但集合无 pos_schema 时也重建），
             # 且 `text_` 集合缺位置时按当前名单补建 —— **补位置的调度只在这里**（存卡
             # 汇合点，它自己就有原文内容）。会话入口一律不调度。
-            need_pos = has_positions(card)
+            need_pos = card.character_arc.has_positions()
             self._indexing_service.schedule_scene_index(
                 text_id, actual_card_id, content, card.name,
                 all_characters=all_chars,

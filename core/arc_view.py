@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+from core.card_layers import REGISTRY, get_path, set_path
 from core.schema import ArcPhase, BoundaryExample, CharacterCard, Relationship, RetrievalWindow
 
 
@@ -22,7 +23,6 @@ class ArcView(NamedTuple):
     n: int                                  # 卡的阶段总数
     show_axis: bool                         # k==n（不截断）→ 注入变化轴
     boundary: bool                          # k<n（截断了）→ 注入边界说明与示范
-    memories: list[str]                     # 要注入的记忆：顶层 + 阶段 1..k
     boundary_examples: list[BoundaryExample]  # 阶段 k 的边界示范（k<n 才有）
     before: int | None                      # 检索上界（规范化坐标）；不截断或缺位置时 None
     source_fingerprint: str = ""            # 起点所依据的正文指纹
@@ -35,35 +35,49 @@ class ArcView(NamedTuple):
         return RetrievalWindow(self.before, self.source_fingerprint)
 
 
-def valid_phase(card: CharacterCard, arc_phase: int | None) -> int | None:
-    """用户选的阶段号是否有效：1..n 原样返回；None / 越界 / 卡无阶段 → None。
+class ProjectedCard(CharacterCard):
+    """已投影到某阶段的卡 —— **只能由 `project_card` 构造**（DA18）。
 
-    **阶段号的范围规则只在这里**：路由存库前的校验与 `_normalize_k` 的归一都用它（审计 A3）。
+    拼角色扮演 prompt 的入口（`ChatEngine` 的注入、`ContextEngine`、开场白、苏醒台词、
+    市场 @ 回复）只收这个类型，把「拿原卡拼 prompt」在类型上堵死。
     """
+
+
+def require_projected(card) -> ProjectedCard:
+    """拼角色扮演 prompt 的入口只收投影卡 —— 收原卡在类型上直接堵死（DA18）。
+
+    仅类型检查，不复制：`project_card` 已经给的是副本，这里再拷一次只会多一份没人读的卡。
+    """
+    if not isinstance(card, ProjectedCard):
+        raise TypeError(
+            f"{type(card).__name__} 不是 ProjectedCard —— 拼角色扮演 prompt 只收 "
+            f"core.arc_view.project_card 的产物")
+    return card
+
+
+def _phase_in_range(card: CharacterCard, arc_phase: int | None) -> int | None:
+    """**阶段号的范围规则只在这里**：1..n 原样返回，None / 越界 → None（审计 A3）。"""
     n = len(card.character_arc.phases)
     if arc_phase is None or not 1 <= arc_phase <= n:
         return None
     return int(arc_phase)
 
 
+def valid_phase(card: CharacterCard, arc_phase: int | None) -> int | None:
+    """用户选的阶段号是否有效：1..n 原样返回；None / 越界 / 卡不可选阶段 → None。
+
+    路由存库前的校验用它。不可选阶段的卡（起点不全或缺指纹，`has_positions` 为假）恒不可选
+    （DA8）—— 归一（`_normalize_k`）不吃这个门：位置不全的旧卡照样投影到用户给的阶段号。
+    """
+    if not card.character_arc.has_positions():
+        return None
+    return _phase_in_range(card, arc_phase)
+
+
 def _normalize_k(card: CharacterCard, arc_phase: int | None) -> int:
     """阶段号归一：有效 → 原样；否则 → n（最后阶段）；无阶段卡 → 0。"""
-    k = valid_phase(card, arc_phase)
+    k = _phase_in_range(card, arc_phase)
     return len(card.character_arc.phases) if k is None else k
-
-
-def has_positions(card: CharacterCard) -> bool:
-    """阶段起点是否可用于按位置截断：齐全、严格递增、且有正文指纹。
-
-    存卡调度（是否补位置）与检索上界（是否启用过滤）**共用这一个判定**。
-    """
-    phases = card.character_arc.phases
-    if not phases or not card.character_arc.source_fingerprint:
-        return False
-    starts = [p.start for p in phases]
-    if any(s is None for s in starts):
-        return False
-    return all(starts[i] < starts[i + 1] for i in range(len(starts) - 1))
 
 
 def arc_view(card: CharacterCard, arc_phase: int | None) -> ArcView:
@@ -71,55 +85,132 @@ def arc_view(card: CharacterCard, arc_phase: int | None) -> ArcView:
     phases = card.character_arc.phases
     n = len(phases)
     k = _normalize_k(card, arc_phase)
-    memories = list(card.key_memories) + [m for p in phases[:k] for m in p.memories]
     boundary = k < n
     boundary_examples = list(phases[k - 1].boundary_examples) if boundary else []
     before: int | None = None
-    if boundary and has_positions(card):
+    if boundary and card.character_arc.has_positions():
         before = phases[k].start
     return ArcView(
         k=k, n=n, show_axis=(n > 0 and k == n), boundary=boundary,
-        memories=memories, boundary_examples=boundary_examples, before=before,
+        boundary_examples=boundary_examples, before=before,
         source_fingerprint=card.character_arc.source_fingerprint,
     )
 
 
+def phase_header(index: int, label: str = "") -> str:
+    """阶段表头「阶段 i·label」（无 label 则「阶段 i」）—— 表头写法只此一处（B6）。"""
+    label = (label or "").strip()
+    return f"阶段 {index}·{label}" if label else f"阶段 {index}"
+
+
+def card_outline(card: CharacterCard):
+    """整卡的两层视图：``(全程, 逐阶段)`` —— 导出与展示共用的唯一字段名来源（B5）。
+
+    - **全程** = 原卡顶层的 state / experience 字段；
+    - **逐阶段** = 第 i 个阶段的 ``overlay``（每个阶段一份）。
+
+    两层都按登记表遍历，一行是 ``(路径, 中文名, 文本)``：字段名一律取 ``FieldSpec.label``
+    （不在此拼字段名），列表「；」连接、单值原样，无值跳过。只取 state / experience 两类
+    —— 它们是会随阶段变的人设；stable 全程不变、custom 各自渲染、none 不进 prompt。
+    """
+    def rows(read) -> list[tuple[str, str, str]]:
+        out: list[tuple[str, str, str]] = []
+        for path, spec in REGISTRY.items():
+            if spec.layer not in ("state", "experience"):
+                continue
+            value = read(path)
+            if spec.kind == "list":
+                text = "；".join(str(x) for x in (value or []))
+            else:
+                text = str(value or "").strip()
+            if text:
+                out.append((path, spec.label, text))
+        return out
+
+    lifelong = rows(lambda path: get_path(card, path))
+    per_phase = [rows(lambda path, o=p.overlay: o.get(path))
+                 for p in card.character_arc.phases]
+    return lifelong, per_phase
+
+
 def _project_relationships(
-    rels: list[Relationship], k: int, n: int,
+    rels: list[Relationship], k: int,
 ) -> list[Relationship]:
-    """关系投影：k<n 取 ≤k 里最新态度、之后才认识的去掉；k=n 一律用顶层态度。"""
-    if k == n:
-        return [r.model_copy(deep=True) for r in rels]
+    """关系投影：只留阶段 ≤k 的态度；之后才认识的去掉；无阶段态度原样（旧卡）。
+
+    - 态度取 ≤k 里最新的一条；口径取 ≤k 里最近一条**非空**的口径。都只看 ≤k，**不回落**到
+      关系顶层的 note。生成规则第 7 条要求顶层写「两人最初的关系」，但那是对模型的要求，
+      模型未必照做；投影只认按阶段标好的条目，不赌顶层那句没写成后期立场。
+    - 投影卡里的 `phase_attitudes` 也截到 ≤k：投影卡只装阶段 k 能看到的东西（R2），
+      读者以后读这个字段也不会读到后期。
+    """
     out: list[Relationship] = []
     for r in rels:
         if not r.phase_attitudes:
             out.append(r.model_copy(deep=True))   # 旧卡：原样
             continue
-        upto = [pa for pa in r.phase_attitudes if pa.phase <= k]
+        upto = sorted((pa for pa in r.phase_attitudes if pa.phase <= k),
+                      key=lambda pa: pa.phase)
         if not upto:
             continue                               # 之后才认识 → 去掉
         r2 = r.model_copy(deep=True)
-        r2.attitude = max(upto, key=lambda pa: pa.phase).attitude
+        r2.phase_attitudes = [pa.model_copy() for pa in upto]
+        r2.attitude = upto[-1].attitude
+        r2.note = next((pa.note for pa in reversed(upto) if pa.note), "")
         out.append(r2)
     return out
 
 
-def project_card(card: CharacterCard, arc_phase: int | None) -> tuple[CharacterCard, ArcView]:
-    """把卡投影到阶段 k：返回（投影后的副本，阶段视图）。原卡不改。"""
-    view = arc_view(card, arc_phase)
-    k, n = view.k, view.n
-    proj = card.model_copy(deep=True)
+def _project_custom(proj: ProjectedCard, card: CharacterCard, k: int, n: int) -> None:
+    """专门投影（各自函数）：弧线截断、关系口径、情境做法原样。就地改 `proj`。
+
+    阶段表一律只留 1..k 的 label / state（k=n 也一样）：各阶段的 overlay 已经按登记表并进
+    顶层字段，留在阶段里就是同一份内容的第二个来源，k=n 时还会带着前几个阶段的状态（R2）。
+    """
+    proj.character_arc.phases = [
+        ArcPhase(label=p.label, state=p.state) for p in proj.character_arc.phases[:k]
+    ]
     if k < n:
-        proj.character_arc.phases = [
-            ArcPhase(label=p.label, state=p.state) for p in proj.character_arc.phases[:k]
-        ]
         proj.character_arc.axis = ""
         proj.first_message = ""
-    proj.key_memories = list(view.memories)
-    proj.dialogue_examples = list(card.dialogue_examples) + [
-        d for p in card.character_arc.phases[:k] for d in p.dialogue_examples
-    ]
-    proj.relationships = _project_relationships(card.relationships, k, n)
+    proj.relationships = _project_relationships(card.relationships, k)
+
+
+def project_card(card: CharacterCard, arc_phase: int | None) -> tuple[ProjectedCard, ArcView]:
+    """把卡投影到阶段 k：返回（投影后的副本，阶段视图）。原卡不改。
+
+    除弧线 / 关系 / 开场白这些专门投影（`_project_custom`）外，全按 `REGISTRY` 通用执行 ——
+    不写字段名分支（S2）。
+
+    **列表顺序是读者依赖的契约（B3）**：状态类列表 = **阶段 k 特有在前 + 全程在后**。
+    读者按 N 取前几条（`[:3]` / `[:2]`）时，阶段 k 才成立的人设排在最前，不会被顶层的
+    全程条目挤掉（顶层条目 ≥N 时尤其）。经历类列表仍是顶层在前 + 1..k（读者整体使用，
+    不取前 N）。
+    """
+    view = arc_view(card, arc_phase)
+    k = view.k
+    phases = card.character_arc.phases
+    proj = ProjectedCard(**card.model_dump())
+
+    for path, spec in REGISTRY.items():
+        kth = phases[k - 1].overlay.get(path) if k >= 1 else None
+        if spec.layer == "state":
+            if spec.kind == "list":
+                base = list(get_path(proj, path) or [])
+                set_path(proj, path, list(kth or []) + base)
+            elif kth:
+                set_path(proj, path, kth)
+        elif spec.layer == "experience":
+            if spec.kind == "list":
+                base = list(get_path(proj, path) or [])
+                extra = [x for p in phases[:k] for x in (p.overlay.get(path) or [])]
+                set_path(proj, path, base + extra)
+            else:
+                parts = [get_path(proj, path) or ""]
+                parts += [p.overlay.get(path) or "" for p in phases[:k]]
+                set_path(proj, path, "；".join(x for x in parts if x))
+
+    _project_custom(proj, card, k, view.n)
     return proj, view
 
 

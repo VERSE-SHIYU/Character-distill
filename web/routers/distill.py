@@ -23,6 +23,7 @@ from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
 from adapters.llm_adapter import LLMAdapter, user_facing_error
 from core.arc_view import project_card, valid_phase
+from core.card_out import out_card
 from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core.embeddings import EMBEDDING_KEY_REQUIRED
@@ -293,20 +294,17 @@ def _generate_awakening(llm, card: CharacterCard, storage=None) -> str:
 
     Returns the line text, or empty string on any failure.
     Never raises — all exceptions are caught and logged.
+
+    提示词走 `core.opening.build_awakening_prompt`（提示词**只此一处**，锁 S12）；
+    按最后一个阶段投影 —— 苏醒台词是这个角色「此刻」的口吻。
     """
     if llm is None or not card.first_message:
         return ""
     try:
-        style = card.speaking_style
-        prompt = (
-            f"你现在是「{card.name}」。你刚从长梦中醒来，第一眼认出了眼前的人。\n"
-            f"你的身份：{card.identity}\n"
-            f"你的语气：{style.tone}\n\n"
-            f"你的原开场白是：「{card.first_message}」\n\n"
-            f"请基于原开场白的口吻，说一句「刚从长梦中醒来、第一眼认出眼前人」的话"
-            f"——带一点初醒的朦胧和「是你啊」的温度。\n"
-            f"不是重写开场白，而是原口吻的变形。只输出这句话本身，不要引号，不要解释，不超过50个字。"
-        )
+        from core.arc_view import project_card
+        from core.opening import build_awakening_prompt
+
+        prompt = build_awakening_prompt(project_card(card, None)[0])
         result = llm.chat(prompt, [{"role": "user", "content": "请说苏醒台词"}])
         try_record_usage(storage, llm, action="chat_awakening", source="distill")
         result = result.strip().strip('"').strip("'").strip("「」").strip("《》")
@@ -502,6 +500,15 @@ def _run_distill_task(
             else:
                 logger.error("JSON parse failed for %s (first 200 chars): %r", name, stripped[:200])
                 _set_task(task_id, {"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
+            return
+
+        try:
+            # 主调用（维度 F）只出关系名单，细节在转卡前按批补齐（§4.5）。本通道的草稿在
+            # 消费方成型，补关系也只能在这里做 —— 前缀与主调用同源（`_longcontext_prompt`）。
+            distiller.fill_relationships(data, content, name)
+        except Exception as exc:
+            logger.error("Relationship batching failed for %s: %s", name, exc, exc_info=True)
+            _set_task(task_id, {"status": "error", "message": "蒸馏失败：关系生成失败，请重试", "character": name})
             return
 
         try:
@@ -1124,6 +1131,15 @@ async def distill_stream(
             return
 
         try:
+            # 主调用（维度 F）只出关系名单，细节在转卡前按批补齐（§4.5）。本通道的草稿在
+            # 消费方成型，补关系也只能在这里做 —— 前缀与主调用同源（`_longcontext_prompt`）。
+            await asyncio.to_thread(distiller.fill_relationships, data, content, char_name)
+        except Exception as exc:
+            logger.error("Relationship batching failed: %s", exc, exc_info=True)
+            yield f"data: {json.dumps({'error': '蒸馏失败：关系生成失败，请重试'}, ensure_ascii=False, default=str)}\n\n"
+            return
+
+        try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
             # 位置检查要 normalize 整本原文（约 0.3s CPU），本生成器跑在事件循环线程上 ——
             # 同步跑会堵住它，与上面 dialogue_candidates 同法挪进 to_thread。
@@ -1271,7 +1287,7 @@ async def list_cards(
     user_id = user["id"]
     result = await storage.list_cards(text_id, user_id)
     print(f"[distill] list_cards text_id={text_id} user_id={user_id} => {len(result)} cards")
-    return result
+    return [out_card(r) for r in result]
 
 
 @router.get("/cards/standalone")
@@ -1281,7 +1297,8 @@ async def list_standalone_cards(
     storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     """List standalone cards (forked from market, no text attachment)."""
-    return await storage.list_standalone_cards(user["id"])
+    rows = await storage.list_standalone_cards(user["id"])
+    return [out_card(r) for r in rows]
 
 
 @router.get("/cards/{card_id}/export")
@@ -1430,34 +1447,11 @@ async def start_session(
     opening = ""
     try:
         # 开场白也要按阶段投影（S14 只此两处）：截断时 `first_message` 已被清空，改由
-        # 阶段描述生成（D10）。`proj_card` 与引擎里的那张是同一投影口径。
-        proj_card, _phase_view = project_card(card, arc_phase)
-        style = proj_card.speaking_style
-        traits = "，".join(proj_card.personality_traits[:3])
-        seed = proj_card.first_message or ""
-        phase_note = ""
-        if _phase_view.n > 0:
-            _cur = proj_card.character_arc.phases[_phase_view.k - 1]
-            _head = _cur.label or f"阶段 {_phase_view.k}"
-            phase_note = f"此刻你处在这个阶段：{_head}（{_cur.state}）\n"
-        user_context = f"对「{req.user_role}」" if req.user_role else "对初次见面的陌生人"
-        from core.clock import UserClock, describe_time_period
-        _now = UserClock.now()
-        _period = describe_time_period(_now.hour)
-        seed_line = f"惯常开场白参考：「{seed}」\n" if seed else ""
-        prompt = (
-            f"以「{card.name}」的口吻，{user_context}说此刻的第一句话。\n"
-            f"身份：{card.identity}\n"
-            f"性格：{traits}\n"
-            f"语气：{style.tone}\n"
-            f"口癖：{', '.join(style.catchphrases) if style.catchphrases else '无'}\n"
-            f"{phase_note}"
-            f"{seed_line}"
-            f"当前时段：{_period}（{_now.hour}点）\n\n"
-            f"先用不超过15字的括号动作把自己放进当下场景，再说话。"
-            f"时间藏在语气里不点明。\n"
-            f"(动作)台词，台词不超过50字。"
-        )
+        # 阶段描述生成（D10）。提示词**只此一处**（锁 S12）—— 从原卡出发的入口走
+        # `project_opening_prompt`，投影与拼 prompt 一次做完。
+        from core.opening import project_opening_prompt
+
+        prompt = project_opening_prompt(card, arc_phase, user_role=req.user_role)
         opening = await asyncio.to_thread(
             per_user_llm.chat, prompt, [{"role": "user", "content": "请说开场白"}]
         )

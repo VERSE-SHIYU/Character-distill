@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from core.card_layers import REGISTRY
 from core.quotes import normalize, quoted_spans, verbatim_in_normalized
 from core.schema import CharacterCard
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # 要核对的字段路径（`a.b[].c` 形状）。**唯一出处**：核对、验收、测试都读这一份。
 # 只列「引号里应是原文」的字段；不在清单里的一律不动。
-VERIFIED_FIELDS: tuple[str, ...] = (
+_VERIFIED_TOP: tuple[str, ...] = (
     "personality_traits[]",
     "values[]",
     "key_memories[]",
@@ -38,16 +39,37 @@ VERIFIED_FIELDS: tuple[str, ...] = (
     "relationships[].phase_attitudes[].attitude",
     "situation_behaviors[].behavior",
     "character_arc.phases[].behaviors[].behavior",
-    "character_arc.phases[].memories[]",
 )
 
 # 整个值就声明「是原文」的字段（同样的路径形状）。**唯一出处**。对不上没有可保留的部分：
 # 列表元素整条删（口癖）；对象里的键清成空串、对象本身留下（摘录没了，条目还在）。
-VERBATIM_FIELDS: tuple[str, ...] = (
+_VERBATIM_TOP: tuple[str, ...] = (
     "speaking_style.catchphrases[]",
     "situation_behaviors[].source_quote",
     "character_arc.phases[].behaviors[].source_quote",
 )
+
+
+def _overlay_paths(paths: tuple[str, ...]) -> tuple[str, ...]:
+    """同名路径在阶段 overlay 下的那一份（`character_arc.phases[].overlay.<路径>`）。
+
+    overlay 装的是「只在这个阶段成立」的取值（登记表里 state / experience 类），同一字段的
+    引文照样要核。清单不重抄一份：登记表说哪些字段会进 overlay，这里就补哪些；`[]` 由登记表
+    的 `kind` 决定（单值字段在 overlay 里也是单值）。
+    """
+    out: list[str] = []
+    for path in paths:
+        base = path[:-2] if path.endswith("[]") else path
+        spec = REGISTRY.get(base)
+        if spec is None or spec.layer not in ("state", "experience"):
+            continue
+        out.append(f"character_arc.phases[].overlay.{base}"
+                   + ("[]" if spec.kind == "list" else ""))
+    return tuple(out)
+
+
+VERIFIED_FIELDS: tuple[str, ...] = _VERIFIED_TOP + _overlay_paths(_VERIFIED_TOP)
+VERBATIM_FIELDS: tuple[str, ...] = _VERBATIM_TOP + _overlay_paths(_VERBATIM_TOP)
 
 
 def _descend(node: Any, segs: list[str], label: str, out: list) -> None:

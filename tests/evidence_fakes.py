@@ -23,6 +23,7 @@ _repo = Path(__file__).resolve().parent.parent
 if str(_repo) not in sys.path:
     sys.path.insert(0, str(_repo))
 
+from core.arc_view import project_card  # noqa: E402
 from core.context_engine import ContextEngine  # noqa: E402
 from core.rag import RAGEngine  # noqa: E402
 from core.schema import (  # noqa: E402
@@ -265,9 +266,13 @@ def make_trace(source: str, status: str = "hit", text: str = "片段") -> Source
 
 
 def build_ctx(*, rag=None, memory=None, llm=None, card=None) -> ContextEngine:
-    """装配 ContextEngine —— 三源共用这一个入口。"""
+    """装配 ContextEngine —— 三源共用这一个入口。
+
+    注入层只收 `ProjectedCard`（DA18），故这里先投影（`None` → 最后阶段，不截断，
+    与本组假件无关的那些阶段取舍保持原样）。
+    """
     return ContextEngine(
-        card=card or make_card(),
+        card=project_card(card or make_card(), None)[0],
         rag=rag,
         memory_manager=memory,
         card_id="card_test",

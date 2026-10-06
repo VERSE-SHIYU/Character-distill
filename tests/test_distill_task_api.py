@@ -256,7 +256,10 @@ class _CardStubDistiller:
     test_distiller_dialogue_pick 里核（桩上再写一份就是第二处判据）。
     """
 
-    CARD = {"name": "乙", "first_message": "", "dialogue_examples": ["模型编的示例"]}
+    # 草稿里的状态类字段是「一条取值 + 它在哪段原文里成立」（§4.2 由登记表派生）；无阶段的卡
+    # 全落顶层，故 occurrences 可以为空。挑选出的真示例由 `finalize_card` 覆盖掉这一条。
+    CARD = {"name": "乙", "first_message": "",
+            "dialogue_examples": [{"value": "模型编的示例", "occurrences": []}]}
 
     def __init__(self, examples=None, pick_error=None):
         self.examples = ["对方：甲\n乙：丙"] if examples is None else list(examples)
@@ -281,6 +284,10 @@ class _CardStubDistiller:
 
     def _auto_tag(self, card_dict):
         return []
+
+    def fill_relationships(self, draft, text, character_name):
+        # 路由在转卡前补关系（§4.5）。本组的 CARD 没有关系名单，真实现此处也直接返回。
+        return None
 
     def finalize_card(self, card, content, name, aliases=(), roster=()):
         self.pick_calls.append((content, name, tuple(aliases), len(roster)))

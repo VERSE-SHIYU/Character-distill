@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 
-export default function RoleSetupModal({ isOpen, characterName, characterId, relationships, textType, arcPhases, onConfirm, onSkip }) {
+export default function RoleSetupModal({ isOpen, characterName, characterId, relationships, textType, arcPhases, selectable, onConfirm, onSkip }) {
   const getUserRole = useAppStore((s) => s.getUserRole)
   const setUserRole = useAppStore((s) => s.setUserRole)
   const setSessionUserRole = useAppStore((s) => s.setSessionUserRole)
@@ -29,7 +29,10 @@ export default function RoleSetupModal({ isOpen, characterName, characterId, rel
 
   const trimmed = role.trim()
   // 阶段单选：每张卡记住上次选择（getArcPhase），没选过 → 最后阶段。
+  // 只在卡片**可按**（起点齐全 + 有正文指纹，后端 `character_arc.selectable`）时给选：
+  // 不可按的卡把它按最后阶段聊，前端不出选项、提交也不带 arc_phase（DA8）。
   const phaseCount = (arcPhases || []).length
+  const showPhasePicker = Boolean(selectable) && phaseCount > 0
   const selectedPhase = phase ?? phaseCount
   const choosePhase = (k) => {
     setPhase(k)
@@ -69,7 +72,7 @@ export default function RoleSetupModal({ isOpen, characterName, characterId, rel
           <div className="modal-title">确认身份</div>
           <p className="role-confirm-text">
             你将以 <strong>「{trimmed}」</strong> 的身份与 <strong>{characterName}</strong> 对话
-            {phaseCount > 0 && `（阶段 ${selectedPhase}/${phaseCount}${arcPhases[selectedPhase - 1]?.label ? ` · ${arcPhases[selectedPhase - 1].label}` : ''}）`}
+            {showPhasePicker && `（阶段 ${selectedPhase}/${phaseCount}${arcPhases[selectedPhase - 1]?.label ? ` · ${arcPhases[selectedPhase - 1].label}` : ''}）`}
           </p>
           <div className="modal-actions">
             <button type="button" className="btn-secondary" onClick={handleBack}>
@@ -136,7 +139,7 @@ export default function RoleSetupModal({ isOpen, characterName, characterId, rel
           </div>
         )}
 
-        {phaseCount > 0 && (
+        {showPhasePicker && (
           <fieldset className="modal-field role-phase-select">
             <legend className="modal-label">这次聊的是哪个时期的他？</legend>
             {arcPhases.map((p, i) => {

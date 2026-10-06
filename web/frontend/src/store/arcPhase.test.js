@@ -1,7 +1,7 @@
 /**
  * U11 / U12：开聊时选阶段的前端出口。
  *
- * U11 `startSessionBody(card)`：有阶段带 `arc_phase`，无阶段为 `null`，默认最后阶段。
+ * U11 `startSessionBody(card)`：**可按**的卡带 `arc_phase`（默认最后阶段），不可按 / 无阶段为 `null`。
  * U12 身份赋值单一出口：恢复存档用 session 的值；新建用卡片默认值。
  * 均配 `vi.mock` 掉网络层 —— 这些出口是纯 state 计算，不打真接口。
  */
@@ -20,7 +20,10 @@ vi.mock('../api/client', () => ({
   removeAuth: vi.fn(),
 }))
 
-const card3 = { id: 'c1', text_id: 't1', character_arc: { phases: [{}, {}, {}] } }
+const card3 = {
+  id: 'c1', text_id: 't1',
+  character_arc: { phases: [{}, {}, {}], selectable: true },
+}
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -49,6 +52,15 @@ describe('U11 startSessionBody', () => {
     const body = useAppStore.getState().startSessionBody({ id: 'c2', text_id: 't2' })
     expect(body).toHaveProperty('arc_phase')
     expect(body.arc_phase).toBeNull()
+  })
+
+  it('有阶段但不可按（起点不全 / 无指纹）→ 不带 arc_phase', () => {
+    const card = {
+      id: 'c4', text_id: 't4',
+      character_arc: { phases: [{}, {}], selectable: false },
+    }
+    useAppStore.getState().setArcPhase('c4', 1)
+    expect(useAppStore.getState().startSessionBody(card).arc_phase).toBeNull()
   })
 })
 

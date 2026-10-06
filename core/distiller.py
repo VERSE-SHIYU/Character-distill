@@ -28,7 +28,7 @@ from adapters.llm_adapter import (
     user_facing_error,
 )
 from core.card_quotes import retract_unverified
-from core.arc_view import has_positions, phase_of
+from core.arc_view import phase_header, phase_of
 from core.llm_json import extract_json
 from core.card_relationships import dedupe_relationship_targets
 from core.chat_preprocessor import ChatPreprocessor
@@ -53,6 +53,12 @@ from core.roster_aggregate import (
     usable_alias,
 )
 from core.card_draft import CardDraft, card_from_draft, draft_schema
+from core.card_layers import REGISTRY
+from core.relationship_batch import (
+    REL_BATCH_SIZE,
+    RelationshipBatchError,
+    batch_relationships,
+)
 from core.length_budget import (
     LONGCTX_THRESHOLD_TOKENS,
     LONG_OUTPUT_MAX_TOKENS as _LONG_OUTPUT_MAX_TOKENS,
@@ -175,32 +181,46 @@ _PHASE_EXCERPT_RULE = (
     '[{"phase": 1, "quote": "…"}]；只填原文里确实这样过的阶段；'
     '没有阶段时只写一条，phase 填 0。'
 )
+# 状态类字段（性格、价值观、说话方式、雷点软肋…）的写法：描述随阶段变，故一条描述附它在
+# 哪些阶段成立的摘录。只定义一次：各处引用它，别复制这句（锁 S4 数它）。
+_PHASE_DESCRIPTION_RULE = (
+    '取值按阶段给，写成 {"value": "描述（含原文出处）", "occurrences": '
+    '[{"phase": 1, "quote": "该阶段原文摘录"}]} —— 一条取值只写一次，'
+    '标出它确实成立的阶段；从头到尾都成立时标全部阶段。'
+)
+# 稳定类字段（出身、身份、用词层次、禁忌词…）的写法：不随阶段变，只写一次。
+_STABLE_FIELD_RULE = (
+    '这类字段全程不变：只写一次，不按阶段拆，出处写在括号里。'
+)
+# 状态类字段在 JSON 模板里的取值形态（`_PHASE_DESCRIPTION_RULE` 的模板版）。
+_TIMED_TPL = '{"value": "描述（原文出处）", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]}'
 _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ("G1", 'A. 基本信息：名字、身份、背景（背景只写故事开始前就成立的出身与处境，不写故事里的遭遇）'),
-    ("G2", 'B. 核心性格（3-5个）：每个特质 + 原文中的具体场景作为证据'),
-    ("G3", 'C. 说话风格：语气、句式、口癖（直接从原文对话提取）、用词水平。禁忌用词（taboo_words）：根据角色性格，推断他绝对不会说出口的话或词（如违背人设的示弱话、不符其语言习惯的词）。从原文和人设推断，确实没有才留空。'),
-    ("G2", 'D. 价值观（2-4个）：什么对他最重要？两难时怎么选？'),
+    ("G2", 'B. 核心性格（3-5个）：每个特质 + 原文中的具体场景作为证据。' + _PHASE_DESCRIPTION_RULE),
+    ("G3", 'C. 说话风格：语气、句式、口癖（直接从原文对话提取）。语气/句式/口癖按阶段给，'
+           + _PHASE_DESCRIPTION_RULE +
+           '用词水平是稳定项，' + _STABLE_FIELD_RULE +
+           '禁忌用词（taboo_words）：根据角色性格，推断他绝对不会说出口的话或词'
+           '（如违背人设的示弱话、不符其语言习惯的词）。从原文和人设推断，确实没有才留空。'),
+    ("G2", 'D. 价值观（2-4个）：什么对他最重要？两难时怎么选？' + _PHASE_DESCRIPTION_RULE),
     ("G6",
         'E. 关键记忆（3-5个）：塑造此人的重要经历，全部写进 key_memories。每条给出：\n'
         '   - memory：一句话讲清这段经历（不带人名地名）。\n'
         '   - occurrences：这段经历在原文里哪些阶段成立，' + _PHASE_EXCERPT_RULE
     ),
     ("G5",
-        'F. 人际关系（站在本角色自己的视角，单向抽取）：\n'
-        '   覆盖前置步骤中枚举的角色，每人只写一条；不合并不同角色，不列入宠物等非人物。\n'
-        '   关键：只写【本角色对对方的看法】，不要写"对方怎么看本角色"。关系可以不对称——A把B当挚友，B可能对A别有心思，各自视角各自抽，这是合理的。\n'
-        '   每条给出：\n'
-        '   - target：对方名（必须用前置步骤中的标准名，确保能和其他角色卡对上）\n'
-        '   - relation：关系类型（挚友/前队友/仇人/暗恋对象...）\n'
-        '   - attitude：态度描述（体现情感变化）\n'
-        '   - note：一句话口径——站在本角色的角度，"我和ta是什么关系、我怎么看ta"，这句会在对话中直接喂给模型当固定立场，要自然、口语、能直接用。\n'
-        '   - attitudes：本角色对ta的态度随阶段怎么变，写成 [{"phase": 1, "attitude": "该阶段的态度", "quote": "该阶段原文摘录"}]；'
-        '只写态度确实变了的阶段，没变就只写一条；没有阶段时只写一条，phase 填 0。'
+        'F. 人际关系：**只出名单**——站在本角色自己的视角，覆盖前置步骤中枚举的角色，'
+        '每人只写一条，不合并不同角色，不列入宠物等非人物。\n'
+        '   每条只给出 target：对方名（必须用前置步骤中的标准名，确保能和其他角色卡对上）。\n'
+        '   关系的类型、态度与阶段变化由后续单独生成，这里**不要**写。'
     ),
-    ("G2", 'G. 内在矛盾（1-3个）：此人身上自相矛盾之处，以及矛盾如何影响行为'),
+    ("G2", 'G. 内在矛盾（1-3个）：此人身上自相矛盾之处，以及矛盾如何影响行为。'
+           + _PHASE_DESCRIPTION_RULE),
     ("G3", 'H. 开场白：以此角色的口吻写一句开场白，用于对话开始时'),
-    ("G2", 'J. 情感模式（2-3个）：什么情况下会生气、开心、沉默、逃避？触发条件是什么？'),
-    ("G2", 'K. 决策风格：面对选择时是冲动还是谨慎？靠情感还是逻辑？举例说明。'),
+    ("G2", 'J. 情感模式（2-3个）：什么情况下会生气、开心、沉默、逃避？触发条件是什么？'
+           + _PHASE_DESCRIPTION_RULE),
+    ("G2", 'K. 决策风格：面对选择时是冲动还是谨慎？靠情感还是逻辑？举例说明。'
+           + _PHASE_DESCRIPTION_RULE),
     ("G6",
         'L. 角色弧线：此人从故事开始到结束，心态或立场发生了怎样的变化？无明显变化则 axis 留空、phases 输出空数组 []。\n'
         '   - axis：一句「从…到…」（≤30字），两端都写心态或立场，不写情节。\n'
@@ -215,10 +235,10 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ),
     ("G3",
         'N. 认知/语言画像：基于原文中角色的实际话语和行为，判断以下四项：\n'
-        '   - education_level（文化程度）：文盲/识字不多/普通/受过良好教育/学者。从句式复杂度、用词丰富度、会不会用成语典故判断。原文证据：引一句原文中角色说的话作为判断依据。\n'
-        '   - knowledge_scope（知识边界）：这个角色的时代/阶层/见识决定他知道什么、不知道什么。如"古代农妇，不懂现代科技与时事", 或"现代都市白领，对古代文学不了解"。从角色身份、背景、行为推断。\n'
-        '   - speech_style（说话腔调）：用词雅俗、长短句风格、会不会用成语/专业词、口头禅、方言口音感。从原文对话提取最典型的说话特征。\n'
-        '   - vocabulary_level（用词层次）：粗白（市井/底层）/日常（普通人）/文雅（读书人/官员）/书面（学者/文人）。从原文用词直接判断。'
+        '   - education_level（文化程度）：文盲/识字不多/普通/受过良好教育/学者。从句式复杂度、用词丰富度、会不会用成语典故判断。原文证据：引一句原文中角色说的话作为判断依据。稳定项，' + _STABLE_FIELD_RULE + '\n'
+        '   - knowledge_scope（知识边界）：这个角色的时代/阶层/见识决定他知道什么、不知道什么。如"古代农妇，不懂现代科技与时事", 或"现代都市白领，对古代文学不了解"。从角色身份、背景、行为推断。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
+        '   - speech_style（说话腔调）：用词雅俗、长短句风格、会不会用成语/专业词、口头禅、方言口音感。从原文对话提取最典型的说话特征。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
+        '   - vocabulary_level（用词层次）：粗白（市井/底层）/日常（普通人）/文雅（读书人/官员）/书面（学者/文人）。从原文用词直接判断。稳定项，' + _STABLE_FIELD_RULE
     ),
     ("G6",
         'O. 情境→行为：此人遇到某类情境时会怎么做，全部写进 situation_behaviors（6-12条），每条只写一次。\n'
@@ -234,8 +254,8 @@ _FORMAT_DIM_M = (
     '   - affinity_baseline（0-100）：此角色对一个新认识的人，默认会停在的关系基线。高冷/谨慎者低（25-40），热情/外向者高（55-70），多数人 45-55。\n'
     '   - volatility：情绪波动幅度，平稳/适中/剧烈（高神经质偏剧烈）。\n'
     '   - grudge_inertia：受到负面对待后多久消化，大度/一般/记仇（低宜人性或高神经质偏记仇）。\n'
-    '   - triggers（1-3 条）：碰了会让 ta 情绪激烈下降的具体雷点，从原文冲突场景提取。\n'
-    '   - soft_spots（1-3 条）：戳中会让 ta 心软/好感上升的点，从原文提取。'
+    '   - triggers（1-3 条）：碰了会让 ta 情绪激烈下降的具体雷点，从原文冲突场景提取。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
+    '   - soft_spots（1-3 条）：戳中会让 ta 心软/好感上升的点，从原文提取。按阶段给：' + _PHASE_DESCRIPTION_RULE
 )
 _FORMAT_OUTPUT_RULES = (
     '## 输出要求\n'
@@ -245,17 +265,17 @@ _FORMAT_TEMPLATE_INTRO = 'JSON 模板（所有字段必须包含）：'
 _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("name", '  "name": "角色名"'),
     ("identity", '  "identity": "一句话身份"'),
-    ("personality_traits", '  "personality_traits": ["特质1（原文证据）", "特质2（原文证据）", "特质3（原文证据）"]'),
+    ("personality_traits", '  "personality_traits": [' + _TIMED_TPL + ', ...]'),
     ("speaking_style",
         '  "speaking_style": {\n'
-        '    "tone": "语气描述",\n'
-        '    "sentence_pattern": "句式特点描述",\n'
-        '    "catchphrases": ["口癖1", "口癖2"],\n'
+        '    "tone": [' + _TIMED_TPL + '],\n'
+        '    "sentence_pattern": [' + _TIMED_TPL + '],\n'
+        '    "catchphrases": [' + _TIMED_TPL + '],\n'
         '    "vocabulary_level": "文雅/日常/粗白",\n'
         '    "taboo_words": ["禁忌词1", "禁忌词2"]\n'
         '  }'
     ),
-    ("values", '  "values": ["核心价值观1", "核心价值观2"]'),
+    ("values", '  "values": [' + _TIMED_TPL + ', ...]'),
     ("key_memories",
         '  "key_memories": [\n'
         '    {"memory": "关键经历（原文出处）", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]}\n'
@@ -263,15 +283,14 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ),
     ("relationships",
         '  "relationships": [\n'
-        '    {"target": "对方名", "relation": "关系类型", "attitude": "态度描述", "note": "一句话口径——本角色怎么看对方",\n'
-        '     "attitudes": [{"phase": 1, "attitude": "该阶段的态度", "quote": "该阶段原文摘录"}]}\n'
+        '    {"target": "对方名"}\n'
         '  ]'
     ),
-    ("inner_tensions", '  "inner_tensions": ["内在矛盾1（原文出处）", "内在矛盾2（原文出处）"]'),
+    ("inner_tensions", '  "inner_tensions": [' + _TIMED_TPL + ', ...]'),
     ("background", '  "background": "背景摘要"'),
     ("first_message", '  "first_message": "角色开场白"'),
-    ("emotional_patterns", '  "emotional_patterns": ["情感模式1（原文出处）", "情感模式2（原文出处）"]'),
-    ("decision_style", '  "decision_style": "决策风格描述（含原文依据）"'),
+    ("emotional_patterns", '  "emotional_patterns": [' + _TIMED_TPL + ', ...]'),
+    ("decision_style", '  "decision_style": [' + _TIMED_TPL + ']'),
     ("character_arc",
         '  "character_arc": {\n'
         '    "axis": "从…到…",\n'
@@ -294,15 +313,15 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
         '    "affinity_baseline": 50,\n'
         '    "volatility": "适中",\n'
         '    "grudge_inertia": "一般",\n'
-        '    "triggers": ["雷点1（原文冲突场景）", "雷点2（原文冲突场景）"],\n'
-        '    "soft_spots": ["软肋1（原文出处）", "软肋2（原文出处）"]\n'
+        '    "triggers": [' + _TIMED_TPL + ', ...],\n'
+        '    "soft_spots": [' + _TIMED_TPL + ', ...]\n'
         '  }'
     ),
     ("cognitive",
         '  "cognitive": {\n'
         '    "education_level": "文盲/识字不多/普通/受过良好教育/学者",\n'
-        '    "knowledge_scope": "此角色的知识边界描述",\n'
-        '    "speech_style": "说话腔调描述（含原文例证）",\n'
+        '    "knowledge_scope": [' + _TIMED_TPL + '],\n'
+        '    "speech_style": [' + _TIMED_TPL + '],\n'
         '    "vocabulary_level": "粗白/日常/文雅/书面"\n'
         '  }'
     ),
@@ -311,10 +330,11 @@ _FORMAT_IMPORTANCE_HEADING = '重要：'
 _FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
     ("G4", '- psyche 是必需嵌套对象，triggers 和 soft_spots 放在 psyche 内部，不在顶层'),
     (None, '- 数组字段的元素形态按模板来：模板里写成【一句字符串】的，就输出一句字符串，不要改成对象'),
-    ("G5", '- relationships 的每个元素是【对象】，含 target/relation/attitude/note/attitudes；attitudes 的每个元素是【对象】，含 phase/attitude/quote，phase 用维度 L 的阶段编号'),
+    (None, '- 写成 [{"value": …, "occurrences": […"phase"/"quote"…]}] 的字段，元素是【对象】；occurrences 的 phase 用维度 L 的阶段编号（1 起），全阶段都成立时把每个阶段都标上'),
+    ("G5", '- relationships 只出【名单】：每个元素是【对象】，只含 target（对方的标准名）；relation/attitude/note/attitudes 由后续步骤生成，不要在这里写'),
     ("G6", '- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state/anchor/boundary_examples'),
     ("G6", '- situation_behaviors / key_memories 的每个元素是【对象】；occurrences 的每个元素是【对象】，含 phase/quote'),
-    ("G6", '- 有阶段时，occurrences/attitudes 的 phase 用维度 L 的阶段编号（1 起）；没有阶段时只写一条，phase 填 0'),
+    ("G6", '- 有阶段时，occurrences 的 phase 用维度 L 的阶段编号（1 起）；没有阶段时只写一条，phase 填 0'),
     ("G4", '- 数字字段（openness/conscientiousness 等）输出整数，不要加引号'),
     (None, '- 所有字段必须按此模板输出，不要添加自定义字段'),
 )
@@ -323,6 +343,23 @@ _FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
 _FORMAT_FIELD_GROUP: dict[str, str] = {
     key: group for group, keys in FORMAT_GROUPS.items() for key in keys
 }
+
+
+def _has_phase_leaves(fields: tuple[str, ...]) -> bool:
+    """本组的字段里有没有状态/经历类叶子（登记表说了算，不写组名字）。"""
+    tops = set(fields)
+    return any(spec.layer in ("state", "experience") for path, spec in REGISTRY.items()
+               if path.split(".")[0] in tops)
+
+
+#: 需要 G6 先定出阶段、再启动的组：组内有状态/经历类字段（它们的 occurrences / overlay
+#: 要按阶段编号标注）。**由登记表推导**（DA7），不写死组名 —— 加一个状态类字段到某组，
+#: 该组自动变成依赖组。G6 自己产出阶段，不算依赖自己，故排除弧线所在的组。
+_PHASE_SOURCE_GROUP = next(g for g, fields in FORMAT_GROUPS.items() if "character_arc" in fields)
+PHASE_DEPENDENT_GROUPS: frozenset[str] = frozenset(
+    g for g, fields in FORMAT_GROUPS.items()
+    if g != _PHASE_SOURCE_GROUP and _has_phase_leaves(fields)
+)
 
 
 def format_prompt_after(group: str | None = None) -> str:
@@ -358,17 +395,57 @@ def format_prompt_after(group: str | None = None) -> str:
 
 DISTILL_PROMPT_AFTER_NAME = format_prompt_after()
 
+# 组提示词共有的**第一段**：角色行 + 头像句 + 铁律。`format_prompt_after(group)` 的每个
+# 组提示词都以此开头（组专属维度从「分析维度」那节起才分叉），故它是组间共享前缀；它不含
+# 任何组专属维度 —— 尤其不含维度 F 的「只出名单」（关系分批的组路径拿它当前缀）。
+_FORMAT_SHARED_HEAD = _FORMAT_HEADER + "\n\n" + _FORMAT_IRON_LAWS
+
+
+def format_prompt_shared(character_name: str) -> str:
+    """各组提示词共用的前缀（角色行 + 铁律）—— 关系分批在组路径上的前缀。
+
+    组提示词 = 本前缀 + 该组维度/模板。故它既让分批与各组共享缓存前缀，又不含任何组专属
+    维度 —— 分批要的是关系详情，不能把主/组提示里「这里不要写」的指令带进去（B2）。
+    """
+    return DISTILL_PROMPT_BEFORE_NAME + character_name + _FORMAT_SHARED_HEAD
+
+
+def book_prefix(text: str) -> str:
+    """共享前缀（一次读完路径的主调用与关系分批共用）：正文段。
+
+    「全文在前」是为了同一本书换角色时命中 Context Caching（前缀匹配，共享段须落在请求
+    最前面）。关系分批也用它当前缀 —— 正文是主调用与分批之间**唯一**不含本步指令的那一段。
+    """
+    return "以下是完整的文本内容：\n\n" + text
+
+
+def distill_instruction(character_name: str) -> str:
+    """本步指令（主调用）：角色行 + 分析维度 + 输出规则 + 草稿 JSON 结构。"""
+    try:
+        schema_str = json.dumps(draft_schema(), ensure_ascii=False, indent=2)
+    except (TypeError, ValueError) as exc:
+        print(f"生成 CharacterCard JSON Schema 失败：{exc}")
+        raise
+    return (DISTILL_PROMPT_BEFORE_NAME + character_name
+            + DISTILL_PROMPT_AFTER_NAME + schema_str)
+
+
+def _phase_labels(draft: dict) -> list[str]:
+    """草稿里弧线的阶段名（关系分批「阶段依次为…」用）。"""
+    phases = ((draft or {}).get("character_arc") or {}).get("phases") or []
+    return [p.get("label") or f"阶段 {i}" for i, p in enumerate(phases, 1)]
+
 
 def _phase_list_note(g6: dict) -> str:
-    """G5 提示词里附上的 G6 阶段列表（编号 · label · state）——关系态度按这些编号标注。
+    """依赖组提示词里附上的 G6 阶段列表（编号 · label · state）——按阶段标注的字段用这些编号。
 
     G6 没定出阶段（`phases` 空）时退回「没有阶段」的写法，让模型只写一条 phase 0。
     """
     phases = ((g6 or {}).get("character_arc") or {}).get("phases") or []
     if not phases:
-        return "本角色没有阶段：维度 F 的每条关系只写一条 attitude，phase 填 0。"
-    lines = ["本角色弧线的阶段（维度 L 已定，维度 F 的 attitudes 按这些编号标注）："]
-    lines += [f"  阶段 {i} · {p.get('label', '')} · {p.get('state', '')}"
+        return "本角色没有阶段：需要按阶段标注的字段只写一条，phase 填 0。"
+    lines = ["本角色弧线的阶段（维度 L 已定，按阶段标注的字段用这些编号）："]
+    lines += [f"  {phase_header(i, p.get('label', ''))} · {p.get('state', '')}"
               for i, p in enumerate(phases, 1)]
     return "\n".join(lines)
 
@@ -877,6 +954,56 @@ class Distiller:
             return evidence, True
         self._try_record_usage(usage_action, usage)
         return "".join(parts), False
+
+    def _relationships_batched(self, draft: dict[str, Any], *,
+                               prefix: str, character_name: str, material: str) -> None:
+        """把草稿里主调用只出的关系名单，按批换成完整关系（原地写回 `relationships`）。
+
+        §4.5：关系条数随登场人数增长、没有代码上限（C18），一次出全部会把输出顶到 token
+        上限。故主调用（维度 F）只出名单，细节交 `core.relationship_batch` 按 10 人一批、
+        批间并行补 —— 每批走 `_collect_stream`（非流式会撞 45s 生成墙钟，C20），前缀
+        `prefix` 与主调用同源（Context Caching 只认前缀）。任一批失败 → 整步失败
+        （`RelationshipBatchError` 转 `DistillError`），不静默丢人。
+
+        名单已补全（或主调用本就没照名单来）时直接返回：本函数只吃「只有 target、
+        还没 relation」的条目。
+
+        本步的 system 尾部与 user 消息都由 `relationship_batch._batch_prompt` 产出；这里只给
+        共享前缀与素材，**不传主调用的 messages**（那句「生成角色卡」会与「只输出关系数组」冲突，
+        R1）。`material`：一次读完路径为空（正文已在 `prefix` 里）；分组路径是分析档案。
+        """
+        targets = [r["target"] for r in (draft.get("relationships") or [])
+                   if r.get("target") and not r.get("relation")]
+        if not targets:
+            return
+
+        def _call(system: str, user: str, batch: list[str]) -> list[dict[str, Any]]:
+            messages = [{"role": "user", "content": user}]
+            reply, truncated = self._collect_stream(
+                system, messages, "关系生成", "distill_relationships")
+            return self._parse_json_with_retry(
+                reply, system, messages, action_label="distill_relationships",
+                upstream_truncated=truncated, list_item_keys=("target", "relation"),
+                stream=True)
+
+        try:
+            draft["relationships"] = batch_relationships(
+                targets, _phase_labels(draft), stream_call=_call,
+                prefix=prefix, name=character_name, material=material,
+                batch_size=REL_BATCH_SIZE)
+        except RelationshipBatchError as exc:
+            print(f"关系分批失败：{exc}")
+            raise DistillError("蒸馏失败：关系生成失败，请重试", str(exc)) from exc
+
+    def fill_relationships(self, draft: dict[str, Any], text: str,
+                           character_name: str) -> None:
+        """一次读完路径的**流式**支路：草稿只在消费方（SSE / 后台路由）成型，由它调这里补关系。
+
+        其余入口的草稿在 distiller 内部成型，入口自己调 `_relationships_batched`；这里只是
+        同一条链在消费方那一侧的入口，前缀与主调用同源（`book_prefix` 共享段）。
+        """
+        self._relationships_batched(draft, prefix=book_prefix(text),
+                                    character_name=character_name, material="")
 
     def _chat_accounted(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str, action: str,
@@ -1533,6 +1660,8 @@ class Distiller:
             reply, system_prompt, user_messages,
             action_label="distill", upstream_truncated=upstream_truncated,
         )
+        self._relationships_batched(data, prefix=book_prefix(text),
+                                    character_name=character_name, material="")
         try:
             return card_from_draft(data, text)
         except ValidationError as exc:
@@ -1614,18 +1743,11 @@ class Distiller:
 
         同步（`_distill_longcontext`）与流式（`_distill_longcontext_stream`）曾各拼各的，
         顺序因此分叉（同步那条留在旧结构）；收到这里一份，改顺序只改这里。
-        """
-        try:
-            schema_str = json.dumps(
-                draft_schema(), ensure_ascii=False, indent=2)
-        except (TypeError, ValueError) as exc:
-            print(f"生成 CharacterCard JSON Schema 失败：{exc}")
-            raise
 
-        system_prompt = (
-            "以下是完整的文本内容：\n\n" + text + "\n\n"
-            + DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
-        )
+        拆成 `book_prefix(text)`（共享段）+ `distill_instruction(name)`（本步指令）：关系分批
+        拿共享段当前缀，不会把本步指令里维度 F 的「只出名单」带进「给我详情」的那一步（B2）。
+        """
+        system_prompt = book_prefix(text) + "\n\n" + distill_instruction(character_name)
         user_content = f"请基于以上全文为「{character_name}」生成角色卡。"
         return system_prompt, [{"role": "user", "content": user_content}]
 
@@ -1642,6 +1764,8 @@ class Distiller:
             reply, system_prompt, user_messages,
             action_label="distill_longcontext", upstream_truncated=upstream_truncated,
         )
+        self._relationships_batched(data, prefix=book_prefix(text),
+                                    character_name=character_name, material="")
         try:
             return card_from_draft(data, text)
         except ValidationError as exc:
@@ -1819,12 +1943,14 @@ class Distiller:
         candidates = self.dialogue_candidates(content, name, aliases, roster)
         picked = self._pick_dialogue_examples(candidates, name, others)
         card_dict = card.model_dump()
-        if has_positions(card):
+        if card.character_arc.has_positions():
             pos = normalized_starts(content, [start for _, start in picked])
             card_dict["dialogue_examples"] = []
             for (text, _), norm_pos in zip(picked, pos):
-                card_dict["character_arc"]["phases"][
-                    phase_of(card, norm_pos) - 1]["dialogue_examples"].append(text)
+                # 阶段特有的示例落在 overlay（①的 `memories` 已在加载时并进去，同一个键）。
+                phase = card_dict["character_arc"]["phases"][phase_of(card, norm_pos) - 1]
+                phase.setdefault("overlay", {}).setdefault(
+                    "dialogue_examples", []).append(text)
         else:
             card_dict["dialogue_examples"] = [text for text, _ in picked]
         return CharacterCard.model_validate(card_dict)
@@ -2265,6 +2391,9 @@ class Distiller:
             reply, system_prompt, user_messages,
             action_label="distill_format", upstream_truncated=upstream_truncated,
         )
+        self._relationships_batched(
+            data, prefix=format_prompt_shared(character_name), character_name=character_name,
+            material=profile_draft)
         try:
             card = card_from_draft(data, text)
         except ValidationError as exc:
@@ -2537,11 +2666,13 @@ class Distiller:
 
         # ── Phase 3: Format — 各组并行，合并校验后一次交出 ──
         # 每组是一次长输出（共享前缀 + 组片段 + 该组子 schema），彼此独立，故并行发；组内串行。
-        # 唯一的依赖：G5（关系）的态度要按阶段编号标注，得先知道 G6（弧线）定下的阶段 ——
-        # 故 G5 的线程在 G6 返回后才启动，提示词附上 G6 的阶段列表；其余组照旧并行（C29）。
-        # 合并 → 按草稿校验（`CardDraft.model_validate`）→ **一个**草稿的 json.dumps 字符串
-        # yield：本生成器的每条路径都交出草稿，转成卡只在消费方调 `card_from_draft` 一处
-        # （两条消费路径都从累加串里 parse，见 web/routers/distill.py）。
+        # 依赖：组内有状态/经历类字段的组（`PHASE_DEPENDENT_GROUPS`，由登记表推导）要按阶段
+        # 编号标注 occurrences，得先知道 G6（弧线）定下的阶段 —— 故这些组的线程在 G6 返回后
+        # 才启动，提示词附上 G6 的阶段列表；G6 自己产出阶段、G1/G5 没有阶段字段，三者先并行。
+        # 合并 → 关系分批（主调用只出名单，见 `_relationships_batched`）→ 按草稿校验
+        # （`CardDraft.model_validate`）→ **一个**草稿的 json.dumps 字符串 yield：本生成器的
+        # 每条路径都交出草稿，转成卡只在消费方调 `card_from_draft` 一处（两条消费路径都从
+        # 累加串里 parse，见 web/routers/distill.py）。
         # 任一组失败或校验不过：上屏 error 帧，不拼半张卡。
         yield {"status": "formatting"}
 
@@ -2579,15 +2710,15 @@ class Distiller:
             except Exception as exc:
                 fmt_queue.put(("error", group, exc))   # 上屏口径交给下面统一出口
 
-        # 先起除 G5 外的组（G5 得等 G6）；破障/并行只发生在这一批。
+        # 先起不依赖阶段的组；破障/并行只发生在这一批。
         for group in FORMAT_GROUPS:
-            if group != "G5":
+            if group not in PHASE_DEPENDENT_GROUPS:
                 C.ctx_thread(_format_one_group, args=(group,),
                              name=f"format-{group}").start()
 
         group_data: dict[str, dict[str, Any]] = {}
 
-        # G6 到手 → 启动 G5（提示词附 G6 的阶段列表）
+        # G6 到手 → 启动依赖组（提示词附 G6 的阶段列表）
         while "G6" not in group_data:
             kind, group, payload = fmt_queue.get()
             if kind == "error":
@@ -2596,9 +2727,10 @@ class Distiller:
                 return
             group_data[group] = payload
             yield {"heartbeat": True}
-        C.ctx_thread(_format_one_group, args=("G5",),
-                     kwargs={"phase_list_note": _phase_list_note(group_data["G6"])},
-                     name="format-G5").start()
+        for group in PHASE_DEPENDENT_GROUPS:
+            C.ctx_thread(_format_one_group, args=(group,),
+                         kwargs={"phase_list_note": _phase_list_note(group_data["G6"])},
+                         name=f"format-{group}").start()
 
         while len(group_data) < len(FORMAT_GROUPS):
             kind, group, payload = fmt_queue.get()
@@ -2614,11 +2746,20 @@ class Distiller:
         for group in FORMAT_GROUPS:      # 按 FORMAT_GROUPS 的顺序合并，与完成次序无关
             merged.update(group_data[group])
         try:
+            # 关系详情：主调用只出名单，这里按批补齐（在按草稿校验之前，校验才见完整形态）。
+            self._relationships_batched(
+                merged,
+                prefix=format_prompt_shared(character_name),
+                character_name=character_name, material=format_input)
             draft = CardDraft.model_validate(merged)
         except ValidationError as exc:
             # 模块 logger，不是 print：print 只进容器 stdout（不进日志面板、不发告警），
             # 而这条上屏的是用户可见的报错帧 —— 服务端这一半必须留痕（spec-119 口径）。
             logger.error("Pydantic 校验 CharacterCard 失败：%s", exc)
+            yield {"error": user_facing_error(exc)}
+            return
+        except DistillError as exc:
+            logger.error("关系分批失败：%s", exc)
             yield {"error": user_facing_error(exc)}
             return
 

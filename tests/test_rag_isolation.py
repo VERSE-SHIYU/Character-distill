@@ -34,10 +34,12 @@ def _make_card(name="测试角色", traits=None, background="测试背景"):
 async def test_context_engine_rag_none():
     """ContextEngine._retrieve_scenes must return '' when rag is None."""
     print("1. ContextEngine with rag=None...", end=" ")
+    from core.arc_view import project_card
     from core.context_engine import ContextEngine
 
     card = _make_card("测试角色", ["温柔"], "测试背景")
-    ctx = ContextEngine(card=card, rag=None, card_id="test", storage=None)
+    # 注入层只收 ProjectedCard（DA18）：投影到最后一个阶段（不截断）。
+    ctx = ContextEngine(card=project_card(card, None)[0], rag=None, card_id="test", storage=None)
     result = ctx._retrieve_scenes("你好")
     assert result == "", f"Expected empty string, got: {result!r}"
     print("PASS (returns empty, no crash)")

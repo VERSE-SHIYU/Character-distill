@@ -352,15 +352,18 @@ const useAppStore = create((set, get) => {
     const phases = parseCardJson(card)?.character_arc?.phases || []
     return phases.length ? phases.length : null
   },
-  /** 建会话请求体：只此一处（S3）。有阶段带选中的（未选过用最后阶段），无阶段为 null。 */
+  /** 建会话请求体：只此一处（S3）。可按的卡带选中的（未选过用最后阶段）；不可按的不带。 */
   startSessionBody: (card) => {
     const cardId = card.id || card.card_id
     const chosen = get().getArcPhase(cardId)
+    const arc = parseCardJson(card).character_arc
     return {
       text_id: card.text_id || '',
       card_id: cardId,
       user_role: get().getUserRole(cardId),
-      arc_phase: chosen ?? get().defaultArcPhase(card),
+      // 不可按（起点不全 / 无指纹）的卡按最后阶段聊，前端不替它挑：带上去后端也只会
+      // 归一成最后阶段，不如让「没选」在请求里就是 null（DA8）。
+      arc_phase: arc?.selectable ? (chosen ?? get().defaultArcPhase(card)) : null,
     }
   },
 

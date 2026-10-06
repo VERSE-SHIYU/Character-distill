@@ -93,10 +93,10 @@ def test_u2_last_phase_keeps_axis_no_boundary():
 
 # ── U3 记忆 = 顶层 + 阶段 1..k ─────────────────────────────────
 def test_u3_memories_top_plus_upto_k():
-    card, view = av.project_card(_card(), 2)
+    # 记忆只在投影卡上算一次（`ArcView.memories` 已删，B5：同一份记忆不存两处）。
+    card, _ = av.project_card(_card(), 2)
     assert card.key_memories == ["top", "m1", "m2"]
     assert "m3" not in card.key_memories
-    assert view.memories == ["top", "m1", "m2"]
 
 
 def test_u3_memories_at_last_include_all():
@@ -131,10 +131,11 @@ def test_u4_last_phase_gives_none():
 
 
 def test_has_positions_true_and_false():
-    assert av.has_positions(_card()) is True
-    assert av.has_positions(_card(starts=(0, None, 200))) is False
-    assert av.has_positions(_card(starts=(0, 200, 100))) is False
-    assert av.has_positions(_card(fp="")) is False
+    # 判定已挪进 `CharacterArc.has_positions`（本段 S7）；卡级语义不变。
+    assert _card().character_arc.has_positions() is True
+    assert _card(starts=(0, None, 200)).character_arc.has_positions() is False
+    assert _card(starts=(0, 200, 100)).character_arc.has_positions() is False
+    assert _card(fp="").character_arc.has_positions() is False
 
 
 # ── U17 关系投影 ───────────────────────────────────────────────
@@ -161,10 +162,11 @@ def test_u17_mid_phase_takes_latest_upto_k():
     assert by["丁"].attitude == "疼爱"      # 旧卡原样
 
 
-def test_u17_last_phase_uses_top_attitude():
+def test_u17_last_phase_takes_phase_attitude():
+    # 本段 DA5 改了①：口径一律取 ≤k 最新一条，k=n 也取阶段 n 的（不再回落顶层）。
     card, _ = av.project_card(_card(relationships=_rels()), 3)
     by = {r.target: r for r in card.relationships}
-    assert by["乙"].attitude == "顶层"      # k=n 用顶层（用户可编辑），非阶段 3 的「晚」
+    assert by["乙"].attitude == "晚"
     assert "丙" in by
 
 
@@ -175,9 +177,10 @@ def test_u17_no_phase_attitudes_kept_at_mid_phase():
 
 
 # ── U18 台词投影 + phase_of 边界 ───────────────────────────────
-def test_u18_dialogues_top_plus_upto_k():
+def test_u18_dialogues_phase_k_first_then_top():
+    # 本段 DA15 把对白示例归状态类：阶段 k 特有在前 + 顶层（不再累加 1..k；B3 顺序契约）。
     card, _ = av.project_card(_card(), 2)
-    assert card.dialogue_examples == ["dt", "d1", "d2"]
+    assert card.dialogue_examples == ["d2", "dt"]
 
 
 def test_u18_phase_of_boundary_is_later_phase():

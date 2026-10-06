@@ -29,14 +29,15 @@ def test_object_arc_keeps_axis_labels_and_phase_behaviors():
         "phases": [{
             "label": "桀骜不服", "state": "大闹天宫前后，动辄动手",
             "behaviors": [{"situation": "被人轻视", "behavior": "当场动手", "source_quote": ""}],
-            "memories": [], "start": None, "boundary_examples": [], "dialogue_examples": [],
+            "overlay": {}, "start": None, "boundary_examples": [],
         }],
     }
 
 
 def test_card_without_new_fields_gets_empty_defaults():
     card = CharacterCard.model_validate({"name": "x"})
-    assert card.character_arc.model_dump() == {"axis": "", "phases": [], "source_fingerprint": ""}
+    assert card.character_arc.model_dump() == {
+        "axis": "", "phases": [], "source_fingerprint": ""}
     assert card.situation_behaviors == []
 
 
@@ -47,8 +48,8 @@ def test_dump_roundtrip_is_stable_and_canonicalizes_legacy_arc():
     once = CharacterCard.model_validate(legacy).model_dump()
     assert once["character_arc"] == {
         "axis": "", "source_fingerprint": "",
-        "phases": [{"label": "", "state": "a", "behaviors": [], "memories": [],
-                    "start": None, "boundary_examples": [], "dialogue_examples": []}],
+        "phases": [{"label": "", "state": "a", "behaviors": [], "overlay": {},
+                    "start": None, "boundary_examples": []}],
     }
     assert once["situation_behaviors"] == [{"situation": "s", "behavior": "b", "source_quote": ""}]
     assert CharacterCard.model_validate(once).model_dump() == once
