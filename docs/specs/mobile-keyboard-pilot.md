@@ -257,3 +257,35 @@ skill：第 2、4 步 `tdd`；第 3、5 步 `code-review-and-quality`；各一�
 - UA 三种：iOS Safari 的 UA 不滚；iOS 微信的 UA 在 300ms、1000ms 各滚一次；安卓 Chrome 的 UA 同样滚。
 - P4：「是否文字输入框」只有一个函数，`goalCheck.js` 与聚焦逻辑共用；text、password、email、search、tel、url、number 与 `textarea` 为真，checkbox、button 为假。
 - P5：网址参数在应用入口处理一次，`ChatArea` 不再调用。
+
+## 补充 3（2026-10-06）：键盘层提交（`59f8577`）审计
+
+**亲手跑**：受影响的 7 个测试文件 76/76 通过；CI 的 lint 命令对改动文件退出码 0。对核心规则做了 17 个变异（放宽、收紧两个方向）：15 个被打红，2 个存活（见 P7、P8）。执行方预跑的那一个锁变异我复跑，同样变红。
+
+**对着状态表走了一遍**：开关关闭时，`useKeyboardFocus` 不挂监听、`data-kbd-lift` 属性没有规则命中、旧 hook 照旧，角色聊天行为不变。旧 hook 的判断放在 `rafId = null` 之后（`useVisualViewport.js:21-24`），离开角色聊天后它能恢复工作。`keyboard.css` 的选择器优先级高于手机端固定 `body` 的规则，能覆盖。
+
+**逐文件结论**
+
+| 文件 | 结论 |
+|---|---|
+| `src/keyboard/textEntry.js` 及测试 | 通过。P4 已落实，全仓只此一处 |
+| `src/keyboard/useNativeKeyboardPage.js` 及测试 | 通过 |
+| `src/keyboard/keyboard.css` | 通过。与 D1、D3 一致；效果只能真机看 |
+| `src/keyboard/useKeyboardFocus.js` | B5、B7 的顺序正确。有 P6、P7 |
+| `src/keyboard/useKeyboardFocus.test.jsx` | 缺 P7 的用例 |
+| `src/utils/useVisualViewport.js` 及测试 | 通过 |
+| `src/main.jsx` | 通过。P5 已落实；入口处读本地存储与现有的 `utils/theme.js:7` 同等暴露，没有新增故障方式 |
+| `src/components/ChatArea.jsx` | 通过。有 P8、P9 |
+| `src/components/__tests__/ChatAreaGoalCheckWiring.test.jsx` | 缺 P8 的断言 |
+| `src/keyboard/goalCheck.js` | 通过，改为共用 `isTextEntry` |
+
+**问题**
+
+| # | 问题 | 属于 | 根因 | 处理 |
+|---|---|---|---|---|
+| P7 | 「键盘收起但未失焦时让它失焦」的判据是 `visualViewport.height >= window.innerHeight`，每次取当前的 `innerHeight`。ChatUI 的原实现不是这样：它在安装时记下窗口高度 `winHeight`，只在 `innerHeight` 变大时更新，然后比较 `visualViewport.height >= winHeight`（`Composer/index.js:134-146`）。iOS 26 上键盘弹起过程中 `innerHeight` 会短暂变小（svedit PR #352 的真机记录），按现在的写法这一瞬间条件可能成立，输入框被失焦，**键盘刚弹起就自己收回去** | **本文件补充 2 的 D6 写错**，执行方照做 | 我转述了源码而没有照抄，丢掉了「只增不减的窗口高度」这个关键细节（经验第 13 条） | 照抄原实现：`winHeight` 安装时取 `window.innerHeight`，处理函数里若 `innerHeight` 更大则更新，再比较。补两条用例：键盘开着（可视高度小于 `winHeight`）时触发 `resize` 不失焦；`innerHeight` 短暂变小到等于可视高度时不失焦。前一条同时消灭存活的变异「键盘还开着也让它失焦」 |
+| P6 | B8 的滚入视野打在聚焦的输入框上，不是输入栏。执行方的说明是「与 ChatUI 默认分支一致」，但 ChatUI 的调用点传了输入栏：`riseInput(inputRef.current, $composer)`（`Composer/ComposerInput.js:37-38`）。只影响安卓和内嵌浏览器 | 实现偏离 D5 | 引用出处时只看了被调函数的默认参数，没看调用点 | `useKeyboardFocus` 增加一个可选参数，由页面给出要滚进视野的元素，默认是输入框本身；`ChatArea` 传输入栏（`.composer-bar`）。不要在 hook 里写死类名 |
+| P8 | B7（聚焦时列表滚到底）没有测试守着，变异「聚焦时不滚到底」存活 | 实现（测试） | 接线测试只断言了类和属性，没断言回调的效果 | 接线测试里补一条：native 下聚焦后，列表的 `scrollTo` 以 `top = scrollHeight`、`behavior: 'instant'` 被调用 |
+| P9 | 监听挂在页面根节点上，所以根节点内任何文字输入框聚焦（例如记忆面板里的输入框）也会把消息列表滚到底 | 已知行为，本段接受 | 本段还没有「输入区」这个边界 | 不改。第三段抽出聊天骨架后监听收窄到输入区插槽 |
+
+**结论**：不通过，修完 P6、P7、P8 再部署。P7 最要紧，而且出在本文件自己。修正只动 `useKeyboardFocus.js`、它的测试、`ChatArea.jsx` 里的一个参数和接线测试的一条断言；不改接口的既有部分，不扩范围。
