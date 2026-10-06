@@ -203,6 +203,24 @@ describe('useKeyboardFocus (B5/B7/B8)', () => {
     expect(blurSpy).not.toHaveBeenCalled()
   })
 
+  // S1：安装时窗口高度偏小，之后回正——「只增」那一行要把 winHeight 追上去，
+  // 否则可视高度 400 撞上冻结的 winHeight 400 会被误判成「键盘收起」。
+  it('S1：安装时窗口高度偏小(400)，回正(800)后键盘弹起不误判失焦', () => {
+    setInnerHeight(400) // 安装前取值偏小，winHeight 记为 400
+    renderFocus({ ua: UAS.iosSafari })
+    act(() => ta.focus())
+    const blurSpy = vi.spyOn(ta, 'blur')
+
+    setInnerHeight(800) // 窗口高度回正
+    window.visualViewport.height = 400 // 键盘弹起，可视高度变小
+    act(() => window.visualViewport.emit('resize'))
+    expect(blurSpy).not.toHaveBeenCalled()
+
+    window.visualViewport.height = 800 // 键盘收起，可视高度长回
+    act(() => window.visualViewport.emit('resize'))
+    expect(blurSpy).toHaveBeenCalledTimes(1)
+  })
+
   // P6：滚进视野的目标由页面给出（第二个参数是输入区，不是 input 本身）。
   it('P6：传了 getRiseTarget 时，滚动打在返回的元素上，输入框自己不被滚', () => {
     const target = document.createElement('div')

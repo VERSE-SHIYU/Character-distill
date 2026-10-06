@@ -89,8 +89,9 @@ export default function useKeyboardFocus({
     root.addEventListener('focusout', handleFocusOut)
 
     // D6/P7：iOS 键盘收起但输入框没失焦（可视视口长回原高）→ 让它失焦。
-    // winHeight 只增不减：iOS 26 键盘弹起瞬间 innerHeight 会短暂变小，若每次
-    // 现取 innerHeight 比较，这一瞬会被误判成「键盘收起」而把刚弹起的键盘收回。
+    // winHeight 只增不减：据 svedit PR #352 记录，iOS 键盘弹起瞬间 innerHeight
+    // 会短暂变小，若每次现取 innerHeight 比较，这一瞬会被误判成「键盘收起」
+    // 而把刚弹起的键盘收回。
     const vv = window.visualViewport
     let winHeight = window.innerHeight
     const handleVVResize = () => {
