@@ -23,6 +23,7 @@ from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
 from adapters.llm_adapter import LLMAdapter, user_facing_error
 from core.arc_view import project_card, valid_phase
+from core.card_out import out_card
 from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core.embeddings import EMBEDDING_KEY_REQUIRED
@@ -1286,7 +1287,7 @@ async def list_cards(
     user_id = user["id"]
     result = await storage.list_cards(text_id, user_id)
     print(f"[distill] list_cards text_id={text_id} user_id={user_id} => {len(result)} cards")
-    return result
+    return [out_card(r) for r in result]
 
 
 @router.get("/cards/standalone")
@@ -1296,7 +1297,8 @@ async def list_standalone_cards(
     storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     """List standalone cards (forked from market, no text attachment)."""
-    return await storage.list_standalone_cards(user["id"])
+    rows = await storage.list_standalone_cards(user["id"])
+    return [out_card(r) for r in rows]
 
 
 @router.get("/cards/{card_id}/export")

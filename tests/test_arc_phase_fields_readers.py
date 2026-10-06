@@ -219,3 +219,92 @@ def test_guard_covers_overlay():
     c = make_card(2)
     set_overlay(c, 0, "key_memories", ["阶段一才有的记忆内容"])
     assert any("阶段一才有的记忆内容" in t for _, t in leaf_texts(c.model_dump()))
+
+
+# ── E20 出卡：`selectable` 现算（B4）─────────────────────────────────────────
+#
+# `character_arc.selectable` 是派生值，不随卡落库。存量 `card_json` 里可能带着过期值
+# （位置是后台作业补的，补完那张卡存下的仍是 false）或根本没这个键（旧卡）。出卡这一处
+# 按**当前** phases / 指纹现算，故陈值与缺键都要能被纠正。
+
+def _stored(card: CharacterCard, *, selectable=None) -> dict:
+    """一张存下来的行：`card_json` 是字符串，可注入一个过期的 `selectable`。"""
+    import json
+
+    data = card.model_dump()
+    if selectable is not None:
+        data["character_arc"]["selectable"] = selectable
+    return {"id": 1, "name": "甲", "card_json": json.dumps(data, ensure_ascii=False)}
+
+
+def _arc_of(card_json) -> dict:
+    import json
+
+    return (json.loads(card_json) if isinstance(card_json, str) else card_json)["character_arc"]
+
+
+def test_out_card_recomputes_stale_false_to_true():
+    """E20：存量 `selectable:false`（位置补上前存下的陈值）在出卡时按当前 phases 纠正为 true。"""
+    from core.card_out import out_card
+
+    c = make_card(2)                       # 起点齐全 + 指纹 → 应当可选
+    assert c.character_arc.has_positions() is True
+    assert _arc_of(out_card(_stored(c, selectable=False))["card_json"])["selectable"] is True
+
+
+def test_out_card_recomputes_stale_true_to_false():
+    """E20：存量 `selectable:true` 但起点已缺 → 出卡时为 false（陈值双向都要纠正）。"""
+    from core.card_out import out_card
+
+    c = make_card(2)
+    for p in c.character_arc.phases:       # 起点缺失 → 不可选
+        p.start = None
+    assert c.character_arc.has_positions() is False
+    assert _arc_of(out_card(_stored(c, selectable=True))["card_json"])["selectable"] is False
+
+
+def test_out_card_fills_missing_key():
+    """E20：旧卡 `card_json` 没有这个键 → 出卡时补上现算的值。"""
+    from core.card_out import out_card
+
+    c = make_card(2)
+    assert "selectable" not in _arc_of(_stored(c)["card_json"])   # 旧卡没这个键
+    assert _arc_of(out_card(_stored(c))["card_json"])["selectable"] is True
+
+
+def test_out_card_passes_everything_else_through():
+    """E20：除 `selectable` 外整卡与行的其它列逐字透传（不含 selectable 后的两份 JSON 相等）。"""
+    import json
+
+    from core.card_out import out_card
+
+    c = make_card(2)
+    c.personality_traits = ["全程"]
+    row = _stored(c, selectable=False)
+    row["created_at"] = "2026-01-01"       # 行的其它列
+
+    out = out_card(row)
+    assert out["id"] == 1 and out["created_at"] == "2026-01-01"
+
+    before = json.loads(row["card_json"])
+    after = json.loads(out["card_json"])
+    before["character_arc"].pop("selectable")
+    after["character_arc"].pop("selectable")
+    assert after == before
+
+
+def test_out_card_accepts_dict_card_json():
+    """E20：`card_json` 已是 dict（调用方解好的）也收，且同样现算。"""
+    from core.card_out import out_card
+
+    c = make_card(2)
+    out = out_card({"id": 1, "card_json": c.model_dump()})
+    assert out["card_json"]["character_arc"]["selectable"] is True
+
+
+def test_out_card_without_card_json_is_untouched():
+    """E20：没有 `card_json` 的行（如聚合行）原样返回。"""
+    from core.card_out import out_card
+
+    row = {"id": 1, "name": "甲"}
+    assert out_card(row) == row

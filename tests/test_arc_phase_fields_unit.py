@@ -173,20 +173,24 @@ def test_relationship_note_follows_phase():
 # ── U10 selectable 与 valid_phase ────────────────────────────────────────
 
 def test_selectable_and_valid_phase():
-    """U10：起点齐全 + 指纹 → selectable；否则 valid_phase 恒 None。"""
+    """U10：起点齐全 + 指纹（`has_positions`）→ 可选；否则 valid_phase 恒 None。
+
+    `selectable` 不再是模型上的字段（B4：派生值不落库），出卡时才现算 —— 判定口径仍
+    只有 `CharacterArc.has_positions` 一处。
+    """
     from core.arc_view import valid_phase
 
     good = make_card(3, starts=[0, 10, 20], fingerprint="fp")
-    assert good.character_arc.selectable is True
+    assert good.character_arc.has_positions() is True
     assert valid_phase(good, 2) == 2
     assert valid_phase(good, None) is None
 
     no_start = make_card(3, fingerprint="fp")           # 起点缺失
-    assert no_start.character_arc.selectable is False
+    assert no_start.character_arc.has_positions() is False
     assert valid_phase(no_start, 2) is None
 
     no_fp = make_card(3, starts=[0, 10, 20], fingerprint="")  # 无指纹
-    assert no_fp.character_arc.selectable is False
+    assert no_fp.character_arc.has_positions() is False
     assert valid_phase(no_fp, 2) is None
 
 

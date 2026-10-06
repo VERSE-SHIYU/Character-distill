@@ -138,6 +138,7 @@ C27. 线上模型是 `deepseek-flash`（`adapters/llm_adapter.py:717` `_FALLBACK
 |---|---|---|---|
 | `core/card_layers.py`（新） | 只做声明：登记表、`FieldSpec`、按路径读写（pydash 薄封装） | `core.schema`、pydash | 其余 core 模块 |
 | `core/arc_view.py` | 纯计算：阶段归一、通用投影、`ProjectedCard` 的唯一构造处 | `schema`、`card_layers` | 任何 IO、LLM、路由 |
+| `core/card_out.py`（新） | 出卡：存储行 → 前端卡片负载的**唯一一处**；`character_arc.selectable` 按当前 phases / 指纹现算（派生值不落库，B4） | `core.schema` | 其余 core 模块、路由 |
 | `core/card_draft.py` | 纯计算：草稿 → 存卡、按类别分发 | `schema`、`card_layers`、`phase_anchoring`、`quotes` | `distiller`、IO |
 | `core/relationship_batch.py`（新） | 关系分批：切批、并行、汇总、失败口径；**调用模型的函数由调用方注入** | `schema`、`card_layers`、`concurrency` | `distiller`、`adapters`、路由 |
 | `core/opening.py`（新） | 开场白 / 苏醒台词的提示词与生成，收 `ProjectedCard` 与注入的模型调用 | `schema`、`arc_view` | 路由、存储 |
@@ -149,7 +150,8 @@ C27. 线上模型是 `deepseek-flash`（`adapters/llm_adapter.py:717` `_FALLBACK
 - `core/card_layers.py`：`REGISTRY: dict[str, FieldSpec(layer, kind)]`；读写用 pydash（DA12）。
 - `project_card` 改为按登记表通用投影；custom 路径调各自函数（沿用①）。逐字段手写分支删除。
 - `ArcPhase.overlay` 校验：键 ∈ 登记表 state / experience 路径，值类型与 `kind` 一致。①格式 `memories` / `dialogue_examples` 在 `model_validator(mode="before")` 搬进 overlay（唯一转换点）。
-- `CharacterArc.has_positions()`（判定从 `arc_view` 挪入 schema）与 `selectable`（`computed_field`）；`valid_phase` 在 `selectable` 为假时恒 None。
+- `CharacterArc.has_positions()`（判定从 `arc_view` 挪入 schema，是「能否选阶段」的唯一口径）；`valid_phase` 在 `has_positions` 为假时恒 None。
+- **`selectable` 不是模型字段（B4）**：它是派生值（起点齐全 + 指纹），随序列化落库就会过期 —— 旧卡没这个键；位置由后台作业补，补完那张卡存下的仍是 `false`。改由 `core/card_out.py::out_card` 在**出卡时**按当前 `phases` / 指纹现算；两个开聊接口（`/cards/by-text/{id}`、`/cards/standalone`，即 `StartChatButton` 的两条取数路径）过它，其余接口不接（市场、群聊不走开聊按钮）。
 
 ### 4.2 分发（`card_draft.py`）
 - `dispatch` 加 `layer` 参数：state → 每个最终阶段（全部 → 顶层）；experience → 只最早阶段（从阶段 1 起覆盖全部 → 顶层）。`by_phase[` 仍只此一处。
@@ -212,9 +214,10 @@ U1 登记表 = 叶子全集（多、少都红）；U2 状态列表取「顶层 +
 | E17 引文核对 / 注入守卫 | overlay 覆盖 | — | — | — | `test_quotes_cover_overlay`、`test_guard_covers_overlay` |
 | E18 苏醒台词 | 最后阶段投影 | ✓ | — | — | `test_awakening_projected` |
 | E19 新会话开场变体 | 投影卡 | ✓ | — | — | U19 |
+| E20 出卡（两个开聊接口） | `selectable` 现算 | — | — | — | `test_out_card_recomputes_stale_false_to_true` 等 6 条 |
 
 ### 6.3 结构锁
-S1 登记表 = 叶子全集；S2 `project_card` 不出现具体字段名分支（custom 除外）；S3 拼人设 prompt 的模块只读投影卡（`market.py`、开场白含 `project_card(`）；S4 描述规则、稳定类规则常量各一次；S5 `distiller.py` 无写死 `"G5"` 依赖；S6 `by_phase[` 只在 `dispatch`；S7 起点判定只在 `CharacterArc.has_positions`；S8 关系分批只有 `_relationships_batched` 一处、批大小常量一次；S9 分批调用只经 `_collect_stream`；S10 审核与守卫共用一个遍历函数；**S3（改）** 拼角色扮演 prompt 的入口参数类型为 `ProjectedCard`，`ProjectedCard(...)` 只在 `arc_view.py` 出现；**S11** 导入方向（§4.0）：AST 扫描各模块导入，违反即红；**S12** 开场白提示词只在 `core/opening.py`。
+S1 登记表 = 叶子全集；S2 `project_card` 不出现具体字段名分支（custom 除外）；S3 拼人设 prompt 的模块只读投影卡（`market.py`、开场白含 `project_card(`）；S4 描述规则、稳定类规则常量各一次；S5 `distiller.py` 无写死 `"G5"` 依赖；S6 `by_phase[` 只在 `dispatch`；S7 起点判定只在 `CharacterArc.has_positions`；S8 关系分批只有 `_relationships_batched` 一处、批大小常量一次；S9 分批调用只经 `_collect_stream`；S10 审核与守卫共用一个遍历函数；**S3（改）** 拼角色扮演 prompt 的入口参数类型为 `ProjectedCard`，`ProjectedCard(...)` 只在 `arc_view.py` 出现；**S11** 导入方向（§4.0）：AST 扫描各模块导入，违反即红；**S12** 开场白提示词只在 `core/opening.py`；**S13** 关系生成口径（五条规则）只在 `relationship_batch.py` 一处、`_batch_prompt` 确实引用它；**S14** 分批前缀只能由共享前缀函数（`book_prefix` / `format_prompt_shared`）产出、且确为各组提示词的前缀；**S15 出卡只有一处（B4）**：`out_card` 仅在 `core/card_out.py` 定义一次、只被 `list_cards` / `list_standalone_cards` 调用；`schema.py` 无 `computed_field` / `def selectable`；`"selectable"` 字面只在 `card_out.py`。
 
 ## 7. 变异（两方向）与预跑
 
@@ -236,6 +239,12 @@ S1 登记表 = 叶子全集；S2 `project_card` 不出现具体字段名分支�
 | MA21 | `ContextEngine` 收原卡不抛错 | U18 | ✅（原型三） |
 | MA22 | `relationship_batch` 导入 `distiller` | S11 | ✅（原型三） |
 | MA23 | 新会话开场变体绕过 `opening.py` 用原卡 | E19、S12 | 实现后 |
+| MA1–MA3 / MB1–MB3（改） | 状态顺序契约（阶段 k 在前）/ 分发只有一套（`kind` 定格子容量） | U2、U8 | ✅（B1、B3） |
+| MB4 | 每个字段各自归一化整本原文 | U20 | ✅（效率 #1） |
+| MB5–MB7 | 分批前缀退回主调用系统提示 / 关系口径内联回维度 F / 组前缀塞进整段格式提示 | U22、S13、S14 | ✅（B2 提示词、B7） |
+| MB8 | 阶段 note 不落卡 | U23 | ✅（B7） |
+| MB9 / MB10 | 缺人不补跑 / 补跑后仍缺只丢人不报错 | U24、U25 | ✅（B2 关系完整性） |
+| **MB11** | **出卡不重算 `selectable`（退回透传存量值，B4 的旧形态）** | **E20** | **✅（本步）** |
 
 预跑原始输出（原型一：登记表驱动的通用投影）：
 
@@ -395,6 +404,30 @@ N，阶段 k 才成立的人设就被整段切掉 —— 与「选阶段 k 只�
 加一条独有标记，断言标记仍进得了读者产出（先证对 `base + kth` 老顺序全红、改后全绿）。变异 `MA1`
 （取 1..k 累加）/`MA2`（取全部阶段）/`MA3`（丢顶层）靶子与锚随之更新，均实测 RED。
 
+### B4 出卡只有一处（2026-10-06，本步一个提交）
+
+**缺陷**：`CharacterArc.selectable` 是 `@computed_field`，`model_dump_json()`（存库那刻）会把它算一遍
+写进 `card_json`。它是**派生值**（起点齐全 + 有正文指纹），会过期：旧卡没这个键；位置由后台作业
+补，补完那张卡存下的仍是 `false`。前端 `StartChatButton` 读 `data.character_arc?.selectable` 决定
+是否渲染阶段选择框 —— 读到陈值 ⇒ 该能选阶段的卡不显示选择框。
+
+**契约**：派生值**不落库**；出卡时按**当前** `phases` / 指纹现算。判定口径仍只有
+`CharacterArc.has_positions()` 一处。
+
+**改法**：① 模型去掉 `@computed_field` / `selectable`（`core/schema.py` 导入改回 `BaseModel,
+model_validator`）；② 新增 `core/card_out.py::out_card(row)` —— 存储行 → 前端卡片负载的唯一一处，
+只补 `character_arc.selectable` 这一个派生键、其余逐字透传，`card_json` 字符串 / dict 都收；
+③ 两个开聊接口（`/cards/by-text/{id}`、`/cards/standalone`，即 `StartChatButton` 的两条取数路径）
+返回 `[out_card(r) for r in …]`；市场、群聊不走开聊按钮，不接（Shiyu 已核实范围）。
+
+**判据**：`E20` 六条（`tests/test_arc_phase_fields_readers.py::test_out_card_*`）—— 陈值 `false`→`true`、
+陈值 `true`→`false`、缺键补齐、除 `selectable` 外逐字透传、`card_json` 为 dict 也收、无 `card_json`
+原样返回；结构锁 `S15` —— `out_card` 仅 `core/card_out.py` 定义一次、只被两个接口调用、`schema.py`
+无 `computed_field` / `def selectable`、`"selectable"` 字面只在 `card_out.py`。变异 `MB11`（出卡不重算、
+退回透传存量值）靶 `test_out_card_recomputes_stale_false_to_true`，实测 RED、逐字节还原。受影响的既有
+测试：`test_card_arc_behaviors.py`（三处 `model_dump()` 断言去掉 `"selectable"`）、
+`test_arc_phase_fields_unit.py::U10`（改断言 `has_positions()`）。
+
 ### 偏离与旁证（随步记录）
 
 - **B2 组路径/档案路径的共享前缀**：spec 只点名了「一次读完路径拆 `book_prefix`」与「组路径
@@ -420,6 +453,14 @@ N，阶段 k 才成立的人设就被整段切掉 —— 与「选阶段 k 只�
   （状态）与 `test_u18_dialogues_top_plus_phase_k`（对白）两个名字已与事实相反，随内容一并改为
   `..._phase_k_first_then_top`；`MA1`/`MA2`/`MA3` 的靶子名与载荷锚同步更新。这两处改名属本步改动
   的直接后果，不另计偏离。
+- **B4 范围边界（Shiyu 已核实，本段按此执行）**：`selectable` 现算只接在**两个开聊接口**上
+  （`/cards/by-text/{id}`、`/cards/standalone`）。这意味着前端**必须重新取数**才看得到纠正后的值：
+  若列表对象在位置补写之前取过一次并留在 store 里，要等下次拉列表才更新。这是本次点名的范围
+  （市场、群聊不走开聊按钮，不接），非本段引入的新问题 —— 旧实现里该值更糟（落库那刻就固化，
+  永不更新）。不另计偏离。
+- **B4 去 `computed_field` 属更正而非偏离**：spec §4.1 原写「`selectable`（`computed_field`）」，
+  正是缺陷形态（派生值随序列化落库）。本步把 §4.1 一并改写，规则从「模型字段」挪到「出卡现算」，
+  口径仍只有 `has_positions` 一处。
 - **旁证（非本段改动面）**：注册变异驱动 `tests/perf/arc_phase_anchoring_mutations.py` 有三条
   锚点已在更早的分支提交上失真（M17 锚 `row.occurrences`、M30 锚 `occurrences: list[...] = []`
   计数 3、M35 锚旧版 warning 文案），`_apply` 的「锚点恰一命中」会当场 assert，该驱动**跑不完**。

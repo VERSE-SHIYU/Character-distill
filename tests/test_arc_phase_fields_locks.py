@@ -204,6 +204,9 @@ def test_s11_import_direction():
     op = _imports(_CORE / "opening.py")
     assert not (op & {"web", "storage", "distiller"}), f"opening 导入越界：{op}"
 
+    co = _imports(_CORE / "card_out.py")
+    assert co <= {"schema", "json", "typing"}, f"card_out 导入了越界模块（§4.0 只可导入 core.schema）：{co}"
+
 
 # ── S12 开场白 / 苏醒台词提示词只在 `core/opening.py` ─────────────────────────
 def test_s12_opening_prompts_only_in_opening_module():
@@ -269,3 +272,47 @@ def test_s14b_shared_prefix_is_a_real_shared_prefix():
         assert full.startswith(shared), f"组共享前缀不是 {g} 提示词的前缀"
     assert "只出名单" not in shared, "组共享前缀带了维度 F 的「只出名单」"
     assert "只出名单" not in book_prefix("正文"), "book_prefix 带了维度 F 的「只出名单」"
+
+
+# ── S15 出卡只有一处：派生 `selectable` 不落库，出卡单点现算（B4）────────────
+def _callers(path: Path, func: str) -> set[str]:
+    """调用 `func(...)` 的**所属函数名**集合（AST；模块级调用记为 `<module>`）。
+
+    不看注释/文档串 —— 文本子串会被「出卡这一处」这类说明满足。
+    """
+    tree = ast.parse(_read(path))
+    owner: dict[int, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for c in ast.walk(node):
+                owner.setdefault(id(c), node.name)
+    return {owner.get(id(n), "<module>")
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == func}
+
+
+def test_s15_out_card_is_the_only_card_out():
+    """出卡只有 `core/card_out.py::out_card` 一处，且只在两个开聊接口被调（B4）。
+
+    `selectable` 是派生值（起点齐全 + 指纹），**不随卡落库**：模型上不再有 `computed_field`，
+    否则存库那刻算一遍写进 `card_json` 就会过期（旧卡没这个键；位置是后台作业补的，补完那张
+    卡存下的仍是 false）。出卡这一处按当前 phases / 指纹现算。市场、群聊不走开聊按钮，不接。
+    """
+    # 1) 定义只有一处
+    defs = _hits(_CORE, r"^def out_card\(")
+    assert [f for f, _ in defs] == ["core/card_out.py"], f"out_card 应只在 card_out 定义一次：{defs}"
+
+    # 2) 模型不再把派生值当字段序列化
+    schema = _read(_CORE / "schema.py")
+    assert "computed_field" not in schema, "schema 里还留着 computed_field（派生值会落库）"
+    assert not re.search(r"\bdef selectable\b", schema), "schema 里还留着 selectable"
+
+    # 3) 调用点只在这两个开聊接口（`StartChatButton` 的两条取数路径）
+    callers = _callers(_WEB / "routers" / "distill.py", "out_card")
+    assert callers == {"list_cards", "list_standalone_cards"}, f"out_card 调用点不对：{callers}"
+    extra = _files(_BOTH, r"\bout_card\(") - {"core/card_out.py", "web/routers/distill.py"}
+    assert not extra, f"out_card 在别处也被调/定义：{extra}"
+
+    # 4) `"selectable"` 字面只在出卡这一处（core/web 的 .py）
+    lit = _files(_BOTH, r"""["']selectable["']""")
+    assert lit <= {"core/card_out.py"}, f"`selectable` 字面逸出出卡模块：{lit}"

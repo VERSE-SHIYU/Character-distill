@@ -67,10 +67,10 @@ def _phase_in_range(card: CharacterCard, arc_phase: int | None) -> int | None:
 def valid_phase(card: CharacterCard, arc_phase: int | None) -> int | None:
     """用户选的阶段号是否有效：1..n 原样返回；None / 越界 / 卡不可选阶段 → None。
 
-    路由存库前的校验用它。`selectable` 为假的卡（起点不全或缺指纹）恒不可选（DA8）——
-    归一（`_normalize_k`）不吃这个门：位置不全的旧卡照样投影到用户给的阶段号。
+    路由存库前的校验用它。不可选阶段的卡（起点不全或缺指纹，`has_positions` 为假）恒不可选
+    （DA8）—— 归一（`_normalize_k`）不吃这个门：位置不全的旧卡照样投影到用户给的阶段号。
     """
-    if not card.character_arc.selectable:
+    if not card.character_arc.has_positions():
         return None
     return _phase_in_range(card, arc_phase)
 

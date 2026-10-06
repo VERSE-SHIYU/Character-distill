@@ -4,7 +4,7 @@ import logging
 import json
 from typing import Any, Literal, NamedTuple, TypedDict
 
-from pydantic import BaseModel, computed_field, model_validator
+from pydantic import BaseModel, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -183,12 +183,6 @@ class CharacterArc(ArcAxis):
         if any(s is None for s in starts):
             return False
         return all(starts[i] < starts[i + 1] for i in range(len(starts) - 1))
-
-    @computed_field
-    @property
-    def selectable(self) -> bool:
-        """能否在开聊时选阶段：起点齐全 + 有指纹（前端按它决定是否渲染选择框，DA8）。"""
-        return self.has_positions()
 
 
 class CharacterCard(BaseModel):

@@ -51,8 +51,10 @@ RB = ROOT / "core" / "relationship_batch.py"
 CTX = ROOT / "core" / "context_engine.py"
 TM = ROOT / "core" / "text_manager.py"
 PA = ROOT / "core" / "phase_anchoring.py"
+CARD_OUT = ROOT / "core" / "card_out.py"
+WDISTILL = ROOT / "web" / "routers" / "distill.py"
 
-TARGETS = (AV, CL, CD, SCHEMA, DIST, AREV, MARKET, RB, CTX, TM, PA)
+TARGETS = (AV, CL, CD, SCHEMA, DIST, AREV, MARKET, RB, CTX, TM, PA, CARD_OUT, WDISTILL)
 
 U = "tests/test_arc_phase_fields_unit.py"
 LOC = "tests/test_arc_phase_fields_locks.py"
@@ -65,6 +67,10 @@ def _u(name: str) -> str:
 
 def _loc(name: str) -> str:
     return f"{LOC}::{name}"
+
+
+def _r(name: str) -> str:
+    return f"{READERS}::{name}"
 
 
 # (编号, 靶子测试, [(动作, 文件, 载荷)], 期望)
@@ -239,6 +245,12 @@ MUTANTS = [
                      "        if still:\n"
                      '            raise RelationshipBatchError(f"关系生成缺少人物：{\'、\'.join(still)}")',
                      "        want = [k for k in want if k in found]  # 变异：静默丢掉还缺的人")])], "RED"),
+    # MB11：B4 —— 出卡这一处按**当前** phases / 指纹现算 `selectable`；不重算即退回修复前
+    # 的形态（接口把存量行原样透传，陈值 `false` / 缺键照旧），只有 E19 的三条撞得到。
+    ("MB11 出卡不重算 selectable（B4 的旧形态）",
+     _r("test_out_card_recomputes_stale_false_to_true"),
+     [("repl", CARD_OUT, [('        card["character_arc"] = {**arc, "selectable": CharacterArc.model_validate(arc).has_positions()}',
+                           '        card["character_arc"] = arc  # 变异：不重算，透传存量值')])], "RED"),
 ]
 
 BASELINE_TARGETS = (U, READERS, "tests/test_arc_phase_fields_entries.py", LOC)
