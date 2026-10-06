@@ -521,12 +521,12 @@ class TextManager:
         generated_opening = ""
         if card.first_message and self._llm:
             try:
-                variation_prompt = (
-                    f"你是「{card.name}」。以下是你的标准开场白：\n"
-                    f"「{card.first_message}」\n\n"
-                    f"请用同样的语气、口癖和风格，重新说一句意思相近但措辞不同的开场白。"
-                    f"只输出开场白本身，不要解释。保持{card.name}的说话习惯。50字以内。"
-                )
+                # 提示词**只此一处**（锁 S12）：变体的措辞不换口吻，故按最后一个阶段投影
+                # （k=n 不截断，`first_message` 原样留着）。
+                from core.arc_view import project_card
+                from core.opening import build_variation_prompt
+
+                variation_prompt = build_variation_prompt(project_card(card, None)[0])
                 opening = await asyncio.to_thread(
                     self._llm.chat,
                     f"你是{card.name}，保持角色风格。",

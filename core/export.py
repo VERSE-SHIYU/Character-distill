@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from core.arc_view import project_card
 from core.schema import CharacterCard
 
 
@@ -16,7 +17,11 @@ def to_tavern_json(card: CharacterCard, first_message: str = "") -> dict:
 
     Returns:
         Dict conforming to ``chara_card_v2`` / ``spec_version: "2.0"``.
+
+    导出的是**投影到最后一个阶段**的卡（阶段 k 那个人的样子 + 一到 k 的经历），阶段特有的
+    内容再按阶段另起一行列出 —— 单给原卡会是「全书混在一起」的人设。
     """
+    card = project_card(card, None)[0]
     style = card.speaking_style
 
     personality_lines: list[str] = []

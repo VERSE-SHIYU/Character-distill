@@ -44,6 +44,18 @@ class ProjectedCard(CharacterCard):
     """
 
 
+def require_projected(card) -> ProjectedCard:
+    """拼角色扮演 prompt 的入口只收投影卡 —— 收原卡在类型上直接堵死（DA18）。
+
+    仅类型检查，不复制：`project_card` 已经给的是副本，这里再拷一次只会多一份没人读的卡。
+    """
+    if not isinstance(card, ProjectedCard):
+        raise TypeError(
+            f"{type(card).__name__} 不是 ProjectedCard —— 拼角色扮演 prompt 只收 "
+            f"core.arc_view.project_card 的产物")
+    return card
+
+
 def _phase_in_range(card: CharacterCard, arc_phase: int | None) -> int | None:
     """**阶段号的范围规则只在这里**：1..n 原样返回，None / 越界 → None（审计 A3）。"""
     n = len(card.character_arc.phases)

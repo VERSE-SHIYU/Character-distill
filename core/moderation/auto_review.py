@@ -8,6 +8,7 @@ from typing import Any
 
 from adapters.llm_adapter import LLMAdapter
 from core.llm_json import loads_llm_json
+from core.moderation.card_text import iter_texts
 from core.utils import try_record_usage
 
 logger = logging.getLogger(__name__)
@@ -123,25 +124,12 @@ async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None,
 
 
 def _flatten_card(card_json: dict[str, Any]) -> str:
-    """Convert card JSON to a flat text for LLM review."""
+    """Convert card JSON to a flat text for LLM review.
+
+    叶子遍历走 `core.moderation.card_text.iter_texts` —— 与注入守卫共用同一份递归（锁 S10），
+    卡里新加的嵌套（如 ①迁移后的 `phases[].overlay`）自动进审核，不必再改这里。
+    逐叶截断只为压住审核 payload 的长度，不改变「哪些内容会被看到」。
+    """
     import json as _json
-    parts = []
-    for key in ("name", "identity", "background", "personality"):
-        val = card_json.get(key)
-        if val:
-            parts.append(f"{key}: {val}")
-    for key in ("personality_traits", "values", "inner_tensions", "speaking_style"):
-        val = card_json.get(key)
-        if val:
-            if isinstance(val, dict):
-                parts.append(f"{key}: {_json.dumps(val, ensure_ascii=False)}")
-            elif isinstance(val, list):
-                parts.append(f"{key}: {'; '.join(str(v) for v in val)}")
-            else:
-                parts.append(f"{key}: {val}")
-    # Include any other fields
-    for k, v in card_json.items():
-        if k not in ("name", "identity", "background", "personality", "personality_traits", "values", "inner_tensions", "speaking_style"):
-            if isinstance(v, str) and len(v) > 20:
-                parts.append(f"{k}: {v[:500]}")
+    parts = [f"{path}: {text[:500]}" for path, text in iter_texts(card_json)]
     return "\n".join(parts) if parts else _json.dumps(card_json, ensure_ascii=False)

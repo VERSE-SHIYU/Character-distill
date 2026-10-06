@@ -817,6 +817,7 @@ async def at_reply(
     """用被@角色卡的设定生成 AI 回应，存为特殊评论。"""
     import asyncio, json as _json
     from deps import get_user_llm
+    from core.arc_view import project_card
     from core.schema import CharacterCard
 
     # 1. 校验 at_card_id 是同书 public 卡
@@ -835,6 +836,8 @@ async def at_reply(
     if isinstance(card_json_str, dict):
         card_json_str = _json.dumps(card_json_str, ensure_ascii=False)
     char = CharacterCard.model_validate(_json.loads(card_json_str))
+    # 回复按最后一个阶段的口吻（投影卡的设定类字段只含阶段 k 的那个人），原卡不外泄。
+    char = project_card(char, None)[0]
 
     # 3. 拼 system_prompt（轻量版，只用角色核心设定）
     traits = "\n".join(f"- {t}" for t in (char.personality_traits or []))

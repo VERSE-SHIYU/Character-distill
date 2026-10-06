@@ -34,6 +34,7 @@ import re
 from dataclasses import dataclass, field
 
 from adapters.llm_adapter import LLMAdapter
+from core.moderation.card_text import iter_texts
 from core.utils import try_record_usage
 from core import concurrency as C  # 派生与上下文传播（ctx_thread）
 
@@ -69,31 +70,12 @@ class GuardVerdict:
 
 
 def leaf_texts(card: dict, prefix: str = "") -> list[tuple[str, str]]:
-    """Flatten card into (path, text) leaves. path uses dot+[i] addressing."""
-    out: list[tuple[str, str]] = []
-    for k, v in card.items():
-        path = f"{prefix}{k}"
-        if isinstance(v, dict):
-            out += leaf_texts(v, path + ".")
-        elif isinstance(v, list):
-            for i, item in enumerate(v):
-                out += _leaf_paths(item, f"{path}[{i}]")
-        elif isinstance(v, str):
-            out.append((path, v))
-    return out
+    """Flatten card into (path, text) leaves. path uses dot+[i] addressing.
 
-
-def _leaf_paths(node, path: str) -> list[tuple[str, str]]:
-    if isinstance(node, dict):
-        return leaf_texts(node, path + ".")
-    if isinstance(node, list):
-        res: list[tuple[str, str]] = []
-        for i, item in enumerate(node):
-            res += _leaf_paths(item, f"{path}[{i}]")
-        return res
-    if isinstance(node, str):
-        return [(path, node)]
-    return []
+    走 `core.moderation.card_text.iter_texts` —— 与内容审核共用同一份递归（锁 S10），
+    `neutralize_one` 按同一套路径寻址回写。
+    """
+    return list(iter_texts(card, prefix))
 
 
 def _build_payload(card: dict) -> str:

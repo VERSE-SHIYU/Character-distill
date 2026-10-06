@@ -11,17 +11,8 @@
 """
 from __future__ import annotations
 
-from core.arc_view import ProjectedCard, project_card
+from core.arc_view import ProjectedCard, project_card, require_projected
 from core.clock import UserClock, describe_time_period
-
-
-def _require_projected(card) -> ProjectedCard:
-    """拼 prompt 的入口只收投影卡 —— 收原卡在类型上直接堵死（DA18）。"""
-    if not isinstance(card, ProjectedCard):
-        raise TypeError(
-            f"{type(card).__name__} 不是 ProjectedCard —— 拼角色扮演 prompt 只收 "
-            f"core.arc_view.project_card 的产物")
-    return card
 
 
 def _phase_note(card: ProjectedCard) -> str:
@@ -36,7 +27,7 @@ def _phase_note(card: ProjectedCard) -> str:
 
 def build_opening_prompt(card: ProjectedCard, *, user_role: str = "") -> str:
     """新会话的第一句话的提示词（读投影卡：选阶段 k 时看不到 k 之后的口癖与人设）。"""
-    card = _require_projected(card)
+    card = require_projected(card)
     style = card.speaking_style
     traits = "，".join(card.personality_traits[:3])
     seed = card.first_message or ""
@@ -61,7 +52,7 @@ def build_opening_prompt(card: ProjectedCard, *, user_role: str = "") -> str:
 
 def build_variation_prompt(card: ProjectedCard, *, max_chars: int = 50) -> str:
     """开场白变体的提示词（换措辞、不换口吻）。"""
-    card = _require_projected(card)
+    card = require_projected(card)
     return (
         f"你是「{card.name}」。以下是你的标准开场白：\n"
         f"「{card.first_message}」\n\n"
@@ -72,7 +63,7 @@ def build_variation_prompt(card: ProjectedCard, *, max_chars: int = 50) -> str:
 
 def build_awakening_prompt(card: ProjectedCard) -> str:
     """苏醒台词的提示词：原口吻的变形，不是重写开场白。"""
-    card = _require_projected(card)
+    card = require_projected(card)
     style = card.speaking_style
     return (
         f"你现在是「{card.name}」。你刚从长梦中醒来，第一眼认出了眼前的人。\n"

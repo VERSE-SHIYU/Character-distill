@@ -16,6 +16,7 @@ from core.schema import (
     memory_evidence,
     web_evidence,
 )
+from core.arc_view import ProjectedCard, require_projected
 from core.rag import RAGEngine
 from core.scene_indexer import _detect_emotion
 from core.tokens import count_tokens
@@ -196,7 +197,7 @@ class ContextEngine:
 
     def __init__(
         self,
-        card: CharacterCard,
+        card: ProjectedCard,
         rag: RAGEngine,
         memory_manager=None,
         card_id: str = "",
@@ -206,7 +207,7 @@ class ContextEngine:
         storage: Any,
         arc_view: Any = None,
     ) -> None:
-        self.card = card
+        self.card = require_projected(card)   # 原卡不进注入层（DA18）
         self.arc_view = arc_view
         self.rag = rag
         self.memory = memory_manager
