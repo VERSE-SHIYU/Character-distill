@@ -1,7 +1,48 @@
 // 角色弧线：一条变化轴 + 按故事顺序排列的阶段。卡片详情两处（自建卡 / 集市卡）共用。
-// `arc` 是 parseCardJson 归一后的 { axis, phases: [{ label, state, behaviors }] }；旧卡的阶段没有 label。
+// `arc` 是 parseCardJson 归一后的 { axis, phases: [{ label, state, behaviors, overlay }] }；旧卡的阶段没有 label。
 // 阶段下的 behaviors 是只在那个阶段成立的做法，跟在阶段后面显示。
+// `overlay` 是「只在这个阶段成立」的字段（后端登记表里的路径 → 值）；标签查下面的映射表，
+// 认不出的键显示原名 —— 后端加了新路径而这里没跟上时，内容照样列出来，不静默丢。
 import BehaviorList from './BehaviorList'
+
+const OVERLAY_LABELS = {
+  personality_traits: '性格',
+  values: '价值观',
+  inner_tensions: '内心矛盾',
+  emotional_patterns: '情绪模式',
+  'speaking_style.tone': '语气',
+  'speaking_style.sentence_pattern': '句式',
+  'speaking_style.catchphrases': '口头禅',
+  'psyche.triggers': '雷点',
+  'psyche.soft_spots': '软肋',
+  decision_style: '决策风格',
+  'cognitive.speech_style': '说话风格',
+  'cognitive.knowledge_scope': '见识范围',
+  key_memories: '记忆',
+  dialogue_examples: '对白示例',
+}
+
+function OverlayBlock({ overlay }) {
+  const entries = Object.entries(overlay || {})
+    .filter(([, v]) => (Array.isArray(v) ? v.length > 0 : Boolean(v)))
+  if (entries.length === 0) return null
+  return (
+    <dl className="card-arc-overlay">
+      {entries.map(([key, value]) => (
+        <div key={key} className="card-arc-overlay-field">
+          <dt className="card-arc-overlay-label">{OVERLAY_LABELS[key] || key}</dt>
+          <dd className="card-arc-overlay-value">
+            {Array.isArray(value)
+              ? <ul className="card-arc-overlay-list">
+                  {value.map((v, j) => <li key={j}>{v}</li>)}
+                </ul>
+              : value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
 
 export default function ArcList({ arc }) {
   return (
@@ -18,6 +59,7 @@ export default function ArcList({ arc }) {
                 {p.state}
               </span>
               {p.behaviors?.length > 0 && <BehaviorList items={p.behaviors} />}
+              <OverlayBlock overlay={p.overlay} />
               {p.memories?.length > 0 && (
                 <ul className="card-arc-memories">
                   {p.memories.map((m, j) => <li key={j} className="card-arc-memory">{m}</li>)}

@@ -3897,6 +3897,46 @@ label[for] {
   font-weight: 600;
 }
 
+/* 阶段 overlay：只在这个阶段成立的字段（后端登记表的路径 → 值）。标签小字压一行、
+   值跟在同一行的剩余宽度里；列表值逐条断行。只读展示，不可编辑。 */
+.card-arc-overlay {
+  margin: 6px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.card-arc-overlay-field {
+  display: flex;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.card-arc-overlay-label {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.card-arc-overlay-label::after {
+  content: '：';
+}
+
+.card-arc-overlay-value {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-sec);
+}
+
+.card-arc-overlay-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 /* 情境→行为：情境用现成的 .pill（同 .card-rel-type 的做法），做法与原文摘录各占一行。
    条目是块级而非 flex：与 .card-memory-item 同形，无空格长串按块级规则断行。 */
 .card-behavior-list {
