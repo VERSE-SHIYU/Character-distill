@@ -274,6 +274,63 @@ def test_dispatch_state_scalar_single_per_phase():
     assert out == [2]
 
 
+# ── U7b 草稿形态由登记表派生（§4.2）─────────────────────────────────────
+
+def _draft_ann(path: str):
+    from core.card_draft import CardDraft
+
+    ann = CardDraft
+    for part in path.split("."):
+        ann = ann.model_fields[part].annotation
+    return ann
+
+
+def test_draft_shape_derived_from_registry():
+    """U7b：状态/经历类字段的草稿形态是 `list[DraftTimed]`（顶层与嵌套一视同仁），
+    做法/记忆各自的草稿类不动，稳定类原样 —— 全部由登记表派生，不逐字段手写。"""
+    from core.card_draft import CardDraft, DraftBehavior, DraftMemory, DraftTimed
+    from core.card_layers import REGISTRY
+
+    assert _draft_ann("name") is str
+    assert _draft_ann("speaking_style.vocabulary_level") is str       # 稳定类不动
+    assert _draft_ann("situation_behaviors") == list[DraftBehavior]   # 各自的草稿类
+    assert _draft_ann("key_memories") == list[DraftMemory]
+
+    derived = [p for p, s in REGISTRY.items()
+               if s.layer in ("state", "experience")
+               and p not in ("situation_behaviors", "key_memories")]
+    assert derived, "登记表里没有状态/经历类字段，判据失去意义"
+    for path in derived:
+        assert _draft_ann(path) == list[DraftTimed], path
+    assert CardDraft.model_json_schema()["title"] == "CharacterCard"
+
+
+def test_timed_draft_fields_convert_to_overlay_and_top():
+    """U7b：`list[DraftTimed]` 按类别落卡 —— 覆盖全部 → 顶层；标部分阶段 → 该阶段 overlay。"""
+    from core.card_draft import card_from_draft
+
+    src = "开头甲甲甲。中间乙乙乙。结尾丙丙丙。"
+    data = {
+        "name": "甲",
+        "character_arc": {"phases": [
+            {"label": "一", "state": "s1", "anchor": ""},
+            {"label": "二", "state": "s2", "anchor": "中间乙乙乙"}]},
+        "personality_traits": [
+            {"value": "全程都这样",
+             "occurrences": [{"phase": 1, "quote": "开头甲甲甲"},
+                             {"phase": 2, "quote": "中间乙乙乙"}]},
+            {"value": "后来才这样", "occurrences": [{"phase": 2, "quote": "中间乙乙乙"}]}],
+        "decision_style": [{"value": "一辈子都谨慎",
+                            "occurrences": [{"phase": 1, "quote": "开头甲甲甲"},
+                                            {"phase": 2, "quote": "中间乙乙乙"}]}],
+    }
+    card = card_from_draft(data, src)
+    assert card.personality_traits == ["全程都这样"]
+    assert card.decision_style == "一辈子都谨慎"
+    assert card.character_arc.phases[0].overlay.get("personality_traits") is None
+    assert card.character_arc.phases[1].overlay.get("personality_traits") == ["后来才这样"]
+
+
 # ── U13 依赖组推导 ──────────────────────────────────────────────────────
 
 def test_phase_dependent_groups_derived():

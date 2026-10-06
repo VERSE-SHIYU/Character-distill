@@ -770,8 +770,11 @@ class TestFormatFieldGroups:
             sub = draft_schema(group)
             assert set(sub["properties"]) == set(fields), group
             assert set(sub.get("required", ())) <= set(fields), group
-            # 嵌套模型定义必须带上，否则 $ref 解析不了
-            assert "PsycheProfile" in sub.get("$defs", {}), group
+            # 嵌套模型定义必须带上，否则 $ref 解析不了（草稿形态由登记表派生，名字不写死）
+            refs = [r.rsplit("/", 1)[-1] for r in _refs(sub)]
+            assert refs, group
+            missing = [r for r in refs if r not in sub.get("$defs", {})]
+            assert not missing, f"{group} 的 $ref 解析不了：{missing}"
 
 
 # ── WP7：格式化按字段组并行 ───────────────────────────────────────────────
@@ -803,20 +806,38 @@ def _format_group_of(system: str) -> str | None:
             return group
     return None
 
+def _timed(value: str) -> dict:
+    """状态/经历类字段的草稿形态：一条取值 + 它在哪一段原文里成立（§4.2 由登记表派生）。"""
+    return {"value": value, "occurrences": [{"phase": 1, "quote": "开头甲甲甲"}]}
+
+
+def _refs(node):
+    """子 schema 里出现的所有 `$ref`（判「嵌套定义都带上了」用，名字不写死）。"""
+    if isinstance(node, dict):
+        if "$ref" in node:
+            yield node["$ref"]
+        for v in node.values():
+            yield from _refs(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _refs(v)
+
+
 _SAMPLE_FIELD_VALUES = {
     "name": "角色",
     "identity": "一句话身份",
     "background": "背景摘要",
-    "personality_traits": ["特质（原文证据）"],
-    "values": ["价值观"],
-    "inner_tensions": ["内在矛盾"],
-    "emotional_patterns": ["情感模式"],
-    "decision_style": "谨慎型",
-    "speaking_style": {"tone": "冷淡", "sentence_pattern": "短句", "catchphrases": ["哼"],
+    "personality_traits": [_timed("特质（原文证据）")],
+    "values": [_timed("价值观")],
+    "inner_tensions": [_timed("内在矛盾")],
+    "emotional_patterns": [_timed("情感模式")],
+    "decision_style": [_timed("谨慎型")],
+    "speaking_style": {"tone": [_timed("冷淡")], "sentence_pattern": [_timed("短句")],
+                       "catchphrases": [_timed("哼")],
                        "vocabulary_level": "日常", "taboo_words": []},
     "first_message": "你来了。",
-    "cognitive": {"education_level": "普通", "knowledge_scope": "常识",
-                  "speech_style": "平实", "vocabulary_level": "日常"},
+    "cognitive": {"education_level": "普通", "knowledge_scope": [_timed("常识")],
+                  "speech_style": [_timed("平实")], "vocabulary_level": "日常"},
     "relationships": [{"target": "某人", "relation": "朋友", "attitude": "亲近",
                        "note": "认识很久的朋友"}],
     "key_memories": [{"memory": "关键经历",
@@ -827,7 +848,7 @@ _SAMPLE_FIELD_VALUES = {
     "psyche": {"openness": 3, "conscientiousness": 3, "extraversion": 3,
                "agreeableness": 3, "neuroticism": 3, "affinity_baseline": 50,
                "volatility": "适中", "grudge_inertia": "一般",
-               "triggers": ["雷点"], "soft_spots": ["软肋"]},
+               "triggers": [_timed("雷点")], "soft_spots": [_timed("软肋")]},
 }
 
 

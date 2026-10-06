@@ -4,7 +4,8 @@
 从头到尾都成立），要模型判断「从头到尾都成立」是一道概括题，它会两边都写。草稿里每条
 做法只写一次，并给每个阶段标一段**该阶段里**的原文摘录（照原文回答的事实题）；这条摘录的
 位置由 `core.phase_anchoring` 按原文核对，标错的阶段去掉，再按最终阶段分发：所有阶段都
-成立的放顶层，否则挂到成立的阶段下。
+成立的放顶层，否则挂到成立的阶段下。状态/经历类字段同样每条只写一次（`DraftTimed`），
+形态由 `core.card_layers.REGISTRY` 统一派生（`_derive_draft_model`），不逐字段手写。
 
 两处唯一出处：
 - `draft_schema`：发给模型的 JSON 结构只从这里取 —— 提示词让模型写草稿，附的结构也必须
@@ -16,9 +17,10 @@
 import logging
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from core import phase_anchoring
+from core.card_layers import REGISTRY, get_path, set_path
 from core.fingerprint import content_fingerprint
 from core.schema import (
     FORMAT_GROUPS,
@@ -41,6 +43,17 @@ class DraftOccurrence(BaseModel):
 
 class DraftBehavior(BehaviorCore):
     """情境→行为：此人遇到某类情境时的具体做法；occurrences 是它在各阶段的原文摘录。"""
+    occurrences: list[DraftOccurrence] = []
+
+
+class DraftTimed(BaseModel):
+    """状态/经历类字段在草稿里的形态：一条取值 + 它在**哪些阶段**成立的原文摘录。
+
+    每条取值只写一次，由 `card_from_draft` 按登记表的类别分发：覆盖全部阶段 → 卡片顶层，
+    否则挂到标了的阶段（经历类只挂最早阶段）。形态由登记表统一派生（`_derive_draft_model`），
+    不逐字段手写。
+    """
+    value: str = ""
     occurrences: list[DraftOccurrence] = []
 
 
@@ -73,8 +86,41 @@ class DraftArc(ArcAxis):
     phases: list[DraftPhase] = []
 
 
+# 做法与记忆各自的草稿类已经带 occurrences（`DraftBehavior` / `DraftMemory`），不参与派生。
+_DEDICATED = {"situation_behaviors", "key_memories"}
+
+# 由 `list[DraftTimed]` 统一转换的状态/经历类字段（分发规则按各自的 layer 走）。
+_GENERIC_PATHS = [(p, s) for p, s in REGISTRY.items()
+                  if s.layer in ("state", "experience") and p not in _DEDICATED]
+
+
+def _derive_draft_model(base: type[BaseModel], prefix: str = "", *,
+                        name: str | None = None) -> type[BaseModel]:
+    """按登记表派生草稿形态：state / experience 叶子换成 `list[DraftTimed]`，嵌套子模型递归。
+
+    只有真改了字段的层才新建模型（没改的原样返回）—— `$defs` 里只多出必要的几个。
+    """
+    overrides: dict[str, Any] = {}
+    for fname, f in base.model_fields.items():
+        path = f"{prefix}{fname}"
+        spec = REGISTRY.get(path)
+        if spec is not None and spec.layer in ("state", "experience") and path not in _DEDICATED:
+            overrides[fname] = (list[DraftTimed], Field(default_factory=list))
+            continue
+        ann = f.annotation
+        if isinstance(ann, type) and issubclass(ann, BaseModel) and ann is not BaseModel:
+            nested = _derive_draft_model(ann, f"{path}.")
+            if nested is not ann:
+                overrides[fname] = (nested, Field(default_factory=nested))
+    if not overrides:
+        return base
+    return create_model(name or f"Draft{base.__name__}", __base__=base,
+                        __module__=base.__module__, __doc__=base.__doc__,
+                        **overrides)
+
+
 # docstring 会进发给模型的 JSON 结构，只写给模型看的话；与存卡的差别见模块说明。
-class CardDraft(CharacterCard):
+class CardDraftBase(CharacterCard):
     """角色卡——蒸馏引擎的唯一输出格式"""
     # 标题沿用存卡的名字：它会进发给模型的 JSON 结构，模型看到的仍是「角色卡」。
     model_config = ConfigDict(title="CharacterCard")
@@ -83,6 +129,10 @@ class CardDraft(CharacterCard):
     situation_behaviors: list[DraftBehavior] = []
     key_memories: list[DraftMemory] = []
     relationships: list[DraftRelationship] = []
+
+
+# 状态/经历类字段的草稿形态由登记表派生（§4.2），不逐字段手写。
+CardDraft = _derive_draft_model(CardDraftBase, name="CardDraft")
 
 
 def draft_schema(group: str | None = None) -> dict[str, Any]:
@@ -109,9 +159,10 @@ def _first_quote(row) -> str:
 
 
 def _row_label(item) -> str:
-    """编号非法警告里点出是哪一条：做法取 `situation`，记忆取 `memory`，关系取 `target`。"""
+    """编号非法警告里点出是哪一条：做法取 `situation`，记忆取 `memory`，关系取 `target`，
+    状态/经历类字段的取值取 `value`。"""
     return (getattr(item, "situation", "") or getattr(item, "memory", "")
-            or getattr(item, "target", ""))
+            or getattr(item, "target", "") or getattr(item, "value", ""))
 
 
 def _valid_number_rows(items, count: int, kind: str) -> list[list[int]]:
@@ -130,13 +181,27 @@ def _valid_number_rows(items, count: int, kind: str) -> list[list[int]]:
     return valid_rows
 
 
-def dispatch(final_phases: list[list[int]], count: int) -> tuple[list[int], list[list[int]]]:
-    """按最终阶段把条目分发到顶层与各阶段 —— 做法与记忆共用这一份（S8 唯一分发处）。
+def _layer_phases(final_phases: list[list[int]], count: int, layer: str) -> list[list[int]]:
+    """按类别把每条条目的最终阶段折成「要挂的阶段」：``experience`` 只留最早阶段。
 
-    无阶段的卡（`count == 0`）或标注覆盖全部阶段 → 顶层；否则挂到最终阶段下；编号全部被
-    撤回（`final` 空）→ 不出现（整条撤回）。返回 `(顶层序号, by_phase)`，`by_phase[p-1]`
-    是挂到阶段 p 的序号。**`by_phase[` 只在这里出现**，判据 S8 靠它定位唯一分发点。
+    ①把同一条经历挂到每个标了的阶段，投影 1..k 时就重复了（C14）—— 只挂最早阶段即不重复。
+    覆盖全部阶段的那条原样保留：顶层判据 `len(final) == count` 还要用它。
     """
+    if layer == "experience":
+        return [f if (count and len(f) == count) else f[:1] for f in final_phases]
+    return final_phases
+
+
+def dispatch(final_phases: list[list[int]], count: int, *,
+             layer: str = "state") -> tuple[list[int], list[list[int]]]:
+    """按最终阶段把条目分发到顶层与各阶段 —— 分发只此一处（S6）。
+
+    `layer` 决定「挂到哪些阶段」：``state``（默认，做法走这条）→ 每个最终阶段都挂；
+    ``experience``（记忆）→ 只挂最早阶段（`_layer_phases`）。共同规则：无阶段的卡
+    （`count == 0`）或标注覆盖全部阶段 → 顶层；编号全部被撤回（`final` 空）→ 整条不出现。
+    返回 `(顶层序号, by_phase)`，`by_phase[p-1]` 是挂到阶段 p 的序号，**`by_phase[` 只在这里出现**。
+    """
+    final_phases = _layer_phases(final_phases, count, layer)
     top: list[int] = []
     by_phase: list[list[int]] = [[] for _ in range(count)]
     for i, final in enumerate(final_phases):
@@ -146,6 +211,33 @@ def dispatch(final_phases: list[list[int]], count: int) -> tuple[list[int], list
             for p in final:
                 by_phase[p - 1].append(i)
     return top, by_phase
+
+
+def dispatch_single(final_phases: list[list[int]], count: int, *,
+                    layer: str, label: str) -> list[int | None]:
+    """单值状态字段的分发：每条条目只落**一个**阶段（同阶段多条 → 保留第一条 + warning）。
+
+    返回与条目同序的阶段号；`None` = 不落阶段（覆盖全部 → 顶层；无合法编号 → 丢弃）。
+    与 `dispatch` 同源（`_layer_phases` + 「覆盖全部 → 顶层」），只是单值字段一个阶段存不下两条。
+    """
+    out: list[int | None] = []
+    taken: set[int] = set()
+    for final in _layer_phases(final_phases, count, layer):
+        if count and len(final) == count:
+            out.append(None)                      # 覆盖全部 → 顶层
+            continue
+        one = final[:1]
+        if not one:
+            out.append(None)
+            continue
+        p = one[0]
+        if p in taken:
+            logger.warning("[card_draft] %s 的阶段 %d 有多条取值，保留第一条", label, p)
+            out.append(None)
+            continue
+        taken.add(p)
+        out.append(p)
+    return out
 
 
 def _convert_relationships(rels, phases, source_text: str, count: int,
@@ -187,8 +279,9 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
     先做阶段编号合法性过滤（越界、空 → 对不上的撤回、打 warning，一条的编号全部作废就整条
     撤回，与 `core.card_quotes.retract_unverified` 对模型输出的口径同）；再让 `phase_anchoring`
     按 `source_text` 核对摘录位置，标错的阶段去掉，全部被去掉的退回原标注（兜底）。做法与记忆
-    各走一遍（位置检查口径相同），结果交 `dispatch` 分发：所有阶段都成立 → 顶层，否则挂到成立
-    的阶段下；没有阶段的卡，全部放顶层，不做位置检查。关系态度同样过一遍检查。最后写
+    各走一遍（位置检查口径相同），结果交 `dispatch` 分发：做法按状态类挂到每个成立阶段，记忆按
+    经历类只挂最早阶段；所有阶段都成立 → 顶层，没有阶段的卡全部放顶层、不做位置检查。关系态度
+    同样过一遍检查。最后写
     `ArcPhase.start`（整卡跳过时不写）与 `CharacterArc.source_fingerprint`。`source_text` 必填。
     """
     draft = CardDraft.model_validate(data)
@@ -210,9 +303,32 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
                 b.unverified_quotes, b.fallback, b.skipped_card, m.dropped)
 
     b_top, b_slots = dispatch(b.phases, count)
-    m_top, m_slots = dispatch(m.phases, count)
+    m_top, m_slots = dispatch(m.phases, count, layer="experience")
 
     card = draft.model_dump()
+    overlays: dict[int, dict[str, Any]] = {}
+    for path, spec in _GENERIC_PATHS:
+        rows = get_path(draft, path)
+        res = phase_anchoring.verify(
+            rows, _valid_number_rows(rows, count, path), phases, source_text,
+            kind=path, label=lambda x: x.value, name=draft.name, warn_skip=False)
+        if spec.kind == "list":
+            top, slots = dispatch(res.phases, count, layer=spec.layer)
+            set_path(card, path, [rows[i].value for i in top])
+            for idx, slot in enumerate(slots):
+                vals = [rows[i].value for i in slot]
+                if vals:
+                    overlays.setdefault(idx, {})[path] = vals
+        else:
+            placed = dispatch_single(res.phases, count, layer=spec.layer, label=path)
+            top_val = rows[0].value if (count == 0 and rows) else next(
+                (rows[i].value for i, p in enumerate(placed)
+                 if p is None and res.phases[i]), "")
+            set_path(card, path, top_val)
+            for i, p in enumerate(placed):
+                if p is not None:
+                    overlays.setdefault(p - 1, {})[path] = rows[i].value
+
     card["situation_behaviors"] = [
         {"situation": draft.situation_behaviors[i].situation,
          "behavior": draft.situation_behaviors[i].behavior,
@@ -230,7 +346,11 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
              "source_quote": b.phase_quotes[i].get(idx + 1, "")}
             for i in b_slots[idx]
         ]
-        phase["memories"] = [draft.key_memories[i].memory for i in m_slots[idx]]
+        memories = [draft.key_memories[i].memory for i in m_slots[idx]]
+        if memories:
+            overlays.setdefault(idx, {})["key_memories"] = memories
+        if idx in overlays:
+            phase["overlay"] = overlays[idx]
     if b.starts is not None:                      # 整卡跳过位置检查 → 不写起点（D7）
         for phase, start in zip(card["character_arc"]["phases"], b.starts):
             phase["start"] = start
