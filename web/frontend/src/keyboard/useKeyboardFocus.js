@@ -35,6 +35,7 @@ export default function useKeyboardFocus({
   rootRef,
   enabled,
   onFocus,
+  getRiseTarget,
   ua = navigator.userAgent,
 }) {
   const { scrollOnFocus, scrollPageOnBlur, blurOnKbdClose } = keyboardRiseStrategy(ua)
@@ -63,7 +64,11 @@ export default function useKeyboardFocus({
       if (scrollOnFocus) {
         clearRise()
         riseTimers = RISE_AT_MS.map((ms) =>
-          setTimeout(() => inputEl?.scrollIntoView(false), ms),
+          setTimeout(() => {
+            if (!inputEl) return
+            // P6：滚进视野的是页面给的输入区（由页面传 getRiseTarget），不是 input 本身
+            ;(getRiseTarget?.(inputEl) ?? inputEl).scrollIntoView(false)
+          }, ms),
         )
       }
     }
@@ -83,10 +88,14 @@ export default function useKeyboardFocus({
     root.addEventListener('focusin', handleFocusIn)
     root.addEventListener('focusout', handleFocusOut)
 
-    // D6：iOS 键盘收起但输入框没失焦（可视视口长回原高）→ 让它失焦
+    // D6/P7：iOS 键盘收起但输入框没失焦（可视视口长回原高）→ 让它失焦。
+    // winHeight 只增不减：iOS 26 键盘弹起瞬间 innerHeight 会短暂变小，若每次
+    // 现取 innerHeight 比较，这一瞬会被误判成「键盘收起」而把刚弹起的键盘收回。
     const vv = window.visualViewport
+    let winHeight = window.innerHeight
     const handleVVResize = () => {
-      if (inputEl && vv.height >= window.innerHeight) inputEl.blur()
+      if (window.innerHeight > winHeight) winHeight = window.innerHeight
+      if (inputEl && vv.height >= winHeight) inputEl.blur()
     }
     if (blurOnKbdClose && vv) vv.addEventListener('resize', handleVVResize)
 
@@ -98,5 +107,5 @@ export default function useKeyboardFocus({
       clearRise()
       document.body.classList.remove(FOCUSING_CLASS)
     }
-  }, [enabled, rootRef, onFocus, scrollOnFocus, scrollPageOnBlur, blurOnKbdClose])
+  }, [enabled, rootRef, onFocus, getRiseTarget, scrollOnFocus, scrollPageOnBlur, blurOnKbdClose])
 }

@@ -26,9 +26,11 @@ describe('useKeyboardFocus (B5/B7/B8)', () => {
   let rootRef
   let ta
   let checkbox
+  let origInnerHeight
 
   beforeEach(() => {
     vi.useFakeTimers()
+    origInnerHeight = window.innerHeight
     document.body.innerHTML = ''
     document.body.className = ''
 
@@ -49,10 +51,20 @@ describe('useKeyboardFocus (B5/B7/B8)', () => {
     vi.useRealTimers()
     document.body.className = ''
     delete window.visualViewport
+    Object.defineProperty(window, 'innerHeight', {
+      value: origInnerHeight,
+      configurable: true,
+      writable: true,
+    })
   })
 
-  const renderFocus = ({ enabled = true, ua = UAS.iosSafari, onFocus = vi.fn() } = {}) =>
-    renderHook(() => useKeyboardFocus({ rootRef, enabled, ua, onFocus }))
+  const renderFocus = ({
+    enabled = true,
+    ua = UAS.iosSafari,
+    onFocus = vi.fn(),
+    getRiseTarget,
+  } = {}) =>
+    renderHook(() => useKeyboardFocus({ rootRef, enabled, ua, onFocus, getRiseTarget }))
 
   const focusing = () => document.body.classList.contains('kbd-focusing')
 
@@ -160,5 +172,54 @@ describe('useKeyboardFocus (B5/B7/B8)', () => {
     act(() => window.visualViewport.emit('resize'))
 
     expect(blurSpy).toHaveBeenCalled()
+  })
+
+  // P7：winHeight 是「只增不减」的窗口高度，不是每次比较时现取的 innerHeight。
+  const setInnerHeight = (h) =>
+    Object.defineProperty(window, 'innerHeight', { value: h, configurable: true, writable: true })
+
+  it('P7-1：键盘还开着（可视高度 < winHeight）触发 resize 不失焦', () => {
+    setInnerHeight(800) // winHeight 安装时记为 800
+    renderFocus({ ua: UAS.iosSafari })
+    act(() => ta.focus())
+    const blurSpy = vi.spyOn(ta, 'blur')
+
+    window.visualViewport.height = 400 // 键盘弹起，可视高度变小
+    act(() => window.visualViewport.emit('resize'))
+
+    expect(blurSpy).not.toHaveBeenCalled()
+  })
+
+  it('P7-2：innerHeight 短暂变小到等于可视高度时不误判失焦', () => {
+    setInnerHeight(800)
+    renderFocus({ ua: UAS.iosSafari })
+    act(() => ta.focus())
+    const blurSpy = vi.spyOn(ta, 'blur')
+
+    window.visualViewport.height = 400
+    setInnerHeight(400) // iOS 26 弹起瞬间 innerHeight 短暂变小
+    act(() => window.visualViewport.emit('resize'))
+
+    expect(blurSpy).not.toHaveBeenCalled()
+  })
+
+  // P6：滚进视野的目标由页面给出（第二个参数是输入区，不是 input 本身）。
+  it('P6：传了 getRiseTarget 时，滚动打在返回的元素上，输入框自己不被滚', () => {
+    const target = document.createElement('div')
+    target.scrollIntoView = vi.fn()
+    renderFocus({ ua: UAS.androidChrome, getRiseTarget: () => target })
+    act(() => ta.focus())
+    act(() => vi.advanceTimersByTime(1000))
+
+    expect(target.scrollIntoView).toHaveBeenCalledTimes(2)
+    expect(target.scrollIntoView).toHaveBeenCalledWith(false)
+    expect(ta.scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('P6：getRiseTarget 返回 null 时回落到输入框本身', () => {
+    renderFocus({ ua: UAS.androidChrome, getRiseTarget: () => null })
+    act(() => ta.focus())
+    act(() => vi.advanceTimersByTime(1000))
+    expect(ta.scrollIntoView).toHaveBeenCalledTimes(2)
   })
 })

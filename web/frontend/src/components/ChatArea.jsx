@@ -31,6 +31,10 @@ import { installGoalCheck } from '../keyboard/goalCheck'
 import useNativeKeyboardPage from '../keyboard/useNativeKeyboardPage'
 import useKeyboardFocus from '../keyboard/useKeyboardFocus'
 
+// P6：要滚进视野的是整个输入区（引用条在 .composer-bar 之上，最外层是 wrap）。
+// 放模块顶层，引用稳定，不会触发 useKeyboardFocus 的 effect 重装。
+const getComposerWrap = (el) => el.closest('.composer-bar-wrap')
+
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
   const sessionId = useAppStore((s) => s.sessionId)
@@ -429,7 +433,7 @@ function ChatView() {
     const el = listRef.current
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
   }, [])
-  useKeyboardFocus({ rootRef, enabled: nativeKbd, onFocus: handleKbdFocus })
+  useKeyboardFocus({ rootRef, enabled: nativeKbd, onFocus: handleKbdFocus, getRiseTarget: getComposerWrap })
 
   const loadMemories = useCallback(async () => {
     if (!cardId) return

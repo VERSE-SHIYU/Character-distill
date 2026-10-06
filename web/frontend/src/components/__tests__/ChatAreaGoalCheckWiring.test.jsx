@@ -149,6 +149,7 @@ describe('ChatArea 接线：native 键盘层 + P5', () => {
   afterEach(() => {
     cleanup()
     vi.useRealTimers()
+    vi.restoreAllMocks()
     window.matchMedia = origMatchMedia
     Object.defineProperty(window, 'innerWidth', { value: origInnerWidth, configurable: true, writable: true })
     document.documentElement.removeAttribute('data-kbd')
@@ -188,5 +189,32 @@ describe('ChatArea 接线：native 键盘层 + P5', () => {
     ta.blur()
     vi.advanceTimersByTime(0)
     expect(document.body.classList.contains('kbd-focusing')).toBe(false)
+  })
+
+  // P8：B7 的效果没有测试守着。native 下聚焦后，列表要以 top=scrollHeight、
+  // behavior:'instant' 被滚到底（列表有平滑滚动，不能带动画）。
+  it('P8：native 聚焦后列表 scrollTo({ top: scrollHeight, behavior: "instant" })', () => {
+    localStorage.setItem('kbd_mode', 'native')
+    window.matchMedia = (q) => ({
+      matches: true, media: q,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, onchange: null,
+      dispatchEvent: () => false,
+    })
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true })
+
+    const { container } = render(<ChatArea />)
+    const list = container.querySelector('.chat-messages')
+    expect(list, '列表没渲染').not.toBeNull()
+    expect(list.hasAttribute('data-kbd-lift')).toBe(true)
+    Object.defineProperty(list, 'scrollHeight', { value: 1234, configurable: true })
+
+    const spy = vi.spyOn(Element.prototype, 'scrollTo')
+    container.querySelector('.chat-textarea').focus()
+
+    const idx = spy.mock.calls.findIndex((c) => c[0]?.behavior === 'instant')
+    expect(idx, '列表没被滚到底').toBeGreaterThanOrEqual(0)
+    expect(spy.mock.calls[idx][0]).toEqual({ top: 1234, behavior: 'instant' })
+    expect(spy.mock.instances[idx], '滚的不是带 data-kbd-lift 的列表').toBe(list)
   })
 })
