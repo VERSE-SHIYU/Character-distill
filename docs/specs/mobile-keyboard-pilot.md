@@ -172,3 +172,32 @@ skill：第 2、4 步 `tdd`；第 3、5 步 `code-review-and-quality`；各一�
 - **1b 顶栏留在原位（需 Shiyu 拍板是否要做）**：已读清 ChatUI 的 `--viewport-top`（`es/components/Composer/viewportTop.js`）：聚焦后逐帧量出页面被推上去的距离并写成变量，失焦归零；ChatUI 自己的样式不使用它，是留给应用把顶栏移回视野用的。用它可以让顶栏在键盘弹起时留在屏幕顶部，但它是推上去之后才量到的，顶栏会晚一拍归位，做不到与键盘完全同步。
 - **2 消息列表组件**：`use-stick-to-bottom`，贴底与回到底部按钮；删掉 `ChatArea` 自带的键盘监听和平滑滚动依赖。
 - **3 聊天骨架 + 群聊接入**；之后私信、登录页；最后删旧逻辑与开关。
+
+## 补充 1（2026-10-06）：提交 1（`e095dce`）审计
+
+审计顺序：先看目标检查能否量出第一节的三项、结果能否在手机上被看到，再对照本文件。
+
+**亲手跑的结果**：受影响的 3 个测试文件 28/28 通过；CI 的 lint 命令对改动文件退出码 0。对三项判据做了 9 个变异（放宽、收紧两个方向）：6 个被打红，3 个存活（见 P3）。
+
+**逐文件结论**
+
+| 文件 | 结论 |
+|---|---|
+| `src/keyboard/keyboardMode.js` | 通过。与 B1 一致 |
+| `src/keyboard/keyboardMode.test.js` | 通过 |
+| `src/keyboard/goalCheck.js` | 判据通过：C1–C3 的公式、800ms / 2000ms、留白实时读取与第一节逐项一致。显示部分有 P1、P2 |
+| `src/keyboard/goalCheck.test.js` | 有缺口，见 P3 |
+| `src/components/ChatArea.jsx` | 通过。开关关闭时只多一个 ref 和一个不生效的 effect。P5 |
+| `src/components/__tests__/ChatAreaGoalCheckWiring.test.jsx` | 保留。它守的是选择器：选择器失效会让真机检查只显示「找不到」，白跑一次部署 |
+
+**问题**
+
+| # | 问题 | 属于 | 根因 | 处理 |
+|---|---|---|---|---|
+| P1 | 结果浮层是 `position: fixed; top: 0`。iPhone 上页面被键盘推上去时，fixed 元素跟的是布局视口，会被一起推出可视区——恰好是要验证的那个状态下看不到结果。主屏幕模式下还会被灵动岛挡住 | 本文件设计缺口（第一节只写了「屏幕顶部」） | 把「屏幕顶部」等同于「布局视口顶部」，正是本项目要处理的同一个坑 | 浮层的 `top` 每次写入时取 `visualViewport.offsetTop`，并在可视视口 `scroll` / `resize` 时更新；顶部加 `env(safe-area-inset-top)` 内边距。**未核实**：iOS 26 上 fixed 元素是否确实被推出，修法对两种情况都成立 |
+| P2 | 「推上去」只显示 `visualViewport.offsetTop`。ChatUI 是用根节点的位置量这个距离的（`viewportTop.js`），说明页面被推上去也可能表现为文档滚动，此时 `offsetTop` 是 0，读数会误导 | 本文件设计缺口（没定义「推上去的距离」） | 同上：没分清两种视口 | 同时显示 `offsetTop`、`pageTop`、`scrollY` 三个数。判据不变：C1–C3 用的矩形与可视区同在布局视口坐标里，两种情况都成立 |
+| P3 | 测试里的 `offsetTop` 全是 0，变异「可视区不加 offsetTop」存活。另有两个边界变异存活：C1 下边取等号、C3 恰好 20px | 实现（测试） | 测试样本没覆盖页面被推上去这个核心场景 | 必须补一条 `offsetTop > 0` 且忽略它会翻转结论的用例。两个边界用例可补可不补 |
+| P4 | `isTextEntry` 只认 `textarea` 和 `input[type=text]`。提交 2 的 B5 也要用「是否文字输入框」这个判断 | 提交 2 的要求 | 防止同一条规则写两处 | 提交 2 把它抽成 `src/keyboard/` 下唯一的一个函数，并覆盖 password、email、search、tel、url、number（登录页要用） |
+| P5 | 网址参数在 `ChatArea` 挂载时才处理（执行方已声明） | 可接受的临时偏离 | — | 提交 2 移到应用入口，只此一处。**未核实**：带参数打开后经过登录跳转，参数是否还在 |
+
+**结论**：判据实现正确；P1–P3 修完才能用于真机。修正只动 `goalCheck.js` 的显示部分和它的测试，不改判据、不改接口。
