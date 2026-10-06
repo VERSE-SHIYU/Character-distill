@@ -285,6 +285,10 @@ class _CardStubDistiller:
     def _auto_tag(self, card_dict):
         return []
 
+    def fill_relationships(self, draft, text, character_name):
+        # 路由在转卡前补关系（§4.5）。本组的 CARD 没有关系名单，真实现此处也直接返回。
+        return None
+
     def finalize_card(self, card, content, name, aliases=(), roster=()):
         self.pick_calls.append((content, name, tuple(aliases), len(roster)))
         if self.pick_error is not None:

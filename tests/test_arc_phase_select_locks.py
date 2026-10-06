@@ -148,14 +148,19 @@ def test_s13_no_find_backtrack_for_positions():
     assert not bad, f"切分/坐标模块里出现 .find( 回找（重复段落会找错）：{bad}"
 
 
-# ── S14 project_card 只在构造与开场白两处调用 ───────────────────────────────
-def test_s14_project_card_called_only_at_construction_and_opening():
+# ── S14 project_card 只在一份允许名单里调用 ─────────────────────────────────
+def test_s14_project_card_called_only_in_the_allowlist():
+    """调用点 = 构造（chat_engine）+ 拼 prompt 的入口（opening / distill 苏醒 /
+    text_manager 变体）+ 整卡读者（export / market 回复）。②之后新增的入口一律走
+    `project_opening_prompt` 或先投影再拼，别在别处又开一处 —— 名单外即红。"""
     av = _REPO / "core" / "arc_view.py"
     assert av.exists() and "def project_card(" in _read(av), (
         "project_card 未定义在 core/arc_view.py")
     files = _files(_BOTH, r"\bproject_card\(")
-    assert files <= {"core/arc_view.py", "core/chat_engine.py", "web/routers/distill.py"}, (
-        f"project_card 散落到了：{files}")
+    allowed = {"core/arc_view.py", "core/chat_engine.py", "core/opening.py",
+               "core/export.py", "core/text_manager.py",
+               "web/routers/distill.py", "web/routers/market.py"}
+    assert files <= allowed, f"project_card 散落到了：{files - allowed}"
 
 
 # ── S15 边界说明文案常量只定义一次 ─────────────────────────────────────────

@@ -325,7 +325,9 @@ def test_m15_scene_items_passes_the_bound_and_fingerprint():
 
     card = _phase_card()
     view = av.arc_view(card, 1)
-    ce = ContextEngine(card=card, rag=_RAG(), storage=None, arc_view=view)
+    # 注入层只收 ProjectedCard（DA18）：投影到用户选的阶段 1。
+    ce = ContextEngine(card=av.project_card(card, 1)[0], rag=_RAG(),
+                       storage=None, arc_view=view)
     ce._scene_items("某段查询")
 
     assert seen.get("window") == RetrievalWindow(10, "FP"), (
@@ -387,7 +389,9 @@ def test_agent_search_respects_window():
 
     card = _phase_card()
     view = av.arc_view(card, 1)
-    ce = ContextEngine(card=card, rag=_RAG(), storage=None, arc_view=view)
+    # 注入层只收 ProjectedCard（DA18）：投影到用户选的阶段 1。
+    ce = ContextEngine(card=av.project_card(card, 1)[0], rag=_RAG(),
+                       storage=None, arc_view=view)
     ce._retrieve_scenes_ex("某段查询")
 
     assert seen.get("window") == RetrievalWindow(10, "FP"), (

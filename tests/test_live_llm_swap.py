@@ -144,7 +144,11 @@ def test_T1_set_llm_recomputes_budgets_for_the_new_model():
     生产公式：重跑一遍的话公式改错了两边一起错，这条就永远不会红。
     """
     old, new = _StubLLM(OLD_MODEL, 11), _StubLLM(NEW_MODEL, 22)
-    ctx = ContextEngine(card=CARD, rag=None, llm=old, model=OLD_MODEL, storage=MagicMock())
+    # 注入层只收 ProjectedCard（DA18）。
+    from core.arc_view import project_card
+
+    ctx = ContextEngine(card=project_card(CARD, None)[0], rag=None, llm=old,
+                        model=OLD_MODEL, storage=MagicMock())
     assert (ctx.TOTAL_BUDGET, ctx.MAX_HISTORY, ctx.MAX_SCENE,
             ctx.MAX_MEMORY, ctx.MAX_CARD_EXT) == (32000, 12800, 8000, 1920, 2560)
 
