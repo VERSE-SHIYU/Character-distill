@@ -23,15 +23,33 @@ class RelationshipBatchError(RuntimeError):
     """某一批关系生成失败 —— 整步失败，不把这一批的人悄悄丢掉。"""
 
 
+# 关系生成的口径（五条）：**只在这里写一次**（锁 S13），由 `_batch_prompt` 引用。
+# 主调用维度 F 的「只出名单」讲的是「这一步先别写关系详情」，这五条讲的是「这一步怎么写」，
+# 是同一件事的两步、两句话 —— 规则若也内联进 distiller 的维度说明就成了「一处两写」。
+RELATIONSHIP_RULES = (
+    "## 关系生成口径\n"
+    "1. 单向视角：只写主角怎么看对方，不写对方怎么看主角。\n"
+    "2. note 是喂给聊天模型的固定立场：一句话讲清我和ta是什么关系、我怎么看ta。\n"
+    "3. 只写态度变了的阶段：态度没变的阶段不写；从头到尾一个态度就只写一条。\n"
+    "4. 没有阶段时 phase 填 0。\n"
+    "5. quote 是该阶段里的原文摘录（10-40字，逐字照抄）。"
+)
+
+
 def _batch_prompt(prefix: str, batch: list[str], phases: list[str]) -> str:
-    """本批的提示词：调用方的 `prefix` 逐字在前（前缀一致缓存才命中），后面只换本批人物。"""
+    """本批的提示词：调用方的 `prefix` 逐字在前（前缀一致缓存才命中），后面只换本批人物。
+
+    `prefix` 是**共享前缀**（正文 / 组共享段），不含本步指令 —— 见 `_relationships_batched`
+    的调用点与锁 S14：把主调用的系统提示整段拿来，维度 F 的「只出名单」会被带进来。
+    """
     stage = "、".join(p for p in phases if p) or "（无阶段）"
     return (
         f"{prefix}\n\n"
         f"只产出这几个人物与主角的关系，其余人不要出现：{'、'.join(batch)}\n"
         f"阶段依次为：{stage}；每条关系按阶段给态度。\n"
+        f"{RELATIONSHIP_RULES}\n"
         "输出 JSON 数组，每个元素含 target / relation / attitude / note，"
-        "以及 attitudes: [{phase, attitude, quote}]。"
+        "以及 attitudes: [{phase, attitude, quote, note}]。"
     )
 
 

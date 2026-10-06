@@ -198,6 +198,26 @@ MUTANTS = [
      _u("test_anchors_built_once_per_card"),
      [("repl", PA, [("    source_norm = anchors.source_norm",
                      "    source_norm = normalize(anchors.source_norm)")])], "RED"),
+    # MB5/MB6/MB7：B2 提示词、B7 —— 分批前缀与关系口径各只写一处。
+    ("MB5 分批前缀改回主调用系统提示（B2 的旧形态）",
+     _u("test_relationship_batch_prefix_is_shared_step_free"),
+     [("repl", DIST, [("        self._relationships_batched(draft, prefix=book_prefix(text), messages=messages)",
+                       "        self._relationships_batched(\n"
+                       "            draft, prefix=self._longcontext_prompt(text, character_name)[0],\n"
+                       "            messages=messages)")])], "RED"),
+    ("MB6 关系口径内联回主提示维度 F（B7 的旧形态）",
+     _loc("test_s13_relationship_rules_defined_once"),
+     [("repl", DIST, [("        '   关系的类型、态度与阶段变化由后续单独生成，这里**不要**写。'",
+                       "        '   关系的类型、态度与阶段变化由后续单独生成，这里**不要**写。'\n"
+                       "        '单向视角：只写主角怎么看对方，不写对方怎么看主角。'")])], "RED"),
+    ("MB7 组共享前缀塞进整段格式提示（B2 回归）",
+     _loc("test_s14b_shared_prefix_producers_defined_once"),
+     [("repl", DIST, [("    return DISTILL_PROMPT_BEFORE_NAME + character_name + _FORMAT_SHARED_HEAD",
+                       "    return DISTILL_PROMPT_BEFORE_NAME + character_name + format_prompt_after()")])], "RED"),
+    ("MB8 阶段 note 不落卡（B7 的行为面）",
+     _u("test_relationship_note_flows_from_draft_to_projection"),
+     [("repl", CD, [('            {"phase": p, "attitude": att_map.get(p, ""), "note": note_map.get(p, "")}',
+                     '            {"phase": p, "attitude": att_map.get(p, "")}')])], "RED"),
 ]
 
 BASELINE_TARGETS = (U, READERS, "tests/test_arc_phase_fields_entries.py", LOC)

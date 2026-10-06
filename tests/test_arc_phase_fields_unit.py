@@ -536,3 +536,69 @@ def test_anchors_built_once_per_card(monkeypatch):
     card = card_from_draft(data, src)
     assert card.name == "甲"          # 先证位置核对确实跑过（不是提前 return）
     assert calls == 1
+
+
+# ── U22/U23 提示词 = 共享前缀 + 本步指令（B2 提示词、B7）────────────────
+
+def test_relationship_batch_prefix_is_shared_step_free():
+    """U22：关系分批的系统提示以 `book_prefix` 开头，且不含主调用维度 F 的「只出名单」。
+
+    分批这一步要的是**关系详情**，主调用的维度 F 却写着「关系的类型、态度与阶段变化由
+    后续单独生成，这里不要写」——分批把整段主提示当前缀，等于把「不要写」带进了「给我写」。
+    前缀只能是共享的、不含本步指令的那一段（`book_prefix`：正文）。
+    """
+    import json
+    from core.distiller import Distiller, book_prefix
+
+    systems: list[str] = []
+
+    class _LLM:
+        model = "stub-rel"
+        last_usage = None
+
+        def chat_stream_long(self, system, messages, max_tokens=None, **kw):
+            systems.append(system)
+            yield json.dumps([{
+                "target": "乙", "relation": "同窗", "attitude": "亲近", "note": "老同学",
+                "attitudes": [{"phase": 1, "attitude": "亲近", "quote": "开头甲甲甲",
+                               "note": "老同学"}],
+            }], ensure_ascii=False)
+            return {"prompt_tokens": 1, "completion_tokens": 1}
+
+    src = "开头甲甲甲。中间乙乙乙。"
+    d = Distiller(llm=_LLM(), config_path=None)
+    draft = {"name": "甲", "relationships": [{"target": "乙"}]}
+    d.fill_relationships(draft, src, "甲")
+
+    assert systems, "关系分批没调模型（判据失去意义）"
+    assert systems[0].startswith(book_prefix(src)), "分批前缀不是共享前缀（缓存命中不上）"
+    assert "只出名单" not in systems[0], "分批前缀把维度 F 的「只出名单」带进来了"
+    assert draft["relationships"][0]["relation"] == "同窗", "分批结果没写回草稿"
+
+
+def test_relationship_note_flows_from_draft_to_projection():
+    """U23：草稿里按阶段写的 note 经 `card_from_draft` 落到 `phase_attitudes`，投影按阶段取。
+
+    注入口径 `note` 是「喂给聊天模型的固定立场」，必须随阶段变 —— 草稿侧按阶段写、
+    转卡时落进 `phase_attitudes[i].note`、`project_card` 取 ≤k 最新一条。
+    """
+    from core.arc_view import project_card
+    from core.card_draft import card_from_draft
+
+    src = "开头甲甲甲。中间乙乙乙。"
+    data = {
+        "name": "甲",
+        "character_arc": {"phases": [
+            {"label": "一", "state": "s1", "anchor": ""},
+            {"label": "二", "state": "s2", "anchor": "中间乙乙乙"}]},
+        "relationships": [{
+            "target": "乙", "relation": "同窗",
+            "attitudes": [
+                {"phase": 1, "attitude": "平淡", "quote": "开头甲甲甲", "note": "普通同学"},
+                {"phase": 2, "attitude": "亲密", "quote": "中间乙乙乙", "note": "生死之交"}]}],
+    }
+    card = card_from_draft(data, src)
+    notes = {p.phase: p.note for p in card.relationships[0].phase_attitudes}
+    assert notes == {1: "普通同学", 2: "生死之交"}, "草稿的按阶段 note 没落进 phase_attitudes"
+    assert project_card(card, 1)[0].relationships[0].note == "普通同学"
+    assert project_card(card, 2)[0].relationships[0].note == "生死之交"

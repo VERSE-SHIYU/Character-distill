@@ -320,8 +320,40 @@ experience 字段），修复后只在 `card_from_draft` 开头建一次。样�
 50 万 token 的书同理到秒级）。判别器 `U20`（`test_anchors_built_once_per_card`）钉住次数这一列，
 变异 `MB4` 打红它。产数脚本入库：`docs/specs/artifacts/arc_phase_fields_perf.py`（原样可重跑）。
 
+### B2 提示词 / B7 关系口径（2026-10-06，本步一个提交）
+
+**缺陷**：关系分批（`_relationships_batched`）把**主调用的整段系统提示**当前缀传给
+`core.relationship_batch._batch_prompt`。主提示里有维度 F 的「关系的类型、态度与阶段变化由
+后续单独生成，这里**不要**写」——分批这一步要的恰恰是关系详情，等于把「不要写」带进了
+「给我写」。同一条规则的另一个症状：五条关系生成口径（单向视角 / note 是注入立场 / 只写
+态度变了的阶段 / 无阶段 phase 0 / quote 是该阶段原文摘录）哪一处都没写成常量。
+
+**改法**（提示词 = 共享前缀 + 本步指令）：
+
+- `book_prefix(text)` = 「以下是完整的文本内容：」+ 正文（一次读完路径的共享段）；
+  `distill_instruction(name)` = 角色行 + 分析维度 + 输出规则 + 草稿 JSON。`_longcontext_prompt`
+  = 两者拼接，**输出逐字节不变**（已验证）。
+- `format_prompt_shared(name)` = 各组提示词共同的开头（角色行 + 头像句 + 铁律），是每个
+  `format_prompt_after(group)` 的前缀（已验证）—— 组路径的共享段。
+- 五个 `_relationships_batched` 调用点的 `prefix=` 全部换成这两个产出者之一；主调用的
+  `system_prompt` 不再出现在 `prefix=` 位置（锁 S14）。
+- 五条口径收进 `core.relationship_batch.RELATIONSHIP_RULES`，只由 `_batch_prompt` 引用
+  （锁 S13）；与维度 F 的「只出名单」是同一件事的两步、两句话。
+- `DraftAttitude` 加 `note`；`_convert_relationships` 把它写进 `phase_attitudes[i].note`
+  （`arc_view._project_relationships` 早已按 ≤k 最新一条投影，只缺草稿侧这一半）。
+
+**判据**：`U22`（分批系统提示以 `book_prefix` 开头、不含「只出名单」）、`U23`（按阶段 note
+从草稿流到投影）；锁 `S13 / S14 / S14b`。变异 `MB5`（前缀改回主提示）打红 `U22`、`MB6`
+（口径内联回维度 F）打红 `S13`、`MB7`（组共享前缀退回整段格式提示）打红 `S14b`、`MB8`
+（阶段 note 不落卡）打红 `U23` —— 四条均实测 RED。
+
 ### 偏离与旁证（随步记录）
 
+- **B2 组路径/档案路径的共享前缀**：spec 只点名了「一次读完路径拆 `book_prefix`」与「组路径
+  用组共有段」。`distill_incremental`（档案路径，非组）的主调用系统提示本身没有正文段，故其
+  分批前缀取 `format_prompt_shared(name)`（组共享段）—— 给出角色行与铁律、不含维度 F，且与
+  组提示词同前缀。它不是该路径主调用提示的**字面前缀**（该路径主调用不是组调用），这是本段
+  的一处解释性选择。
 - **效率 #1 的实现形态**：spec 说「verify 改为收这个对象」。实际把 `verify(items, valid_rows,
   phases, source_text)` 改成 `verify(items, valid_rows, anchors)`（`anchors` 是新增的
   `PhaseAnchors` NamedTuple，含 `n / source_norm / ranges / reason`），`build_anchors(phases,

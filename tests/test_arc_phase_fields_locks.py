@@ -50,6 +50,18 @@ def _funcs(path: Path) -> dict[str, str]:
     }
 
 
+def _kwarg_sources(path: Path, method: str, kwarg: str) -> list[str]:
+    """源码里所有 `self.<method>(...)` 调用中 `kwarg=` 实参的源码片段（AST，不看注释）。"""
+    text = _read(path)
+    out: list[str] = []
+    for n in ast.walk(ast.parse(text)):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == method:
+            for kw in n.keywords:
+                if kw.arg == kwarg:
+                    out.append((ast.get_source_segment(text, kw.value) or "").strip())
+    return out
+
+
 def _imports(path: Path) -> set[str]:
     """导入的**子模块名**，相对 `core` 归一：`core.distiller` → `distiller`、
     `core.adapters.x` → `adapters`；仓外模块取首段（`pydash`）。
@@ -207,3 +219,53 @@ def test_s12_opening_prompts_only_in_opening_module():
     # text_manager，这里点名（MA23）。
     assert "build_variation_prompt(" in _read(_CORE / "text_manager.py"), (
         "text_manager 的开场变体未走 core.opening.build_variation_prompt")
+
+
+# ── S13 关系生成口径（五条规则）只在 relationship_batch 一处（B7） ───────────
+def test_s13_relationship_rules_defined_once():
+    """关系生成的口径只此一处，且 `_batch_prompt` 确实引用它（不是死常量）。
+
+    五条规则（单向视角 / note 是注入立场 / 只写态度变了的阶段 / phase 0 / quote 是原文
+    摘录）讲的是**关系怎么写**；主调用维度 F 的「只出名单」讲的是**这一步先别写**，两步
+    的两句话。规则若也内联进 distiller 的维度说明，就成了「同一条规则两处」，改一处漏一处。
+    """
+    defs = _hits(_CORE, r"^RELATIONSHIP_RULES\s*(?::[^=]+)?=")
+    assert [f for f, _ in defs] == ["core/relationship_batch.py"], (
+        f"RELATIONSHIP_RULES 应只在 relationship_batch 定义一次：{defs}")
+    for marker in ("单向视角", "只写态度变了的阶段"):
+        files = _files(_CORE, marker)
+        assert files <= {"core/relationship_batch.py"}, f"关系口径「{marker}」在别处也有：{files}"
+    assert "RELATIONSHIP_RULES" in _funcs(_CORE / "relationship_batch.py")["_batch_prompt"], (
+        "_batch_prompt 没引用 RELATIONSHIP_RULES（常量成了死代码）")
+
+
+# ── S14 关系分批的前缀只能由共享前缀函数产出（B2 提示词）────────────────────
+def test_s14_batch_prefix_only_from_shared_prefix():
+    """分批前缀 = 共享前缀（`book_prefix` 正文 / `format_prompt_shared` 组共享段）。
+
+    传出主调用的系统提示会把维度 F 的「不要写关系详情」带进「给我关系详情」的这一步 ——
+    前缀只能是**不含本步指令**的那一段；本锁钉住「只有这两个产出者」。
+    """
+    prefixes = _kwarg_sources(_CORE / "distiller.py", "_relationships_batched", "prefix")
+    assert prefixes, "没找到任何 _relationships_batched 的 prefix 实参（判据失去意义）"
+    bad = [p for p in prefixes
+           if not (p.startswith("book_prefix(") or p.startswith("format_prompt_shared("))]
+    assert not bad, f"分批前缀不是共享前缀函数产出的：{bad}"
+
+
+def test_s14b_shared_prefix_is_a_real_shared_prefix():
+    """组共享前缀 = 每个组提示词共同的开头，且不含本步指令（维度 F 的「只出名单」）。
+
+    只锁「存在一个共享前缀函数」不够：它必须**真的是**各组提示词的前缀（缓存才命中），
+    且不含组专属维度 —— 退回整段 `format_prompt_after()` 就不是任何组的前缀（MB7）。
+    """
+    from core.distiller import (
+        DISTILL_PROMPT_BEFORE_NAME, format_prompt_after, format_prompt_shared, book_prefix)
+    from core.schema import FORMAT_GROUPS
+
+    shared = format_prompt_shared("甲")
+    for g in FORMAT_GROUPS:
+        full = DISTILL_PROMPT_BEFORE_NAME + "甲" + format_prompt_after(g)
+        assert full.startswith(shared), f"组共享前缀不是 {g} 提示词的前缀"
+    assert "只出名单" not in shared, "组共享前缀带了维度 F 的「只出名单」"
+    assert "只出名单" not in book_prefix("正文"), "book_prefix 带了维度 F 的「只出名单」"

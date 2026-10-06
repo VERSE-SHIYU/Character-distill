@@ -64,9 +64,13 @@ class DraftMemory(BaseModel):
 
 
 class DraftAttitude(BaseModel):
-    """本角色在某阶段对某人的态度；quote 是这段态度成立的原文摘录。"""
+    """本角色在某阶段对某人的态度；quote 是这段态度成立的原文摘录。
+
+    `note` 是这一阶段的单向口径（喂给聊天模型的固定立场），随阶段变；空则回落关系顶层 note。
+    """
     phase: int
     attitude: str = ""
+    note: str = ""
     quote: str = ""
 
 
@@ -258,9 +262,11 @@ def _convert_relationships(rels, anchors, count: int, name: str) -> list[dict]:
             out.append(row)                       # 旧卡：顶层 attitude 原样
             continue
         att_map = {a.phase: a.attitude for a in r.attitudes}
+        note_map = {a.phase: a.note for a in r.attitudes}
         final = res.phases[i]
         row["phase_attitudes"] = [
-            {"phase": p, "attitude": att_map.get(p, "")} for p in final]
+            {"phase": p, "attitude": att_map.get(p, ""), "note": note_map.get(p, "")}
+            for p in final]
         row["attitude"] = att_map[max(final or att_map)]
         out.append(row)
     return out

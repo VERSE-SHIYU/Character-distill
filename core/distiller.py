@@ -395,6 +395,40 @@ def format_prompt_after(group: str | None = None) -> str:
 
 DISTILL_PROMPT_AFTER_NAME = format_prompt_after()
 
+# 组提示词共有的**第一段**：角色行 + 头像句 + 铁律。`format_prompt_after(group)` 的每个
+# 组提示词都以此开头（组专属维度从「分析维度」那节起才分叉），故它是组间共享前缀；它不含
+# 任何组专属维度 —— 尤其不含维度 F 的「只出名单」（关系分批的组路径拿它当前缀）。
+_FORMAT_SHARED_HEAD = _FORMAT_HEADER + "\n\n" + _FORMAT_IRON_LAWS
+
+
+def format_prompt_shared(character_name: str) -> str:
+    """各组提示词共用的前缀（角色行 + 铁律）—— 关系分批在组路径上的前缀。
+
+    组提示词 = 本前缀 + 该组维度/模板。故它既让分批与各组共享缓存前缀，又不含任何组专属
+    维度 —— 分批要的是关系详情，不能把主/组提示里「这里不要写」的指令带进去（B2）。
+    """
+    return DISTILL_PROMPT_BEFORE_NAME + character_name + _FORMAT_SHARED_HEAD
+
+
+def book_prefix(text: str) -> str:
+    """共享前缀（一次读完路径的主调用与关系分批共用）：正文段。
+
+    「全文在前」是为了同一本书换角色时命中 Context Caching（前缀匹配，共享段须落在请求
+    最前面）。关系分批也用它当前缀 —— 正文是主调用与分批之间**唯一**不含本步指令的那一段。
+    """
+    return "以下是完整的文本内容：\n\n" + text
+
+
+def distill_instruction(character_name: str) -> str:
+    """本步指令（主调用）：角色行 + 分析维度 + 输出规则 + 草稿 JSON 结构。"""
+    try:
+        schema_str = json.dumps(draft_schema(), ensure_ascii=False, indent=2)
+    except (TypeError, ValueError) as exc:
+        print(f"生成 CharacterCard JSON Schema 失败：{exc}")
+        raise
+    return (DISTILL_PROMPT_BEFORE_NAME + character_name
+            + DISTILL_PROMPT_AFTER_NAME + schema_str)
+
 
 def _phase_labels(draft: dict) -> list[str]:
     """草稿里弧线的阶段名（关系分批「阶段依次为…」用）。"""
@@ -960,10 +994,10 @@ class Distiller:
         """一次读完路径的**流式**支路：草稿只在消费方（SSE / 后台路由）成型，由它调这里补关系。
 
         其余入口的草稿在 distiller 内部成型，入口自己调 `_relationships_batched`；这里只是
-        同一条链在消费方那一侧的入口，前缀与主调用同源（`_longcontext_prompt`）。
+        同一条链在消费方那一侧的入口，前缀与主调用同源（`book_prefix` 共享段）。
         """
-        prefix, messages = self._longcontext_prompt(text, character_name)
-        self._relationships_batched(draft, prefix=prefix, messages=messages)
+        _, messages = self._longcontext_prompt(text, character_name)
+        self._relationships_batched(draft, prefix=book_prefix(text), messages=messages)
 
     def _chat_accounted(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str, action: str,
@@ -1620,7 +1654,7 @@ class Distiller:
             reply, system_prompt, user_messages,
             action_label="distill", upstream_truncated=upstream_truncated,
         )
-        self._relationships_batched(data, prefix=system_prompt, messages=user_messages)
+        self._relationships_batched(data, prefix=book_prefix(text), messages=user_messages)
         try:
             return card_from_draft(data, text)
         except ValidationError as exc:
@@ -1702,18 +1736,11 @@ class Distiller:
 
         同步（`_distill_longcontext`）与流式（`_distill_longcontext_stream`）曾各拼各的，
         顺序因此分叉（同步那条留在旧结构）；收到这里一份，改顺序只改这里。
-        """
-        try:
-            schema_str = json.dumps(
-                draft_schema(), ensure_ascii=False, indent=2)
-        except (TypeError, ValueError) as exc:
-            print(f"生成 CharacterCard JSON Schema 失败：{exc}")
-            raise
 
-        system_prompt = (
-            "以下是完整的文本内容：\n\n" + text + "\n\n"
-            + DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
-        )
+        拆成 `book_prefix(text)`（共享段）+ `distill_instruction(name)`（本步指令）：关系分批
+        拿共享段当前缀，不会把本步指令里维度 F 的「只出名单」带进「给我详情」的那一步（B2）。
+        """
+        system_prompt = book_prefix(text) + "\n\n" + distill_instruction(character_name)
         user_content = f"请基于以上全文为「{character_name}」生成角色卡。"
         return system_prompt, [{"role": "user", "content": user_content}]
 
@@ -1730,7 +1757,7 @@ class Distiller:
             reply, system_prompt, user_messages,
             action_label="distill_longcontext", upstream_truncated=upstream_truncated,
         )
-        self._relationships_batched(data, prefix=system_prompt, messages=user_messages)
+        self._relationships_batched(data, prefix=book_prefix(text), messages=user_messages)
         try:
             return card_from_draft(data, text)
         except ValidationError as exc:
@@ -2356,7 +2383,8 @@ class Distiller:
             reply, system_prompt, user_messages,
             action_label="distill_format", upstream_truncated=upstream_truncated,
         )
-        self._relationships_batched(data, prefix=system_prompt, messages=user_messages)
+        self._relationships_batched(
+            data, prefix=format_prompt_shared(character_name), messages=user_messages)
         try:
             card = card_from_draft(data, text)
         except ValidationError as exc:
@@ -2712,7 +2740,7 @@ class Distiller:
             # 关系详情：主调用只出名单，这里按批补齐（在按草稿校验之前，校验才见完整形态）。
             self._relationships_batched(
                 merged,
-                prefix=DISTILL_PROMPT_BEFORE_NAME + character_name + format_prompt_after(),
+                prefix=format_prompt_shared(character_name),
                 messages=[{"role": "user", "content":
                     f"以下是关于「{character_name}」的完整分析档案，"
                     f"严格按 JSON 格式输出：\n\n{format_input}"}])
