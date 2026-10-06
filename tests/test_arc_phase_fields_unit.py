@@ -494,3 +494,45 @@ def test_projected_card_type_only_from_project_card():
 
     with pytest.raises(TypeError):
         ContextEngine(c, rag=None, storage=None)      # 原卡 → 抛
+
+
+# ── U20 位置核对的上下文只建一次（效率 #1）─────────────────────────────
+
+def test_anchors_built_once_per_card(monkeypatch):
+    """U20：一次 `card_from_draft` 里整本原文只规范化一次 —— 位置核对的上下文只建一次。
+
+    修复前每个字段各归一化一遍整本书（做法 / 记忆 / 关系 + 每个 state、experience 字段
+    各一次），书越大重复成本越高。计数口径是 `core.phase_anchoring` 自己那个 `normalize`
+    绑定 —— 引用侧 `core.quotes.normalize` 只归一化短摘录，不在此列。
+    """
+    import core.phase_anchoring as pa
+    from core.card_draft import card_from_draft
+
+    calls = 0
+
+    def counting(s):
+        nonlocal calls
+        calls += 1
+        return real(s)
+
+    real = pa.normalize
+    monkeypatch.setattr(pa, "normalize", counting)
+
+    src = "开头甲甲甲。中间乙乙乙。结尾丙丙丙。"
+    data = {
+        "name": "甲",
+        "character_arc": {"phases": [
+            {"label": "一", "state": "s1", "anchor": ""},
+            {"label": "二", "state": "s2", "anchor": "中间乙乙乙"}]},
+        "personality_traits": [{"value": "全程", "occurrences": [
+            {"phase": 1, "quote": "开头甲甲甲"}, {"phase": 2, "quote": "中间乙乙乙"}]}],
+        "key_memories": [{"memory": "记忆", "occurrences": [
+            {"phase": 1, "quote": "开头甲甲甲"}]}],
+        "situation_behaviors": [{"situation": "情境", "behavior": "做法",
+                                 "occurrences": [{"phase": 2, "quote": "中间乙乙乙"}]}],
+        "relationships": [{"target": "乙", "relation": "熟人", "attitudes": [
+            {"phase": 2, "attitude": "熟", "quote": "中间乙乙乙"}]}],
+    }
+    card = card_from_draft(data, src)
+    assert card.name == "甲"          # 先证位置核对确实跑过（不是提前 return）
+    assert calls == 1

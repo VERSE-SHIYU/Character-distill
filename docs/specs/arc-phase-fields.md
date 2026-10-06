@@ -303,6 +303,36 @@ RED   MA22 relationship_batch 导入 distiller | 1 failed, 1 passed in 0.12s
 - **C24**：实测样本卡 token 掌柜 2074 / 孔乙己 2675 / 赵太爷 2789 / 阿Q 3894（区间与规格一致）。
 - 附录 C、D、E 扫描逐行复现（附件命令原样可重跑）。
 
+### 效率 #1 实测（2026-10-06，`7c3aec77` 前后各一次，本机 `.venv`）
+
+判据：一次 `card_from_draft` 里「规范化原文 + 各阶段区间」这个上下文建几次（= `core.phase_anchoring`
+自己的 `normalize` 被调几次）。修复前**每个字段各建一次**（做法 / 记忆 / 关系 + 每个 state、
+experience 字段），修复后只在 `card_from_draft` 开头建一次。样本卡 + 原文 = 仓内
+`tests/fixtures/kongyiji.txt`（公版；2623 字，规范化后 2187 字），草稿按 §2.3 规模
+（6 阶段、26 条状态/经历条目 + 做法 6 条 + 记忆 4 条 + 关系 3 人）。
+
+| | `normalize(整本原文)` 次数 | 耗时 ms（30 次：最小 / 中位 / 均值 / 最大） |
+|---|---|---|
+| 修复前（每字段各归一化一遍） | 16 | 15.90 / 17.47 / 17.85 / 22.13 |
+| 修复后（开头建一次） | 1 | 4.59 / 5.12 / 5.35 / 6.79 |
+
+「次数」这一列与书的大小无关（16 → 1）；「耗时」这列的省量随书线性变大（2.6KB 样本省约 12ms，
+50 万 token 的书同理到秒级）。判别器 `U20`（`test_anchors_built_once_per_card`）钉住次数这一列，
+变异 `MB4` 打红它。产数脚本入库：`docs/specs/artifacts/arc_phase_fields_perf.py`（原样可重跑）。
+
+### 偏离与旁证（随步记录）
+
+- **效率 #1 的实现形态**：spec 说「verify 改为收这个对象」。实际把 `verify(items, valid_rows,
+  phases, source_text)` 改成 `verify(items, valid_rows, anchors)`（`anchors` 是新增的
+  `PhaseAnchors` NamedTuple，含 `n / source_norm / ranges / reason`），`build_anchors(phases,
+  source_text)` 是唯一的产地；`phase_ranges` 保持原签名（既有测试直接调它）。
+- **旁证（非本段改动面）**：注册变异驱动 `tests/perf/arc_phase_anchoring_mutations.py` 有三条
+  锚点已在更早的分支提交上失真（M17 锚 `row.occurrences`、M30 锚 `occurrences: list[...] = []`
+  计数 3、M35 锚旧版 warning 文案），`_apply` 的「锚点恰一命中」会当场 assert，该驱动**跑不完**。
+  这不是本段引入的（`881fb6bf` 时已如此），也不在 CI 路径上（CI 只跑 pytest，`test_lock_coverage`
+  读产物、产物记的是 `test_phase_anchoring.py` 的判别器身份，未受影响、仍绿）。处置需拍板：修锚点
+  要重跑该驱动（需测试 PG），本段先不动，报告里点出。
+
 ## 11. 自检表（逐条对照 Shiyu 的 spec 标准）
 | 标准 | 落点 | 状态 |
 |---|---|---|

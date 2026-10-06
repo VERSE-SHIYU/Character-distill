@@ -234,8 +234,7 @@ def _cap_slot(slot: list[int], label: str, where: str) -> list[int]:
     return slot[:1]
 
 
-def _convert_relationships(rels, phases, source_text: str, count: int,
-                           name: str) -> list[dict]:
+def _convert_relationships(rels, anchors, count: int, name: str) -> list[dict]:
     """关系草稿 → 存卡关系：态度复用位置检查与编号过滤，写 `phase_attitudes` 与顶层 `attitude`。
 
     顶层 `attitude` 取它出现的最后一个（存留下来的）阶段的态度 —— k=n 与前端编辑都读它。
@@ -249,7 +248,7 @@ def _convert_relationships(rels, phases, source_text: str, count: int,
         occurrences=[DraftOccurrence(phase=a.phase, quote=a.quote) for a in r.attitudes],
     ) for r in rels]
     res = phase_anchoring.verify(
-        items, _valid_number_rows(items, count, "态度"), phases, source_text,
+        items, _valid_number_rows(items, count, "态度"), anchors,
         kind="态度", label=lambda x: x.memory, name=name)
     out: list[dict] = []
     for i, r in enumerate(rels):
@@ -281,15 +280,16 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
     draft = CardDraft.model_validate(data)
     phases = draft.character_arc.phases
     count = len(phases)
+    anchors = phase_anchoring.build_anchors(phases, source_text)   # 整本原文只归一化这一次
 
     b = phase_anchoring.verify(
         draft.situation_behaviors,
         _valid_number_rows(draft.situation_behaviors, count, "做法"),
-        phases, source_text, kind="做法", name=draft.name)
+        anchors, kind="做法", name=draft.name)
     m = phase_anchoring.verify(
         draft.key_memories,
         _valid_number_rows(draft.key_memories, count, "记忆"),
-        phases, source_text, kind="记忆", name=draft.name,
+        anchors, kind="记忆", name=draft.name,
         warn_skip=not draft.situation_behaviors)   # 卡的跳过警告由第一类有内容的条目打一次
     logger.info("[phase_anchoring] card=%s tags=%d dropped=%d ambiguous=%d "
                 "unverified_quotes=%d fallback=%d skipped_card=%s memories_dropped=%d",
@@ -304,7 +304,7 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
     for path, spec in _GENERIC_PATHS:
         rows = get_path(draft, path)
         res = phase_anchoring.verify(
-            rows, _valid_number_rows(rows, count, path), phases, source_text,
+            rows, _valid_number_rows(rows, count, path), anchors,
             kind=path, label=lambda x: x.value, name=draft.name, warn_skip=False)
         # 列表与单值走同一个循环：`kind` 在 `dispatch` 里决定格子容量（scalar 每格只留第一条），
         # 这里只按 `kind` 决定取值形态（list → 列表，scalar → 单值）。
@@ -327,7 +327,7 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
     ]
     card["key_memories"] = [draft.key_memories[i].memory for i in m_top]
     card["relationships"] = _convert_relationships(
-        draft.relationships, phases, source_text, count, draft.name)
+        draft.relationships, anchors, count, draft.name)
 
     for idx, phase in enumerate(card["character_arc"]["phases"]):
         phase["behaviors"] = [

@@ -88,7 +88,28 @@ def phase_ranges(phases, source_norm: str) -> tuple[list[tuple[int, int]], str]:
     return ranges, ""
 
 
-def verify(items, valid_rows: list[list[int]], phases, source_text: str, *,
+class PhaseAnchors(NamedTuple):
+    """位置核对的上下文：规范化原文 + 各阶段区间 + 整卡跳过的原因 —— **一张卡建一次**。
+
+    每个字段各建一次，就是每个字段各归一化一遍整本书（效率 #1）。`reason` 非空即整卡跳过
+    （规则 2 / D7），那条 warning 由 `verify` 打 —— 这里不打，免得同一原因打多次。
+    """
+    n: int
+    source_norm: str
+    ranges: list[tuple[int, int]]
+    reason: str
+
+
+def build_anchors(phases, source_text: str) -> PhaseAnchors:
+    """按草稿的阶段与原文建一次上下文。无阶段的卡不归一化（规则 5：整卡不做位置检查）。"""
+    if not phases:
+        return PhaseAnchors(0, "", [], "")
+    source_norm = normalize(source_text)
+    ranges, reason = phase_ranges(phases, source_norm)
+    return PhaseAnchors(len(phases), source_norm, ranges, reason)
+
+
+def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
            kind: str = "做法", label=_situation_label, name: str = "",
            warn_skip: bool = True) -> Verification:
     """按原文位置校正每条条目的阶段 —— **对任意带 `occurrences` 的条目列表**工作。
@@ -99,14 +120,17 @@ def verify(items, valid_rows: list[list[int]], phases, source_text: str, *,
 
     `valid_rows`：`card_from_draft` 先做规则 0（编号合法性过滤）后，每条条目剩下的合法阶段编号
     （升序、去重）。本函数只对合法编号做位置检查；顺序、兜底、取值口径见 spec §3.2。
+
+    `anchors`：`card_from_draft` 开头 `build_anchors` 建一次的那个上下文（整本原文只归一化
+    一次，效率 #1）。本函数不再自己归一化原文。
     """
-    n = len(phases)
+    n = anchors.n
     if n == 0:                                   # 规则 5：无阶段的卡不做位置检查
         return Verification([[] for _ in items], [{} for _ in items],
                             False, 0, 0, 0, 0, 0, None)
 
-    source_norm = normalize(source_text)
-    ranges, reason = phase_ranges(phases, source_norm)
+    source_norm = anchors.source_norm
+    ranges, reason = anchors.ranges, anchors.reason
     skipped = bool(reason)
     starts = None if skipped else [r[0] for r in ranges]
     if skipped and items and warn_skip:          # 规则 2：保留模型标注，warning 一条

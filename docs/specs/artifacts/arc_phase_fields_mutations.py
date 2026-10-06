@@ -50,8 +50,9 @@ MARKET = ROOT / "web" / "routers" / "market.py"
 RB = ROOT / "core" / "relationship_batch.py"
 CTX = ROOT / "core" / "context_engine.py"
 TM = ROOT / "core" / "text_manager.py"
+PA = ROOT / "core" / "phase_anchoring.py"
 
-TARGETS = (AV, CL, CD, SCHEMA, DIST, AREV, MARKET, RB, CTX, TM)
+TARGETS = (AV, CL, CD, SCHEMA, DIST, AREV, MARKET, RB, CTX, TM, PA)
 
 U = "tests/test_arc_phase_fields_unit.py"
 LOC = "tests/test_arc_phase_fields_locks.py"
@@ -190,6 +191,13 @@ MUTANTS = [
                      '            kept = [i for i in slot[:1] if i not in seen]\n'
                      '            seen.update(kept)\n'
                      '            by_phase[p - 1] = kept')])], "RED"),
+    # MB4：B2/效率 #1 —— 位置核对的上下文只在 card_from_draft 开头建一次；每个字段各建一次
+    # 就是每字段各归一化一遍整本书（修复前 16 次）。变异在 verify 里再归一化一次 ⇒ 计数回到
+    # 「每字段一次」，只有 U20 的判别器撞得到它。
+    ("MB4 每个字段各自归一化整本原文（效率 #1 的旧形态）",
+     _u("test_anchors_built_once_per_card"),
+     [("repl", PA, [("    source_norm = anchors.source_norm",
+                     "    source_norm = normalize(anchors.source_norm)")])], "RED"),
 ]
 
 BASELINE_TARGETS = (U, READERS, "tests/test_arc_phase_fields_entries.py", LOC)
