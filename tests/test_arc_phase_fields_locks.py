@@ -51,12 +51,25 @@ def _funcs(path: Path) -> dict[str, str]:
 
 
 def _imports(path: Path) -> set[str]:
+    """导入的**子模块名**，相对 `core` 归一：`core.distiller` → `distiller`、
+    `core.adapters.x` → `adapters`；仓外模块取首段（`pydash`）。
+
+    不归一就会塌成 `core` —— `from core.distiller import …` 的首段是 `core`，导入方向锁
+    看着全绿其实一条都没拦（MA22 打不红就是这么来的）。
+    """
     mods: set[str] = set()
     for n in ast.walk(ast.parse(_read(path))):
         if isinstance(n, ast.Import):
-            mods |= {a.name.split(".")[0] for a in n.names}
+            names = {a.name for a in n.names}
         elif isinstance(n, ast.ImportFrom):
-            mods.add((n.module or "").split(".")[0] or "core")
+            names = {n.module or ""}
+        else:
+            continue
+        for name in names:
+            name = name[5:] if name.startswith("core.") else name
+            head = name.split(".")[0]
+            if head:
+                mods.add(head)
     return mods - {"__future__"}
 
 
@@ -129,9 +142,25 @@ def test_s8_batching_single_entry_and_batch_size_constant():
 
 
 # ── S9 分批调用只经 `_collect_stream` ──────────────────────────────────────
+def _self_calls(path: Path, func: str) -> set[str]:
+    """函数体里 `self.<name>(...)` 实际调用的方法名（AST，**不看注释/文档串**）——
+
+    文本子串会被 docstring 里那句「每批走 `_collect_stream`」满足，变异把调用换成非流式
+    也照绿（MA19 打不红就是这么来的）。
+    """
+    out: set[str] = set()
+    for n in ast.walk(ast.parse(_read(path))):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == func:
+            for c in ast.walk(n):
+                if (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                        and isinstance(c.func.value, ast.Name) and c.func.value.id == "self"):
+                    out.add(c.func.attr)
+    return out
+
+
 def test_s9_batches_go_through_collect_stream():
-    src = _funcs(_CORE / "distiller.py")["_relationships_batched"]
-    assert "_collect_stream" in src, "分批未走 _collect_stream（流式）"
+    calls = _self_calls(_CORE / "distiller.py", "_relationships_batched")
+    assert "_collect_stream" in calls, "分批未走 _collect_stream（流式）"
 
 
 # ── S10 审核与守卫共用一个遍历函数 ──────────────────────────────────────────
@@ -145,8 +174,8 @@ def test_s10_review_and_guard_share_one_walker():
 # ── S11 导入方向（§4.0）：AST 扫描各模块导入，违反即红 ───────────────────────
 def test_s11_import_direction():
     cl = _imports(_CORE / "card_layers.py")
-    assert cl <= {"pydash", "core", "typing"}, f"card_layers 导入了越界模块：{cl}"
-    assert "core" in cl or "pydash" in cl
+    assert cl <= {"schema", "pydash", "typing"}, f"card_layers 导入了越界模块：{cl}"
+    assert "schema" in cl or "pydash" in cl
 
     rv = _imports(_CORE / "arc_view.py")
     assert not (rv & {"distiller", "adapters", "web", "storage"}), f"arc_view 导入越界：{rv}"
@@ -160,9 +189,15 @@ def test_s11_import_direction():
 
 # ── S12 开场白 / 苏醒台词提示词只在 `core/opening.py` ─────────────────────────
 def test_s12_opening_prompts_only_in_opening_module():
-    markers = ("放进当下场景", "第一眼认出眼前人")
+    markers = ("放进当下场景", "第一眼认出眼前人", "重新说一句意思相近但措辞不同")
+    src_opening = _read(_CORE / "opening.py")
     for m in markers:
-        assert m in _read(_CORE / "opening.py"), f"opening.py 缺提示词特征串：{m}"
-    src = _read(_WEB / "routers" / "distill.py")
-    for m in markers:
-        assert m not in src, f"distill.py 里还有内联开场白提示词：{m}"
+        assert m in src_opening, f"opening.py 缺提示词特征串：{m}"
+    for f in (_WEB / "routers" / "distill.py", _CORE / "text_manager.py"):
+        text = _read(f)
+        for m in markers:
+            assert m not in text, f"{f.name} 里还有内联开场白提示词：{m}"
+    # 两处开场白（新会话 + 开场变体）都经 core/opening.py（§4.6）—— 变体若又内联回
+    # text_manager，这里点名（MA23）。
+    assert "build_variation_prompt(" in _read(_CORE / "text_manager.py"), (
+        "text_manager 的开场变体未走 core.opening.build_variation_prompt")
