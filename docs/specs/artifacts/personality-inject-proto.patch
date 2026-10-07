@@ -1,0 +1,418 @@
+diff --git a/core/affinity_rules.py b/core/affinity_rules.py
+new file mode 100644
+index 00000000..dcade0b4
+--- /dev/null
++++ b/core/affinity_rules.py
+@@ -0,0 +1,109 @@
++"""好感规则表（③b-1）：评估模型只报「发生了哪类事、哪一档、档内的整数」，好感怎么变由这里定。
++
++纯函数，无 IO、不读卡片以外的东西。出处见 `docs/specs/personality-3a-design.md` v6 §5：
++档位区间照 EIBench（arXiv 2606.15532 附录 G，关系刻度同为 0–100）；进亲近档要累计 3 次
++「做到亲近条件」（2609.00982 的三步有序门槛；PatientAct 2608.12750）。
++"""
++
++from __future__ import annotations
++
++from dataclasses import asdict, dataclass
++
++CLOSE_FROM = 73        # 亲近档下界：只此一处，`affinity_service.AFFINITY_STAGES` 引用它
++MET_REQUIRED = 3       # 跨进亲近档前要累计的 `met_condition` 次数
++LARGE_NEEDS_STREAK = 2  # 正向大档要求此前连续几轮非负
++
++TIERS: dict[str, tuple[int, int]] = {"small": (1, 2), "medium": (3, 5), "large": (6, 8)}
++POSITIVE = frozenset({"met_condition", "friendly", "repair"})
++NEGATIVE = frozenset({"offended", "trigger"})
++EVENTS = POSITIVE | NEGATIVE | {"neutral"}
++
++# 卡上没有亲近条件时用的两条（亲密过程模型：表露 + 被回应）。只此一处。
++DEFAULT_WARMING = (
++    "对方向你说了自己的心事（感受，不是寒暄）",
++    "对方认真回应了你说的事（听懂、认可、在乎）",
++)
++
++
++def warming_conditions(psyche) -> list[str]:
++    """这张卡生效的亲近条件：卡上有就用卡上的，没有才用默认两条。"""
++    return list(getattr(psyche, "warming_conditions", None) or DEFAULT_WARMING)
++
++
++@dataclass(frozen=True)
++class RelationState:
++    """好感数字之外、规则表要记的状态（一个存档一份）。"""
++    last_event: str = ""           # 上一轮生效的事件类别
++    met_count: int = 0             # 本存档累计 `met_condition` 次数
++    nonneg_streak: int = 0         # 连续非负轮数
++    pre_offence: int | None = None  # 冒犯前的值；非空 = 有待修复的冒犯
++
++
++def relation_to_dict(state: RelationState) -> dict:
++    return asdict(state)
++
++
++def relation_from_dict(data) -> RelationState:
++    """从落库的 dict 还原；缺键、类型不对的键取默认值（旧存档没有这份状态）。"""
++    if not isinstance(data, dict):
++        return RelationState()
++    base = RelationState()
++    pre = data.get("pre_offence")
++    return RelationState(
++        last_event=data["last_event"] if data.get("last_event") in EVENTS else base.last_event,
++        met_count=data["met_count"] if type(data.get("met_count")) is int else base.met_count,
++        nonneg_streak=data["nonneg_streak"] if type(data.get("nonneg_streak")) is int else base.nonneg_streak,
++        pre_offence=pre if type(pre) is int else None,
++    )
++
++
++def relational_tier(affinity: int, state: RelationState) -> str:
++    """三档关系做法取哪一档：上一轮冲突 → conflict（优先）；≥73 → close；其余 normal。"""
++    if state.last_event in NEGATIVE:
++        return "conflict"
++    return "close" if affinity >= CLOSE_FROM else "normal"
++
++
++def _magnitude(tier: str, delta: int) -> int:
++    lo, hi = TIERS[tier]
++    return max(lo, min(hi, abs(delta)))
++
++
++def apply_event(affinity: int, state: RelationState, psyche, *, event, tier, delta,
++                met_index=None) -> tuple[int, RelationState, list[str]]:
++    """一轮评估 → （新好感，新状态，warning 列表）。输入不合法抛 ValueError，调用方保持原值。"""
++    if event not in EVENTS:
++        raise ValueError(f"未知的 affinity_event：{event!r}")
++    if event != "neutral" and (tier not in TIERS or type(delta) is not int):
++        raise ValueError(f"档位或整数不合法：tier={tier!r} delta={delta!r}")
++
++    warnings: list[str] = []
++    if event == "met_condition":
++        n = len(warming_conditions(psyche))
++        if type(met_index) is not int or not 0 <= met_index < n:
++            warnings.append(f"met_condition_index={met_index!r} 不在 0..{n - 1}，按 friendly 算")
++            event = "friendly"
++    if event == "repair" and state.pre_offence is None:
++        event = "friendly"                      # 没有待修复的冒犯
++
++    new, met, pre = affinity, state.met_count, state.pre_offence
++    if event == "friendly":
++        if affinity < psyche.affinity_baseline:  # 基线这条线：客气最多加到基线
++            new = min(psyche.affinity_baseline, affinity + _magnitude("small", delta))
++    elif event == "met_condition":
++        if tier == "large" and state.nonneg_streak < LARGE_NEEDS_STREAK:
++            tier = "medium"
++        new, met = affinity + _magnitude(tier, delta), met + 1
++    elif event == "repair":
++        new = min(pre, affinity + _magnitude("medium" if tier == "large" else tier, delta))
++    elif event in NEGATIVE:
++        pre = affinity if pre is None else pre
++        new = affinity - _magnitude(tier, delta)
++
++    if affinity < CLOSE_FROM and met < MET_REQUIRED:   # 没挣够次数，不能跨进亲近档
++        new = min(new, CLOSE_FROM - 1)
++    new = max(0, min(100, new))
++    if pre is not None and event not in NEGATIVE and new >= pre:
++        pre = None                                     # 补回来了，冒犯了结
++    streak = 0 if event in NEGATIVE else state.nonneg_streak + 1
++    return new, RelationState(event, met, streak, pre), warnings
+diff --git a/core/affinity_service.py b/core/affinity_service.py
+index c0cb5a15..1904b6a0 100644
+--- a/core/affinity_service.py
++++ b/core/affinity_service.py
+@@ -3,16 +3,23 @@
+ from __future__ import annotations
+ 
+ import json
++import logging
+ from typing import Any
+ 
++from core.affinity_rules import (
++    CLOSE_FROM, RelationState, apply_event, relation_from_dict, relation_to_dict, warming_conditions,
++)
++
++logger = logging.getLogger(__name__)
++
+ 
+ # IOS₁₁ (Scientific Reports 2024) 11级亲密度 → Bogardus 7级社会距离映射
+ AFFINITY_STAGES = [
+     (0, 18, "陌生", "🫥"),      # IOS 1-2, Bogardus 6-7
+     (18, 36, "认识", "🙂"),     # IOS 3-4, Bogardus 4-5
+     (36, 55, "熟悉", "😊"),     # IOS 5-6, Bogardus 3
+-    (55, 73, "朋友", "😄"),     # IOS 7-8, Bogardus 2
+-    (73, 91, "亲近", "🥰"),     # IOS 9-10, Bogardus 1-2
++    (55, CLOSE_FROM, "朋友", "😄"),     # IOS 7-8, Bogardus 2
++    (CLOSE_FROM, 91, "亲近", "🥰"),     # IOS 9-10, Bogardus 1-2
+     (91, 101, "心意相通", "💕"), # IOS 11, Bogardus 1
+ ]
+ 
+@@ -77,6 +84,8 @@ class AffinityService:
+         # ── P1 影子模式：8 轮 delta 历史环形缓冲（纯内存，不落库） ──
+         self._delta_ring: list[dict] = []
+         self._ring_maxlen: int = 8
++        # 规则表的状态：随 reason 的 JSON 落库（apply_evaluation 写、load 读）
++        self.relation: RelationState = RelationState()
+ 
+     def _record_delta_ring(self, *, affinity_delta: int, trust_delta: int,
+                            guard_delta: int, trigger_hit: bool,
+@@ -140,6 +149,12 @@ class AffinityService:
+                 self.mood_emoji = "😊"
+             self.user_catchwords = _parsed.get("user_catchwords", []) if isinstance(_parsed, dict) else []
+             self.stage, self.stage_emoji = calc_stage(self.affinity)
++        # 规则状态与 inner_voice 走同一个通道：reason 里的 JSON（单聊新旧格式、群聊都带 reason）
++        try:
++            _stored = json.loads(self.affinity_reason or "")
++        except (json.JSONDecodeError, TypeError):
++            _stored = None
++        self.relation = relation_from_dict(_stored.get("relation") if isinstance(_stored, dict) else None)
+         self.prev_stage = self.stage
+ 
+     def get(self) -> dict[str, Any]:
+@@ -168,45 +183,28 @@ class AffinityService:
+     ) -> str:
+         """构建情感评估 LLM prompt（纯函数：只读状态，无副作用/IO）。"""
+         _values = getattr(card, 'values', []) or []
++        _traits = getattr(card, 'personality_traits', []) or []
+         _tensions = getattr(card, 'inner_tensions', []) or []
+         psyche = card.psyche
+ 
+-        # ── 个性化基线规则 vs 通用回退 ──
+-        has_custom_psyche = (
+-            psyche.affinity_baseline != 50
+-            or psyche.volatility != "适中"
+-            or psyche.grudge_inertia != "一般"
+-            or bool(psyche.triggers)
+-            or bool(psyche.soft_spots)
++        # ── 判档依据：这张卡的性格 ──
++        # 好感数值不由模型给（见 core/affinity_rules.py），这里只帮它判「哪类事、哪一档」；
++        # 所以不写「好感围绕基线波动 / 自然回到基线」这类旧说法（设计稿 Q6：没有回落）。
++        baseline_rules = (
++            "判档依据（你的性格）：\n"
++            f"- 你的情绪波动幅度是【{psyche.volatility}】的（剧烈=容易大起大落，平稳=情感很稳不会轻易起伏）\n"
++            f"- 你消化负面情绪的方式是【{psyche.grudge_inertia}】（记仇=被冒犯后很难被一句道歉打动，大度=对方有诚意就过去了）\n"
+         )
+-        if has_custom_psyche:
+-            baseline_rules = (
+-                f"情绪基线规则（依据Kuppens情感动力学—情感围绕个性化基线波动）：\n"
+-                f"- 你的关系基线大约在 {psyche.affinity_baseline}（满分100）——当前好感围绕这条基线波动，不会无限攀升，也很难长期大幅低于它；连续多轮真心相待，基线才会慢慢台阶式上移\n"
+-                f"- 你的情绪波动幅度是【{psyche.volatility}】的（剧烈=容易大起大落，平稳=情感很稳不会轻易起伏）\n"
+-                f"- 你消化负面情绪的方式是【{psyche.grudge_inertia}】（记仇=好感掉了很难回升，大度=很快回到基线不记仇）\n"
+-            )
+-            if psyche.triggers:
+-                baseline_rules += f"- 以下是你的雷点，被触碰会明显掉好感/防御飙升：{', '.join(psyche.triggers)}\n"
+-            if psyche.soft_spots:
+-                baseline_rules += f"- 以下是你的软肋，被戳中会让你心软、好感回升更快：{', '.join(psyche.soft_spots)}\n"
+-            baseline_rules += (
+-                "- 好感很难长时间大幅低于基线——除非对方严重背叛或伤害你，普通拌嘴过后会自然回到基线附近\n"
+-                "- 基线上移要慢、要台阶式；一旦上移，不会因小摩擦轻易回落\n\n"
+-            )
+-        else:
+-            baseline_rules = (
+-                "情绪基线规则（依据Kuppens情感动力学—情感围绕个性化基线波动）：\n"
+-                "- 你心里有一条\"关系基线\"，代表你对 ta 长期、稳定的态度，不等于此刻的一时情绪\n"
+-                "- 当前好感是围绕这条基线的波动：开心时高于基线，闹别扭时低于基线\n"
+-                "- 好感很难长时间大幅低于基线——除非对方严重背叛或伤害你，普通拌嘴过后会自然回到基线附近\n"
+-                "- 连续多轮真心相待，会让基线本身慢慢上移（关系真正变深），而不是因为一次拌嘴就退回原点\n"
+-                "- 基线上移要慢、要台阶式；一旦上移，不会因小摩擦轻易回落\n\n"
+-            )
++        if psyche.triggers:
++            baseline_rules += f"- 以下是你的雷点，被触碰就是 trigger：{', '.join(psyche.triggers)}\n"
++        if psyche.soft_spots:
++            baseline_rules += f"- 以下是你的软肋，被戳中会让你心软：{', '.join(psyche.soft_spots)}\n"
++        baseline_rules += "\n"
+ 
+         prompt = (
+             f"你现在就是{card.name}本人。\n"
+-            f"性格特征：{', '.join(_values[:3])}\n"
++            f"性格特征：{', '.join(_traits[:3])}\n"
++            f"价值观：{', '.join(_values[:3])}\n"
+             f"内在矛盾：{', '.join(_tensions[:2])}\n"
+             f"对话者身份：{user_role}\n\n"
+             f"当前情感状态：好感={self.affinity}, 信任={self.trust}, 情绪={self.mood}, 防御={self.guard}\n"
+@@ -226,13 +224,23 @@ class AffinityService:
+             "3. 如果对方触碰了你的痛点或雷区，反应要激烈但符合你的性格。\n"
+             "4. 如果上一刻你在生气，对方道歉了，你不应该立刻原谅——你需要时间消化。\n\n"
+             "情绪惯性规则（依据AnnaAgent ACL 2025情绪动态演化模型）：\n"
+-            "- 单轮数值变化不超过 ±8\n"
+-            "- 正面情绪建立慢（+3~5/轮），负面情绪爆发快（-5~8/轮）\n"
++            "- 信任、防御的单轮变化不超过 ±8；信任建立慢（+3~5/轮），受伤掉得快（-5~8/轮）\n"
+             "- 防御值下降速度 = 信任上升速度的0.6倍（信任建立慢，防御松懈更慢）\n"
+             "- 情绪有惯性：愤怒→道歉→不是立刻开心，而是'不甘+犹豫'的过渡态\n"
+-            "- 连续3轮正面互动才能触发阶段性好感跃升\n\n"
++            "\n"
+             + baseline_rules
+-            + "重要性评分规则（用于判断对话记忆的营养程度）：\n"
++            + "好感事件判定规则（用于 affinity_event / affinity_tier / affinity_delta）：\n"
++            "- 只判断对方这一轮做了哪类事，不要自己给好感数值：\n"
++            "  met_condition=做到了下面某一条亲近条件；friendly=一般友好；"
++            "neutral=闲聊（敷衍和「嗯」「哦」这类纯应答也算闲聊，不算一般友好）；"
++            "offended=冒犯；trigger=触到雷点；repair=道歉、解释或补偿\n"
++            "- 亲近条件（met_condition 时在 met_condition_index 填满足的是第几条，从 0 数）：\n"
++            + "".join(f"  {i}. {c}\n" for i, c in enumerate(warming_conditions(psyche)))
++            + "- 必须先选档，再在该档内给整数：small（1–2）只是点到为止；"
++            "medium（3–5）切实回应了或明确搞砸了；large（6–8）真正改变了你对 ta 的态度，"
++            "大幅正向通常要前面几轮一致\n"
++            "- 不要太快接受道歉：一句好话不该带来大幅回升\n\n"
++            "重要性评分规则（用于判断对话记忆的营养程度）：\n"
+             "- 情感强度高/关系转折/承诺/冲突/揭露秘密/告白/决裂：8-10分\n"
+             "- 日常寒暄/打招呼/无关痛痒：1-3分\n"
+             "- 普通对话/闲聊/一般信息交换：4-6分\n\n"
+@@ -266,7 +274,10 @@ class AffinityService:
+             "- 简单的「对不起」算 apology；详细解释原因算 explanation；用行动表示改变算 action；戳中 psyche.soft_spots 的内容算 soft_spot\n\n"
+             "输出严格JSON格式（只输出JSON，不要任何其他内容）：\n"
+             "{\n"
+-            '  "affinity": 0-100整数,\n'
++            '  "affinity_event": "met_condition|friendly|neutral|offended|trigger|repair",\n'
++            '  "affinity_tier": "small|medium|large",\n'
++            '  "affinity_delta": 该档区间内的整数,\n'
++            '  "met_condition_index": 整数或null,\n'
+             '  "trust": 0-100整数,\n'
+             '  "mood": "具体情绪词（如释然/微酸/警觉/心软/嘴硬心软/又气又心疼/微微上头）",\n'
+             '  "guard": 0-100整数,\n'
+@@ -332,7 +343,7 @@ class AffinityService:
+             and data.get("guard") == 70
+         )
+ 
+-    def apply_evaluation(self, data: dict, old_stage: str) -> int:
++    def apply_evaluation(self, data: dict, old_stage: str, psyche: Any) -> int:
+         """把解析结果回写11个情感字段，返回importance。纯状态计算，无IO。
+ 
+         LLM 返回的数值经过 delta clamp（旧值 ± 上限强制执行 prompt 声明的单轮变化约束），
+@@ -344,7 +355,17 @@ class AffinityService:
+         importance = max(1, min(10, int(data.get("importance", 5))))
+ 
+         # Delta clamp enforces prompt-declared per-turn limits in code
+-        self.affinity = _clamp_delta(old_affinity, data.get("affinity"), up_max=AFFINITY_DELTA_UP, down_max=AFFINITY_DELTA_DOWN)
++        # 好感：模型只报事件与档位，变多少由规则表定（core/affinity_rules.py）
++        try:
++            self.affinity, self.relation, warns = apply_event(
++                old_affinity, self.relation, psyche,
++                event=data.get("affinity_event"), tier=data.get("affinity_tier"),
++                delta=data.get("affinity_delta"), met_index=data.get("met_condition_index"),
++            )
++            for w in warns:
++                logger.warning("Affinity rule: %s", w)
++        except ValueError as exc:
++            logger.warning("Affinity event rejected, affinity unchanged: %s", exc)
+         self.trust = _clamp_delta(old_trust, data.get("trust"), up_max=TRUST_DELTA_UP, down_max=TRUST_DELTA_DOWN)
+         # Guard: rise fast (up +8/down -5), ease slow — symmetrical on rise but
+         # extra conservative on drop (a character doesn't let their guard down quickly).
+@@ -374,6 +395,7 @@ class AffinityService:
+             "stage": self.stage,
+             "stage_emoji": self.stage_emoji,
+             "user_catchwords": self.user_catchwords,
++            "relation": relation_to_dict(self.relation),   # 规则状态：单聊、群聊都随 reason 落库
+         }
+         self.affinity_reason = _json.dumps(extended, ensure_ascii=False)
+         return importance
+diff --git a/core/card_layers.py b/core/card_layers.py
+index 2f0a10a2..e69fe4ed 100644
+--- a/core/card_layers.py
++++ b/core/card_layers.py
+@@ -52,6 +52,7 @@ REGISTRY: dict[str, FieldSpec] = {
+     "psyche.grudge_inertia": FieldSpec("stable", "scalar", "记仇惯性"),
+     "cognitive.education_level": FieldSpec("stable", "scalar", "教育程度"),
+     "cognitive.vocabulary_level": FieldSpec("stable", "scalar", "词汇水平"),
++    "psyche.agreeableness_facets": FieldSpec("stable", "list", "宜人性分面"),
+     # ── 状态（列表：顶层 + 阶段 k）─────────────────────────────────────
+     "personality_traits": FieldSpec("state", "list", "性格特征"),
+     "values": FieldSpec("state", "list", "核心价值观"),
+@@ -60,12 +61,16 @@ REGISTRY: dict[str, FieldSpec] = {
+     "speaking_style.catchphrases": FieldSpec("state", "list", "口癖"),
+     "psyche.triggers": FieldSpec("state", "list", "雷点"),
+     "psyche.soft_spots": FieldSpec("state", "list", "软肋"),
++    "psyche.warming_conditions": FieldSpec("state", "list", "亲近条件"),
+     "dialogue_examples": FieldSpec("state", "list", "对话示例"),
+     # ── 状态（单值：阶段 k 有值用之，否则顶层）─────────────────────────
+     "decision_style": FieldSpec("state", "scalar", "决策风格"),
+     "speaking_style.tone": FieldSpec("state", "scalar", "语气"),
+     "speaking_style.sentence_pattern": FieldSpec("state", "scalar", "句式"),
+     "cognitive.speech_style": FieldSpec("state", "scalar", "说话风格"),
++    "psyche.relational_modes.close": FieldSpec("state", "scalar", "对亲近的人"),
++    "psyche.relational_modes.normal": FieldSpec("state", "scalar", "对平常的人"),
++    "psyche.relational_modes.conflict": FieldSpec("state", "scalar", "起冲突时"),
+     # ── 经历（顶层 + 1..k）────────────────────────────────────────────
+     "key_memories": FieldSpec("experience", "list", "关键记忆"),
+     "cognitive.knowledge_scope": FieldSpec("experience", "scalar", "知识范围"),
+diff --git a/core/chat_engine.py b/core/chat_engine.py
+index c4ee1a8a..c9c9e35e 100644
+--- a/core/chat_engine.py
++++ b/core/chat_engine.py
+@@ -26,6 +26,7 @@ from core.reaction_service import ReactionService
+ from core.reflection_service import ReflectionService
+ from core.telemetry import set_current_attr
+ from core.affinity_service import AffinityService, calc_stage
++from core.affinity_rules import relational_tier
+ from core.evaluation_pipeline import EvaluationPipeline, EvalContext
+ 
+ logger = logging.getLogger(__name__)
+@@ -899,6 +900,10 @@ class ChatEngine:
+             "心意相通": "不设防，完全信任，会撒娇或示弱，语气柔软",
+         }
+         tone_rule = stage_tones.get(stage_name, "自然表现")
++        # 卡上三档关系做法齐全时，用这张卡自己这一档的做法取代通用语气
++        modes = getattr(getattr(self.card, "psyche", None), "relational_modes", None)
++        if modes and modes.close and modes.normal and modes.conflict:
++            tone_rule = getattr(modes, relational_tier(self._affinity, self._affinity_service.relation))
+         parts.append(
+             f"\n\n[当前情感状态——影响你的语气和态度]\n"
+             f"你对{self.user_role or '对方'}的好感度：{self._affinity}/100（{stage_name}阶段）\n"
+@@ -932,7 +937,10 @@ class ChatEngine:
+             triggers = getattr(psyche, "triggers", [])
+             soft_spots = getattr(psyche, "soft_spots", [])
+ 
+-            if agreeableness >= 4:
++            facets = [f.behavior for f in getattr(psyche, "agreeableness_facets", []) if f.behavior]
++            if facets:
++                psy_lines.extend(facets)      # 有分面：每个分面一句行为，不写分数
++            elif agreeableness >= 4:
+                 psy_lines.append(
+                     "你天生好说话，愿意迁就别人——对方示好时你会更热情回应，"
+                     "这不代表你软弱，而是你的性格如此。"
+diff --git a/core/evaluation_pipeline.py b/core/evaluation_pipeline.py
+index 8ed1858e..b594c523 100644
+--- a/core/evaluation_pipeline.py
++++ b/core/evaluation_pipeline.py
+@@ -77,7 +77,7 @@ class EvaluationPipeline:
+             print(f"[EvaluationPipeline] RUN SKIP session={ctx.session_id}: _core_evaluate returned None")
+             return EvalResult(importance=5, applied=False)
+ 
+-        importance = ctx.affinity_service.apply_evaluation(data, ctx.old_stage)
++        importance = ctx.affinity_service.apply_evaluation(data, ctx.old_stage, ctx.card.psyche)
+         # 瞬时纠偏信号：只传递，不入库，不跨 session
+         in_character = data.get("in_character", 80)
+         if not isinstance(in_character, int) or in_character < 0 or in_character > 100:
+diff --git a/core/schema.py b/core/schema.py
+index 4003da91..8733a21f 100644
+--- a/core/schema.py
++++ b/core/schema.py
+@@ -79,6 +79,21 @@ class CognitiveProfile(BaseModel):
+     vocabulary_level: str = "日常"
+ 
+ 
++class RelationalModes(BaseModel):
++    """三档关系做法：对亲近的人 / 对平常的人 / 起冲突时，各一句具体做法。"""
++    close: str = ""
++    normal: str = ""
++    conflict: str = ""
++
++
++class AgreeablenessFacet(BaseModel):
++    """宜人性分面：同情 / 谦恭 / 信任，各一句概括性的行为。"""
++    facet: str = ""
++    level: str = ""
++    behavior: str = ""
++    quote: str = ""
++
++
+ class PsycheProfile(BaseModel):
+     """心理画像：大五人格 + 情感动力学参数，作为 set-point 基线和角色推理的统一数据源。"""
+     # 大五人格（1-5 离散档，依据 PsyPlay arXiv:2502.03821）
+@@ -94,6 +109,10 @@ class PsycheProfile(BaseModel):
+     # 推理锚点
+     triggers: list[str] = []         # 雷点：碰了就炸的具体点
+     soft_spots: list[str] = []       # 软肋：戳中会心软的点
++    # ③ 好感机制的输入
++    warming_conditions: list[str] = []            # 亲近条件：对方做到什么，此人才肯更近一步
++    relational_modes: RelationalModes = RelationalModes()
++    agreeableness_facets: list[AgreeablenessFacet] = []
+ 
+ 
+ class BehaviorCore(BaseModel):

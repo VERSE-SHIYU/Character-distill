@@ -1,0 +1,25 @@
+红 | 放宽 | M1 基线以上客气也加分 | test_g2_low_affinity_does_not_soften
+红 | 放宽 | M2 亲近门槛 3→2 | test_g3_meeting_conditions_opens_closeness_not_before_third
+红 | 放宽 | M3 道歉修复不设上限 | test_g4_repair_never_exceeds_pre_offence_value
+红 | 放宽 | M4 档内整数不截断 | test_g2_low_affinity_does_not_soften
+红 | 放宽 | M5 冲突档不触发 | test_g2_low_affinity_does_not_soften
+红 | 放宽 | M6 亲近档优先于冲突档 | test_g4_offence_switches_to_conflict_even_when_close
+红 | 过严 | M7 亲近门槛永远不开 | test_g3_meeting_conditions_opens_closeness_not_before_third
+红 | 过严 | M8 基线以下客气不加分 | test_g2_low_affinity_does_not_soften
+红 | 过严 | M9 冲突档不退出 | test_g4_conflict_ends_once_offence_stops
+红 | 过严 | M10 道歉修复不加分 | test_g4_repair_never_exceeds_pre_offence_value
+红 | 过严 | M11 有三档做法仍用通用语气 | test_g1_same_level_keeps_the_character
+红 | 过严 | M12 有分面仍用写死文案 | test_g1_same_level_keeps_the_character
+红 | 过严 | M13 闲聊向基线回落 | test_g2_low_affinity_does_not_soften
+红 | 放宽 | M14 档内永远取上限（审计 L1） | test_g5_number_inside_its_tier_is_used_as_given
+红 | 放宽 | M15 永远用默认亲近条件（审计 L2） | test_g7_evaluator_is_shown_the_cards_own_conditions
+红 | 放宽 | M16 不核对亲近条件编号 | test_g7_condition_index_out_of_range_does_not_count
+红 | 放宽 | M17 正向大档不设门槛 | test_g6_large_positive_needs_two_non_negative_turns_first
+红 | 放宽 | M18 客气按报的档算 | test_g2_low_affinity_does_not_soften
+红 | 过严 | M19 闲聊也触发冲突档（审计 T1） | test_g2_low_affinity_does_not_soften
+红 | 过严 | M20 亲近门槛 3→4（审计 T2） | test_g3_meeting_conditions_opens_closeness_not_before_third
+红 | 过严 | M21 大档一律降为中档（审计 T3） | test_g6_large_positive_needs_two_non_negative_turns_first
+红 | 过严 | M22 有卡上条件时仍追加默认条件 | test_g7_evaluator_is_shown_the_cards_own_conditions
+红 | 过严 | M23 规则状态不落库 | test_g8_gate_count_survives_a_new_engine
+红 | 放宽 | M24 恢复时不读规则状态 | test_g8_gate_count_survives_a_new_engine
+结论：24/24 条打红；还原后 sha256 一致：True
