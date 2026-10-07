@@ -393,13 +393,8 @@ async def _run_agent(
 
         llm_messages = engine._build_llm_messages(engine.history, msg)
 
-        # time_block（engine.chat 中的逻辑）
-        time_block = engine._build_time_awareness_block()
-        if time_block and llm_messages and llm_messages[-1]["role"] == "user":
-            llm_messages[-1] = {
-                **llm_messages[-1],
-                "content": llm_messages[-1]["content"] + time_block,
-            }
+        # 只给这一轮看的块（时间感知 + 到期的做法表重注入），与 engine.chat 同一处
+        engine._attach_turn_blocks(llm_messages)
 
         # Step 2: AgentLoop 决策
         toolkit = AgentToolkit(engine._ctx_engine, current_mood=engine._mood)
