@@ -249,3 +249,74 @@ def test_r8_following_turn_does_not_repeat(stream, monkeypatch):
     assert "提醒：你遇事的做法" not in llm.sent[1][-1]["content"]
     assert all("提醒：你遇事的做法" not in m["content"] for m in llm.sent[1][:-1]), (
         "上一轮的重注入留在了历史里")
+
+
+# ── 审计补充：引擎级多次到期、群聊、agent（spec 补充 1–3）────────────────────
+
+def test_r9_engine_reinjects_at_turn_5_9_13_only(monkeypatch):
+    """连聊 13 句：只有第 5、9、13 句带提醒（纯函数之外，钉住引擎级的周期绑定）。"""
+    llm = _CaptureLLM()
+    eng = _engine(llm=llm)
+    monkeypatch.setattr(eng, "_post_turn", lambda *a, **k: None)
+    eng.history = [{"role": "assistant", "content": "开场白"}]
+    for i in range(13):
+        eng.chat(f"第{i + 1}句")
+    hit = [i + 1 for i, msgs in enumerate(llm.sent) if "提醒：你遇事的做法" in msgs[-1]["content"]]
+    assert hit == [5, 9, 13], f"提醒落在第 {hit} 句"
+
+
+class _AsyncCaptureLLM(_CaptureLLM):
+    def __init__(self):
+        super().__init__()
+        self.systems: list[str] = []
+
+    async def achat(self, system_prompt, messages, **_kw):
+        self.systems.append(system_prompt)
+        self.sent.append([dict(m) for m in messages])
+        return "回复"
+
+
+def test_g1_group_chat_has_section_but_no_reinjection():
+    """群聊：system prompt 带最后阶段的做法块；多轮之后也不重注入（§9：本轮群聊不重注入）。"""
+    import asyncio
+
+    from core.group_session import GroupSession
+
+    llm = _AsyncCaptureLLM()
+    eng = ChatEngine(llm=llm, rag=None, card=_card(), card_id="c1", storage=None,
+                     session_id="", is_new_session=True)
+    session = GroupSession(id="g1", engines={"c1": eng}, storage=None, user_id="u1")
+
+    async def _run():
+        for i in range(9):
+            await session.send("c1", f"第{i + 1}句")
+
+    asyncio.run(_run())
+    assert all("## 遇事的做法\n- 后期情境 → 后期做法\n- 全程情境 → 全程做法\n" in sp
+               for sp in llm.systems), "群聊 system prompt 没有最后阶段的做法块"
+    blob = "".join(llm.systems) + "".join(m["content"] for msgs in llm.sent for m in msgs)
+    assert "提醒：你遇事的做法" not in blob, "群聊被重注入了"
+
+
+def test_a1_agent_path_carries_section_and_reminder(monkeypatch):
+    """agent 模式：最终那次调用的 system prompt 有做法块，第 5 句的消息带提醒。"""
+    from core.agent import agent_loop
+
+    llm = _CaptureLLM()
+    systems: list[str] = []
+    orig_chat = llm.chat
+
+    def _chat(system_prompt, messages, **kw):
+        systems.append(system_prompt)
+        return orig_chat(system_prompt, messages, **kw)
+
+    llm.chat = _chat
+    monkeypatch.setattr(agent_loop.AgentLoop, "run", lambda self, hint, messages: agent_loop.AgentLoopResult(
+        messages=messages, steps=[], degraded=False))
+    eng = _engine(llm=llm)
+    eng.agent_mode = True
+    monkeypatch.setattr(eng, "_post_turn", lambda *a, **k: None)
+    eng.history = _history(4)
+    eng.chat("现在")
+    assert "## 遇事的做法\n- 早期情境 → 早期做法\n- 全程情境 → 全程做法\n" in systems[-1]
+    assert llm.sent[-1][-1]["content"].endswith(_REMINDER)

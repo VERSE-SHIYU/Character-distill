@@ -1,4 +1,4 @@
-"""变异预跑（spec `arc-behavior-inject.md` §7 对账表 M1–M21 + 目标检查 G-*）。
+"""变异预跑（spec `arc-behavior-inject.md` §7 对账表 M1–M24 + 目标检查 G-*）。
 
 逐条把改后代码改坏一处（放宽、过严两个方向），对应测试必须红；跑完逐字节还原。
 
@@ -32,7 +32,8 @@ import mutation_framework as framework  # noqa: E402
 VIEW = ROOT / "core" / "arc_view.py"
 CTX = ROOT / "core" / "context_engine.py"
 CHAT = ROOT / "core" / "chat_engine.py"
-TARGETS = (VIEW, CTX, CHAT)
+GROUP = ROOT / "core" / "group_session.py"
+TARGETS = (VIEW, CTX, CHAT, GROUP)
 
 T = "tests/test_arc_behavior_inject.py"
 GOAL = "tests/test_arc_behavior_inject_goal.py"
@@ -114,6 +115,18 @@ MUTANTS = [
     ("M21 过严 没有做法也出提醒标题", _t("test_r4_due_but_no_behaviors_no_reminder"),
      [("repl", CHAT, [("        if not reinject_due(prior) or not self.card.situation_behaviors:",
                        "        if not reinject_due(prior):")])], "RED"),
+    # ── 审计补充（spec 补充 1–3）──
+    ("M22 过严 只在第一次到期注入（第 9、13 句漏）", _t("test_r9_engine_reinjects_at_turn_5_9_13_only"),
+     [("repl", CHAT, [("        if not reinject_due(prior) or not self.card.situation_behaviors:",
+                       "        if prior != REINJECT_EVERY or not self.card.situation_behaviors:")])], "RED"),
+    ("M23 放宽 群聊也被重注入", _t("test_g1_group_chat_has_section_but_no_reinjection"),
+     [("repl", GROUP, [("        system_prompt = engine._compose_context(message)\n"
+                        "        # Inject user persona context",
+                        "        system_prompt = engine._compose_context(message) + \"【提醒：你遇事的做法】\"\n"
+                        "        # Inject user persona context")])], "RED"),
+    ("M24 放宽 agent 路径丢了提醒", _t("test_a1_agent_path_carries_section_and_reminder"),
+     [("repl", CHAT, [("        return final_sp, llm_messages  # 返回原始 messages（无 tool 消息）",
+                       "        return final_sp, [dict(m, content=m['content'].split('\\n\\n【提醒')[0]) for m in llm_messages]")])], "RED"),
     # ── 目标检查（独立预言，四张公版样本卡）：关键变异再打一遍 ──
     ("G-M1 放宽 阶段 k 的做法不进投影", GOAL,
      [("repl", VIEW, [(_OWN, "    own = []\n")])], "RED"),
