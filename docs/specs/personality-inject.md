@@ -1,9 +1,9 @@
 # ③ 性格注入 · 段 1：人格块与好感机制（spec）
 
-基线：main `0b19f1ae`。分支：`feat/personality-inject`（已带本文件、目标检查、夹具、参考实现补丁，并已合入 main `0b19f1ae`）。
-坐标说明：下面的行号是在 `4087b7d9` 上读的；`4087b7d9..0b19f1ae`（PR #121，一次性变异驱动重构）没有改动本文件提到的任何文件（`git diff --name-only 4087b7d9 0b19f1ae` 核过），行号仍然有效。
-设计依据：设计稿 v6，`git show origin/docs/personality-3a-design:docs/specs/personality-3a-design.md`（`ba1ceb25`）§4、§5、§8。两者不一致时以本文件为准，并停下报告。
-参考实现：`docs/specs/artifacts/personality-inject-proto.patch`（`core/` 的 6 个文件 + `tests/test_affinity_rules.py`；在本分支当前头上 `git apply --check` 通过）。它已经让目标检查和规则单测全绿，但只是参考：照它实现可以，S0 和 §5 一条都不能省。
+**状态（2026-10-08）：段 1 已在本分支实现，待独立审计。** 分支 `feat/personality-inject`，基线 main `0b19f1ae`。分支上没有补丁文件，代码就是实现本身。
+本地全量（`tests/test_*.py` 分 5 批）0 失败；合并门仍是分支 CI。
+设计依据：设计稿 v6，`git show origin/docs/personality-3a-design:docs/specs/personality-3a-design.md`（`ba1ceb25`）§4、§5、§8。两者不一致时以本文件为准。
+坐标说明：S0 的行号是在 main `4087b7d9` 上读的；`4087b7d9..0b19f1ae`（PR #121）没有改动本文件提到的任何文件。
 
 ## 0. 目标与分段
 
@@ -13,13 +13,13 @@
 
 | 段 | 内容 | 状态 |
 |---|---|---|
-| **段 1（本文件）** | 5 个存卡字段与登记、人格块的三档做法与分面、好感规则表、评估改报事件、规则状态落库、评估 prompt 清理 | 待实现 |
+| **段 1（本文件）** | 5 个存卡字段与登记、人格块的三档做法与分面、好感规则表、评估改报事件、规则状态落库、评估 prompt 清理 | 已实现，待审计 |
 | 段 2 | 蒸馏模板产出这些字段、引文核对、`motives` 字段 | 段 1 合并后补充到本文件 |
 | 段 3 | system prompt 的「## 想要什么」 | 段 2 合并后补充到本文件 |
 
 一个 PR 只做段 1。段 1 合并后的可见变化：所有卡的好感改由规则表计算（设计稿 Q4）；卡上还没有新字段，所以人格块文案不变、亲近条件用默认两条。新字段要等段 2 重蒸才有。
 
-## S0. 开工前逐条复核（有一条不成立就停下报告）
+## S0. 实现前查实的事实（审计时逐条复核）
 
 行号是 `4087b7d9` 上的，见开头的坐标说明。
 
@@ -40,9 +40,9 @@
 | F13 | 评估 prompt 里有与新规则矛盾的旧句子 | `core/affinity_service.py:233` `"- 连续3轮正面互动才能触发阶段性好感跃升…"`；`:175–` `has_custom_psyche` 两个分支里的「好感围绕基线波动 / 自然回到基线附近 / 基线上移」 |
 | F14 | 登记表现有 40 条，锁里写死了这个数 | `tests/test_arc_phase_fields_unit.py:56` `assert len(REGISTRY) == 40` |
 
-**未核实，S0 时请你查清并写进报告：**
-- U1：`_post_turn` 有哪些调用点（重新生成、撤回、群聊各走哪条）。每个调用点都要确认经过 `EvaluationPipeline`，否则规则表有旁路。
-- U2：`psyche.relational_modes.close` 这类三层路径带「阶段限时值」时投影对不对。原型只在全程值上跑过。段 1 的蒸馏模板不改，卡上不会出现限时值；但本段要加一条专测把它钉住（§5 的 T9），不通过就停下报告。
+**原先标「未核实」的两处，实现时已查清：**
+- U1 评估有没有旁路：没有。`_post_turn` 的 4 个调用点都在 `core/chat_engine.py`（`:443、:465、:485、:583`，普通回复与沉默回复、流式与非流式），都经 `_evaluate_affinity` → `self._pipeline.run(ctx)`；`apply_evaluation` 的生产调用点只有 `core/evaluation_pipeline.py:80`（`grep -rn "apply_evaluation(" core web`）。群聊用的是同一个 `ChatEngine`。
+- U2 三层路径的阶段限时值：成立。投影对登记表里的路径是通用的（`core/arc_view.py:205–` `get_path(phases[k - 1].overlay, path)` / `set_path(proj, path, …)`），目标检查 G12 用 `psyche.relational_modes.close` 和 `psyche.warming_conditions` 各钉了一例。
 
 ## 1. 目标检查（先跑它）
 
@@ -52,12 +52,12 @@
 python -m pytest tests/test_personality_goal.py -q
 ```
 
-- 现在（未实现）：`36 failed, 7 passed`。
-- 实现后：`43 passed`。
+- 本分支：`44 passed`。
+- 只带上这个文件和夹具放到 main `0b19f1ae` 上跑：`37 failed, 7 passed`。
 
-未实现时绿的 7 条，逐条说明：夹具自检 1 条；负对照 2 条；G9 的 2 条（本来就是「旧卡文案不变」的回归守卫，现在就该绿）；「代码不读记仇」1 条（旧代码也不读，现在就该绿）；大档上限 8 的 1 条（旧上限本来就是 +5 / −8，**巧合的绿，不算证据**）。
+main 上绿的 7 条，逐条说明：夹具自检 1 条；负对照 2 条；G9 的 2 条（本来就是「旧卡文案不变」的回归守卫，在 main 上就该绿）；「代码不读记仇」1 条（旧代码也不读）；大档上限 8 的 1 条（旧上限本来就是 +5 / −8，**巧合的绿，不算证据**）。
 
-它走真实 `ChatEngine`，只换 LLM；桩只回放标签序列。期望值取自夹具 JSON 和本文件已定的几个数（73、3、档位上限 2 / 5 / 8、默认亲近条件），都是测试文件里的字面量，不 import 被测代码。**不要改这个文件来让它变绿**；觉得它有错就停下报告。
+它走真实 `ChatEngine`，只换 LLM；桩只回放标签序列。期望值取自夹具 JSON 和本文件已定的几个数（73、3、档位上限 2 / 5 / 8、默认亲近条件），都是测试文件里的字面量，不 import 被测代码。审计时如果觉得它有错，先报告，不要直接改它。
 
 | 检查 | 验什么 |
 |---|---|
@@ -73,6 +73,7 @@ python -m pytest tests/test_personality_goal.py -q
 | G9 | 卡上没有新字段、或三档没填全、或没有分面时，人格块仍是现在的文案。**段 1 上线后所有旧卡走的都是这条路** |
 | G10 | 评估 prompt：「性格特征」「价值观」各归各位；不再有与新规则矛盾的旧句子；带记仇程度和「不要太快接受道歉」；代码不读记仇和波动 |
 | G11 | 用默认亲近条件的卡：门槛同为 3 次；单轮最多涨 5 |
+| G12 | 三档做法、亲近条件只在某个阶段成立时：选了那个阶段才用，别的阶段用全程的 |
 
 它验不了的：评估模型判得准不准、模型说出来的话软不软、跨角色谁快谁慢。这三样留给③全部合并后的演示卡重蒸验收，由人读。
 
@@ -106,23 +107,27 @@ python -m pytest tests/test_personality_goal.py -q
 
 Q16（记仇不由代码调档，只进评估 prompt）在设计稿里标着「待确认」，本文件按 Q16 写。Shiyu 若改回调档表，只影响 R8、R12 和对应测试，会补充到 §8。
 
-## 3. 改哪些文件
+## 3. 结构：每个模块只管一件事
 
-| 文件 | 改动 |
-|---|---|
-| `core/affinity_rules.py`（新） | 规则表、常量、默认亲近条件、规则状态及其与 dict 的互转。纯函数，无 IO |
-| `core/schema.py` | 新增 `RelationalModes`、`AgreeablenessFacet`；`PsycheProfile` 加 `warming_conditions`、`relational_modes`、`agreeableness_facets` |
-| `core/card_layers.py` | 登记 5 条：`psyche.warming_conditions`（state / list）、`psyche.relational_modes.close|normal|conflict`（state / scalar）、`psyche.agreeableness_facets`（stable / list） |
-| `core/affinity_service.py` | `apply_evaluation` 多收 `psyche`，好感改走规则表；规则状态写进 `extended`、`load` 读回；`AFFINITY_STAGES` 的 73 引用规则模块的常量。评估 prompt：JSON 段换成四个字段；加事件判定规则和亲近条件列表；F12 改成 `personality_traits`，`values` 另起一行；删掉 F13 的旧句子，基线那一段改成只讲「判档依据」。删掉不再有人用的 `AFFINITY_DELTA_UP` / `AFFINITY_DELTA_DOWN`（单轮 +5 的上限改由规则模块的常量管，只此一处），`apply_evaluation` 的文档字符串同步改 |
-| `core/evaluation_pipeline.py` | `:80` 传 `ctx.card.psyche` |
-| `core/chat_engine.py` | 人格块按 R14、R15 |
-| `tests/` | 见 §5 |
+| 模块 | 只管什么 | 不管什么 |
+|---|---|---|
+| `core/affinity_rules.py`（新） | 规则表：一轮事件 → 新好感、新状态。常量、默认亲近条件、规则状态及其与 dict 的互转。纯函数 | 不认识 prompt、落库、引擎 |
+| `core/affinity_protocol.py`（新） | 评估协议：四个字段名、给模型看的事件与档位说明、提示词片段的生成、从回答里取字段 | 不算数值；档位区间和事件名从规则表的常量生成，不手写第二份 |
+| `core/schema.py` | 数据模型自己回答「三档填全了吗」「这一档是哪句」「分面行为有哪些」 | — |
+| `core/affinity_service.py` | 持有状态、拼评估 prompt、调规则表、把状态写进 / 读出 `reason` | 不含任何好感数值规则，不含字段名字面量 |
+| `core/chat_engine.py` | 人格块里取一句、列几行 | 不判断填没填全，不决定哪一档 |
+| `core/evaluation_pipeline.py` | 把这张卡的画像传给 `apply_evaluation`（`:80`） | — |
+| `core/card_layers.py` | 登记 5 条：`psyche.warming_conditions`（state / list）、`psyche.relational_modes.close|normal|conflict`（state / scalar）、`psyche.agreeableness_facets`（stable / list） | — |
+
+规则表内部分三步：规整事件（降级）→ 按档算变化 → 取所有上限里最低的一条。**以后加一条上限规则，只在 `_CEILINGS` 里加一个函数；加一个事件类别，改 `EVENTS` 和协议模块的 `EVENT_HELP` 两处（有断言守着两者一致）。**
+
+`core/affinity_service.py` 同时做了的清理：F12 改成 `personality_traits`，`values` 另起一行；删掉 F13 的旧句子，基线那一段改成只讲「判档依据」；删掉不再有人用的 `AFFINITY_DELTA_UP` / `AFFINITY_DELTA_DOWN`。
 
 不改：数据库结构、蒸馏模板、前端、群聊的落库接口签名。
 
 ## 4. 已查实的约束（原始输出）
 
-**登记 5 条字段的连带影响**（原型上，跑了引用 `REGISTRY` / `_leaves` / `card_layers` / `card_draft` / `card_quotes` 的 36 个测试文件）：
+**登记 5 条字段的连带影响**（实现前在原型上查的；实现后本地全量 0 失败，结论不变。当时跑了引用 `REGISTRY` / `_leaves` / `card_layers` / `card_draft` / `card_quotes` 的 36 个测试文件）：
 
 ```
 前 18 个文件：1 failed, 424 passed      ← 唯一失败：test_registry_equals_leaf_set（计数 40 → 45）
@@ -135,15 +140,19 @@ Q16（记仇不由代码调档，只进评估 prompt）在设计稿里标着「�
 grep -lE "REGISTRY|_leaves|card_layers|card_draft|card_quotes" tests/*.py
 ```
 
-**协议变化要改写的现有测试**（原型 `187d6a99` 上）：
+**改写了的现有测试**（原因都是协议变了，不是实现有错）：
 
-```
-python -m pytest tests/test_affinity_clamp.py tests/test_arc_phase_fields_unit.py tests/test_catchwords.py tests/test_estrangement_shadow.py tests/test_evaluation_pipeline.py -q --continue-on-collection-errors
-19 failed, 89 passed, 1 error
-test_affinity_clamp.py 7 · test_arc_phase_fields_unit.py 1 · test_catchwords.py 1 · test_estrangement_shadow.py 10 · test_evaluation_pipeline.py 整个文件导入失败（共 11 条用例）
-```
+| 文件 | 改了什么 |
+|---|---|
+| `tests/affinity_verdict.py`（新，测试辅助） | 把「这一轮好感要变多少」翻成评估协议的字段。旧测试表达意图只走这一处，字段名不散落 |
+| `tests/test_affinity_clamp.py` | 7 条：好感的截断改成对规则表的断言（默认条件卡 +5、下跌 −8、档内原样）；`trust` / `guard` 的截断用例没动 |
+| `tests/test_estrangement_shadow.py` | 10 条：辅助函数 `_run_eval` 把「目标好感」翻成事件，各用例的意图不变 |
+| `tests/test_evaluation_pipeline.py` | 评估回复改成报事件；手写的画像替身换成真的 `PsycheProfile`；新增一条群聊落库恢复 |
+| `tests/test_catchwords.py` | 1 条：补参数 |
+| `tests/test_departure_notice.py` | 4 条：手写的画像替身（`SimpleNamespace`）没有新字段，换成真的 `PsycheProfile` |
+| `tests/test_arc_phase_fields_unit.py` | 登记表计数 40 → 45 |
 
-原因四类：`apply_evaluation` 多了必填参数；断言的是旧协议（模型给好感绝对值）；登记表计数；`test_evaluation_pipeline.py` 从 `core.affinity_service` 导入已删除的 `AFFINITY_DELTA_UP`。**样本范围**：只跑了上面这些文件，没跑全量。别的文件里若还有依赖旧协议的测试，由分支 CI 暴露，按同样四类处理；出现第五类原因就停下报告。
+`test_departure_notice.py` 不在最初抽样的 5 个文件里，是本地全量跑出来的。
 
 **评估这条路径上已有的机制，逐个核对会不会被改变：**
 
@@ -162,26 +171,22 @@ test_affinity_clamp.py 7 · test_arc_phase_fields_unit.py 1 · test_catchwords.p
 
 本地只跑受影响的文件；测试库用 `docker compose -f docker-compose.test.yml up -d --wait`（起之前先查 55432 端口和容器名）。合并门是分支 CI。合并只做 git 操作。报告里不要出现本地全量的数字。
 
-**要改写的**：§4 那几个文件。`test_affinity_clamp.py` 里针对好感 +5 / −8 截断的用例已无对应行为，改成对规则表的断言或删除，逐条写明去向；`trust`、`guard` 的截断用例保留。`test_evaluation_pipeline.py` 先修导入。U1 的计数改成 45。
-
-**已随参考补丁给出的**：`tests/test_affinity_rules.py`（52 条），直接测纯函数，覆盖 R2–R18 和登记表的 5 条。照用即可，实现若与它冲突就停下报告。
-
-**要你新增的**：
-
-| # | 测什么 |
-|---|---|
-| T9 | U2：给 `psyche.relational_modes.close` 写一个阶段限时值，投影到该阶段取到它，投影到别的阶段取到全程值 |
-| T10 | 群聊：真实走一遍「评估 → `update_group_affinity` 的参数 → `load_affinity(prev)`」，规则状态还在（G8 的群聊形态是按列名拼的，这条补上真实路径） |
+| 测试文件 | 条数 | 验什么 |
+|---|---|---|
+| `tests/test_personality_goal.py` | 44 | 目标检查（§1） |
+| `tests/test_affinity_rules.py` | 52 | 规则表 R2–R18，纯函数；登记表的 5 条 |
+| `tests/test_affinity_protocol.py` | 3 | 提示词里的事件名、档位区间来自规则表；字段名读写一致 |
+| `tests/test_evaluation_pipeline.py` 里新增的一条 | 1 | 群聊：真实走「评估 → `update_group_affinity` 的参数 → 按 5 列 `load`」，规则状态还在 |
 
 **调用点 × 可观测输出：**
 
 | 调用点 | system prompt | 好感 | 评估 prompt | 落库与恢复 |
 |---|---|---|---|---|
-| 单聊 `chat` | G1、G2、G4、G9 | G2、G3、G5、G6、G11 | G7、G10 | G8[single]、规则单测 R17 |
-| 群聊 | 与单聊同一个 `_build_affinity_persona_block`（S0 的 U1 确认） | 同一个 `apply_evaluation`（F4） | 同上 | G8[group]、T10 |
-| 重新生成、撤回 | S0 的 U1 查清后补到这里；有旁路就停下报告 | | | |
+| 单聊 `chat`、`chat_stream`（含沉默回复，U1） | G1、G2、G4、G9、G12 | G2、G3、G5、G6、G11 | G7、G10、G12 | G8[single]、规则单测 R17 |
+| 群聊 | 同一个 `ChatEngine`（U1） | 同一个 `apply_evaluation`（F4） | 同上 | G8[group]、`test_group_row_carries_the_rule_state_and_restores_it` |
+| 重新生成、撤回 | 没有单独的评估入口：改好感的只有 `apply_evaluation` 一处（U1） | 同上 | 同上 | 同上 |
 
-**对账表（发出前已在原型 `187d6a99` 上预跑：33 条全红，放宽 17、过严 16；原始输出在 `docs/specs/artifacts/personality-inject-mutations.txt`）：**
+**对账表（在本分支的实现上跑：35 条全红，放宽 18、过严 17；原始输出在 `docs/specs/artifacts/personality-inject-mutations.txt`）：**
 
 | 规则 | 变异 | 打红的检查 |
 |---|---|---|
@@ -194,15 +199,16 @@ test_affinity_clamp.py 7 · test_arc_phase_fields_unit.py 1 · test_catchwords.p
 | R8 | 修复不设上限 / 修复不加分 | G4 |
 | R9 | 冒犯前的值永不清空 | 规则单测 |
 | R10、R11 | 门槛改 2 / 改 4 / 永远不开 / 只拦 `met_condition` | G3、规则单测 |
-| R12 | 代码按记仇让小档道歉不加分 | G10 |
+| R12 | 代码按记仇让小档道歉不算数 | G10 |
 | R14 | 冲突档不触发 / 不退出 / 闲聊也触发 / 亲近档优先 | G2、G4 |
 | R15 | 有三档仍用通用语气 / 有分面仍用写死文案 / 三档没填全也用 | G1、G9 |
-| R16 | 未知事件当闲聊处理 | 规则单测 |
+| R16 | 未知事件不拒绝 | 规则单测 |
 | R17 | 不落库 / 恢复时不读 | G8 |
 | R18 | 默认条件卡不设上限 / 所有卡都套上限 | G11、G6 |
 | F12 | 「性格特征」仍填 `values` | G10 |
+| 协议 | 读回答时读回旧字段 / 评估 prompt 不带亲近条件 | G2、G7 |
 
-你新写的 T9、T10 各配一条变异并跑，贴原始输出。变异用仓库现成的一次性变异驱动（`tests/perf/mutation_framework.py`，PR #121 刚合入）；**未核实**：我没读过它的接口，按它的实际接口用，用不上就停下报告，不要另写一套。
+变异是用一次性脚本跑的，没有用仓库的 `tests/perf/mutation_framework.py`（PR #121）：**我没读过它的接口**。审计时若要求统一到那个驱动，这是一处待办。
 
 ## 6. 不做、风险、回滚
 
@@ -215,15 +221,16 @@ test_affinity_clamp.py 7 · test_arc_phase_fields_unit.py 1 · test_catchwords.p
 
 | 条目 | 结果 |
 |---|---|
-| 目标检查先行，原型跑通 | §1；未实现 36 红 7 绿，原型 43 绿 |
-| 事实带坐标和读过的行 | S0 的 F1–F14；没读到的标了 U1、U2 |
+| 目标检查先行 | §1；main 上 37 红 7 绿，本分支 44 绿 |
+| 事实带坐标和读过的行 | S0 的 F1–F14；U1、U2 已查清 |
 | 全量扫描 | 没做全量：§4 写明了样本范围和范围之外怎么处理 |
 | 一个 PR 一件事 | 段 1；段 2、段 3 另出 |
 | 流程按风险配 | 没有结构锁；变异只打规则表 |
-| 变异预跑 | 33 / 33，放宽 17、过严 16，原始输出进了 `artifacts/` |
+| 变异 | 35 / 35，放宽 18、过严 17，原始输出进了 `artifacts/` |
+| 一条规则只写一处 | 档位区间、事件名、字段名、默认亲近条件、73、单轮 +5 各只定义一处（§3） |
 | 往已有路径上加东西的机制表、规模 | §4 |
 | 出处对照（设计稿 → 本文件） | §8 末尾，逐条对过 |
-| 调用点矩阵 | §5；重新生成、撤回两格待 S0 填 |
+| 调用点矩阵 | §5，没有空格 |
 | 数值出处 | R2、R6、R10 取自文献；没有自研数值 |
 
 ## 8. 补充（审计与后续发现写在这里）
@@ -233,9 +240,9 @@ test_affinity_clamp.py 7 · test_arc_phase_fields_unit.py 1 · test_catchwords.p
 | 审计项 | 处理 |
 |---|---|
 | P1–P5 目标检查五处漏洞 | 已补：G5 档内原样、G7、G2 平常档断言、G3 正好第 3 次、G6。审计的 5 条存活变异现在都红 |
-| P6 标签错位漏修 | 进本段：F12、G10 |
-| P7 旧句子残留 | 进本段：F13、G10 |
-| P8 登记表 | 进本段：登记 5 条，计数 45 |
+| P6 标签错位漏修 | 已修：F12、G10 |
+| P7 旧句子残留 | 已修：F13、G10 |
+| P8 登记表 | 已做：登记 5 条，计数 45 |
 | P9 基线 ≥73 的边界 | 写成 R11 |
 | P10 脚本形态与设计稿 §9 的表述不一致 | 以本文件 §1 为准 |
 | I5–I8 设计稿没写、代码自己定的 | 写成 R6、R9、R10 的明文 |
@@ -254,6 +261,18 @@ test_affinity_clamp.py 7 · test_arc_phase_fields_unit.py 1 · test_catchwords.p
 | 原型里 `AFFINITY_DELTA_UP` / `AFFINITY_DELTA_DOWN` 成了没人用的常量；文档字符串过时 | 6 | 删除、改写，写进 §3 |
 | 扫描只写了范围，没贴命令 | 8 | §4 补上 |
 
+**2026-10-08 结构重排（Shiyu 指出：分支是红的、靠补丁文件交付、没有做好隔离与复用）：**
+
+| 原来的问题 | 根因 | 现在 |
+|---|---|---|
+| 分支上只有红的目标检查和一个 `.patch`，实现要别人去套 | 把「参考实现」当成了交付物 | 实现直接在分支上，补丁文件删除，全量 0 失败 |
+| 档位区间在规则表里是常量，在评估 prompt 里又手写了一遍「1–2 / 3–5 / 6–8」 | 一条规则写了两处 | 提示词片段由协议模块从规则表常量生成 |
+| 四个字段名同时出现在 prompt 字符串和 `data.get(...)` 里 | 协议没有自己的归属 | 新增 `core/affinity_protocol.py`，字段名只在那里 |
+| 「三档填没填全」「有没有分面」的判断写在引擎的人格块里 | 数据的问题让引擎回答 | 挪到数据模型的属性上，引擎只取一句、列几行 |
+| 规则函数是一串 if / elif，每加一条上限就再补一个分支 | 没有抽出「上限」这个概念 | 上限成了一张函数表，取最低的一条 |
+| 旧测试各自手写「模型给目标好感」的 JSON | 没有共用的测试辅助 | `tests/affinity_verdict.py` 一处翻译 |
+| 测试里手写的画像替身缺新字段 | 替身和 schema 走散 | 换成真的 `PsycheProfile` |
+
 **出处对照（设计稿 v6 → 本文件）：**
 
 | 设计稿 | 本文件 |
@@ -270,7 +289,7 @@ test_affinity_clamp.py 7 · test_arc_phase_fields_unit.py 1 · test_catchwords.p
 | §5 默认亲近条件、T15、T19 | R5、R13 · G7 |
 | §5 默认条件卡单轮上限、T16 | R18 · G11 |
 | §5 评估解析、T10 | R16 · 规则单测 |
-| §5 落库、T9、T22；群聊 T11 | R17 · G8、T10 |
+| §5 落库、T9、T22；群聊 T11 | R17 · G8、`test_group_row_carries_the_rule_state_and_restores_it` |
 | §5 附带修复、T12 | F12 · G10 |
 | T1 登记表 | §3 · 规则单测里的登记表一条、U1 计数 |
 | T2–T4、T13、T14（草稿派生、分发、引文核对） | 段 2 |

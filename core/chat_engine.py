@@ -26,6 +26,7 @@ from core.reaction_service import ReactionService
 from core.reflection_service import ReflectionService
 from core.telemetry import set_current_attr
 from core.affinity_service import AffinityService, calc_stage
+from core.affinity_rules import relational_tier
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext
 
 logger = logging.getLogger(__name__)
@@ -899,6 +900,11 @@ class ChatEngine:
             "心意相通": "不设防，完全信任，会撒娇或示弱，语气柔软",
         }
         tone_rule = stage_tones.get(stage_name, "自然表现")
+        # 卡上三档关系做法齐全时，用这张卡自己这一档的做法取代通用语气
+        psyche = getattr(self.card, "psyche", None)
+        if psyche is not None and psyche.relational_modes.complete:
+            tone_rule = psyche.relational_modes.line(
+                relational_tier(self._affinity, self._affinity_service.relation))
         parts.append(
             f"\n\n[当前情感状态——影响你的语气和态度]\n"
             f"你对{self.user_role or '对方'}的好感度：{self._affinity}/100（{stage_name}阶段）\n"
@@ -924,7 +930,6 @@ class ChatEngine:
         parts.append(guard_block + "\n\n")
 
         # ── Step 3: 人格画像（psyche）注入 ──
-        psyche = getattr(self.card, "psyche", None)
         if psyche is not None:
             psy_lines = []
             agreeableness = getattr(psyche, "agreeableness", 3)
@@ -932,7 +937,9 @@ class ChatEngine:
             triggers = getattr(psyche, "triggers", [])
             soft_spots = getattr(psyche, "soft_spots", [])
 
-            if agreeableness >= 4:
+            if psyche.facet_behaviors:
+                psy_lines.extend(psyche.facet_behaviors)      # 有分面：每个分面一句行为，不写分数
+            elif agreeableness >= 4:
                 psy_lines.append(
                     "你天生好说话，愿意迁就别人——对方示好时你会更热情回应，"
                     "这不代表你软弱，而是你的性格如此。"

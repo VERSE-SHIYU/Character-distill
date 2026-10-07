@@ -22,6 +22,7 @@ G6 正向大档要前面连续 2 轮非负才生效，否则按中档算（设�
 G9 卡上没有新字段（或三档没填全）时，人格块仍是改造前的文案 —— 段 1 上线后所有旧卡都走这条路。
 G10 评估 prompt：性格特征与价值观各归各位；不再有与新规则矛盾的旧句子；记仇只进 prompt，代码不读。
 G11 用默认亲近条件的卡：门槛同为 3 次；单轮最多涨 5（设计稿 Q4）。
+G12 三档做法、亲近条件可以只在某个阶段成立：选了那个阶段才用它，别的阶段用全程的。
 G8 换一个引擎接着聊（单聊存档、群聊行两种落库形态），次数、待修复的冒犯、冲突档都还在。
 G7 评估时看的是这张卡自己的亲近条件；卡上没有才用默认两条；编号对不上的「做到亲近条件」不算数。
 G4 转折：冒犯后下一轮换成冲突档（优先于亲近档）；不再冒犯就退出冲突档；
@@ -70,7 +71,7 @@ _TIER_CAP = {"small": 2, "medium": 5, "large": 8}      # 档位上限（设计�
 
 
 def _raw(name: str, *, own_conditions: bool = True, overlay: bool = True,
-         psyche_overrides: dict | None = None) -> dict:
+         psyche_overrides: dict | None = None, phase_overlay: tuple[int, dict] | None = None) -> dict:
     raw = json.loads((_SAMPLES / f"{name}.json").read_text(encoding="utf-8"))
     if overlay:
         raw["psyche"].update(json.loads(json.dumps(_FIX[name], ensure_ascii=False)))
@@ -82,6 +83,9 @@ def _raw(name: str, *, own_conditions: bool = True, overlay: bool = True,
         for key in parents:
             node = node[key]
         node[leaf] = value
+    if phase_overlay:
+        k, psyche_at_k = phase_overlay
+        raw["character_arc"]["phases"][k - 1]["overlay"] = {"psyche": psyche_at_k}
     return raw
 
 
@@ -128,11 +132,12 @@ def _run(name: str, start: int, script, **card_kw):
     return prompts, aff, stage
 
 
-def _run_full(name: str, start: int, script, *, resume_from: dict | None = None, **card_kw):
+def _run_full(name: str, start: int, script, *, resume_from: dict | None = None,
+              arc_phase: int | None = None, **card_kw):
     """同 `_run`，另外返回每轮发给评估模型的 prompt。`resume_from` 给了就从这份落库数据接着聊。"""
     llm = _ReplayLLM(script)
     eng = ChatEngine(llm=llm, rag=None, card=CharacterCard.model_validate(_raw(name, **card_kw)), card_id="c",
-                     storage=None, session_id="", is_new_session=False, arc_phase=None)
+                     storage=None, session_id="", is_new_session=False, arc_phase=arc_phase)
     llm.engine = eng
     eng.load_affinity(resume_from or {"affinity": start, "trust": 30, "mood": "平静", "guard": 70,
                                       "reason": "", "inner_voice": ""}, initialized=True)
@@ -396,3 +401,19 @@ def test_g11_default_condition_card_rises_at_most_five_per_turn():
         _, aff, _ = _run("赵太爷", 20, script, own_conditions=own)
         steps = [b - a for a, b in zip([20] + aff, aff)][2:]
         assert max(steps) == cap, f"own_conditions={own}：单轮最多应涨 {cap}，实际 {steps}"
+
+
+def test_g12_phase_limited_mode_and_condition_apply_only_in_that_phase():
+    name = "孔乙己"                               # 样本卡有两个阶段
+    only_phase_1 = (1, {"relational_modes": {"close": "只在第一阶段：把最后一颗豆也让给对方"},
+                        "warming_conditions": ["只在第一阶段：对方请他喝了一碗酒"]})
+    seen = {}
+    for k in (1, 2):
+        prompts, _, _, llm = _run_full(name, 80, [("neutral", "small", 1)], arc_phase=k,
+                                       phase_overlay=only_phase_1)
+        seen[k] = (prompts[0], llm.eval_prompts[0])
+    line, cond = only_phase_1[1]["relational_modes"]["close"], only_phase_1[1]["warming_conditions"][0]
+    assert line in seen[1][0] and _modes(name)["close"] not in seen[1][0], "选了第一阶段，却没用这个阶段的亲近档做法"
+    assert cond in seen[1][1], "选了第一阶段，评估 prompt 里没有这个阶段的亲近条件"
+    assert line not in seen[2][0] and _modes(name)["close"] in seen[2][0], "第二阶段用到了第一阶段才有的做法"
+    assert cond not in seen[2][1], "第二阶段的评估 prompt 里出现了第一阶段才有的亲近条件"

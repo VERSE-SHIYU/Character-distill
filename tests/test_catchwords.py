@@ -6,6 +6,7 @@ import json
 from unittest.mock import MagicMock
 
 from core.chat_engine import ChatEngine
+from core.schema import PsycheProfile
 from core.affinity_service import AffinityService
 from core.schema import CharacterCard
 
@@ -263,7 +264,7 @@ class TestAffinityCompat:
             "guard": 30, "inner_voice": "不错", "mood_emoji": "😊",
             "importance": 5,
         }
-        svc.apply_evaluation(data, "朋友")
+        svc.apply_evaluation(data, "朋友", PsycheProfile())
         parsed = json.loads(svc.affinity_reason)
         assert parsed.get("user_catchwords") == ["好的"]
 

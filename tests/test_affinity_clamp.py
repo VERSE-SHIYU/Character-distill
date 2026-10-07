@@ -1,8 +1,11 @@
-"""Tests for affinity delta clamp — enforces prompt-declared per-turn limits in code."""
+"""Per-turn limits enforced in code: `_clamp_delta` for trust / guard, the rule table for affinity."""
 
 from __future__ import annotations
 
+from affinity_verdict import verdict
+from core.affinity_protocol import FIELD_DELTA
 from core.affinity_service import _clamp_delta, AffinityService
+from core.schema import PsycheProfile
 
 
 class TestClampDelta:
@@ -60,7 +63,8 @@ class TestClampDelta:
 
 
 class TestApplyEvaluationClamp:
-    """Integration tests: apply_evaluation with delta clamp."""
+    """Integration tests: apply_evaluation. Affinity follows the rule table (core/affinity_rules.py);
+    the card here has no warming conditions, so the default-condition ceiling (+5 per turn) applies."""
 
     def _make_service(self, affinity=50, trust=30, guard=70) -> AffinityService:
         svc = AffinityService()
@@ -70,37 +74,37 @@ class TestApplyEvaluationClamp:
         return svc
 
     def test_affinity_up_clamped_to_5(self):
-        """LLM returns +30 affinity → clamped to +5."""
+        """Evaluator reports a large gain (+8) → a default-condition card rises by at most +5."""
         svc = self._make_service(affinity=50)
-        svc.apply_evaluation({"affinity": 80, "trust": 30, "guard": 70, "mood": "平静",
-                              "inner_voice": "", "mood_emoji": "😊", "importance": 5}, "陌生")
+        svc.apply_evaluation({**verdict(+8), "trust": 30, "guard": 70, "mood": "平静",
+                              "inner_voice": "", "mood_emoji": "😊", "importance": 5}, "陌生", PsycheProfile())
         assert svc.affinity == 55, f"Expected 55, got {svc.affinity}"
 
     def test_affinity_down_clamped_to_8(self):
         """LLM returns -30 affinity → clamped to -8."""
         svc = self._make_service(affinity=50)
-        svc.apply_evaluation({"affinity": 20, "trust": 30, "guard": 70, "mood": "生气",
-                              "inner_voice": "", "mood_emoji": "😠", "importance": 5}, "陌生")
+        svc.apply_evaluation({**verdict(-8), FIELD_DELTA: 30, "trust": 30, "guard": 70, "mood": "生气",
+                              "inner_voice": "", "mood_emoji": "😠", "importance": 5}, "陌生", PsycheProfile())
         assert svc.affinity == 42, f"Expected 42, got {svc.affinity}"
 
     def test_normal_delta_unchanged(self):
         """Normal +3 change passes through apply_evaluation."""
         svc = self._make_service(affinity=50)
-        svc.apply_evaluation({"affinity": 53, "trust": 30, "guard": 70, "mood": "平静",
-                              "inner_voice": "", "mood_emoji": "😊", "importance": 5}, "陌生")
+        svc.apply_evaluation({**verdict(+3), "trust": 30, "guard": 70, "mood": "平静",
+                              "inner_voice": "", "mood_emoji": "😊", "importance": 5}, "陌生", PsycheProfile())
         assert svc.affinity == 53, f"Expected 53, got {svc.affinity}"
 
     def test_guard_drop_limited_to_5(self):
         """Guard下降限制在 -5。"""
         svc = self._make_service(guard=70)
-        svc.apply_evaluation({"affinity": 50, "trust": 30, "guard": 20, "mood": "放松",
-                              "inner_voice": "", "mood_emoji": "😌", "importance": 5}, "陌生")
+        svc.apply_evaluation({**verdict(0), "trust": 30, "guard": 20, "mood": "放松",
+                              "inner_voice": "", "mood_emoji": "😌", "importance": 5}, "陌生", PsycheProfile())
         assert svc.guard == 65, f"Expected 65, got {svc.guard}"
 
     def test_missing_fields_keep_old_values(self):
         """字段缺失 → 保持旧值（fallback 语义不变）。"""
         svc = self._make_service(affinity=50, trust=30, guard=70)
-        svc.apply_evaluation({"mood": "开心", "inner_voice": "嘿嘿", "mood_emoji": "😊", "importance": 5}, "陌生")
+        svc.apply_evaluation({"mood": "开心", "inner_voice": "嘿嘿", "mood_emoji": "😊", "importance": 5}, "陌生", PsycheProfile())
         assert svc.affinity == 50, f"Expected 50, got {svc.affinity}"
         assert svc.trust == 30, f"Expected 30, got {svc.trust}"
         assert svc.guard == 70, f"Expected 70, got {svc.guard}"
@@ -109,9 +113,9 @@ class TestApplyEvaluationClamp:
     def test_all_values_combined_clamp(self):
         """Multiple numeric fields all get clamped simultaneously."""
         svc = self._make_service(affinity=40, trust=20, guard=60)
-        svc.apply_evaluation({"affinity": 90, "trust": 80, "guard": 10, "mood": "震惊",
-                              "inner_voice": "哇", "mood_emoji": "😮", "importance": 7}, "陌生")
-        # affinity: 40 + 5 = 45 (not 90)
+        svc.apply_evaluation({**verdict(+8), "trust": 80, "guard": 10, "mood": "震惊",
+                              "inner_voice": "哇", "mood_emoji": "😮", "importance": 7}, "陌生", PsycheProfile())
+        # affinity: 40 + 5 = 45 (reported +8, default-condition ceiling)
         assert svc.affinity == 45, f"Expected 45, got {svc.affinity}"
         # trust: 20 + 5 = 25 (not 80)
         assert svc.trust == 25, f"Expected 25, got {svc.trust}"
@@ -119,11 +123,11 @@ class TestApplyEvaluationClamp:
         assert svc.guard == 55, f"Expected 55, got {svc.guard}"
 
     def test_stage_calculated_after_clamped_affinity(self):
-        """Stage is recalculated from clamped affinity, not raw LLM value."""
+        """Stage is recalculated from the affinity the rule table produced."""
         svc = self._make_service(affinity=88)  # stage=亲近 (73-90)
-        svc.apply_evaluation({"affinity": 95, "trust": 30, "guard": 70, "mood": "开心",
-                              "inner_voice": "", "mood_emoji": "😊", "importance": 5}, "亲近")
-        # affinity clamped to 88 + 5 = 93 → stage should be 心意相通 (91-100)
+        svc.apply_evaluation({**verdict(+5), "trust": 30, "guard": 70, "mood": "开心",
+                              "inner_voice": "", "mood_emoji": "😊", "importance": 5}, "亲近", PsycheProfile())
+        # affinity 88 + 5 = 93 → stage should be 心意相通 (91-100)
         assert svc.affinity == 93, f"Expected 93, got {svc.affinity}"
         assert svc.stage == "心意相通", f"Expected 心意相通, got {svc.stage}"
         assert svc.stage_upgraded is True
