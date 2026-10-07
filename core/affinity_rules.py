@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 CLOSE_FROM = 73        # 亲近档下界：只此一处，`affinity_service.AFFINITY_STAGES` 引用它
 MET_REQUIRED = 3       # 跨进亲近档前要累计的 `met_condition` 次数
@@ -37,6 +37,24 @@ class RelationState:
     met_count: int = 0             # 本存档累计 `met_condition` 次数
     nonneg_streak: int = 0         # 连续非负轮数
     pre_offence: int | None = None  # 冒犯前的值；非空 = 有待修复的冒犯
+
+
+def relation_to_dict(state: RelationState) -> dict:
+    return asdict(state)
+
+
+def relation_from_dict(data) -> RelationState:
+    """从落库的 dict 还原；缺键、类型不对的键取默认值（旧存档没有这份状态）。"""
+    if not isinstance(data, dict):
+        return RelationState()
+    base = RelationState()
+    pre = data.get("pre_offence")
+    return RelationState(
+        last_event=data["last_event"] if data.get("last_event") in EVENTS else base.last_event,
+        met_count=data["met_count"] if type(data.get("met_count")) is int else base.met_count,
+        nonneg_streak=data["nonneg_streak"] if type(data.get("nonneg_streak")) is int else base.nonneg_streak,
+        pre_offence=pre if type(pre) is int else None,
+    )
 
 
 def relational_tier(affinity: int, state: RelationState) -> str:

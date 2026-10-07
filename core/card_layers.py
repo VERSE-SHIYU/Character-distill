@@ -52,6 +52,7 @@ REGISTRY: dict[str, FieldSpec] = {
     "psyche.grudge_inertia": FieldSpec("stable", "scalar", "记仇惯性"),
     "cognitive.education_level": FieldSpec("stable", "scalar", "教育程度"),
     "cognitive.vocabulary_level": FieldSpec("stable", "scalar", "词汇水平"),
+    "psyche.agreeableness_facets": FieldSpec("stable", "list", "宜人性分面"),
     # ── 状态（列表：顶层 + 阶段 k）─────────────────────────────────────
     "personality_traits": FieldSpec("state", "list", "性格特征"),
     "values": FieldSpec("state", "list", "核心价值观"),
@@ -60,12 +61,16 @@ REGISTRY: dict[str, FieldSpec] = {
     "speaking_style.catchphrases": FieldSpec("state", "list", "口癖"),
     "psyche.triggers": FieldSpec("state", "list", "雷点"),
     "psyche.soft_spots": FieldSpec("state", "list", "软肋"),
+    "psyche.warming_conditions": FieldSpec("state", "list", "亲近条件"),
     "dialogue_examples": FieldSpec("state", "list", "对话示例"),
     # ── 状态（单值：阶段 k 有值用之，否则顶层）─────────────────────────
     "decision_style": FieldSpec("state", "scalar", "决策风格"),
     "speaking_style.tone": FieldSpec("state", "scalar", "语气"),
     "speaking_style.sentence_pattern": FieldSpec("state", "scalar", "句式"),
     "cognitive.speech_style": FieldSpec("state", "scalar", "说话风格"),
+    "psyche.relational_modes.close": FieldSpec("state", "scalar", "对亲近的人"),
+    "psyche.relational_modes.normal": FieldSpec("state", "scalar", "对平常的人"),
+    "psyche.relational_modes.conflict": FieldSpec("state", "scalar", "起冲突时"),
     # ── 经历（顶层 + 1..k）────────────────────────────────────────────
     "key_memories": FieldSpec("experience", "list", "关键记忆"),
     "cognitive.knowledge_scope": FieldSpec("experience", "scalar", "知识范围"),

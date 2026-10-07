@@ -6,7 +6,9 @@ import json
 import logging
 from typing import Any
 
-from core.affinity_rules import CLOSE_FROM, RelationState, apply_event, warming_conditions
+from core.affinity_rules import (
+    CLOSE_FROM, RelationState, apply_event, relation_from_dict, relation_to_dict, warming_conditions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +84,7 @@ class AffinityService:
         # ── P1 影子模式：8 轮 delta 历史环形缓冲（纯内存，不落库） ──
         self._delta_ring: list[dict] = []
         self._ring_maxlen: int = 8
-        # 规则表的状态（原型：只在内存；落库随 spec 的落库一段做）
+        # 规则表的状态：随 reason 的 JSON 落库（apply_evaluation 写、load 读）
         self.relation: RelationState = RelationState()
 
     def _record_delta_ring(self, *, affinity_delta: int, trust_delta: int,
@@ -147,6 +149,12 @@ class AffinityService:
                 self.mood_emoji = "😊"
             self.user_catchwords = _parsed.get("user_catchwords", []) if isinstance(_parsed, dict) else []
             self.stage, self.stage_emoji = calc_stage(self.affinity)
+        # 规则状态与 inner_voice 走同一个通道：reason 里的 JSON（单聊新旧格式、群聊都带 reason）
+        try:
+            _stored = json.loads(self.affinity_reason or "")
+        except (json.JSONDecodeError, TypeError):
+            _stored = None
+        self.relation = relation_from_dict(_stored.get("relation") if isinstance(_stored, dict) else None)
         self.prev_stage = self.stage
 
     def get(self) -> dict[str, Any]:
@@ -175,45 +183,28 @@ class AffinityService:
     ) -> str:
         """构建情感评估 LLM prompt（纯函数：只读状态，无副作用/IO）。"""
         _values = getattr(card, 'values', []) or []
+        _traits = getattr(card, 'personality_traits', []) or []
         _tensions = getattr(card, 'inner_tensions', []) or []
         psyche = card.psyche
 
-        # ── 个性化基线规则 vs 通用回退 ──
-        has_custom_psyche = (
-            psyche.affinity_baseline != 50
-            or psyche.volatility != "适中"
-            or psyche.grudge_inertia != "一般"
-            or bool(psyche.triggers)
-            or bool(psyche.soft_spots)
+        # ── 判档依据：这张卡的性格 ──
+        # 好感数值不由模型给（见 core/affinity_rules.py），这里只帮它判「哪类事、哪一档」；
+        # 所以不写「好感围绕基线波动 / 自然回到基线」这类旧说法（设计稿 Q6：没有回落）。
+        baseline_rules = (
+            "判档依据（你的性格）：\n"
+            f"- 你的情绪波动幅度是【{psyche.volatility}】的（剧烈=容易大起大落，平稳=情感很稳不会轻易起伏）\n"
+            f"- 你消化负面情绪的方式是【{psyche.grudge_inertia}】（记仇=被冒犯后很难被一句道歉打动，大度=对方有诚意就过去了）\n"
         )
-        if has_custom_psyche:
-            baseline_rules = (
-                f"情绪基线规则（依据Kuppens情感动力学—情感围绕个性化基线波动）：\n"
-                f"- 你的关系基线大约在 {psyche.affinity_baseline}（满分100）——当前好感围绕这条基线波动，不会无限攀升，也很难长期大幅低于它；连续多轮真心相待，基线才会慢慢台阶式上移\n"
-                f"- 你的情绪波动幅度是【{psyche.volatility}】的（剧烈=容易大起大落，平稳=情感很稳不会轻易起伏）\n"
-                f"- 你消化负面情绪的方式是【{psyche.grudge_inertia}】（记仇=好感掉了很难回升，大度=很快回到基线不记仇）\n"
-            )
-            if psyche.triggers:
-                baseline_rules += f"- 以下是你的雷点，被触碰会明显掉好感/防御飙升：{', '.join(psyche.triggers)}\n"
-            if psyche.soft_spots:
-                baseline_rules += f"- 以下是你的软肋，被戳中会让你心软、好感回升更快：{', '.join(psyche.soft_spots)}\n"
-            baseline_rules += (
-                "- 好感很难长时间大幅低于基线——除非对方严重背叛或伤害你，普通拌嘴过后会自然回到基线附近\n"
-                "- 基线上移要慢、要台阶式；一旦上移，不会因小摩擦轻易回落\n\n"
-            )
-        else:
-            baseline_rules = (
-                "情绪基线规则（依据Kuppens情感动力学—情感围绕个性化基线波动）：\n"
-                "- 你心里有一条\"关系基线\"，代表你对 ta 长期、稳定的态度，不等于此刻的一时情绪\n"
-                "- 当前好感是围绕这条基线的波动：开心时高于基线，闹别扭时低于基线\n"
-                "- 好感很难长时间大幅低于基线——除非对方严重背叛或伤害你，普通拌嘴过后会自然回到基线附近\n"
-                "- 连续多轮真心相待，会让基线本身慢慢上移（关系真正变深），而不是因为一次拌嘴就退回原点\n"
-                "- 基线上移要慢、要台阶式；一旦上移，不会因小摩擦轻易回落\n\n"
-            )
+        if psyche.triggers:
+            baseline_rules += f"- 以下是你的雷点，被触碰就是 trigger：{', '.join(psyche.triggers)}\n"
+        if psyche.soft_spots:
+            baseline_rules += f"- 以下是你的软肋，被戳中会让你心软：{', '.join(psyche.soft_spots)}\n"
+        baseline_rules += "\n"
 
         prompt = (
             f"你现在就是{card.name}本人。\n"
-            f"性格特征：{', '.join(_values[:3])}\n"
+            f"性格特征：{', '.join(_traits[:3])}\n"
+            f"价值观：{', '.join(_values[:3])}\n"
             f"内在矛盾：{', '.join(_tensions[:2])}\n"
             f"对话者身份：{user_role}\n\n"
             f"当前情感状态：好感={self.affinity}, 信任={self.trust}, 情绪={self.mood}, 防御={self.guard}\n"
@@ -233,11 +224,10 @@ class AffinityService:
             "3. 如果对方触碰了你的痛点或雷区，反应要激烈但符合你的性格。\n"
             "4. 如果上一刻你在生气，对方道歉了，你不应该立刻原谅——你需要时间消化。\n\n"
             "情绪惯性规则（依据AnnaAgent ACL 2025情绪动态演化模型）：\n"
-            "- 单轮数值变化不超过 ±8\n"
-            "- 正面情绪建立慢（+3~5/轮），负面情绪爆发快（-5~8/轮）\n"
+            "- 信任、防御的单轮变化不超过 ±8；信任建立慢（+3~5/轮），受伤掉得快（-5~8/轮）\n"
             "- 防御值下降速度 = 信任上升速度的0.6倍（信任建立慢，防御松懈更慢）\n"
             "- 情绪有惯性：愤怒→道歉→不是立刻开心，而是'不甘+犹豫'的过渡态\n"
-            "- 连续3轮正面互动才能触发阶段性好感跃升\n\n"
+            "\n"
             + baseline_rules
             + "好感事件判定规则（用于 affinity_event / affinity_tier / affinity_delta）：\n"
             "- 只判断对方这一轮做了哪类事，不要自己给好感数值：\n"
@@ -405,6 +395,7 @@ class AffinityService:
             "stage": self.stage,
             "stage_emoji": self.stage_emoji,
             "user_catchwords": self.user_catchwords,
+            "relation": relation_to_dict(self.relation),   # 规则状态：单聊、群聊都随 reason 落库
         }
         self.affinity_reason = _json.dumps(extended, ensure_ascii=False)
         return importance
