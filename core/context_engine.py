@@ -411,7 +411,9 @@ class ContextEngine:
 
         if c.relationships:
             relations = "\n".join(
-                f"- {r.target}（{r.relation}）：{r.attitude}" for r in c.relationships
+                # 态度可能留空（一条态度都没定位、挂在最后阶段的关系，§3.3）：空就不带冒号
+                f"- {r.target}（{r.relation}）" + (f"：{r.attitude}" if r.attitude else "")
+                for r in c.relationships
             )
             parts.append(f"【人际关系】\n{relations}")
 

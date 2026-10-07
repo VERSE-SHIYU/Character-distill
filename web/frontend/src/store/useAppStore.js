@@ -1782,6 +1782,30 @@ const useAppStore = create((set, get) => {
     }),
   })),
 
+  // 写回服务端返回的卡（接口经 out_card：带现算的 `character_arc.selectable`）—— 编辑保存与
+  // 挪动未定位条目共用这一处，store 里不再存本地拼的那份（旧做法会留着过期的 selectable）。
+  _applyServerCard: (cardId, row) => {
+    const raw = row?.card_json
+    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (!obj) return
+    set((s) => {
+      const updated = {
+        cards: s.cards.map((c) =>
+          c.id === cardId
+            ? { ...c, card_json: typeof c.card_json === 'string' ? JSON.stringify(obj) : obj }
+            : c
+        ),
+        currentCard: s.currentCard?.id === cardId
+          ? { ...s.currentCard, ...obj, card_json: obj }
+          : s.currentCard,
+      }
+      if (s.sessionId && s.currentCard?.id === cardId) {
+        updated.messages = [...s.messages, withCid({ role: 'system', content: '角色卡已更新' })]
+      }
+      return updated
+    })
+  },
+
   updateCard: async (cardId, cardJson) => {
     try {
       const res = await fetchWithTimeout(`/api/distill/card/${cardId}`, {
@@ -1790,29 +1814,25 @@ const useAppStore = create((set, get) => {
         body: JSON.stringify({ card_json: cardJson }),
       })
       const data = await res.json()
-      if (data.ok) {
-        set((s) => {
-          const updated = {
-            cards: s.cards.map((c) =>
-              c.id === cardId
-                ? { ...c, card_json: typeof c.card_json === 'string' ? JSON.stringify(cardJson) : cardJson }
-                : c
-            ),
-            currentCard: s.currentCard?.id === cardId
-              ? { ...s.currentCard, ...cardJson, card_json: cardJson }
-              : s.currentCard,
-          }
-          if (s.sessionId && s.currentCard?.id === cardId) {
-            updated.messages = [...s.messages, withCid({ role: 'system', content: '角色卡已更新' })]
-          }
-          return updated
-        })
-      }
+      if (data.ok) get()._applyServerCard(cardId, data.card)
       return data
     } catch (err) {
       set({ error: err.message })
       throw err
     }
+  },
+
+  // 把未定位区的一条挪进阶段 `phase`（规则只在后端 core/unlocated.py；这里只调接口、写回结果）。
+  moveUnlocated: async (cardId, { section, index, phase, path = '' }) => {
+    const res = await fetchWithTimeout(`/api/distill/card/${cardId}/unlocated/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ section, index, phase, path }),
+    })
+    const data = await res.json()
+    if (!res.ok || !data.ok) throw new Error(data.detail || '挪动失败，请刷新后重试')
+    get()._applyServerCard(cardId, data.card)
+    return data
   },
   }
 })

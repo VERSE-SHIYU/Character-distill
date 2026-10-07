@@ -6,8 +6,8 @@
 覆盖域（`tests/test_lock_coverage.py` 按文件计域）。
 
 **两条贯穿全篇的约定**（否则变异会存活）：
-1. 拒侧用例里，被测做法必须**另有一个能通过的标注** —— 否则兜底 D5 会把整条退回，被测的
-   标注去没去掉结果一样（§4.1）。
+1. 拒侧用例里，被测做法必须**另有一个能通过的标注** —— 否则整条进未定位区，被测的标注
+   去没去掉结果一样（`arc-phase-unlocated.md` §4；原兜底 D5 已由按位置改挂取代）。
 2. 位置证据只取**最长一段**在原文里的位置；短段（「这」）满篇都是，拿它定位置等于没定（C12）。
 
 **每条用例只留一条 assert。** `pytest --tb=long` 只报**每条用例第一处**失败断言，同一条用例
@@ -117,12 +117,13 @@ def test_u6_verbatim_ignores_segment_order():
             verbatim_in_normalized(_KONG, "下回还清罢……温一碗酒")) == (True, True)
 
 
-def test_u7_tag_kept_when_quote_is_in_the_tagged_phase_dropped_when_not():
+def test_u7_tag_kept_when_quote_is_in_the_tagged_phase_rehung_when_not():
+    """摘录落在所标阶段 → 留；落在别的阶段 → 改挂到摘录所在阶段（D1，不是去掉）。"""
     card = _card([_row([_occ(1, _Q1)], "在阶段1"),
                   _row([_occ(2, _Q1), _occ(3, _Q3)], "错标阶段2")])
     assert _placement(card) == (
         [],
-        [[_beh("在阶段1", quote=_Q1)],
+        [[_beh("在阶段1", quote=_Q1), _beh("错标阶段2", quote=_Q1)],
          [],
          [_beh("错标阶段2", quote=_Q3)]])
 
@@ -166,18 +167,41 @@ def test_u12_invalid_number_warns(caplog):
     assert any("阶段编号不合法" in r.getMessage() for r in caplog.records)
 
 
-def test_u13_fallback_restores_when_every_tag_was_dropped():
-    card = _card([_row([_occ(3, _Q1)], "全丢")])
-    assert _placement(card) == ([], [[], [], [_beh("全丢", quote=_Q1)]])
+def test_u13_every_tag_off_target_is_rehung_not_restored():
+    """唯一标注的摘录落在别的阶段 → 改挂到那个阶段，不退回模型原标注（取代兜底 D5）。"""
+    card = _card([_row([_occ(3, _Q1)], "错挂")])
+    assert _placement(card) == ([], [[_beh("错挂", quote=_Q1)], [], []])
 
 
-def test_u14_fallback_warns(caplog):
-    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
-        _card([_row([_occ(3, _Q1)], "全丢")])
-    assert any("兜底" in r.getMessage() for r in caplog.records)
+def test_u13b_item_without_any_evidence_hangs_nowhere():
+    """一段摘录都定不了位 → 不挂任何阶段、不进顶层（不退回模型原标注；去处由类别决定，
+    见 `test_arc_phase_unlocated.py`）。"""
+    card = _card([_row([_occ(2, "查无此句")], "无证据")])
+    assert _placement(card) == ([], [[], [], []])
 
 
-def test_u15_partial_drop_does_not_fallback():
+def test_u13c_own_quote_wins_over_a_rehung_quote_for_the_same_phase():
+    """阶段 1 自己的摘录与阶段 3 改挂过来的摘录都落在阶段 1：`source_quote` 取自己的。"""
+    card = _card([_row([_occ(1, "开头甲"), _occ(3, _Q1)], "两份证据")])
+    assert _placement(card) == ([], [[_beh("两份证据", quote="开头甲")], [], []])
+
+
+def test_u13d_rehung_counts_items_not_tags(caplog):
+    """一条条目两个标注都改挂，`rehung` 记 1（按条目计）。"""
+    with caplog.at_level(logging.INFO, logger="core.card_draft"):
+        _card([_row([_occ(2, _Q1), _occ(3, _Q1)], "两处错标")])
+    line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
+    assert " rehung=1 " in line
+
+
+def test_u14_rehang_warns(caplog):
+    with caplog.at_level(logging.WARNING, logger="core.phase_anchoring"):
+        _card([_row([_occ(3, _Q1)], "错挂")])
+    assert [r.getMessage() for r in caplog.records if "改挂" in r.getMessage()] == [
+        "改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]"]
+
+
+def test_u15_rehang_into_a_phase_that_already_stands_is_not_doubled():
     card = _card([_row([_occ(1, _Q1), _occ(3, _Q1)], "去一半")])
     assert _placement(card) == ([], [[_beh("去一半", quote=_Q1)], [], []])
 
@@ -211,30 +235,32 @@ def test_u18_reversed_anchors_skip_the_whole_card():
         [[], [_beh("乱序", quote=_Q2)], [_beh("乱序", quote=_Q3)]])
 
 
-def test_u19_duplicate_quote_any_hit_keeps_and_all_miss_drops():
-    """「甲乙」@0、@6：一处在范围内 → 该标注通过；两处都不在范围内 → 去掉。
+def test_u19_duplicate_quote_hit_keeps_only_tagged_miss_hangs_every_landing():
+    """「甲乙」@0（阶段1）、@6（阶段3）。
 
-    拒侧那条另有一个能通过的标注（阶段 1 的「甲乙」）—— 否则兜底 D5 会把整条退回。
+    - 标阶段 3：有一处落在所标阶段 → **只认阶段 3**（另一处不加挂，§3.1 规则 b）；
+    - 标阶段 2：一处都不在阶段 2 → 状态类挂到**全部**落点阶段 1 和 3（§3.1 规则 c）。
     """
     src = "甲乙丙丁戊己甲乙"
     anchors = {2: "丙丁", 3: "戊己"}                     # 阶段 1/2/3 = [0,2)/[2,4)/[4,8)
-    card = _card([_row([_occ(3, "甲乙")], "收：一处在阶段3"),
-                  _row([_occ(1, "甲乙"), _occ(2, "甲乙")], "拒：两处都不在阶段2")],
+    card = _card([_row([_occ(3, "甲乙")], "命中只认所标"),
+                  _row([_occ(2, "甲乙")], "未命中挂全部落点")],
                  src=src, anchors=anchors)
     assert _placement(card) == (
         [],
-        [[_beh("拒：两处都不在阶段2", quote="甲乙")],
+        [[_beh("未命中挂全部落点", quote="甲乙")],
          [],
-         [_beh("收：一处在阶段3", quote="甲乙")]])
+         [_beh("命中只认所标", quote="甲乙"), _beh("未命中挂全部落点", quote="甲乙")]])
 
 
-def test_u20_phase_absent_when_no_quote_is_in_range():
-    """摘录落在所标阶段之外 → 该阶段不成立（不因「标了就算」而留下一条空引用）。"""
+def test_u20_tagged_phase_absent_when_no_quote_lands_there():
+    """摘录落在所标阶段之外 → 所标阶段不成立，挂到摘录实际所在的阶段 2（不留空引用）。"""
     src = "甲乙丙丁戊己甲乙"
-    anchors = {2: "丙丁", 3: "戊己"}                     # 阶段 3 = [4,8)；「丙丁」@2 不在其中
+    anchors = {2: "丙丁", 3: "戊己"}                     # 阶段 3 = [4,8)；「丙丁」@2 在阶段 2
     card = _card([_row([_occ(1, "甲乙"), _occ(3, "丙丁")], "阶段3不成立")],
                  src=src, anchors=anchors)
-    assert _placement(card) == ([], [[_beh("阶段3不成立", quote="甲乙")], [], []])
+    assert _placement(card) == ([], [[_beh("阶段3不成立", quote="甲乙")],
+                                     [_beh("阶段3不成立", quote="丙丁")], []])
 
 
 def test_u21_source_quote_is_the_passing_one_not_the_first():
@@ -244,12 +270,13 @@ def test_u21_source_quote_is_the_passing_one_not_the_first():
 
 
 def test_u22_monitoring_line_reports_counts(caplog):
-    """监测行（D8）：字段齐全、计数按口径。这条做法摘录落在阶段 3 之外 → 去掉并兜底。"""
+    """监测行（D8 + 本段）：字段齐全、计数按口径。一条改挂、一条进未定位区。"""
     with caplog.at_level(logging.INFO, logger="core.card_draft"):
-        _card([_row([_occ(3, _Q1)], "全丢")])
+        _card([_row([_occ(3, _Q1)], "错挂"), _row([_occ(2, "查无此句")], "无证据")])
     line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
-    assert line == ("[phase_anchoring] card=角色 tags=1 dropped=1 ambiguous=0 "
-                    "unverified_quotes=0 fallback=1 skipped_card=False memories_dropped=0")
+    assert line == ("[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 "
+                    "unverified_quotes=1 rehung=1 unlocated=1 to_last=0 "
+                    "skipped_card=False memories_dropped=0 kinds=做法:1/1/0,字段:0/0/0,记忆:0/0/0,关系:0/0/0")
 
 
 def test_u23_empty_anchor_on_last_phase_skips_the_whole_card():
@@ -270,9 +297,9 @@ def test_u24_empty_anchor_on_a_middle_phase_skips_with_its_own_reason(caplog):
         "整卡跳过位置检查（阶段 2 锚点为空）：角色"]
 
 
-_COUNT_ROWS = [_row([_occ(2, "查无此句"), _occ(2, _Q2), _occ(1, _Q3)], "计数")]
-"""阶段 2：第一段核对不上、第二段通过；阶段 1：摘录在阶段 3 → 去掉。
-共 2 个标注、去掉 1 个、核对不上的摘录 1 段（§9.5 A2）。"""
+_COUNT_ROWS = [_row([_occ(2, "查无此句"), _occ(2, _Q2), _occ(1, "又查无此句")], "计数")]
+"""阶段 2：第一段核对不上、第二段通过；阶段 1：唯一摘录核对不上 → 去掉。
+共 2 个标注、去掉 1 个、核对不上的摘录 2 段（按摘录计，§9.5 A2）。"""
 
 
 def test_u25_monitoring_counts_tags_not_quotes(caplog):
@@ -280,7 +307,8 @@ def test_u25_monitoring_counts_tags_not_quotes(caplog):
         _card(_COUNT_ROWS)
     line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
     assert line == ("[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 "
-                    "unverified_quotes=1 fallback=0 skipped_card=False memories_dropped=0")
+                    "unverified_quotes=2 rehung=0 unlocated=0 to_last=0 "
+                    "skipped_card=False memories_dropped=0 kinds=做法:0/0/0,字段:0/0/0,记忆:0/0/0,关系:0/0/0")
 
 
 def test_u26_skipped_card_still_counts_its_tags(caplog):
@@ -289,7 +317,8 @@ def test_u26_skipped_card_still_counts_its_tags(caplog):
         _card(_COUNT_ROWS, anchors={2: _Q2, 3: "查无此句"})
     line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
     assert line == ("[phase_anchoring] card=角色 tags=2 dropped=0 ambiguous=0 "
-                    "unverified_quotes=0 fallback=0 skipped_card=True memories_dropped=0")
+                    "unverified_quotes=0 rehung=0 unlocated=0 to_last=0 "
+                    "skipped_card=True memories_dropped=0 kinds=做法:0/0/0,字段:0/0/0,记忆:0/0/0,关系:0/0/0")
 
 
 def test_u27_each_dropped_tag_warns_once(caplog):
@@ -297,12 +326,12 @@ def test_u27_each_dropped_tag_warns_once(caplog):
     with caplog.at_level(logging.WARNING, logger="core.phase_anchoring"):
         _card(_COUNT_ROWS)
     assert [r.getMessage() for r in caplog.records if "去掉标注" in r.getMessage()] == [
-        "去掉标注：做法 '计数' 在阶段 1 没有落在该阶段的摘录"]
+        "去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录"]
 
 
 # ── 4.2 调用点矩阵：五个入口各喂同一份草稿 + 原文 ─────────────────────
 
-# 情境一在阶段 1（第 2 条摘录）与阶段 3 都通过；情境二阶段 2 那条错标去掉、阶段 3 通过。
+# 情境一在阶段 1（第 2 条摘录）与阶段 3 都通过；情境二阶段 2 那条错标改挂到阶段 1、阶段 3 通过。
 _ANCHOR_DRAFT = _draft([
     _row([_occ(1, "查无此句"), _occ(1, _Q1), _occ(3, _Q3)], "情境一"),
     _row([_occ(2, _Q1), _occ(3, _Q3)], "情境二"),
@@ -310,7 +339,7 @@ _ANCHOR_DRAFT = _draft([
 
 _ANCHORED = (
     [],
-    ["情境一"], [], ["情境一", "情境二"],
+    ["情境一", "情境二"], [], ["情境一", "情境二"],
     _Q1, _Q3,                                     # 阶段 1 / 阶段 3 首条的 source_quote
 )
 

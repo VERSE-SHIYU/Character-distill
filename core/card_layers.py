@@ -31,7 +31,7 @@ class FieldSpec(NamedTuple):
 
 
 LAYERS = ("stable", "state", "experience", "custom", "none")
-KINDS = ("list", "scalar")
+KINDS = ("list", "scalar", "map")   # map 只用于 none 层（未定位区的同形 overlay）
 
 
 # 键 = 附录 B 的路径（点号；`CharacterCard` 叶子全集，多一个少一个 U1 都红）。
@@ -79,6 +79,10 @@ REGISTRY: dict[str, FieldSpec] = {
     "tags": FieldSpec("none", "list", "标签"),
     "awakening_message": FieldSpec("none", "scalar", "苏醒台词"),
     "character_arc.source_fingerprint": FieldSpec("none", "scalar", "源码指纹"),
+    # 未定位区：阶段核对不上的状态类条目，只展示、不进 prompt（`CharacterArc.unlocated`）
+    "character_arc.unlocated.behaviors": FieldSpec("none", "list", "未定位·做法"),
+    "character_arc.unlocated.overlay": FieldSpec("none", "map", "未定位·字段"),
+    "character_arc.unlocated.attitudes": FieldSpec("none", "list", "未定位·态度"),
 }
 
 
@@ -86,6 +90,62 @@ def paths_of(*layers: str) -> list[str]:
     """登记表里属于给定类别的路径（`ArcPhase.overlay` 校验与投影都从这里取）。"""
     wanted = set(layers)
     return [p for p, s in REGISTRY.items() if s.layer in wanted]
+
+
+def overlay_leaves(overlay, prefix: str = ""):
+    """把与卡片同形的 overlay 摊成 ``(登记表路径, 值)``：遇到字典往下走，其余都是叶子。
+
+    overlay 与卡片同形（``{"speaking_style": {"catchphrases": [...]}}``），所以叶子路径就是
+    登记表路径 —— 读写一律用 `get_path` / `set_path`，不把路径当键名存。
+    """
+    for key, val in (overlay or {}).items():
+        path = f"{prefix}{key}"
+        if isinstance(val, dict):
+            yield from overlay_leaves(val, f"{path}.")
+        else:
+            yield path, val
+
+
+def check_overlay(overlay: dict, *, layers: tuple[str, ...], lists_only: bool, where: str) -> None:
+    """阶段 overlay 与未定位区 overlay 的**唯一**校验器（两处都是「与卡片同形的部分卡片」）。
+
+    ① 任何一层的键名不许含「.」—— 路径只能靠嵌套表达（根因锁，spec §3.5）；
+    ② 每个叶子路径须是登记表里 `layers` 类别的路径；
+    ③ 值形态：`lists_only`（未定位区）一律列表；否则按 `kind`（list → 列表，scalar → 字符串）。
+    """
+    def keys(node):
+        for k, v in node.items():
+            yield k
+            if isinstance(v, dict):
+                yield from keys(v)
+
+    for key in keys(overlay):
+        if "." in key:
+            raise ValueError(f"{where} 键名不许含「.」（路径要嵌套写）：{key}")
+    for path, val in overlay_leaves(overlay):
+        spec = REGISTRY.get(path)
+        if spec is None or spec.layer not in layers:
+            raise ValueError(f"{where} 键未登记（须为 {'/'.join(layers)} 路径）：{path}")
+        if (lists_only or spec.kind == "list") and not isinstance(val, list):
+            raise ValueError(f"{where}[{path}] 应为列表")
+        if not lists_only and spec.kind == "scalar" and not isinstance(val, str):
+            raise ValueError(f"{where}[{path}] 应为字符串")
+
+
+def nest_flat_keys(overlay: dict) -> dict:
+    """旧数据（#116 之后、本次之前）把登记表路径当键名存：``{"speaking_style.catchphrases": …}``。
+
+    转成与卡片同形的嵌套字典 —— **唯一转换点**在 `ArcPhase` 的加载校验里调用。已有嵌套值时
+    不覆盖（同一路径两种写法并存时以嵌套为准）。
+    """
+    out: dict = {}
+    for key, val in overlay.items():
+        if "." not in key:
+            out[key] = val
+    for key, val in overlay.items():
+        if "." in key and pydash.get(out, key) is None:
+            pydash.set_(out, key, val)
+    return out
 
 
 def get_path(obj, path: str):

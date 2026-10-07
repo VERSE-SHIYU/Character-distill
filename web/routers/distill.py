@@ -27,6 +27,7 @@ from core.card_out import out_card
 from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core.embeddings import EMBEDDING_KEY_REQUIRED
+from core.unlocated import move_unlocated
 from core.export import export_tavern_json
 from core.card_draft import card_from_draft
 from core.schema import CharacterCard
@@ -1274,7 +1275,37 @@ async def update_card(
         logger.warning("[distill] Card validation failed: %s", exc)
         raise HTTPException(400, "角色卡数据校验失败，请检查字段后重试") from exc
     result = await storage.update_card(card_id, validated.model_dump())
-    return {"ok": True, "card": result}
+    return {"ok": True, "card": out_card(result)}   # B4：返回的卡写进 store，出卡只经 out_card
+
+
+class MoveUnlocatedRequest(BaseModel):
+    section: str          # behaviors / overlay / attitudes
+    index: int
+    phase: int            # 1 起
+    path: str = ""        # section=overlay 时的登记表路径
+
+
+@router.post("/card/{card_id}/unlocated/move")
+async def move_unlocated_item(
+    card_id: str,
+    req: MoveUnlocatedRequest,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+):
+    """把未定位区的一条挪进某个阶段（用户给了依据）—— 规则只在 `core.unlocated`。"""
+    record = await storage.get_card_owned(card_id, user["id"])
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not record:
+        raise HTTPException(404, "Card not found")
+    card = CharacterCard.model_validate_json(record["card_json"])
+    try:
+        moved = move_unlocated(card, section=req.section, index=req.index,
+                               phase=req.phase, path=req.path)
+    except ValueError as exc:
+        logger.warning("[distill] move_unlocated rejected: %s", exc)
+        raise HTTPException(400, "这一条已经不在未定位区，请刷新后重试") from exc
+    result = await storage.update_card(card_id, moved.model_dump())
+    return {"ok": True, "card": out_card(result)}   # B4：出卡只经 out_card（现算 selectable）
 
 
 @router.get("/cards/by-text/{text_id}")

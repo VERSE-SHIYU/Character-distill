@@ -4,7 +4,7 @@
     "tests/test_phase_anchoring.py"
   ],
   "mutations": {
-    "M1  位置检查恒通过（所有标注保留）": [
+    "M1  位置检查恒通过（摘录落在别处也认所标阶段）": [
       [
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[], [_beh(\"情境\", quote=_Q2)], []])",
@@ -12,12 +12,27 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1)], [], [_beh(\"错标阶段2\", quote=_Q3)]])",
+        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1), _beh(\"错标阶段2\", quote=_Q1)], [], [_beh(\"错标阶段2\", quot",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert any(\"兜底\" in r.getMessage() for r in caplog.records)",
+        "assert _placement(card) == ([], [[_beh(\"错挂\", quote=_Q1)], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[_beh(\"两份证据\", quote=\"开头甲\")], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert \" rehung=1 \" in line",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]\"]",
         0
       ],
       [
@@ -27,27 +42,17 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"拒：两处都不在阶段2\", quote=\"甲乙\")], [], [_beh(\"收：一处在阶段3\", quote=\"甲乙\")]])",
+        "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [], []])",
+        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [_beh(\"阶段3不成立\", quote=\"丙丁\")], []])",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=1 dropped=1 ambiguous=0 \" \"unverified_quotes=0 fallback=1 skip",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 fallback=0 skip",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有落在该阶段的摘",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 rehung=1 unloca",
         0
       ],
       [
@@ -56,55 +61,59 @@
         0
       ]
     ],
-    "M2  位置检查恒不通过（所有标注去掉，兜底后全退回）": [
+    "M2  「落进所标阶段只认所标」失效（命中时也挂全部落点）": [
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"情境\", quote=_Q2)], []])",
+        "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1)], [], [_beh(\"错标阶段2\", quote=_Q3)]])",
+        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [_beh(\"阶段3不成立\", quote=\"丙丁\")], []])",
+        0
+      ]
+    ],
+    "M3  恢复兜底：没有证据时退回模型原标注": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [], []])",
+        1
+      ]
+    ],
+    "M4  不改挂：摘录落在别处时直接去掉": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1), _beh(\"错标阶段2\", quote=_Q1)], [], [_beh(\"错标阶段2\", quot",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"查不到\", quote=_Q2)], []])",
+        "assert _placement(card) == ([], [[_beh(\"错挂\", quote=_Q1)], [], []])",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
+        "assert \" rehung=1 \" in line",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[_beh(\"去一半\", quote=_Q1)], [], []])",
+        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]\"]",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"拒：两处都不在阶段2\", quote=\"甲乙\")], [], [_beh(\"收：一处在阶段3\", quote=\"甲乙\")]])",
+        "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [], []])",
+        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [_beh(\"阶段3不成立\", quote=\"丙丁\")], []])",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [], [_beh(\"多段\", quote=_Q3)]])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 fallback=0 skip",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有落在该阶段的摘",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 rehung=1 unloca",
         0
       ],
       [
@@ -113,67 +122,10 @@
         0
       ]
     ],
-    "M3  删兜底：全部去掉时整条消失": [
+    "M4b 改挂只取最早落点（状态类应取全部）": [
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [], [_beh(\"全丢\", quote=_Q1)]])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert any(\"兜底\" in r.getMessage() for r in caplog.records)",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=1 dropped=1 ambiguous=0 \" \"unverified_quotes=0 fallback=1 skip",
-        0
-      ]
-    ],
-    "M4  兜底在部分去掉时也退回": [
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"情境\", quote=_Q2)], []])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1)], [], [_beh(\"错标阶段2\", quote=_Q3)]])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"查不到\", quote=_Q2)], []])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[_beh(\"去一半\", quote=_Q1)], [], []])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"拒：两处都不在阶段2\", quote=\"甲乙\")], [], [_beh(\"收：一处在阶段3\", quote=\"甲乙\")]])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [], []])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 fallback=0 skip",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert (top, [b[\"situation\"] for b in by[0]], [b[\"situation\"] for b in by[1]], [b[\"situation\"] for b in by[2]]",
+        "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
       ]
     ],
@@ -190,7 +142,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=0 ambiguous=0 \" \"unverified_quotes=0 fallback=0 skip",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=0 ambiguous=0 \" \"unverified_quotes=0 rehung=0 unloca",
         0
       ]
     ],
@@ -209,7 +161,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1)], [], [_beh(\"错标阶段2\", quote=_Q3)]])",
+        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1), _beh(\"错标阶段2\", quote=_Q1)], [], [_beh(\"错标阶段2\", quot",
         0
       ],
       [
@@ -224,7 +176,27 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert any(\"兜底\" in r.getMessage() for r in caplog.records)",
+        "assert _placement(card) == ([], [[_beh(\"错挂\", quote=_Q1)], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [], []])",
+        1
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[_beh(\"两份证据\", quote=\"开头甲\")], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert \" rehung=1 \" in line",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]\"]",
         0
       ],
       [
@@ -234,12 +206,12 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"拒：两处都不在阶段2\", quote=\"甲乙\")], [], [_beh(\"收：一处在阶段3\", quote=\"甲乙\")]])",
+        "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [], []])",
+        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [_beh(\"阶段3不成立\", quote=\"丙丁\")], []])",
         0
       ],
       [
@@ -249,17 +221,17 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=1 dropped=1 ambiguous=0 \" \"unverified_quotes=0 fallback=1 skip",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 rehung=1 unloca",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 fallback=0 skip",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有落在该阶段的摘",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
         0
       ],
       [
@@ -268,19 +240,19 @@
         0
       ]
     ],
-    "M7  重复摘录要求所有位置都在范围内": [
+    "M7  重复摘录要求所有位置都在所标阶段": [
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"拒：两处都不在阶段2\", quote=\"甲乙\")], [], [_beh(\"收：一处在阶段3\", quote=\"甲乙\")]])",
+        "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [], []])",
+        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [_beh(\"阶段3不成立\", quote=\"丙丁\")], []])",
         0
       ]
     ],
-    "M8  重复摘录不检查范围直接通过": [
+    "M8  能定位就算落进所标阶段（不看落点）": [
       [
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[], [_beh(\"情境\", quote=_Q2)], []])",
@@ -288,12 +260,27 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1)], [], [_beh(\"错标阶段2\", quote=_Q3)]])",
+        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1), _beh(\"错标阶段2\", quote=_Q1)], [], [_beh(\"错标阶段2\", quot",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert any(\"兜底\" in r.getMessage() for r in caplog.records)",
+        "assert _placement(card) == ([], [[_beh(\"错挂\", quote=_Q1)], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[_beh(\"两份证据\", quote=\"开头甲\")], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert \" rehung=1 \" in line",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]\"]",
         0
       ],
       [
@@ -303,27 +290,17 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"拒：两处都不在阶段2\", quote=\"甲乙\")], [], [_beh(\"收：一处在阶段3\", quote=\"甲乙\")]])",
+        "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [], []])",
+        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [_beh(\"阶段3不成立\", quote=\"丙丁\")], []])",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=1 dropped=1 ambiguous=0 \" \"unverified_quotes=0 fallback=1 skip",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 fallback=0 skip",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有落在该阶段的摘",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 rehung=1 unloca",
         0
       ],
       [
@@ -336,6 +313,46 @@
       [
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[], [_beh(\"情境\", quote=_Q2)], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[_beh(\"前一字\", quote=\"甲中\")], [_beh(\"前一字\", quote=_Q2)], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1), _beh(\"错标阶段2\", quote=_Q1)], [], [_beh(\"错标阶段2\", quot",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"查不到\", quote=_Q2)], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([_beh(\"三次\", quote=\"重复\")], [[], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [_beh(\"阶段3不成立\", quote=\"丙丁\")], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [], [_beh(\"多段\", quote=_Q3)]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
         0
       ]
     ],
@@ -368,17 +385,17 @@
     "M13 监测行字段名错（ambiguous → ambig）": [
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=1 dropped=1 ambiguous=0 \" \"unverified_quotes=0 fallback=1 skip",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 rehung=1 unloca",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 fallback=0 skip",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=0 ambiguous=0 \" \"unverified_quotes=0 fallback=0 skip",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=0 ambiguous=0 \" \"unverified_quotes=0 rehung=0 unloca",
         0
       ]
     ],
@@ -428,12 +445,17 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 fallback=0 skip",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有落在该阶段的摘",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert (top, [b[\"situation\"] for b in by[0]], [b[\"situation\"] for b in by[1]], [b[\"situation\"] for b in by[2]]",
         0
       ]
     ],
@@ -461,6 +483,46 @@
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[], [_beh(\"情境\", quote=_Q2)], []])",
         0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[_beh(\"前一字\", quote=\"甲中\")], [_beh(\"前一字\", quote=_Q2)], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1), _beh(\"错标阶段2\", quote=_Q1)], [], [_beh(\"错标阶段2\", quot",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"查不到\", quote=_Q2)], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([_beh(\"三次\", quote=\"重复\")], [[], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [_beh(\"阶段3不成立\", quote=\"丙丁\")], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [], [_beh(\"多段\", quote=_Q3)]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
+        0
       ]
     ],
     "M21 阶段上界退一（锚点前一字被排除）": [
@@ -479,6 +541,11 @@
       [
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
       ]
     ],
@@ -500,7 +567,27 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 fallback=0 skip",
+        "assert _placement(card) == ([], [[], [], []])",
+        1
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [], [_beh(\"多段\", quote=_Q3)]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 rehung=1 unloca",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
         0
       ],
       [
@@ -516,17 +603,7 @@
         0
       ]
     ],
-    "M25 核对不上的阶段照挂（picked 空也进 standing）": [
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"情境\", quote=_Q2)], []])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1)], [], [_beh(\"错标阶段2\", quote=_Q3)]])",
-        0
-      ],
+    "M25 核对不上的阶段照挂（没有证据的标注也留下）": [
       [
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[], [_beh(\"查不到\", quote=_Q2)], []])",
@@ -539,47 +616,22 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [], [_beh(\"全丢\", quote=_Q1)]])",
+        "assert _placement(card) == ([], [[], [], []])",
+        1
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 rehung=1 unloca",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert any(\"兜底\" in r.getMessage() for r in caplog.records)",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[_beh(\"去一半\", quote=_Q1)], [], []])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"拒：两处都不在阶段2\", quote=\"甲乙\")], [], [_beh(\"收：一处在阶段3\", quote=\"甲乙\")]])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [], []])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=1 dropped=1 ambiguous=0 \" \"unverified_quotes=0 fallback=1 skip",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 fallback=0 skip",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有落在该阶段的摘",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert (top, [b[\"situation\"] for b in by[0]], [b[\"situation\"] for b in by[1]], [b[\"situation\"] for b in by[2]]",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
         0
       ]
     ],
@@ -643,7 +695,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1)], [], [_beh(\"错标阶段2\", quote=_Q3)]])",
+        "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1), _beh(\"错标阶段2\", quote=_Q1)], [], [_beh(\"错标阶段2\", quot",
         0
       ],
       [
@@ -658,7 +710,27 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert any(\"兜底\" in r.getMessage() for r in caplog.records)",
+        "assert _placement(card) == ([], [[_beh(\"错挂\", quote=_Q1)], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [], []])",
+        1
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[_beh(\"两份证据\", quote=\"开头甲\")], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert \" rehung=1 \" in line",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]\"]",
         0
       ],
       [
@@ -668,12 +740,12 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ( [], [[_beh(\"拒：两处都不在阶段2\", quote=\"甲乙\")], [], [_beh(\"收：一处在阶段3\", quote=\"甲乙\")]])",
+        "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [], []])",
+        "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [_beh(\"阶段3不成立\", quote=\"丙丁\")], []])",
         0
       ],
       [
@@ -683,7 +755,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=1 dropped=1 ambiguous=0 \" \"unverified_quotes=0 fallback=1 skip",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 rehung=1 unloca",
         0
       ],
       [
@@ -693,12 +765,12 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 fallback=0 skip",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有落在该阶段的摘",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
         0
       ],
       [
@@ -710,28 +782,54 @@
     "M33 dropped 按摘录计（核对不上的摘录也记一次去掉）": [
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 fallback=0 skip",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 rehung=1 unloca",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
         0
       ]
     ],
     "M34 tags 按摘录计": [
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=1 fallback=0 skip",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
         0
       ]
     ],
     "M35 删去「去掉标注」的 warning": [
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有落在该阶段的摘",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
         0
       ]
     ],
     "M36 整卡跳过时不计 tags": [
       [
         "tests/test_phase_anchoring.py",
-        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=0 ambiguous=0 \" \"unverified_quotes=0 fallback=0 skip",
+        "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=0 ambiguous=0 \" \"unverified_quotes=0 rehung=0 unloca",
+        0
+      ]
+    ],
+    "M37 删去「改挂」的 warning": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]\"]",
+        0
+      ]
+    ],
+    "M38 rehung 按标注计（一条条目改挂两个标注记两次）": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert \" rehung=1 \" in line",
+        0
+      ]
+    ],
+    "M39 改挂过来的摘录压过所标阶段自己的摘录": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[_beh(\"两份证据\", quote=\"开头甲\")], [], []])",
         0
       ]
     ]

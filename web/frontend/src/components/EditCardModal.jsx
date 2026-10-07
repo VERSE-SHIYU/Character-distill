@@ -150,7 +150,9 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
       first_message: form.first_message,
       emotional_patterns: joinLines(form.emotional_patterns),
       decision_style: form.decision_style,
+      // 只替换表单编辑的两项；起点指纹、未定位区等原样带回（整体替换会丢指纹 → 卡失去选阶段能力）
       character_arc: {
+        ...data.character_arc,
         axis: form.arc_axis.trim(),
         phases: cleanRows(arcPhases, ARC_COLUMNS)
           .map((p) => ({ ...p, behaviors: cleanRows(p.behaviors || [], BEHAVIOR_COLUMNS) })),

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from core.card_layers import set_path
 from core.schema import ArcPhase, CharacterArc, CharacterCard, Relationship, PhaseAttitude
 
 
@@ -17,7 +18,7 @@ def make_card(n_phases: int = 2, fingerprint: str = "fp") -> CharacterCard:
 
 
 def set_overlay(card: CharacterCard, idx: int, path: str, value) -> None:
-    card.character_arc.phases[idx].overlay[path] = value
+    set_path(card.character_arc.phases[idx].overlay, path, value)
 
 
 # ── E1 卡片层 / 扩展层 ─────────────────────────────────────────────────────

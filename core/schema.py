@@ -119,7 +119,9 @@ class ArcPhase(PhaseState):
     """弧线上的一个阶段。"""
     behaviors: list[SituationBehavior] = []   # 只在这一阶段成立的做法
     # 阶段特有的状态/经历字段：键 = 登记表路径，值 = 列表或单值（规则见 core.card_layers）。
-    overlay: dict[str, list[str] | str] = {}
+    # 与卡片同形：``{"personality_traits": [...], "speaking_style": {"catchphrases": [...]}}``。
+    # 叶子路径 = 登记表路径，读写一律 `get_path` / `set_path`（规则见 core.card_layers）。
+    overlay: dict[str, Any] = {}
     start: int | None = None                  # 本阶段起点在**规范化原文**中的位置
     boundary_examples: list[BoundaryExample] = []  # 只在这一阶段成立的边界示范
 
@@ -137,22 +139,48 @@ class ArcPhase(PhaseState):
             if moved and path not in overlay:
                 overlay[path] = moved
         if overlay:
-            value["overlay"] = overlay
+            # #116 之后一度把登记表路径当键名存（扁平）—— 同一转换点转成与卡片同形。
+            from core.card_layers import nest_flat_keys
+
+            value["overlay"] = nest_flat_keys(overlay)
         return value
 
     @model_validator(mode="after")
     def _check_overlay(self) -> "ArcPhase":
-        """overlay 键必须是登记表里的 state / experience 路径，值形态与 `kind` 一致。"""
-        from core.card_layers import REGISTRY
+        """overlay 与卡片同形：叶子须为登记表 state / experience 路径，形态按 `kind`，键名不含点。"""
+        from core.card_layers import check_overlay
 
-        for path, val in self.overlay.items():
-            spec = REGISTRY.get(path)
-            if spec is None or spec.layer not in ("state", "experience"):
-                raise ValueError(f"overlay 键未登记（须为 state/experience 路径）：{path}")
-            if spec.kind == "list" and not isinstance(val, list):
-                raise ValueError(f"overlay[{path}] 应为列表")
-            if spec.kind == "scalar" and not isinstance(val, str):
-                raise ValueError(f"overlay[{path}] 应为字符串")
+        check_overlay(self.overlay, layers=("state", "experience"), lists_only=False,
+                      where="overlay")
+        return self
+
+
+class UnlocatedAttitude(BaseModel):
+    """阶段核对不上的一条关系态度（只展示，不进 prompt）。"""
+    target: str = ""
+    attitude: str = ""
+    note: str = ""
+    phase: int = 0     # 模型原来标的阶段（挪回时预选用；0 = 不知道）
+
+
+class UnlocatedItems(BaseModel):
+    """未定位区：摘录落不进任何阶段的状态类条目 —— 条目保留、照常展示，**不进 prompt**。
+
+    形状与阶段同构：做法是 `SituationBehavior` 列表，字段值是与卡片同形的 overlay（只放
+    state 类、一律列表），关系态度单列。用户在卡片上把一条挪进某个阶段，就是给了依据。
+    """
+    behaviors: list[SituationBehavior] = []
+    overlay: dict[str, Any] = {}
+    attitudes: list[UnlocatedAttitude] = []
+
+    @model_validator(mode="after")
+    def _check_overlay(self) -> "UnlocatedItems":
+        """与阶段 overlay 同一个校验器：只收 state 路径、一律列表、键名不含点。"""
+        if not self.overlay:                       # 空区不必查（也免得类定义期循环导入）
+            return self
+        from core.card_layers import check_overlay
+
+        check_overlay(self.overlay, layers=("state",), lists_only=True, where="未定位区 overlay")
         return self
 
 
@@ -180,6 +208,7 @@ class CharacterArc(ArcAxis):
     """角色弧线：一条变化轴 + 按故事顺序排列的阶段（「变的部分」）。"""
     phases: list[ArcPhase] = []
     source_fingerprint: str = ""   # 阶段起点所依据的正文指纹（§3.4 坐标的前提）
+    unlocated: UnlocatedItems = UnlocatedItems()   # 阶段核对不上的状态类条目（不进 prompt）
 
     def has_positions(self) -> bool:
         """阶段起点是否可用于按位置截断：齐全、严格递增、且有正文指纹。

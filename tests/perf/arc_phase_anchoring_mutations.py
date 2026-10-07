@@ -44,7 +44,6 @@ ANCH, DRAFT, QUOTES = (ROOT / "core" / "phase_anchoring.py", ROOT / "core" / "ca
 DIST, ROUTE = ROOT / "core" / "distiller.py", ROOT / "web" / "routers" / "distill.py"
 TARGETS = (ANCH, DRAFT, QUOTES, DIST, ROUTE)
 
-_ANY_IN_RANGE = "                if any(lo <= x < hi for x in loc):"
 _SAVE_CALL = (
     "            result = await text_manager.save_distilled_card(\n"
     "                req.text_id, card, user_id,\n"
@@ -54,15 +53,22 @@ _SAVE_CALL = (
 _NOT_SEGS = ("    if not segs or not all(s in source_norm for s in segs):\n"
              "        return None\n")
 
+# 规则 3、4 合并后（spec arc-phase-unlocated §3.1：摘录落在哪就挂哪）的锚点
+_IN_TAGGED = "                if p in landed:                  # 落进所标阶段：只认所标阶段"
+_REHANG = "                    hit.update(landed)"
+_PHASE_AT = "        if lo <= pos < hi:"
+
 MUTATIONS = [
-    ('M1  位置检查恒通过（所有标注保留）', TARGET, [("repl", ANCH, [
-        (_ANY_IN_RANGE, "                if True:")])], "RED"),
-    ('M2  位置检查恒不通过（所有标注去掉，兜底后全退回）', TARGET, [("repl", ANCH, [
-        (_ANY_IN_RANGE, "                if False:")])], "RED"),
-    ('M3  删兜底：全部去掉时整条消失', TARGET, [("repl", ANCH, [
-        ("        if not standing:", "        if False:")])], "RED"),
-    ('M4  兜底在部分去掉时也退回', TARGET, [("repl", ANCH, [
-        ("        if not standing:", "        if len(standing) < len(valid):")])], "RED"),
+    ('M1  位置检查恒通过（摘录落在别处也认所标阶段）', TARGET, [("repl", ANCH, [
+        (_IN_TAGGED, "                if True:")])], "RED"),
+    ('M2  「落进所标阶段只认所标」失效（命中时也挂全部落点）', TARGET, [("repl", ANCH, [
+        (_IN_TAGGED, "                if False:")])], "RED"),
+    ('M3  恢复兜底：没有证据时退回模型原标注', TARGET, [("repl", ANCH, [
+        ("        final.append(landed_all)\n", "        final.append(landed_all or list(valid))\n")])], "RED"),
+    ('M4  不改挂：摘录落在别处时直接去掉', TARGET, [("repl", ANCH, [
+        (_REHANG, "                    pass")])], "RED"),
+    ('M4b 改挂只取最早落点（状态类应取全部）', TARGET, [("repl", ANCH, [
+        (_REHANG, "                    hit.add(landed[0])")])], "RED"),
     ('M5a 锚点查不到时当作全文末尾，照常检查（不跳过）', TARGET, [("repl", ANCH, [
         ('        if loc is None:\n            return [], f"阶段 {i + 1} 锚点核对不上：{anchor}"',
          "        if loc is None:\n"
@@ -72,17 +78,17 @@ MUTATIONS = [
         ("        if b <= a:", "        if False:")])], "RED"),
     ('M6  锚点正常也整卡跳过', TARGET, [("repl", ANCH, [
         ("    skipped = bool(reason)", "    skipped = True")])], "RED"),
-    ('M7  重复摘录要求所有位置都在范围内', TARGET, [("repl", ANCH, [
-        (_ANY_IN_RANGE, "                if all(lo <= x < hi for x in loc):")])], "RED"),
-    ('M8  重复摘录不检查范围直接通过', TARGET, [("repl", ANCH, [
-        (_ANY_IN_RANGE, "                if loc:")])], "RED"),
+    ('M7  重复摘录要求所有位置都在所标阶段', TARGET, [("repl", ANCH, [
+        (_IN_TAGGED, "                if landed == [p]:")])], "RED"),
+    ('M8  能定位就算落进所标阶段（不看落点）', TARGET, [("repl", ANCH, [
+        (_IN_TAGGED, "                if landed:")])], "RED"),
     ('M9  范围用 <=（锚点位置归前一阶段）', TARGET, [("repl", ANCH, [
-        (_ANY_IN_RANGE, "                if any(lo <= x <= hi for x in loc):")])], "RED"),
+        (_PHASE_AT, "        if lo <= pos <= hi:")])], "RED"),
     ('M10 R1（/start 后台任务）调用点传空串作原文', TARGET, [("repl", ROUTE, [
         ("            card = card_from_draft(data, content)",
          '            card = card_from_draft(data, "")')])], "RED"),
     ('M11 阶段 k 的 source_quote 一律取第一段', TARGET, [("repl", ANCH, [
-        ("                chosen[p] = picked", "                chosen[p] = by_phase[p][0]")])], "RED"),
+        ("                    own.setdefault(p, quote)", "                    own.setdefault(p, by_phase[p][0])")])], "RED"),
     ('M12 :1128 去掉 to_thread（位置检查回到事件循环线程）', TARGET, [("repl", ROUTE, [
         ("            card = await asyncio.to_thread(card_from_draft, data, content)",
          "            card = card_from_draft(data, content)")])], "RED"),
@@ -107,15 +113,15 @@ MUTATIONS = [
          "        return None\n")])], "RED"),
     ('M17 越界编号被夹到末阶段（连同摘录），而不是撤回（spec 原形的等价形态，见模块说明）', TARGET,
      [("repl", DRAFT, [
-         ("        nums = [occ.phase for occ in row.occurrences]\n"
+         ("        nums = [occ.phase for occ in item.occurrences]\n"
           "        valid = sorted({p for p in nums if 1 <= p <= count})",
-          "        for occ in row.occurrences:\n"
+          "        for occ in item.occurrences:\n"
           "            occ.phase = min(occ.phase, count)\n"
-          "        nums = [occ.phase for occ in row.occurrences]\n"
+          "        nums = [occ.phase for occ in item.occurrences]\n"
           "        valid = sorted({p for p in nums if 1 <= p <= count})")])], "RED"),
     ('M18 同阶段多段摘录：任一段核对不上就整阶段不成立', TARGET, [("repl", ANCH, [
-        ("                    continue\n                lo, hi = ranges[p - 1]",
-         "                    break\n                lo, hi = ranges[p - 1]")])], "RED"),
+        ("                    continue\n                landed = ",
+         "                    break\n                landed = ")])], "RED"),
     ('M19a 出现次数判定改 >=（恰好 3 次也不作证据）', TARGET, [("repl", ANCH, [
         ("                if loc is None or len(loc) > MAX_OCCURRENCES:",
          "                if loc is None or len(loc) >= MAX_OCCURRENCES:")])], "RED"),
@@ -126,7 +132,7 @@ MUTATIONS = [
         ("    ranges = [(starts[k], starts[k + 1] if k + 1 < n else len(source_norm))",
          "    ranges = [(starts[k], (starts[k + 1] + 1) if k + 1 < n else len(source_norm))")])], "RED"),
     ('M21 阶段上界退一（锚点前一字被排除）', TARGET, [("repl", ANCH, [
-        (_ANY_IN_RANGE, "                if any(lo <= x < hi - 1 for x in loc):")])], "RED"),
+        (_PHASE_AT, "        if lo <= pos < hi - 1:")])], "RED"),
     ('M22 位置只取次匹配的第一处（单一命中）', TARGET, [("repl", QUOTES, [
         ("    return [m.start() for m in re.finditer(re.escape(longest), source_norm)]",
          "    return [re.search(re.escape(longest), source_norm).start()]")])], "RED"),
@@ -137,8 +143,12 @@ MUTATIONS = [
     ('M24 删掉非法编号的 warning', TARGET, [("repl", DRAFT, [
         ("        if count and (len(valid) != len(set(nums)) or not valid):",
          "        if False:")])], "RED"),
-    ('M25 核对不上的阶段照挂（picked 空也进 standing）', TARGET, [("repl", ANCH, [
-        ("            if picked:", "            if True:")])], "RED"),
+    ('M25 核对不上的阶段照挂（没有证据的标注也留下）', TARGET, [("repl", ANCH, [
+        ("            targets[p] = sorted(hit)\n",
+         "            if not hit:\n"
+         "                hit.add(p)\n"
+         "                own.setdefault(p, (by_phase.get(p) or [\"\"])[0])\n"
+         "            targets[p] = sorted(hit)\n")])], "RED"),
     ('M26 R2（/run_stream）同一张卡落库两次', TARGET, [("repl", ROUTE, [
         (_SAVE_CALL, _SAVE_CALL + _SAVE_CALL)])], "RED"),
     ('M27 /run_stream 的响应码不是 200', TARGET, [("repl", ROUTE, [
@@ -151,7 +161,9 @@ MUTATIONS = [
         ("            card = card_from_draft(data, text)",
          "            card = card_from_draft(data)")])], "RED"),
     ('M30 草稿做法多出一个 phases 字段（存卡形态被草稿字段污染）', TARGET, [("repl", DRAFT, [
-        ("    occurrences: list[DraftOccurrence] = []\n",
+        ("    \"\"\"情境→行为：此人遇到某类情境时的具体做法；occurrences 是它在各阶段的原文摘录。\"\"\"\n"
+         "    occurrences: list[DraftOccurrence] = []\n",
+         "    \"\"\"情境→行为：此人遇到某类情境时的具体做法；occurrences 是它在各阶段的原文摘录。\"\"\"\n"
          "    occurrences: list[DraftOccurrence] = []\n    phases: list[int] = []\n")])], "RED"),
     # ── 审计 §9.5 补（A1–A3），两个方向 ──
     ('M31 阶段 1 以外的空锚点退回取全文末尾（不跳过整卡）', TARGET, [("repl", ANCH, [
@@ -164,16 +176,25 @@ MUTATIONS = [
          "                    unverified += 1              # 查不到 / 出现太多 → 不作位置证据\n"
          "                    dropped += 1\n")])], "RED"),
     ('M34 tags 按摘录计', TARGET, [("repl", ANCH, [
-        ('            tags += 1\n            picked = ""\n', '            picked = ""\n'),
-        ("            for quote in by_phase.get(p, []):    # 规则 3：同阶段多段摘录，任一段通过即成立\n",
-         "            for quote in by_phase.get(p, []):    # 规则 3：同阶段多段摘录，任一段通过即成立\n"
+        ("            tags += 1\n            hit: set[int] = set()\n", "            hit: set[int] = set()\n"),
+        ("            for quote in by_phase.get(p, []):    # 每段摘录各是一份证据\n",
+         "            for quote in by_phase.get(p, []):    # 每段摘录各是一份证据\n"
          "                tags += 1\n")])], "RED"),
     ('M35 删去「去掉标注」的 warning', TARGET, [("repl", ANCH, [
-        ('                logger.warning("去掉标注：做法 %r 在阶段 %d 没有落在该阶段的摘录",\n'
-         "                               row.situation, p)\n",
+        ('                logger.warning("去掉标注：%s %r 在阶段 %d 没有能定位的摘录",\n'
+         "                               kind, label(item), p)\n",
          "                pass\n")])], "RED"),
     ('M36 整卡跳过时不计 tags', TARGET, [("repl", ANCH, [
         ("            tags += len(valid)                   # 分母照常计（监测比例要用）\n", "")])], "RED"),
+    # ── arc-phase-unlocated §3.1 / §3.7 新增 ──
+    ('M37 删去「改挂」的 warning', TARGET, [("repl", ANCH, [
+        ("            elif targets[p] != [p]:\n", "            elif False:\n")])], "RED"),
+    ('M38 rehung 按标注计（一条条目改挂两个标注记两次）', TARGET, [("repl", ANCH, [
+        ("        elif any(ts and ts != [p] for p, ts in targets.items()):\n            rehung += 1\n",
+         "        else:\n            rehung += sum(1 for p, ts in targets.items() if ts and ts != [p])\n")])], "RED"),
+    ('M39 改挂过来的摘录压过所标阶段自己的摘录', TARGET, [("repl", ANCH, [
+        ("        phase_quotes.append({t: own.get(t) or moved[t] for t in landed_all})",
+         "        phase_quotes.append({t: moved.get(t) or own[t] for t in landed_all})")])], "RED"),
 ]
 
 GROUPS = {"M": MUTATIONS}

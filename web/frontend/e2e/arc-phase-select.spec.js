@@ -21,7 +21,8 @@ function cardJson(phases) {
   return JSON.stringify({
     name: '魏无羡',
     relationships: [],
-    character_arc: { axis: '从冷到热', phases },
+    // 出卡经 out_card 带现算的 selectable（#116 起弹窗只认它）；夹具模拟接口返回，须带上
+    character_arc: { axis: '从冷到热', phases, selectable: true },
   })
 }
 
@@ -66,7 +67,7 @@ async function setup(page, { phases = PHASES, archives = null } = {}) {
     localStorage.setItem('nav_view', 'character')
   })
   await page.goto('/')
-  await page.waitForFunction(() => window.__appStore, { timeout: 8000 })
+  await page.waitForFunction(() => window.__appStore?.getState().authUser, { timeout: 8000 })
   await injectCard(page, phases)
   await expect(page.locator('.card-chat-btn')).toBeVisible({ timeout: 8000 })
   return sent
