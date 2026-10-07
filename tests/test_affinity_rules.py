@@ -129,8 +129,11 @@ def test_r10_never_reached_close_is_still_gated():
 
 
 def test_r10_reaching_close_is_recorded():
+    """回合开始好感 ≥73 即记为到过（含起点就在亲近档）；跨进亲近档的那一轮，落库值在下一轮开头补记。"""
     assert step(82, "offended", "small", 1)[1].reached_close is True         # 起点就在亲近档
-    assert step(70, "met_condition", "medium", 5, state=RelationState(met_count=2))[1].reached_close is True
+    new_aff, crossed, _ = step(70, "met_condition", "medium", 5, state=RelationState(met_count=2))
+    assert new_aff == 75 and crossed.reached_close is False                  # 跨进那轮不记
+    assert step(new_aff, "neutral", "small", 1, state=crossed)[1].reached_close is True   # 下一轮开头补记
     assert step(60, "met_condition", "medium", 5, state=RelationState(met_count=2))[1].reached_close is False
     assert step(50, "offended", "small", 1)[1].reached_close is False
 

@@ -143,7 +143,7 @@ def apply_event(affinity: int, state: RelationState, psyche, *, event, tier, del
     negative = event in NEGATIVE
     state = replace(
         state,
-        reached_close=state.reached_close or affinity >= CLOSE_FROM,   # 起点就在亲近档的也算到过
+        reached_close=state.reached_close or affinity >= CLOSE_FROM,   # R10：回合开始好感 ≥73 即记为到过；跨进那轮的下轮开头补记
         last_event=event,
         met_count=state.met_count + (event == "met_condition"),
         nonneg_streak=0 if negative else state.nonneg_streak + 1,
@@ -154,8 +154,6 @@ def apply_event(affinity: int, state: RelationState, psyche, *, event, tier, del
         bounds = [b for b in (c(affinity, event, state, psyche) for c in _CEILINGS) if b is not None]
         new = max(affinity, min([new, *bounds]))
     new = max(0, min(100, new))
-    if new >= CLOSE_FROM:
-        state = replace(state, reached_close=True)
     if state.pre_offence is not None and not negative and new >= state.pre_offence:
         state = replace(state, pre_offence=None)                          # R9：补回来了，冒犯了结
     return new, state, warnings

@@ -285,7 +285,7 @@ class TestAffinityCompat:
         import re
         root = pathlib.Path(__file__).resolve().parent.parent
         writers = [
-            f"{path.relative_to(root)}:{n}"
+            f"{path.relative_to(root).as_posix()}:{n}"
             for sub in ("core", "web") for path in (root / sub).rglob("*.py")
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
             if re.search(r"affinity_reason\s*=.*dumps", line)

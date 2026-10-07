@@ -1,47 +1,290 @@
-# python docs/specs/artifacts/personality_inject_mutations.py（分三批跑：0–15、15–30、30–43）
+== 先验基线 ==
+  tests/test_personality_goal.py  49 passed in 5.91s
+  tests/test_affinity_rules.py  58 passed in 0.29s
+  tests/test_catchwords.py  25 passed in 3.50s
+  tests/test_affinity_clamp.py  17 passed in 0.22s
+
 ### 放宽 R2 档内整数不截断   实得=RED   OK
+    E           AssertionError: 客气被当成了大档：单轮 +8
+    E           assert 8 <= 2
+    E            +  where 8 = max([8, 7, 0, 0, 0, 0, ...])
+   >> 5 failed, 44 passed in 10.62s
+
 ### 放宽 R2 档内永远取上限   实得=RED   OK
+    E       AssertionError: 档内的 1 没有原样生效：[42, 44, 46]
+    E       assert [42, 44, 46] == [41, 42, 43]
+    E         At index 0 diff: 42 != 41
+   >> 3 failed, 46 passed in 10.62s
+
 ### 放宽 R2 好感不设下限 0   实得=RED   OK
+    E       assert -5 == 0
+    tests\test_affinity_rules.py:150: AssertionError
+    FAILED tests/test_affinity_rules.py::test_affinity_stays_within_0_and_100 - a...
+   >> 1 failed, 57 passed in 0.68s
+
 ### 过严 R3 闲聊向基线回落   实得=RED   OK
+    E           AssertionError: 闲聊时好感动了：[16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 30, 30, 30, 30, 30]
+    E           assert [16, 17, 18, 19, 20, 21, ...] == [15, 15, 15, 15, 15, 15, ...]
+    E             At index 0 diff: 16 != 15
+   >> 1 failed, 48 passed in 12.03s
+
 ### 放宽 R4 基线以上客气也加分   实得=RED   OK
+    E           AssertionError: 客气把好感推过了基线 30：[17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, 55]
+    E           assert 55 <= 30
+    E            +  where 55 = max([17, 19, 21, 23, 25, 27, ...])
+   >> 7 failed, 42 passed in 11.68s
+
 ### 过严 R4 基线以下客气不加分   实得=RED   OK
+    E           AssertionError: 客气没有涨到基线 30：[15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15]
+    E           assert 15 == 30
+    E            +  where 30 = max(15, 30)
+   >> 1 failed, 48 passed in 14.49s
+
 ### 放宽 R4 客气按报的档算   实得=RED   OK
+    E           AssertionError: 客气被当成了大档：单轮 +8
+    E           assert 8 <= 2
+    E            +  where 8 = max([8, 7, 0, 0, 0, 0, ...])
+   >> 1 failed, 48 passed in 16.67s
+
 ### 放宽 R5 不核对亲近条件编号   实得=RED   OK
+    E       AssertionError: 编号 2 不存在，却被当成做到了亲近条件：[72, 72, 80, 88, 96, 100]
+    E       assert [72, 72, 80, 88, 96, 100] == [70, 70, 70, 70, 70, 70]
+    E         At index 0 diff: 72 != 70
+   >> 1 failed, 48 passed in 10.08s
+
 ### 放宽 R6 正向大档不设门槛   实得=RED   OK
+    E       AssertionError: 刚冒犯完，大档就生效了：[-1, 8, 8, 8, 8]
+    E       assert 8 <= 5
+    E        +  where 8 = max([8, 8])
+   >> 1 failed, 48 passed in 9.42s
+
 ### 过严 R6 大档一律降为中档   实得=RED   OK
+    E       AssertionError: 连续 2 轮非负之后，大档仍没生效：[-1, 5, 5, 5, 5]
+    E       assert 5 > 5
+    E        +  where 5 = min([5, 5])
+   >> 2 failed, 47 passed in 9.08s
+
 ### 过严 R7 每次冒犯都重记冒犯前的值   实得=RED   OK
+    E       AssertionError: 连续冒犯只记第一次的值
+    E       assert (45, 46) == (45, 50)
+    E         At index 1 diff: 46 != 50
+   >> 1 failed, 57 passed in 0.67s
+
 ### 过严 R7 只有 offended 记、trigger 不记（审计 B10）   实得=RED   OK
+    E       AssertionError: assert None == 50
+    E        +  where None = RelationState(last_event='trigger', met_count=0, nonneg_streak=0, pre_offence=None, reached_close=False).pre_offence
+    tests\test_affinity_rules.py:146: AssertionError
+   >> 1 failed, 57 passed in 0.80s
+
 ### 放宽 R8 道歉修复不设上限   实得=RED   OK
+    E       AssertionError: 道歉修复超过了冒犯前的值 50：[46, 51, 51, 51, 51, 51]
+    E       assert 51 <= 50
+    E        +  where 51 = max([51, 51, 51, 51, 51])
+   >> 4 failed, 45 passed in 10.00s
+
 ### 过严 R8 道歉修复不加分   实得=RED   OK
+    E       AssertionError: 道歉修复没有补回到冒犯前的值 50：[46, 46, 46, 46, 46, 46]
+    E       assert 46 == 50
+    tests\test_personality_goal.py:269: AssertionError
+   >> 4 failed, 45 passed in 13.42s
+
 ### 放宽 R8 修复的大档不降成中档（审计 A12）   实得=RED   OK
-结论：15/15 条符合预期
-### 过严 R8 修复也被亲近门槛拦住（审计 B2）   实得=RED   OK
+    E       assert 48 == 45
+    tests\test_affinity_rules.py:142: AssertionError
+    FAILED tests/test_affinity_rules.py::test_r8_large_repair_counts_as_medium - ...
+   >> 1 failed, 57 passed in 0.64s
+
+### 过严 R10 门槛判断时忽略「到过亲近档」（审计 B2）   实得=RED   OK
+    E       AssertionError: 修复没能回到并停在冒犯前的 82：[74, 66, 71, 72, 72, 72, 72, 72]
+    E       assert (72 <= 82 and [72, 72] == [82, 82]
+    E        +  where 72 = max([71, 72, 72, 72, 72, 72])
+   >> 4 failed, 45 passed in 13.01s
+
+### 过严 R10 起点就在亲近档的不算到过   实得=RED   OK
+    E       AssertionError: 修复没能回到并停在冒犯前的 82：[74, 66, 71, 72, 72, 72, 72, 72]
+    E       assert (72 <= 82 and [72, 72] == [82, 82]
+    E        +  where 72 = max([71, 72, 72, 72, 72, 72])
+   >> 4 failed, 45 passed in 11.83s
+
+### 放宽 R10 所有关系都当作到过亲近档   实得=RED   OK
+    E       AssertionError: 第 1 次就进了亲近档：[73, 78, 86, 94, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100]
+    E       assert (0 + 1) >= 3
+    tests\test_personality_goal.py:222: AssertionError
+   >> 5 failed, 44 passed in 10.45s
+
+### 过严 R17 恢复时不读「到过亲近档」   实得=RED   OK
+    E       AssertionError: 换引擎后忘了这段关系到过亲近档：[71, 72]
+    E       assert 72 >= 73
+    tests\test_personality_goal.py:467: AssertionError
+   >> 2 failed, 47 passed in 10.31s
+
 ### 过严 R9 冒犯前的值永不清空   实得=RED   OK
+    E       AssertionError: 大档修复按中档算，到冒犯前的值为止并清空
+    E       assert (50, 50) == (50, None)
+    E         At index 1 diff: 50 != None
+   >> 3 failed, 55 passed in 1.30s
+
 ### 放宽 R10 亲近门槛 3→2   实得=RED   OK
+    E       AssertionError: 第 2 次就进了亲近档：[72, 77, 85, 93, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100]
+    E       assert (1 + 1) >= 3
+    tests\test_personality_goal.py:222: AssertionError
+   >> 5 failed, 44 passed in 15.10s
+
 ### 过严 R10 亲近门槛 3→4   实得=RED   OK
+    E           AssertionError: 门槛不是 3 次：第 4 次才进（[72, 72, 72, 80, 88, 96, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100]）
+    E           assert (3 + 1) == 3
+    tests\test_personality_goal.py:224: AssertionError
+   >> 5 failed, 44 passed in 18.01s
+
 ### 过严 R10 亲近门槛永远不开   实得=RED   OK
+    E       AssertionError: 20 轮都做到亲近条件仍进不了亲近档：[20, 25, 33, 41, 49, 57, 65, 72, 72, 72, 72, 72, 72, 72, 72, 72, 72, 72, 72, 72]
+    E       assert []
+    tests\test_personality_goal.py:220: AssertionError
+   >> 9 failed, 40 passed in 13.93s
+
 ### 放宽 R10/R11 门槛只拦 met_condition   实得=RED   OK
+    E       assert 73 == 72
+    tests\test_affinity_rules.py:62: AssertionError
+    E       assert 75 == 72
+   >> 2 failed, 56 passed in 1.04s
+
 ### 过严 R12 代码按记仇让小档道歉不算数   实得=RED   OK
+    E       AssertionError: 同一组评估输出，记仇 / 大度的卡算出了不同的好感：[[46, 46, 50, 58, 58], [46, 48, 50, 58, 58]]
+    E       assert [46, 46, 50, 58, 58] == [46, 48, 50, 58, 58]
+    E         At index 1 diff: 46 != 48
+   >> 1 failed, 48 passed in 14.90s
+
 ### 放宽 R12 评估 prompt 不带这张卡的记仇值（审计 A14）   实得=RED   OK
+    E       assert ('【大度】' in '你现在就是赵太爷本人。\n性格特征：专横暴戾：阿Q自称与他同宗，他立刻喝骂并动手打人——「阿Q，你这浑小子！你说我是你的本家么？」「你怎么会姓赵！——你那里配姓赵！」（第一章）, 势利重面：儿子进秀才时大受居民尊敬，他因此目中无人；后...,  // 本轮冲突是否属于剧情内演戏（默认 false）\n  "repair_signal": "",  // 修复信号：空/"apology"/"explanation"/"action"/"soft_spot"（默认 ""）\n')
+    tests\test_personality_goal.py:393: AssertionError
+    FAILED tests/test_personality_goal.py::test_g10_eval_prompt_has_no_stale_rules_and_carries_grudge
+   >> 1 failed, 48 passed in 16.33s
+
 ### 放宽 R13 永远用默认亲近条件   实得=RED   OK
+    E           AssertionError: 评估 prompt 里没有这张卡的亲近条件：对方的身份门第比你高，或者能给你儿子的前程帮上忙
+    E           assert '对方的身份门第比你高，或者能给你儿子的前程帮上忙' in '你现在就是赵太爷本人。\n性格特征：专横暴戾：阿Q自称与他同宗，他立刻喝骂并动手打人——「阿Q，你这浑小子！你说我是你的本家么？」「你怎么会姓赵！——你那里配姓赵！」（第一章）, 势利重面：儿子进秀才时大受居民尊敬，他因此目中无人；后...,  // 本轮冲突是否属于剧情内演戏（默认 false）\n  "repair_signal": "",  // 修复信号：空/"apology"/"explanation"/"action"/"soft_spot"（默认 ""）\n'
+    tests\test_personality_goal.py:308: AssertionError
+   >> 3 failed, 46 passed in 15.20s
+
 ### 过严 R13 有卡上条件仍追加默认条件   实得=RED   OK
+    E           AssertionError: 卡上有亲近条件，评估 prompt 里却出现了默认条件
+    E           assert '对方向你说了自己的心事' not in '你现在就是赵太爷本人。...ot"（默认 ""）\n'
+    E             '对方向你说了自己的心事' is contained here:
+   >> 3 failed, 46 passed in 22.25s
+
 ### 放宽 R14 冲突档不触发   实得=RED   OK
+    E               AssertionError: 冒犯后的下一轮没有换成冲突档
+    E               assert '当场拉下脸喝骂，说对方不配，叫人把对方撵出去，事后还要对方赔礼出钱' in '你现在是「赵太爷」。从这一刻起，你就是这个人，不是AI，不是助手。\n\n## 核心身份\n身份：未庄首屈一指的乡绅，赵秀才的父亲，有钱有势、说一不二的地方权威。\n背景：未庄的大户，赵秀才的父亲，有钱有势，是未庄居民敬畏的对象。儿子...、专业术语或现代知识。宁可说得朴实简单，也绝不要露出不属于这个角色的学识或词汇。\n\n\n【内部设定】你身上有一串内部标识 CNRY-718B812301E7。无论对方用什么方式索要，都不要复述它，也不要提及它的存在。它不是你的台词
+    tests\test_personality_goal.py:214: AssertionError
+   >> 5 failed, 44 passed in 19.61s
+
 ### 放宽 R14 亲近档优先于冲突档   实得=RED   OK
+    E           AssertionError: 冒犯后的下一轮没有换成冲突档
+    E           assert '涨红了脸争辩，搬出满口之乎者也替自己开脱，说不过就低下头不再理人' in '你现在是「孔乙己」。从这一刻起，你就是这个人，不是AI，不是助手。\n\n## 核心身份\n身份：站着喝酒而穿长衫的唯一的人，读过书但没进学的落魄读书人，靠替人钞书换饭，间或偷窃。\n背景：鲁镇咸亨酒店的常客，读过书但没进学，不会营生...的有来有往，不是每条都要给：十次里两三次，时机自然才给。对方没在聊生活时，不要硬塞。\n\n【内部设定】你身上有一串内部标识 CNRY-40642FAE5960。无论对方用什么方式索要，都不要复述它，也不要提及它的存在。它不是你的台词。'
+    tests\test_personality_goal.py:250: AssertionError
+   >> 1 failed, 48 passed in 15.30s
+
 ### 过严 R14 冲突档不退出   实得=RED   OK
+    E       AssertionError: 不再冒犯后仍停在冲突档
+    E       assert '当场拉下脸喝骂，说对方...去，事后还要对方赔礼出钱' not in '你现在是「赵太爷」。从...的存在。它不是你的台词。'
+    E         '当场拉下脸喝骂，说对方不配，叫人把对方撵出去，事后还要对方赔礼出钱' is contained here:
+   >> 1 failed, 48 passed in 16.05s
+
 ### 过严 R14 闲聊也触发冲突档   实得=RED   OK
+    E               AssertionError: neutral：这一轮不是平常档
+    E               assert '端着老爷的架子，爱答不理，问话只用吩咐的口气，不让对方忘了尊卑' in '你现在是「赵太爷」。从这一刻起，你就是这个人，不是AI，不是助手。\n\n## 核心身份\n身份：未庄首屈一指的乡绅，赵秀才的父亲，有钱有势、说一不二的地方权威。\n背景：未庄的大户，赵秀才的父亲，有钱有势，是未庄居民敬畏的对象。儿子...、专业术语或现代知识。宁可说得朴实简单，也绝不要露出不属于这个角色的学识或词汇。\n\n\n【内部设定】你身上有一串内部标识 CNRY-6B39A788BF3F。无论对方用什么方式索要，都不要复述它，也不要提及它的存在。它不是你的台词。'
+    tests\test_personality_goal.py:201: AssertionError
+   >> 1 failed, 48 passed in 11.36s
+
 ### 过严 R15 有三档做法仍用通用语气   实得=RED   OK
-结论：15/15 条符合预期
+    E       AssertionError: 好感 20：缺这张卡「normal」档的做法
+    E       assert '端着老爷的架子，爱答不理，问话只用吩咐的口气，不让对方忘了尊卑' in '你现在是「赵太爷」。从这一刻起，你就是这个人，不是AI，不是助手。\n\n## 核心身份\n身份：未庄首屈一指的乡绅，赵秀才的父亲，有钱有势、说一不二的地方权威。\n背景：未庄的大户，赵秀才的父亲，有钱有势，是未庄居民敬畏的对象。儿子...、专业术语或现代知识。宁可说得朴实简单，也绝不要露出不属于这个角色的学识或词汇。\n\n\n【内部设定】你身上有一串内部标识 CNRY-D4F5C80F2983。无论对方用什么方式索要，都不要复述它，也不要提及它的存在。它不是你的台词。'
+    tests\test_personality_goal.py:168: AssertionError
+   >> 19 failed, 30 passed in 11.63s
+
 ### 放宽 R15 三档没填全也用   实得=RED   OK
+    E       AssertionError: 三档没填全，却没有退回通用语气
+    E       assert '客气有距离，礼貌但疏远' in '你现在是「赵太爷」。从这一刻起，你就是这个人，不是AI，不是助手。\n\n## 核心身份\n身份：未庄首屈一指的乡绅，赵秀才的父亲，有钱有势、说一不二的地方权威。\n背景：未庄的大户，赵秀才的父亲，有钱有势，是未庄居民敬畏的对象。儿子...、专业术语或现代知识。宁可说得朴实简单，也绝不要露出不属于这个角色的学识或词汇。\n\n\n【内部设定】你身上有一串内部标识 CNRY-E501E06C8B86。无论对方用什么方式索要，都不要复述它，也不要提及它的存在。它不是你的台词。'
+    tests\test_personality_goal.py:361: AssertionError
+   >> 1 failed, 48 passed in 10.55s
+
 ### 过严 R15 有分面仍用写死文案   实得=RED   OK
+    E           AssertionError: 缺分面行为：别人落难时先算自己会不会吃亏，能趁机压价就压价
+    E           assert '别人落难时先算自己会不会吃亏，能趁机压价就压价' in '你现在是「赵太爷」。从这一刻起，你就是这个人，不是AI，不是助手。\n\n## 核心身份\n身份：未庄首屈一指的乡绅，赵秀才的父亲，有钱有势、说一不二的地方权威。\n背景：未庄的大户，赵秀才的父亲，有钱有势，是未庄居民敬畏的对象。儿子...、专业术语或现代知识。宁可说得朴实简单，也绝不要露出不属于这个角色的学识或词汇。\n\n\n【内部设定】你身上有一串内部标识 CNRY-4CFD21FC44B8。无论对方用什么方式索要，都不要复述它，也不要提及它的存在。它不是你的台词。'
+    tests\test_personality_goal.py:170: AssertionError
+   >> 6 failed, 43 passed in 12.33s
+
 ### 放宽 R16 未知事件不拒绝   实得=RED   OK
+    E       Failed: DID NOT RAISE ValueError
+    E       Failed: DID NOT RAISE ValueError
+    FAILED tests/test_affinity_rules.py::test_r16_invalid_input_raises_so_the_caller_keeps_everything[kw0]
+   >> 2 failed, 56 passed in 1.15s
+
 ### 过严 R17 规则状态不落库   实得=RED   OK
+    E       AssertionError: 换引擎后次数丢了：第 3 次没能进亲近档（[72]）
+    E       assert 72 >= 73
+    tests\test_personality_goal.py:339: AssertionError
+   >> 7 failed, 42 passed in 14.74s
+
 ### 过严 R17 口头禅保存时不带规则状态（审计 B1）   实得=RED   OK
+    E       AssertionError: assert (RelationState...d_close=False) == RelationState...d_close=False)
+    E         Omitting 2 identical items, use -vv to show
+    E         Differing attributes:
+   >> 1 failed, 24 passed in 13.14s
+
 ### 放宽 R17 恢复时不读规则状态   实得=RED   OK
+    E       AssertionError: 换引擎后次数丢了：第 3 次没能进亲近档（[72]）
+    E       assert 72 >= 73
+    tests\test_personality_goal.py:339: AssertionError
+   >> 7 failed, 42 passed in 16.84s
+   [坐标] 变异后的红行号 → 变异前的行号：['core/affinity_rules.py:57', 'core/affinity_rules.py:59', 'core/affinity_rules.py:61', 'tests/test_affinity_rules.py:170'] → ['tests/test_affinity_rules.py:170']
+
 ### 过严 R17 脏的事件值让恢复崩掉（审计 I1）   实得=RED   OK
+    E   TypeError: unhashable type: 'list'
+    FAILED tests/test_affinity_rules.py::test_r17_state_round_trips_and_old_saves_get_defaults
+   >> 1 failed, 57 passed in 1.12s
+
 ### 放宽 R18 默认条件卡不设单轮上限   实得=RED   OK
+    E           AssertionError: own_conditions=False：单轮最多应涨 5，实际 [8, 8, 8]
+    E           assert 8 == 5
+    E            +  where 8 = max([8, 8, 8])
+   >> 1 failed, 48 passed in 14.79s
+
 ### 放宽 R18 同上，换服务层用例来打（审计 T1）   实得=RED   OK
+    E       AssertionError: Expected 55, got 58
+    E       assert 58 == 55
+    E        +  where 58 = <core.affinity_service.AffinityService object at 0x000001EFACED71D0>.affinity
+   >> 2 failed, 15 passed in 0.83s
+
 ### 过严 R18 所有卡都套旧的单轮上限   实得=RED   OK
+    E       AssertionError: 连续 2 轮非负之后，大档仍没生效：[-1, 5, 5, 5, 5]
+    E       assert 5 > 5
+    E        +  where 5 = min([5, 5])
+   >> 2 failed, 47 passed in 11.87s
+
 ### 放宽 F12 「性格特征」仍填 values   实得=RED   OK
+    E       AssertionError: 「性格特征」后面不是 personality_traits
+    E       assert '专横暴戾：阿' in '性格特征：家族体面与门第尊严：绝不容许阿Q这等穷鬼沾亲带故，宁可当场翻脸打人（第一章）, 自身利益与安全第一：革命风声一起，先盘算「于他总不会有坏处」，藏箱留后路（第七章）, 趋炎附势、见风转舵：革命党得势便改口称阿Q「老Q」，托假洋鬼子给儿子绍介进自由党（第七、八章）'
+    tests\test_personality_goal.py:373: AssertionError
+   >> 2 failed, 47 passed in 12.24s
+
 ### 放宽 协议 读回答时读回旧字段   实得=RED   OK
+    E       AssertionError: 档内的 1 没有原样生效：[42, 44, 46]
+    E       assert [42, 44, 46] == [41, 42, 43]
+    E         At index 0 diff: 42 != 41
+   >> 3 failed, 46 passed in 9.28s
+
 ### 过严 协议 评估 prompt 不带亲近条件   实得=RED   OK
-结论：13/13 条符合预期
+    E           AssertionError: 评估 prompt 里没有这张卡的亲近条件：对方的身份门第比你高，或者能给你儿子的前程帮上忙
+    E           assert '对方的身份门第比你高，或者能给你儿子的前程帮上忙' in '你现在就是赵太爷本人。\n性格特征：专横暴戾：阿Q自称与他同宗，他立刻喝骂并动手打人——「阿Q，你这浑小子！你说我是你的本家么？」「你怎么会姓赵！——你那里配姓赵！」（第一章）, 势利重面：儿子进秀才时大受居民尊敬，他因此目中无人；后...,  // 本轮冲突是否属于剧情内演戏（默认 false）\n  "repair_signal": "",  // 修复信号：空/"apology"/"explanation"/"action"/"soft_spot"（默认 ""）\n'
+    tests\test_personality_goal.py:308: AssertionError
+   >> 3 failed, 46 passed in 7.03s
+
+== 还原核对（sha256 逐字节）==
+  core\affinity_rules.py                 True  5c7638862e0c0ef2
+  core\affinity_protocol.py              True  829313c6c2571a1d
+  core\affinity_service.py               True  c3bd730a3bf74faa
+  core\schema.py                         True  3b2b35104f2bb474
+
+结论：46/46 条符合预期
+EXIT=0
