@@ -1,5 +1,5 @@
 diff --git a/core/arc_view.py b/core/arc_view.py
-index f775e207..593048c4 100644
+index f775e20..593048c 100644
 --- a/core/arc_view.py
 +++ b/core/arc_view.py
 @@ -14,7 +14,8 @@ from __future__ import annotations
@@ -53,7 +53,7 @@ index f775e207..593048c4 100644
  
      _project_custom(proj, card, k, view.n)
 diff --git a/core/card_draft.py b/core/card_draft.py
-index 3e9e9ca8..0cc6332a 100644
+index 3e9e9ca..0cc6332 100644
 --- a/core/card_draft.py
 +++ b/core/card_draft.py
 @@ -203,18 +203,30 @@ def _layer_phases(final_phases: list[list[int]], count: int, layer: str) -> list
@@ -272,7 +272,7 @@ index 3e9e9ca8..0cc6332a 100644
              phase["overlay"] = overlays[idx]
      if b.starts is not None:                      # 整卡跳过位置检查 → 不写起点（D7）
 diff --git a/core/card_layers.py b/core/card_layers.py
-index d53df653..2f0a10a2 100644
+index d53df65..2f0a10a 100644
 --- a/core/card_layers.py
 +++ b/core/card_layers.py
 @@ -31,7 +31,7 @@ class FieldSpec(NamedTuple):
@@ -359,7 +359,7 @@ index d53df653..2f0a10a2 100644
      """按点号路径读嵌套字段（pydash 薄封装，路径形态见登记表）。"""
      return pydash.get(obj, path)
 diff --git a/core/card_quotes.py b/core/card_quotes.py
-index 58cf123f..b0c28453 100644
+index 58cf123..b0c2845 100644
 --- a/core/card_quotes.py
 +++ b/core/card_quotes.py
 @@ -23,6 +23,8 @@ from core.schema import CharacterCard
@@ -434,7 +434,7 @@ index 58cf123f..b0c28453 100644
  
  def _descend(node: Any, segs: list[str], label: str, out: list) -> None:
 diff --git a/core/chat_engine.py b/core/chat_engine.py
-index 8aec2312..aa272de1 100644
+index 8aec231..aa272de 100644
 --- a/core/chat_engine.py
 +++ b/core/chat_engine.py
 @@ -1046,7 +1046,7 @@ class ChatEngine:
@@ -447,7 +447,7 @@ index 8aec2312..aa272de1 100644
              matched.append(line)
  
 diff --git a/core/context_engine.py b/core/context_engine.py
-index fe44d45e..6f11f9e4 100644
+index fe44d45..6f11f9e 100644
 --- a/core/context_engine.py
 +++ b/core/context_engine.py
 @@ -411,7 +411,9 @@ class ContextEngine:
@@ -462,7 +462,7 @@ index fe44d45e..6f11f9e4 100644
              parts.append(f"【人际关系】\n{relations}")
  
 diff --git a/core/phase_anchoring.py b/core/phase_anchoring.py
-index ab492ca6..c9a66a74 100644
+index ab492ca..c9a66a7 100644
 --- a/core/phase_anchoring.py
 +++ b/core/phase_anchoring.py
 @@ -26,21 +26,26 @@ MAX_OCCURRENCES = 3
@@ -644,7 +644,7 @@ index ab492ca6..c9a66a74 100644
 +    return Verification(final, phase_quotes, tag_targets, skipped, tags, dropped, ambiguous,
 +                        unverified, rehung, unlocated, starts)
 diff --git a/core/schema.py b/core/schema.py
-index 50c82c40..80e46d1e 100644
+index 50c82c4..80e46d1 100644
 --- a/core/schema.py
 +++ b/core/schema.py
 @@ -119,7 +119,9 @@ class ArcPhase(PhaseState):
@@ -729,7 +729,7 @@ index 50c82c40..80e46d1e 100644
          """阶段起点是否可用于按位置截断：齐全、严格递增、且有正文指纹。
 diff --git a/core/unlocated.py b/core/unlocated.py
 new file mode 100644
-index 00000000..86df6e06
+index 0000000..86df6e0
 --- /dev/null
 +++ b/core/unlocated.py
 @@ -0,0 +1,77 @@
@@ -812,7 +812,7 @@ index 00000000..86df6e06
 +    return CharacterCard.model_validate(data)
 diff --git a/docs/specs/artifacts/arc_phase_unlocated_mutations.py b/docs/specs/artifacts/arc_phase_unlocated_mutations.py
 new file mode 100644
-index 00000000..19ac7daf
+index 0000000..19ac7da
 --- /dev/null
 +++ b/docs/specs/artifacts/arc_phase_unlocated_mutations.py
 @@ -0,0 +1,298 @@
@@ -1115,7 +1115,7 @@ index 00000000..19ac7daf
 +if __name__ == "__main__":
 +    sys.exit(main())
 diff --git a/tests/perf/arc_phase_anchoring_mutations.py b/tests/perf/arc_phase_anchoring_mutations.py
-index 61ed436f..f2a3ca3a 100644
+index 61ed436..f2a3ca3 100644
 --- a/tests/perf/arc_phase_anchoring_mutations.py
 +++ b/tests/perf/arc_phase_anchoring_mutations.py
 @@ -44,7 +44,6 @@ ANCH, DRAFT, QUOTES = (ROOT / "core" / "phase_anchoring.py", ROOT / "core" / "ca
@@ -1269,7 +1269,7 @@ index 61ed436f..f2a3ca3a 100644
  
  GROUPS = {"M": MUTATIONS}
 diff --git a/tests/perf/arc_phase_anchoring_red_lines.json b/tests/perf/arc_phase_anchoring_red_lines.json
-index ce797a4a..1d6e805b 100644
+index ce797a4..1d6e805 100644
 --- a/tests/perf/arc_phase_anchoring_red_lines.json
 +++ b/tests/perf/arc_phase_anchoring_red_lines.json
 @@ -4,7 +4,7 @@
@@ -2071,7 +2071,7 @@ index ce797a4a..1d6e805b 100644
        ]
      ]
 diff --git a/tests/perf/card_draft_mutations.py b/tests/perf/card_draft_mutations.py
-index b5a00952..c0320b00 100644
+index b5a0095..c0320b0 100644
 --- a/tests/perf/card_draft_mutations.py
 +++ b/tests/perf/card_draft_mutations.py
 @@ -72,8 +72,8 @@ MUTATIONS = [
@@ -2103,7 +2103,7 @@ index b5a00952..c0320b00 100644
      # 撞到 [257]
      ('M28  分组流式在 distiller 里就转成卡，交出的不再是草稿（occurrences 已丢）',
 diff --git a/tests/perf/card_draft_red_lines.json b/tests/perf/card_draft_red_lines.json
-index fabf6f77..55181676 100644
+index fabf6f7..5518167 100644
 --- a/tests/perf/card_draft_red_lines.json
 +++ b/tests/perf/card_draft_red_lines.json
 @@ -103,11 +103,6 @@
@@ -2119,7 +2119,7 @@ index fabf6f77..55181676 100644
      ],
      "M9  编号全部作废的做法改放顶层，而不是整条撤回": [
 diff --git a/tests/test_arc_phase_fields_locks.py b/tests/test_arc_phase_fields_locks.py
-index 2a3c4bbf..9fd6e0f9 100644
+index 2a3c4bb..9fd6e0f 100644
 --- a/tests/test_arc_phase_fields_locks.py
 +++ b/tests/test_arc_phase_fields_locks.py
 @@ -301,8 +301,26 @@ def _callers(path: Path, func: str) -> set[str]:
@@ -2170,7 +2170,7 @@ index 2a3c4bbf..9fd6e0f9 100644
      assert not extra, f"out_card 在别处也被调/定义：{extra}"
  
 diff --git a/tests/test_arc_phase_fields_readers.py b/tests/test_arc_phase_fields_readers.py
-index 8f8667dd..b2872e49 100644
+index 8f8667d..b2872e4 100644
 --- a/tests/test_arc_phase_fields_readers.py
 +++ b/tests/test_arc_phase_fields_readers.py
 @@ -3,6 +3,7 @@
@@ -2191,7 +2191,7 @@ index 8f8667dd..b2872e49 100644
  
  # ── E1 卡片层 / 扩展层 ─────────────────────────────────────────────────────
 diff --git a/tests/test_arc_phase_fields_unit.py b/tests/test_arc_phase_fields_unit.py
-index e0c5709a..c8d25c00 100644
+index e0c5709..c8d25c0 100644
 --- a/tests/test_arc_phase_fields_unit.py
 +++ b/tests/test_arc_phase_fields_unit.py
 @@ -11,6 +11,7 @@ import typing
@@ -2286,7 +2286,7 @@ index e0c5709a..c8d25c00 100644
  def test_scalar_same_phase_second_dropped_not_promoted():
 diff --git a/tests/test_arc_phase_unlocated.py b/tests/test_arc_phase_unlocated.py
 new file mode 100644
-index 00000000..b7691429
+index 0000000..b769142
 --- /dev/null
 +++ b/tests/test_arc_phase_unlocated.py
 @@ -0,0 +1,376 @@
@@ -2668,7 +2668,7 @@ index 00000000..b7691429
 +
 diff --git a/tests/test_arc_phase_unlocated_goal.py b/tests/test_arc_phase_unlocated_goal.py
 new file mode 100644
-index 00000000..67943ffe
+index 0000000..67943ff
 --- /dev/null
 +++ b/tests/test_arc_phase_unlocated_goal.py
 @@ -0,0 +1,146 @@
@@ -2820,7 +2820,7 @@ index 00000000..67943ffe
 +        ["B对标", "B错标"], ["M错标"], ["T错标"], ["M编造"])
 diff --git a/tests/test_arc_phase_unlocated_move.py b/tests/test_arc_phase_unlocated_move.py
 new file mode 100644
-index 00000000..8e327fd9
+index 0000000..8e327fd
 --- /dev/null
 +++ b/tests/test_arc_phase_unlocated_move.py
 @@ -0,0 +1,162 @@
@@ -2987,7 +2987,7 @@ index 00000000..8e327fd9
 +        "/api/distill/card/c1/unlocated/move", json={"section": "behaviors", "index": 9, "phase": 1})
 +    assert r.status_code == 400
 diff --git a/tests/test_card_arc_behaviors.py b/tests/test_card_arc_behaviors.py
-index f93652e6..0b82ecb0 100644
+index f93652e..0b82ecb 100644
 --- a/tests/test_card_arc_behaviors.py
 +++ b/tests/test_card_arc_behaviors.py
 @@ -25,7 +25,7 @@ def test_object_arc_keeps_axis_labels_and_phase_behaviors():
@@ -3019,7 +3019,7 @@ index f93652e6..0b82ecb0 100644
      }
 diff --git a/tests/test_mutation_anchors.py b/tests/test_mutation_anchors.py
 new file mode 100644
-index 00000000..7135ab59
+index 0000000..7135ab5
 --- /dev/null
 +++ b/tests/test_mutation_anchors.py
 @@ -0,0 +1,90 @@
@@ -3114,7 +3114,7 @@ index 00000000..7135ab59
 +            ("D1 恰一次", "", [("repl", me, [("def test_lock_sees_a_" + "drifted_anchor", "x")])], "RED")]
 +    assert [p.split("：")[0] for p in _problems(fake)] == ["D0 命中 0 次", "D2 命中多次"]
 diff --git a/tests/test_phase_anchoring.py b/tests/test_phase_anchoring.py
-index 0b919afe..05712050 100644
+index 0b919af..0571205 100644
 --- a/tests/test_phase_anchoring.py
 +++ b/tests/test_phase_anchoring.py
 @@ -6,8 +6,8 @@
@@ -3314,7 +3314,7 @@ index 0b919afe..05712050 100644
  )
  
 diff --git a/web/frontend/e2e/arc-phase-select.spec.js b/web/frontend/e2e/arc-phase-select.spec.js
-index 9820850c..8952348f 100644
+index 9820850..8952348 100644
 --- a/web/frontend/e2e/arc-phase-select.spec.js
 +++ b/web/frontend/e2e/arc-phase-select.spec.js
 @@ -21,7 +21,8 @@ function cardJson(phases) {
@@ -3338,13 +3338,13 @@ index 9820850c..8952348f 100644
    return sent
 diff --git a/web/frontend/e2e/arc-phase-unlocated.spec.js b/web/frontend/e2e/arc-phase-unlocated.spec.js
 new file mode 100644
-index 00000000..0ca53a81
+index 0000000..1e593bc
 --- /dev/null
 +++ b/web/frontend/e2e/arc-phase-unlocated.spec.js
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,98 @@
 +// @ts-check
 +// spec arc-phase-unlocated §6 前端触发链的自动验收。全程 page.route 模拟（无真实后端、无凭据）。
-+// 触发链：选阶段（原生 select）→ 点「挪入」→ store.moveUnlocated POST /unlocated/move
++// 触发链：选阶段（全站 Select 下拉）→ 点「挪入」→ store.moveUnlocated POST /unlocated/move
 +//        → 写回接口返回的卡 → 弧线列表与未定位区都从新卡重算。
 +// 断言：
 +//   1) 未定位区列出三类条目；弧线阶段 overlay 按同形（嵌套）展示
@@ -3423,7 +3423,8 @@ index 00000000..0ca53a81
 +test('单值交换：挪入阶段 1 后两边都变，请求体正确', async ({ page }) => {
 +  const body = JSON.stringify({ ok: true, card: { id: 'c1', card_json: JSON.stringify(card('新值', ['原值'])) } })
 +  const sent = await setup(page, { status: 200, contentType: 'application/json', body })
-+  await toneRow(page).locator('select').selectOption('1')
++  await toneRow(page).getByRole('combobox').click()
++  await page.getByRole('option', { name: '阶段 1 · 穷酸要面子' }).click()
 +  await toneRow(page).getByRole('button', { name: '挪入' }).click()
 +  await expect(page.locator('.card-arc-overlay').nth(0)).toContainText('新值')
 +  await expect(toneRow(page)).toContainText('原值')
@@ -3440,7 +3441,7 @@ index 00000000..0ca53a81
 +  await expect(toneRow(page)).toContainText('新值')
 +})
 diff --git a/web/frontend/src/components/CharCard.jsx b/web/frontend/src/components/CharCard.jsx
-index 4b67532b..5f2efd04 100644
+index 4b67532..5f2efd0 100644
 --- a/web/frontend/src/components/CharCard.jsx
 +++ b/web/frontend/src/components/CharCard.jsx
 @@ -7,6 +7,7 @@ import Avatar from './common/Avatar'
@@ -3491,7 +3492,7 @@ index 4b67532b..5f2efd04 100644
            <CardSection label="情境→行为">
              <BehaviorList items={data.situation_behaviors} />
 diff --git a/web/frontend/src/components/EditCardModal.jsx b/web/frontend/src/components/EditCardModal.jsx
-index d6657033..5842ead6 100644
+index d665703..5842ead 100644
 --- a/web/frontend/src/components/EditCardModal.jsx
 +++ b/web/frontend/src/components/EditCardModal.jsx
 @@ -150,7 +150,9 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
@@ -3506,7 +3507,7 @@ index d6657033..5842ead6 100644
            .map((p) => ({ ...p, behaviors: cleanRows(p.behaviors || [], BEHAVIOR_COLUMNS) })),
 diff --git a/web/frontend/src/components/__tests__/ArcListNested.test.jsx b/web/frontend/src/components/__tests__/ArcListNested.test.jsx
 new file mode 100644
-index 00000000..7a3a29f1
+index 0000000..7a3a29f
 --- /dev/null
 +++ b/web/frontend/src/components/__tests__/ArcListNested.test.jsx
 @@ -0,0 +1,23 @@
@@ -3535,10 +3536,10 @@ index 00000000..7a3a29f1
 +})
 diff --git a/web/frontend/src/components/__tests__/CharCardUnlocated.test.jsx b/web/frontend/src/components/__tests__/CharCardUnlocated.test.jsx
 new file mode 100644
-index 00000000..894117d9
+index 0000000..47c199d
 --- /dev/null
 +++ b/web/frontend/src/components/__tests__/CharCardUnlocated.test.jsx
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,122 @@
 +import { describe, it, expect, vi } from 'vitest'
 +import { render, waitFor, fireEvent, screen } from '@testing-library/react'
 +import CharCard from '../CharCard'
@@ -3646,7 +3647,8 @@ index 00000000..894117d9
 +    setCurrentCard(card())
 +    const { container } = render(<CharCard />)
 +    await waitFor(() => expect(container.querySelector('.card-unlocated')).toBeTruthy())
-+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } })
++    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' })
++    fireEvent.click(screen.getByRole('option', { name: '阶段 1 · 早' }))
 +    fireEvent.click(screen.getByRole('button', { name: '挪入' }))
 +    await waitFor(() => expect(moveSpy).toHaveBeenCalled())
 +    expect(moveSpy.mock.calls[0]).toEqual(['c1', { section: 'behaviors', index: 0, phase: 1, path: '' }])
@@ -3662,7 +3664,7 @@ index 00000000..894117d9
 +})
 diff --git a/web/frontend/src/components/__tests__/EditCardModalArcKeep.test.jsx b/web/frontend/src/components/__tests__/EditCardModalArcKeep.test.jsx
 new file mode 100644
-index 00000000..ad5fd332
+index 0000000..ad5fd33
 --- /dev/null
 +++ b/web/frontend/src/components/__tests__/EditCardModalArcKeep.test.jsx
 @@ -0,0 +1,20 @@
@@ -3688,10 +3690,10 @@ index 00000000..ad5fd332
 +})
 diff --git a/web/frontend/src/components/__tests__/UnlocatedList.test.jsx b/web/frontend/src/components/__tests__/UnlocatedList.test.jsx
 new file mode 100644
-index 00000000..338e843e
+index 0000000..95d30c9
 --- /dev/null
 +++ b/web/frontend/src/components/__tests__/UnlocatedList.test.jsx
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,42 @@
 +/**
 + * spec arc-phase-unlocated §4 段 4：未定位区的渲染与挪动交互（选阶段 → 挪入 → onMove）。
 + */
@@ -3718,22 +3720,24 @@ index 00000000..338e843e
 +
 +  it('默认阶段：态度用原来标的阶段，其余用最后阶段', () => {
 +    render(<UnlocatedList arc={arc} onMove={vi.fn()} />)
-+    const values = screen.getAllByRole('combobox').map((s) => s.value)
-+    expect(values).toEqual(['2', '2', '2', '1'])
++    // 全站 Select（Radix）：触发器显示所选项的 label
++    const shown = screen.getAllByRole('combobox').map((s) => s.textContent)
++    expect(shown).toEqual(['阶段 2 · 晚', '阶段 2 · 晚', '阶段 2 · 晚', '阶段 1 · 早'])
 +  })
 +
 +  it('选阶段 → 点挪入 → onMove(分区, 序号, 阶段, 路径)', async () => {
 +    const onMove = vi.fn().mockResolvedValue()
 +    render(<UnlocatedList arc={arc} onMove={onMove} />)
-+    const selects = screen.getAllByRole('combobox')
-+    fireEvent.change(selects[2], { target: { value: '1' } })
++    // 打开下拉走键盘 Enter（同 common/__tests__/Select.test.jsx），再点选项
++    fireEvent.keyDown(screen.getAllByRole('combobox')[2], { key: 'Enter' })
++    fireEvent.click(screen.getByRole('option', { name: '阶段 1 · 早' }))
 +    fireEvent.click(screen.getAllByRole('button', { name: '挪入' })[2])
 +    await waitFor(() => expect(onMove).toHaveBeenCalled())
 +    expect(onMove.mock.calls).toEqual([['overlay', 1, 1, 'speaking_style.tone']])
 +  })
 +})
 diff --git a/web/frontend/src/components/common/ArcList.jsx b/web/frontend/src/components/common/ArcList.jsx
-index 6184646e..ff9aeb34 100644
+index 6184646..ff9aeb3 100644
 --- a/web/frontend/src/components/common/ArcList.jsx
 +++ b/web/frontend/src/components/common/ArcList.jsx
 @@ -1,8 +1,9 @@
@@ -3780,42 +3784,44 @@ index 6184646e..ff9aeb34 100644
                ? <ul className="card-arc-overlay-list">
 diff --git a/web/frontend/src/components/common/UnlocatedList.jsx b/web/frontend/src/components/common/UnlocatedList.jsx
 new file mode 100644
-index 00000000..c436b508
+index 0000000..79f7c3d
 --- /dev/null
 +++ b/web/frontend/src/components/common/UnlocatedList.jsx
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,81 @@
 +// 未定位区：摘录在原文里定不了位的条目（做法、字段值、关系态度）。只展示、不进聊天的 prompt；
 +// 卡主把一条挪进某个阶段，就算给了依据（spec arc-phase-unlocated §6）。
 +//
 +// 规则全在后端（core/unlocated.py：列表追加 / 单值交换 / 态度去占位），这里只渲染、收集
-+// 「挪到第几阶段」，交给 `onMove(section, index, phase, path)`。阶段选择用原生 <select>
-+// （键盘、读屏、定位都现成，不重造）。默认选中：态度用它原来标的阶段，其余用最后阶段。
++// 「挪到第几阶段」，交给 `onMove(section, index, phase, path)`。
++// **不另写样式**：条目外观用「情境→行为」那套（card-behavior-*、pill），下拉用全站的
++// `common/Select`（Radix，键盘与读屏现成），按钮用 btn-secondary btn-sm，按钮行用
++// memory-edit-actions，提示用 settings-hint。默认选中：态度用它原来标的阶段，其余用最后阶段。
 +import { useState } from 'react'
++import Select from './Select'
 +import { overlayLeaves, overlayLabel } from './ArcList'
 +
 +function MoveControl({ phases, initial, label, onMove }) {
-+  const [phase, setPhase] = useState(initial)
++  const [phase, setPhase] = useState(String(initial))
 +  const [busy, setBusy] = useState(false)
 +  const run = async () => {
 +    setBusy(true)
-+    try { await onMove(phase) } finally { setBusy(false) }
++    try { await onMove(Number(phase)) } finally { setBusy(false) }
 +  }
 +  return (
-+    <span className="card-unlocated-move">
-+      <select
-+        aria-label={`把「${label}」挪到哪个阶段`}
++    <div className="memory-edit-actions">
++      <Select
++        size="sm"
++        ariaLabel={`把「${label}」挪到哪个阶段`}
 +        value={phase}
-+        onChange={(e) => setPhase(Number(e.target.value))}
++        options={phases.map((p, i) => ({
++          value: String(i + 1), label: `阶段 ${i + 1}${p.label ? ` · ${p.label}` : ''}` }))}
++        onChange={setPhase}
 +        disabled={busy}
-+      >
-+        {phases.map((p, i) => (
-+          <option key={i} value={i + 1}>{`阶段 ${i + 1}${p.label ? ` · ${p.label}` : ''}`}</option>
-+        ))}
-+      </select>
++      />
 +      <button type="button" className="btn-secondary btn-sm" onClick={run} disabled={busy}>
 +        挪入
 +      </button>
-+    </span>
++    </div>
 +  )
 +}
 +
@@ -3848,14 +3854,14 @@ index 00000000..c436b508
 +  ]
 +  return (
 +    <div className="card-unlocated">
-+      <p className="card-unlocated-hint">
++      <p className="settings-hint">
 +        这些条目在原文里找不到可靠的时期，聊天时不会用上；确认属于哪个阶段后可以挪进去。
 +      </p>
-+      <ul className="card-unlocated-list">
++      <ul className="card-behavior-list">
 +        {rows.map((r) => (
-+          <li key={r.key} className="card-unlocated-item">
-+            <span className="card-unlocated-kind pill">{r.kind}</span>
-+            <span className="card-unlocated-text">{r.text}</span>
++          <li key={r.key} className="card-behavior-item">
++            <span className="card-behavior-situation pill">{r.kind}</span>
++            <span className="card-behavior-text">{r.text}</span>
 +            <MoveControl phases={phases} initial={r.initial} label={r.text} onMove={r.move} />
 +          </li>
 +        ))}
@@ -3865,7 +3871,7 @@ index 00000000..c436b508
 +}
 diff --git a/web/frontend/src/store/applyServerCard.test.js b/web/frontend/src/store/applyServerCard.test.js
 new file mode 100644
-index 00000000..029a2aea
+index 0000000..029a2ae
 --- /dev/null
 +++ b/web/frontend/src/store/applyServerCard.test.js
 @@ -0,0 +1,38 @@
@@ -3909,7 +3915,7 @@ index 00000000..029a2aea
 +})
 diff --git a/web/frontend/src/store/moveUnlocated.test.js b/web/frontend/src/store/moveUnlocated.test.js
 new file mode 100644
-index 00000000..ee78c456
+index 0000000..ee78c45
 --- /dev/null
 +++ b/web/frontend/src/store/moveUnlocated.test.js
 @@ -0,0 +1,47 @@
@@ -3961,7 +3967,7 @@ index 00000000..ee78c456
 +  })
 +})
 diff --git a/web/frontend/src/store/useAppStore.js b/web/frontend/src/store/useAppStore.js
-index a7586190..229e5c21 100644
+index a758619..229e5c2 100644
 --- a/web/frontend/src/store/useAppStore.js
 +++ b/web/frontend/src/store/useAppStore.js
 @@ -1782,6 +1782,30 @@ const useAppStore = create((set, get) => {
@@ -4040,56 +4046,8 @@ index a7586190..229e5c21 100644
    }
  })
  
-diff --git a/web/frontend/src/styles/global.css b/web/frontend/src/styles/global.css
-index 23251fad..38a3b6f5 100644
---- a/web/frontend/src/styles/global.css
-+++ b/web/frontend/src/styles/global.css
-@@ -3939,6 +3939,43 @@ label[for] {
- 
- /* 情境→行为：情境用现成的 .pill（同 .card-rel-type 的做法），做法与原文摘录各占一行。
-    条目是块级而非 flex：与 .card-memory-item 同形，无空格长串按块级规则断行。 */
-+/* 未定位区（arc-phase-unlocated §6）：与情境→行为同一套卡片条目外观 */
-+.card-unlocated-hint {
-+  font-size: 12px;
-+  color: var(--text-secondary);
-+  margin: 0 0 8px;
-+}
-+
-+.card-unlocated-list {
-+  list-style: none;
-+  display: flex;
-+  flex-direction: column;
-+  gap: 6px;
-+}
-+
-+.card-unlocated-item {
-+  display: flex;
-+  flex-wrap: wrap;
-+  align-items: center;
-+  gap: 6px 8px;
-+  font-size: 13px;
-+  line-height: 1.55;
-+  padding: 8px 10px;
-+  background: var(--glass-bg);
-+  border-radius: 8px;
-+}
-+
-+.card-unlocated-text {
-+  flex: 1 1 12em;
-+  min-width: 0;
-+}
-+
-+.card-unlocated-move {
-+  display: inline-flex;
-+  gap: 6px;
-+  align-items: center;
-+}
-+
- .card-behavior-list {
-   list-style: none;
-   display: flex;
 diff --git a/web/routers/distill.py b/web/routers/distill.py
-index 72c3bbf2..1437ac13 100644
+index 72c3bbf..1437ac1 100644
 --- a/web/routers/distill.py
 +++ b/web/routers/distill.py
 @@ -27,6 +27,7 @@ from core.card_out import out_card
