@@ -1,6 +1,6 @@
 # spec：阶段未验证的处理（①补完 B）+ overlay 与卡片同形
 
-基线 main `c97116b0`（2026-10-07 核） · 参考实现 `docs/specs/artifacts/arc-phase-unlocated-proto.patch`（sha256 `7f8b53124e1a16f70583fad7108eaedd2808a28474c390d411692418076c3910`，在 `c97116b0` 上 `git apply --check` 通过）
+基线 main `c97116b0`（2026-10-07 核） · 参考实现 `docs/specs/artifacts/arc-phase-unlocated-proto.patch`（sha256 `6a8f81823b763cbfc484e9433f03541568fbc30485815775066a3bd52da9eb2f`，在 `c97116b0` 上 `git apply --check` 通过）
 决策记录：本对话 2026-10-06/07 与 Shiyu 逐条定的（D1–D4、方案 2 未定位区、d 同形 overlay、S15 选 A + 机械判定、锚点锁），总计划 `arc-reactions-plan.md`「①补完 B」一节。
 
 ~~分 4 段、4 个 PR，按 1 → 2 → 3 → 4 合并~~ **已改为合成 1 个 PR**（Shiyu 2026-10-07 定，见文末「合并方式」）（段 1 与段 2 文件不重叠，可两条 lane 并行；段 3、4 串行）。每段先过本段的目标检查（§1），再对账本段变异（§7，脚本带段号），再开下一段。参考补丁是 4 段的合集：每段只取 §4 列给它的文件和改动。
@@ -270,6 +270,8 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
 
 ## §12 要 Shiyu 定的（不在本 spec 范围内）
 
+**Shiyu 2026-10-07 已定（下面三条）**：第 1 条先不做，哪个接口的卡需要开聊或编辑时，随那条线一起接入；第 3 条在 B 合并后马上单独开一个小 PR，只改断言；第 4 条另开分支，在 B 合并后做。
+
 1. **出卡全面接入**：其余 14 个返回卡片的接口是否也一律走 `out_card`、S15 改成「凡返回卡片」的机械判定（§6）。
 2. ~~挪动与 PATCH 的丢失更新~~ —— Shiyu 10-07 定「一起做」，已落地，见 §13。
 4. **市场编辑（`PUT /api/market/{id}/publish`）的丢失更新与一处既有故障**（§13.5）：这条接口有 3 个调用方、语义不同 —— 市场详情「编辑」是读出-修改-写回（该加锁）；「恢复到某版本」与卡片页「再次分享」是有意整卡覆盖（不该锁）。要锁就得先把这条接口按语义拆开，另外它依赖市场详情的出卡带 `revision`（即第 1 条的一部分）。另：卡片页「再次分享」走 PUT，后端返回 `{version}`，前端却按 `data.card_id` 判成功（`CharCard.jsx` 发布确认按钮，缺陷 105 的修法引入）→ **再次分享实际成功、界面却报「发布失败：服务端未返回 card_id」**。这两件怎么处理？
@@ -480,3 +482,18 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
     - **建议修法**：`run()` 两处 `subprocess.run` 加 `encoding="utf-8", errors="replace"`；`:65,68` 的 `write_text` 加 `newline=""`（与 `audit_mutations.py` 同处置；可选补基线门）。修后裸跑应打印十条 `实得=RED` 且 `git status` 干净。
 
 **次要记录（非发现）**：`tests/test_arc_phase_unlocated.py` 的 `test_n4c_…` 前有 3 个空行（PEP8 要 2）、其后 `def _full_card()` 前只有 1 个空行（要 2）。CI 无 Python lint 门（只有前端 eslint），不影响任何检查。
+
+**补充 20 的处置（2026-10-07，Claude）**：发现成立，根因在 audit3 脚本本身。它是我手写的执行逻辑（自己调 subprocess、自己 write_text），没有用同目录兄弟脚本共用的 `tests/perf/mutation_framework.py` 与 `tests/lock_coverage.py`。
+
+- **修法：重写 audit3。** 执行、还原、判档全部交给框架，与 `arc_phase_unlocated_audit_mutations.py` 同一处置，而不是在原脚本里补三处参数：
+  - 子进程按 UTF-8 解码；
+  - 还原按字节写回（`_restore`），所以没有 LF→CRLF 的问题；
+  - 有基线门，基线跑不起来与基线红分开报（退出码 3 与 2）。
+- **变异本身不变**：10 条的锚点与新代码一致。每条的靶子收窄到能打红它的那个测试文件或用例，判档由 `lock_coverage.outcome` 做。
+- **验证**：
+  - 沙箱默认环境：10/10 符合预期，5 个目标文件还原后 sha256 都为 True。
+  - 用 `localedef` 生成 `zh_CN.GBK`，`LC_ALL=zh_CN.GBK` 且不设 `PYTHONUTF8`：先用旧版脚本复现，跑到 R4 抛 `UnicodeDecodeError: 'gbk' codec…`，与发现一致；新版同样条件下 10/10、退出码 0、`git status` 干净。
+  - 中文 Windows 原机仍需执行方再跑一次确认。
+- **基线门的实际效果**：沙箱里测试库停掉时，新版拒跑并提示「靶子上 pytest 根本没跑起来」，没有把它读成「变异打红了」。
+- **未改**：`arc_phase_unlocated_audit4_mutations.py` 是执行方的审计证据，原样保留。
+- **次要记录**：`test_n4c_…` 前后的空行数一并改成符合 PEP8。

@@ -102,7 +102,6 @@ def test_n4b_unlocated_overlay_uses_the_same_validator_and_rejects_dotted_key():
             "overlay": {"speaking_style.catchphrases": ["哼"]}}}})
 
 
-
 def test_n4c_unlocated_overlay_rejects_experience_path():
     """补充 15：未定位区只收 state 路径 —— 校验器第二个调用点的 `layers` 参数（阶段一侧是 N3）。
 
@@ -111,6 +110,7 @@ def test_n4c_unlocated_overlay_rejects_experience_path():
     with pytest.raises(ValueError, match="未登记"):
         CharacterCard.model_validate({"name": "x", "character_arc": {"unlocated": {
             "overlay": {"key_memories": ["某事"]}}}})
+
 
 def _full_card():
     """每个 state / experience 路径都有阶段 2 特有的取值和一条没有证据的取值，外加做法与关系。
