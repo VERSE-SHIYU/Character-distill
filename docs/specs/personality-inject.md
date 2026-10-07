@@ -1,8 +1,9 @@
 # ③ 性格注入 · 段 1：人格块与好感机制（spec）
 
-基线：main `4087b7d9`。分支：`feat/personality-inject`（第 1 个提交已带本文件、目标检查、夹具、参考实现补丁）。
+基线：main `0b19f1ae`。分支：`feat/personality-inject`（已带本文件、目标检查、夹具、参考实现补丁，并已合入 main `0b19f1ae`）。
+坐标说明：下面的行号是在 `4087b7d9` 上读的；`4087b7d9..0b19f1ae`（PR #121，一次性变异驱动重构）没有改动本文件提到的任何文件（`git diff --name-only 4087b7d9 0b19f1ae` 核过），行号仍然有效。
 设计依据：设计稿 v6，`git show origin/docs/personality-3a-design:docs/specs/personality-3a-design.md`（`ba1ceb25`）§4、§5、§8。两者不一致时以本文件为准，并停下报告。
-参考实现：`docs/specs/artifacts/personality-inject-proto.patch`（只含 `core/` 的 6 个文件；在本分支第 1 个提交上 `git apply --check` 通过）。它已经让目标检查全绿，但只是参考：照它实现可以，S0 和 §5 的测试一条都不能省。
+参考实现：`docs/specs/artifacts/personality-inject-proto.patch`（只含 `core/` 的 6 个文件；在本分支当前头上 `git apply --check` 通过）。它已经让目标检查全绿，但只是参考：照它实现可以，S0 和 §5 的测试一条都不能省。
 
 ## 0. 目标与分段
 
@@ -20,7 +21,7 @@
 
 ## S0. 开工前逐条复核（有一条不成立就停下报告）
 
-行号都是 main `4087b7d9` 上的。
+行号是 `4087b7d9` 上的，见开头的坐标说明。
 
 | # | 事实 | 坐标与关键行 |
 |---|---|---|
@@ -175,7 +176,7 @@ test_affinity_clamp.py 7 · test_arc_phase_fields_unit.py 1 · test_catchwords.p
 | R15 | 有三档仍用通用语气 / 有分面仍用写死文案 | G1 |
 | R17 | 不落库 / 恢复时不读 | G8 |
 
-你实现完后，对 R7、R9、R11、R16 各自写一条变异并跑（这四条目标检查没有专门打，靠 T2、T5、T7），贴原始输出。
+你实现完后，对 R7、R9、R11、R16 各自写一条变异并跑（这四条目标检查没有专门打，靠 T2、T5、T7），贴原始输出。变异用仓库现成的一次性变异驱动（`tests/perf/mutation_framework.py`，PR #121 刚合入）；**未核实**：我没读过它的接口，按它的实际接口用，用不上就停下报告，不要另写一套。
 
 ## 6. 不做、风险、回滚
 
