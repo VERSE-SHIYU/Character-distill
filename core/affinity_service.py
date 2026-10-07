@@ -327,13 +327,26 @@ class AffinityService:
             and data.get("guard") == 70
         )
 
+    def pack_reason(self) -> None:
+        """把要随存档走的扩展状态写进 `affinity_reason`。**唯一的写入处**：单聊存整份状态、
+        群聊只存 5 个标量列，两边都带着 reason，所以内心独白、口头禅、规则状态都从这里出去。
+        改了其中任何一项（评估之后、口头禅更新之后）都调它，不要在别处另拼一份。"""
+        self.affinity_reason = json.dumps({
+            "inner_voice": self.inner_voice,
+            "mood_emoji": self.mood_emoji,
+            "mood_word": self.mood,
+            "stage": self.stage,
+            "stage_emoji": self.stage_emoji,
+            "user_catchwords": self.user_catchwords,
+            "relation": self.relation.to_dict(),
+        }, ensure_ascii=False)
+
     def apply_evaluation(self, data: dict, old_stage: str, psyche: Any) -> int:
         """把解析结果回写11个情感字段，返回importance。纯状态计算，无IO。
 
         好感：模型只报事件、档位、档内整数，变多少由规则表定（core/affinity_rules.py）。
         信任、防御：模型给数值，经 delta clamp（旧值 ± 上限）兜底。
         """
-        import json as _json
         # Snapshot old values before applying LLM output
         old_affinity, old_trust, old_guard = self.affinity, self.trust, self.guard
         importance = max(1, min(10, int(data.get("importance", 5))))
@@ -368,17 +381,7 @@ class AffinityService:
             repair_signal=str(data.get("repair_signal", "") or ""),
         )
 
-        # 旧列兼容：构建扩展 reason JSON（同时为旧格式读端提供数据）
-        extended = {
-            "inner_voice": self.inner_voice,
-            "mood_emoji": self.mood_emoji,
-            "mood_word": self.mood,
-            "stage": self.stage,
-            "stage_emoji": self.stage_emoji,
-            "user_catchwords": self.user_catchwords,
-            "relation": self.relation.to_dict(),   # 规则状态：单聊、群聊都随 reason 落库
-        }
-        self.affinity_reason = _json.dumps(extended, ensure_ascii=False)
+        self.pack_reason()
         return importance
 
 

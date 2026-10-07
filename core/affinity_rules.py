@@ -19,6 +19,7 @@ LARGE_NEEDS_STREAK = 2  # 正向大档要求此前连续几轮非负（R6）
 LEGACY_UP_MAX = 5       # 用默认亲近条件的卡，单轮最多涨这么多（R18）
 
 TIERS: dict[str, tuple[int, int]] = {"small": (1, 2), "medium": (3, 5), "large": (6, 8)}   # R2
+MAX_DROP = max(hi for _, hi in TIERS.values())   # 单轮最多能掉多少（疏远检测的「急降」用它）
 POSITIVE = frozenset({"met_condition", "friendly", "repair"})
 NEGATIVE = frozenset({"offended", "trigger"})
 EVENTS = POSITIVE | NEGATIVE | {"neutral"}
@@ -54,7 +55,8 @@ class RelationState:
         base = cls()
         pick = lambda key, ok: data[key] if ok(data.get(key)) else getattr(base, key)
         is_int = lambda v: type(v) is int
-        return cls(pick("last_event", EVENTS.__contains__), pick("met_count", is_int),
+        is_event = lambda v: isinstance(v, str) and v in EVENTS
+        return cls(pick("last_event", is_event), pick("met_count", is_int),
                    pick("nonneg_streak", is_int), pick("pre_offence", is_int))
 
 
@@ -120,6 +122,8 @@ def _legacy_step(affinity, event, state, psyche):            # R18：默认条�
 
 
 def _close_gate(affinity, event, state, psyche):             # R10：没挣够次数，进不了亲近档
+    if event == "repair":       # 修复只是回到冒犯前已有的位置（R8 管上限），不算新进亲近档
+        return None
     return CLOSE_FROM - 1 if affinity < CLOSE_FROM and state.met_count < MET_REQUIRED else None
 
 

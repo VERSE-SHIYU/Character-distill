@@ -268,6 +268,30 @@ class TestAffinityCompat:
         parsed = json.loads(svc.affinity_reason)
         assert parsed.get("user_catchwords") == ["好的"]
 
+    def test_pack_reason_keeps_rule_state_when_catchwords_change(self):
+        """口头禅更新会重新打包 reason：规则状态必须跟着走（曾在这里被抹掉）。"""
+        from core.affinity_rules import RelationState
+        svc = AffinityService()
+        svc.relation = RelationState("offended", 2, 0, 58)
+        svc.user_catchwords = ["绝了"]
+        svc.pack_reason()
+        restored = AffinityService()
+        restored.load(svc.get())
+        assert restored.relation == svc.relation and restored.user_catchwords == ["绝了"]
+
+    def test_reason_json_is_packed_in_one_place_only(self):
+        """结构锁：除了 AffinityService.pack_reason，没有别处把 JSON 拼进 affinity_reason。"""
+        import pathlib
+        import re
+        root = pathlib.Path(__file__).resolve().parent.parent
+        writers = [
+            f"{path.relative_to(root)}:{n}"
+            for sub in ("core", "web") for path in (root / sub).rglob("*.py")
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            if re.search(r"affinity_reason\s*=.*dumps", line)
+        ]
+        assert writers == [w for w in writers if w.startswith("core/affinity_service.py")] and len(writers) == 1, writers
+
     def test_plain_text_reason_compat(self):
         """旧格式纯文本 reason（非 JSON）→ user_catchwords 默认空列表。"""
         svc = AffinityService()

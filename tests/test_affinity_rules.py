@@ -109,10 +109,27 @@ def test_r10_third_condition_opens_the_close_tier(met_before, expect):
     assert step(70, "met_condition", "medium", 5, state=RelationState(met_count=met_before))[0] == expect
 
 
-def test_r10_applies_to_every_event_and_not_once_already_close():
-    s = RelationState(pre_offence=80)
-    assert step(70, "repair", "medium", 5, state=s)[0] == 72
+def test_r10_does_not_apply_once_already_close():
     assert step(74, "met_condition", "medium", 5)[0] == 79
+
+
+def test_r10_repair_returns_to_the_pre_offence_value_even_across_the_gate():
+    s = RelationState(pre_offence=82)                 # 起点就在亲近档的关系，被冒犯后掉到 73 以下
+    assert step(70, "repair", "medium", 5, state=s) == (75, RelationState("repair", 0, 1, 82), [])
+    assert step(80, "repair", "medium", 5, state=s) == (82, RelationState("repair", 0, 1, None), [])
+
+
+def test_r8_large_repair_counts_as_medium():
+    assert step(40, "repair", "large", 8, state=RelationState(pre_offence=60))[0] == 45
+
+
+def test_r7_trigger_alone_records_the_pre_offence_value():
+    assert step(50, "trigger", "small", 1)[1].pre_offence == 50
+
+
+def test_affinity_stays_within_0_and_100():
+    assert step(3, "offended", "large", 8)[0] == 0
+    assert step(97, "met_condition", "large", 8, state=WARM)[0] == 100
 
 
 @pytest.mark.parametrize("kw", [
@@ -128,7 +145,8 @@ def test_r16_invalid_input_raises_so_the_caller_keeps_everything(kw):
 def test_r17_state_round_trips_and_old_saves_get_defaults():
     s = RelationState("offended", 2, 0, 55)
     assert RelationState.from_dict(s.to_dict()) == s
-    for junk in (None, "x", [], {}, {"last_event": "praise", "met_count": "2", "pre_offence": "55"}):
+    for junk in (None, "x", [], {}, {"last_event": "praise", "met_count": "2", "pre_offence": "55"},
+                 {"last_event": ["offended"]}, {"last_event": {"a": 1}, "met_count": [3]}):
         assert RelationState.from_dict(junk) == RelationState()
 
 

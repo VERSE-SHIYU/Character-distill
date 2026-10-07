@@ -149,6 +149,7 @@ def _run_full(name: str, start: int, script, *, resume_from: dict | None = None,
         stage.append(state["stage"])
     assert len(llm.prompts) == len(llm.script) == llm.i, "有一轮没发聊天调用或没跑评估"
     llm.saved = eng.get_affinity()          # 单聊落库的就是这份（`to_persist` 序列化它）
+    llm.engine = eng
     return llm.prompts, aff, stage, llm
 
 
@@ -381,10 +382,15 @@ _STALE_EVAL_LINES = [      # 与「好感由规则表算、没有回落」矛盾
 
 
 def test_g10_eval_prompt_has_no_stale_rules_and_carries_grudge():
-    ep = _run_full("赵太爷", 40, [("neutral", "small", 1)])[3].eval_prompts[0]
+    one = [("neutral", "small", 1)]
+    ep = {v: _run_full("赵太爷", 40, one, psyche_overrides={"grudge_inertia": v})[3].eval_prompts[0]
+          for v in ("记仇", "大度")}
     for line in _STALE_EVAL_LINES:
-        assert line not in ep, f"评估 prompt 里还有旧句子：{line}"
-    assert "记仇" in ep and "不要太快接受道歉" in ep, "评估 prompt 没带记仇程度或「不要太快接受道歉」"
+        assert line not in ep["记仇"], f"评估 prompt 里还有旧句子：{line}"
+    assert "不要太快接受道歉" in ep["记仇"]
+    # 说明文案里本来就有「记仇=…，大度=…」，所以要看的是这张卡自己的取值（方括号里那个）
+    assert "【记仇】" in ep["记仇"] and "【大度】" not in ep["记仇"], "评估 prompt 没带这张卡的记仇程度"
+    assert "【大度】" in ep["大度"] and "【记仇】" not in ep["大度"]
 
 
 def test_g10_code_does_not_read_grudge_or_volatility():
@@ -417,3 +423,24 @@ def test_g12_phase_limited_mode_and_condition_apply_only_in_that_phase():
     assert cond in seen[1][1], "选了第一阶段，评估 prompt 里没有这个阶段的亲近条件"
     assert line not in seen[2][0] and _modes(name)["close"] in seen[2][0], "第二阶段用到了第一阶段才有的做法"
     assert cond not in seen[2][1], "第二阶段的评估 prompt 里出现了第一阶段才有的亲近条件"
+
+
+def test_g8_rule_state_survives_the_catchword_save():
+    """反思触发后引擎会单独存一次口头禅；这次保存不能把规则状态抹掉。"""
+    name, met = "孔乙己", ("met_condition", "large", 8)
+    *_, llm = _run_full(name, 70, [met] * 2)
+    eng, saved = llm.engine, {}
+    eng._storage, eng._session_id = object(), "s"
+    eng._save_affinity_state = lambda: saved.update(eng.get_affinity())
+    eng._persist_catchwords()
+    assert saved, "夹具前提不成立：口头禅这条保存路径没有走到"
+    _, aff, _ = _run(name, 0, [met], resume_from=json.loads(json.dumps(saved, ensure_ascii=False)))
+    assert aff[0] >= _CLOSE_FROM, f"口头禅保存之后次数丢了：第 3 次没能进亲近档（{aff}）"
+
+
+def test_g4_repair_restores_a_relationship_that_started_close():
+    """起点就在亲近档的关系（恋人、家人）被冒犯掉出亲近档后，修复能回到原处，不用重新挣 3 次。"""
+    name, start = "孔乙己", 82
+    _, aff, _ = _run(name, start, [("offended", "large", 8)] * 2 + [("repair", "medium", 5)] * 5)
+    assert aff[1] < _CLOSE_FROM, f"夹具前提不成立：两次冒犯后应掉出亲近档（{aff}）"
+    assert max(aff[2:]) <= start and aff[-1] == start, f"修复没能回到冒犯前的 {start}：{aff}"

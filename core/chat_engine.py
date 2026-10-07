@@ -26,7 +26,7 @@ from core.reaction_service import ReactionService
 from core.reflection_service import ReflectionService
 from core.telemetry import set_current_attr
 from core.affinity_service import AffinityService, calc_stage
-from core.affinity_rules import relational_tier
+from core.affinity_rules import MAX_DROP, relational_tier
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext
 
 logger = logging.getLogger(__name__)
@@ -608,17 +608,7 @@ class ChatEngine:
         """将 user_catchwords 持久化到 DB（通过单一保存点）。"""
         if not self._storage or not self._session_id:
             return
-        # Rebuild affinity_reason to include current catchwords (旧列兼容)
-        import json as _json
-        extended = {
-            "inner_voice": self._inner_voice,
-            "mood_emoji": self._mood_emoji,
-            "mood_word": self._mood,
-            "stage": self._stage,
-            "stage_emoji": self._stage_emoji,
-            "user_catchwords": self._affinity_service.user_catchwords,
-        }
-        self._affinity_service.affinity_reason = _json.dumps(extended, ensure_ascii=False)
+        self._affinity_service.pack_reason()      # 口头禅变了：reason 由服务自己重新打包
         self._save_affinity_state()
 
     def _try_record_usage(self, action: str, *, llm: LLMAdapter, usage: dict | None = None) -> None:
@@ -830,8 +820,8 @@ class ChatEngine:
         if trigger_hits < 0:
             trigger_hits = 0
 
-        # 条件 3：急降（单轮被 clamp 到 -8，说明原始判定更狠）
-        sharp_drop = any(e["affinity_delta"] <= -8 for e in window)
+        # 条件 3：急降（单轮掉到了规则表允许的最大幅度）
+        sharp_drop = any(e["affinity_delta"] <= -MAX_DROP for e in window)
 
         # 条件 2：雷点命中（排除剧情内冲突），仅当角色有 triggers 定义
         psyche = getattr(self.card, "psyche", None)

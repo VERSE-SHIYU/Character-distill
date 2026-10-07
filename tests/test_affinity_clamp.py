@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from affinity_verdict import verdict
 from core.affinity_protocol import FIELD_DELTA
+from core.affinity_rules import RelationState
 from core.affinity_service import _clamp_delta, AffinityService
 from core.schema import PsycheProfile
 
@@ -76,6 +77,7 @@ class TestApplyEvaluationClamp:
     def test_affinity_up_clamped_to_5(self):
         """Evaluator reports a large gain (+8) → a default-condition card rises by at most +5."""
         svc = self._make_service(affinity=50)
+        svc.relation = RelationState(nonneg_streak=2)     # 大档已能生效：挡住 +8 的只剩这条上限
         svc.apply_evaluation({**verdict(+8), "trust": 30, "guard": 70, "mood": "平静",
                               "inner_voice": "", "mood_emoji": "😊", "importance": 5}, "陌生", PsycheProfile())
         assert svc.affinity == 55, f"Expected 55, got {svc.affinity}"
@@ -113,6 +115,7 @@ class TestApplyEvaluationClamp:
     def test_all_values_combined_clamp(self):
         """Multiple numeric fields all get clamped simultaneously."""
         svc = self._make_service(affinity=40, trust=20, guard=60)
+        svc.relation = RelationState(nonneg_streak=2)
         svc.apply_evaluation({**verdict(+8), "trust": 80, "guard": 10, "mood": "震惊",
                               "inner_voice": "哇", "mood_emoji": "😮", "importance": 7}, "陌生", PsycheProfile())
         # affinity: 40 + 5 = 45 (reported +8, default-condition ceiling)
