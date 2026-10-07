@@ -1782,37 +1782,55 @@ const useAppStore = create((set, get) => {
     }),
   })),
 
-  updateCard: async (cardId, cardJson) => {
-    try {
-      const res = await fetchWithTimeout(`/api/distill/card/${cardId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ card_json: cardJson }),
-      })
-      const data = await res.json()
-      if (data.ok) {
-        set((s) => {
-          const updated = {
-            cards: s.cards.map((c) =>
-              c.id === cardId
-                ? { ...c, card_json: typeof c.card_json === 'string' ? JSON.stringify(cardJson) : cardJson }
-                : c
-            ),
-            currentCard: s.currentCard?.id === cardId
-              ? { ...s.currentCard, ...cardJson, card_json: cardJson }
-              : s.currentCard,
-          }
-          if (s.sessionId && s.currentCard?.id === cardId) {
-            updated.messages = [...s.messages, withCid({ role: 'system', content: '角色卡已更新' })]
-          }
-          return updated
-        })
+  // 写回服务端返回的卡（接口经 out_card：带现算的 `character_arc.selectable`）—— 编辑保存与
+  // 挪动未定位条目共用这一处，store 里不再存本地拼的那份（旧做法会留着过期的 selectable）。
+  _applyServerCard: (cardId, row) => {
+    const raw = row?.card_json
+    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (!obj) return
+    set((s) => {
+      const updated = {
+        // revision 跟着卡走：下一次编辑 / 挪动要按写回后的这一版核对（乐观锁，后端 §13）
+        cards: s.cards.map((c) =>
+          c.id === cardId
+            ? { ...c, card_json: typeof c.card_json === 'string' ? JSON.stringify(obj) : obj, revision: row.revision }
+            : c
+        ),
+        currentCard: s.currentCard?.id === cardId
+          ? { ...s.currentCard, ...obj, card_json: obj, revision: row.revision }
+          : s.currentCard,
       }
-      return data
-    } catch (err) {
-      set({ error: err.message })
-      throw err
-    }
+      if (s.sessionId && s.currentCard?.id === cardId) {
+        updated.messages = [...s.messages, withCid({ role: 'system', content: '角色卡已更新' })]
+      }
+      return updated
+    })
+  },
+
+  // revision：这次编辑所依据的那一版（出卡时给的）；卡在别处变过 → 后端 409，错误抛给调用方
+  // 失败只抛给调用方（编辑弹窗自己呈现），不写全局 error —— 写了会在弹窗外再报一遍。
+  updateCard: async (cardId, cardJson, revision) => {
+    const res = await fetchWithTimeout(`/api/distill/card/${cardId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ card_json: cardJson, revision }),
+    })
+    const data = await res.json()
+    if (data.ok) get()._applyServerCard(cardId, data.card)
+    return data
+  },
+
+  // 把未定位区的一条挪进阶段 `phase`（规则只在后端 core/unlocated.py；这里只调接口、写回结果）。
+  moveUnlocated: async (cardId, { section, index, phase, path = '', revision }) => {
+    const res = await fetchWithTimeout(`/api/distill/card/${cardId}/unlocated/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ section, index, phase, path, revision }),
+    })
+    const data = await res.json()
+    if (!res.ok || !data.ok) throw new Error(data.detail || '挪动失败，请刷新后重试')
+    get()._applyServerCard(cardId, data.card)
+    return data
   },
   }
 })

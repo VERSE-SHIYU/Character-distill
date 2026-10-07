@@ -514,6 +514,7 @@ export default function TextPanel() {
 function CharacterManagement({ setView, selectText, startChat, pushView, setCurrentMarketCardId }) {
   const canWrite = useCanWrite()
   const texts = useAppStore((s) => s.texts)
+  const updateCard = useAppStore((s) => s.updateCard)
   const [allCards, setAllCards] = useState([])
   const [loading, setLoading] = useState(true)
   const [filterTextId, setFilterTextId] = useState('')
@@ -787,12 +788,9 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
           data={parseCardJson(editCard)}
           cardId={editCard.id || editCard.card_id}
           onSave={async (cardJson) => {
-            // 失败不在这里吞：错误抛给 EditCardModal，由弹窗自己呈现
-            await fetchWithTimeout(`/api/distill/card/${editCard.id}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-              body: JSON.stringify({ card_json: JSON.stringify(cardJson) }),
-            })
+            // 走 store 的唯一 PATCH 出口（带 revision，乐观锁）。失败不在这里吞：错误抛给
+            // EditCardModal，由弹窗自己呈现。原先这里自己发 PUT —— 后端只有 PATCH，必 405。
+            await updateCard(editCard.id || editCard.card_id, cardJson, editCard.revision)
             setEditCard(null)
             // Refresh all cards
             const res = await fetchCardsByText(editCard.text_id)

@@ -11,6 +11,7 @@ import typing
 import pytest
 from pydantic import BaseModel
 
+from core.card_layers import set_path
 from core.schema import ArcPhase, CharacterArc, CharacterCard, PhaseAttitude, Relationship
 
 
@@ -30,7 +31,7 @@ def make_card(n_phases: int = 3, *, starts: list[int] | None = None,
 
 
 def set_overlay(card: CharacterCard, idx: int, path: str, value) -> None:
-    card.character_arc.phases[idx].overlay[path] = value
+    set_path(card.character_arc.phases[idx].overlay, path, value)
 
 
 # ── U1 登记表 = 叶子全集 ──────────────────────────────────────────────────
@@ -52,7 +53,7 @@ def test_registry_equals_leaf_set():
     from core.card_layers import REGISTRY
 
     assert set(REGISTRY) == set(_leaves(CharacterCard))
-    assert len(REGISTRY) == 37
+    assert len(REGISTRY) == 40
 
 
 def test_registry_every_entry_has_layer_and_kind():
@@ -253,28 +254,28 @@ def test_dispatch_state_hangs_every_valid_phase():
     """U7：state → 每个最终阶段；覆盖全部 → 顶层。"""
     from core.card_draft import dispatch
 
-    top, by_phase = dispatch([[2, 3]], 3, layer="state")
+    top, by_phase, _ = dispatch([[2, 3]], 3, layer="state")
     assert top == []
     assert by_phase == [[], [0], [0]]
-    assert dispatch([[1, 2, 3]], 3, layer="state") == ([0], [[], [], []])
+    assert dispatch([[1, 2, 3]], 3, layer="state") == ([0], [[], [], []], [])
 
 
 def test_dispatch_experience_hangs_earliest_only():
     """U7：experience → 只最早阶段；从阶段 1 起覆盖全部 → 顶层。"""
     from core.card_draft import dispatch
 
-    top, by_phase = dispatch([[2, 3]], 3, layer="experience")
+    top, by_phase, _ = dispatch([[2, 3]], 3, layer="experience")
     assert top == []
     assert by_phase == [[], [0], []]                 # 只挂阶段 2
-    assert dispatch([[1, 2, 3]], 3, layer="experience") == ([0], [[], [], []])
-    assert dispatch([[1, 3]], 3, layer="experience") == ([], [[0], [], []])
+    assert dispatch([[1, 2, 3]], 3, layer="experience") == ([0], [[], [], []], [])
+    assert dispatch([[1, 3]], 3, layer="experience") == ([], [[0], [], []], [])
 
 
 def test_dispatch_scalar_one_per_slot():
     """U8：单值字段一个格子只留第一条 —— 同一阶段两条，第二条丢弃。"""
     from core.card_draft import dispatch
 
-    top, by_phase = dispatch([[2], [2]], 3, layer="state", kind="scalar")
+    top, by_phase, _ = dispatch([[2], [2]], 3, layer="state", kind="scalar")
     assert top == []
     assert by_phase == [[], [0], []]
 
@@ -283,7 +284,7 @@ def test_dispatch_scalar_multi_phase_fills_each_slot():
     """U8：单值字段标注多个阶段 → 每个阶段各得该值（不是只取第一个阶段）。"""
     from core.card_draft import dispatch
 
-    top, by_phase = dispatch([[2, 3]], 3, layer="state", kind="scalar")
+    top, by_phase, _ = dispatch([[2, 3]], 3, layer="state", kind="scalar")
     assert top == []
     assert by_phase == [[], [0], [0]]
 
@@ -292,7 +293,7 @@ def test_dispatch_scalar_all_phases_top_takes_first():
     """U8：单值字段两条都覆盖全部 → 顶层只留第一条。"""
     from core.card_draft import dispatch
 
-    top, by_phase = dispatch([[1, 2, 3], [1, 2, 3]], 3, kind="scalar")
+    top, by_phase, _ = dispatch([[1, 2, 3], [1, 2, 3]], 3, kind="scalar")
     assert top == [0]
     assert by_phase == [[], [], []]
 
@@ -301,8 +302,8 @@ def test_dispatch_count_zero():
     """U8：无阶段的卡全部落顶层；单值字段顶层格子同样只留第一条。"""
     from core.card_draft import dispatch
 
-    assert dispatch([[1, 2], [1, 2]], 0, kind="list") == ([0, 1], [])
-    assert dispatch([[1, 2], [1, 2]], 0, kind="scalar") == ([0], [])
+    assert dispatch([[1, 2], [1, 2]], 0, kind="list") == ([0, 1], [], [])
+    assert dispatch([[1, 2], [1, 2]], 0, kind="scalar") == ([0], [], [])
 
 
 def test_scalar_same_phase_second_dropped_not_promoted():

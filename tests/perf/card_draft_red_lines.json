@@ -103,11 +103,6 @@
         "tests/test_card_draft.py",
         "assert sum(\"阶段编号不合法\" in r.getMessage() for r in caplog.records) == 1",
         0
-      ],
-      [
-        "tests/test_card_draft.py",
-        "assert all(p.behaviors == [] for p in card.character_arc.phases)",
-        1
       ]
     ],
     "M9  编号全部作废的做法改放顶层，而不是整条撤回": [

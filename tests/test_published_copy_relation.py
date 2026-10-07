@@ -371,7 +371,8 @@ class TestUnpublishIsWithdrawingTheRelease:
             "点赞没挂上，下面那条「点赞保留」会恒绿"
 
         await store.update_card_visibility(copy_id, "private")          # 下架
-        await store.update_card(draft, {"name": "李四"})                 # 草稿改名
+        await store.update_card(draft, {"name": "李四"},                 # 草稿改名
+                                expected=(await store.get_card_owned(draft, user_a))["card_json"])
         await store.save_card_avatar(draft, user_a, "NEWAV")             # 草稿改头像
 
         again = await store.publish_card(draft, user_a, "新desc", "新tag", "v2", '{"name": "李四"}')

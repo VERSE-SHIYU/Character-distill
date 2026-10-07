@@ -14,7 +14,8 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from core.card_layers import REGISTRY, get_path, set_path
-from core.schema import ArcPhase, BoundaryExample, CharacterCard, Relationship, RetrievalWindow
+from core.schema import (ArcPhase, BoundaryExample, CharacterCard, Relationship,
+                         RetrievalWindow, UnlocatedItems)
 
 
 class ArcView(NamedTuple):
@@ -130,7 +131,7 @@ def card_outline(card: CharacterCard, layers: tuple[str, ...] = ("state", "exper
         return out
 
     lifelong = rows(lambda path: get_path(card, path))
-    per_phase = [rows(lambda path, o=p.overlay: o.get(path))
+    per_phase = [rows(lambda path, o=p.overlay: get_path(o, path))
                  for p in card.character_arc.phases]
     return lifelong, per_phase
 
@@ -176,6 +177,7 @@ def _project_custom(proj: ProjectedCard, card: CharacterCard, k: int, n: int) ->
         proj.character_arc.axis = ""
         proj.first_message = ""
     proj.relationships = _project_relationships(card.relationships, k)
+    proj.character_arc.unlocated = UnlocatedItems()   # 未定位区不进 prompt：投影卡不带它
 
 
 def project_card(card: CharacterCard, arc_phase: int | None) -> tuple[ProjectedCard, ArcView]:
@@ -195,7 +197,7 @@ def project_card(card: CharacterCard, arc_phase: int | None) -> tuple[ProjectedC
     proj = ProjectedCard(**card.model_dump())
 
     for path, spec in REGISTRY.items():
-        kth = phases[k - 1].overlay.get(path) if k >= 1 else None
+        kth = get_path(phases[k - 1].overlay, path) if k >= 1 else None
         if spec.layer == "state":
             if spec.kind == "list":
                 base = list(get_path(proj, path) or [])
@@ -205,11 +207,11 @@ def project_card(card: CharacterCard, arc_phase: int | None) -> tuple[ProjectedC
         elif spec.layer == "experience":
             if spec.kind == "list":
                 base = list(get_path(proj, path) or [])
-                extra = [x for p in phases[:k] for x in (p.overlay.get(path) or [])]
+                extra = [x for p in phases[:k] for x in (get_path(p.overlay, path) or [])]
                 set_path(proj, path, base + extra)
             else:
                 parts = [get_path(proj, path) or ""]
-                parts += [p.overlay.get(path) or "" for p in phases[:k]]
+                parts += [get_path(p.overlay, path) or "" for p in phases[:k]]
                 set_path(proj, path, "；".join(x for x in parts if x))
 
     _project_custom(proj, card, k, view.n)

@@ -181,8 +181,13 @@ class StorageBase(ABC):
         """List cards under a text ID."""
 
     @abstractmethod
-    async def update_card(self, card_id: str, card_json: dict) -> dict:
-        """Update a card's JSON and return the updated record."""
+    async def update_card(self, card_id: str, card_json: dict, *, expected: str) -> dict | None:
+        """整卡写回，**比较后写入**：库里的 `card_json` 仍等于调用方读到的 `expected` 才写，
+        返回写后的记录；不等（读写之间别的请求改过这张卡）→ 不写，返回 None，由调用方报冲突。
+
+        乐观锁（spec arc-phase-unlocated §13）：每处整卡写回都是「读出、修改、写回」，
+        不比较的话后写的会静默覆盖先写的。`expected` 必填，新调用点不会漏掉这一步。
+        """
 
     # ── Card domain (market / fork / versions) ────────────
     #

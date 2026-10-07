@@ -1046,7 +1046,7 @@ class ChatEngine:
             line = (
                 f"对{target}：{note}"
                 if note else
-                f"对{target}：{rel.relation}，{rel.attitude}"
+                f"对{target}：{rel.relation}" + (f"，{rel.attitude}" if rel.attitude else "")
             )
             matched.append(line)
 

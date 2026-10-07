@@ -23,6 +23,8 @@ from core.schema import CharacterCard
 
 logger = logging.getLogger(__name__)
 
+_UNLOCATED_ATT = "character_arc.unlocated.attitudes"   # 未定位态度（与关系态度同口径核对）
+
 # 要核对的字段路径（`a.b[].c` 形状）。**唯一出处**：核对、验收、测试都读这一份。
 # 只列「引号里应是原文」的字段；不在清单里的一律不动。
 _VERIFIED_TOP: tuple[str, ...] = (
@@ -38,7 +40,7 @@ _VERIFIED_TOP: tuple[str, ...] = (
     "relationships[].attitude",
     "relationships[].phase_attitudes[].attitude",
     "situation_behaviors[].behavior",
-    "character_arc.phases[].behaviors[].behavior",
+    f"{_UNLOCATED_ATT}[].attitude",
 )
 
 # 整个值就声明「是原文」的字段（同样的路径形状）。**唯一出处**。对不上没有可保留的部分：
@@ -46,16 +48,19 @@ _VERIFIED_TOP: tuple[str, ...] = (
 _VERBATIM_TOP: tuple[str, ...] = (
     "speaking_style.catchphrases[]",
     "situation_behaviors[].source_quote",
-    "character_arc.phases[].behaviors[].source_quote",
 )
 
 
-def _overlay_paths(paths: tuple[str, ...]) -> tuple[str, ...]:
-    """同名路径在阶段 overlay 下的那一份（`character_arc.phases[].overlay.<路径>`）。
+_PHASE_OVERLAY = "character_arc.phases[].overlay"
+_UNLOCATED = "character_arc.unlocated"
 
-    overlay 装的是「只在这个阶段成立」的取值（登记表里 state / experience 类），同一字段的
-    引文照样要核。清单不重抄一份：登记表说哪些字段会进 overlay，这里就补哪些；`[]` 由登记表
-    的 `kind` 决定（单值字段在 overlay 里也是单值）。
+
+def _overlay_paths(paths: tuple[str, ...]) -> tuple[str, ...]:
+    """同名路径在阶段 overlay 与未定位区 overlay 下的那一份。
+
+    两处 overlay 都与卡片同形（叶子路径 = 登记表路径），同一字段的引文照样要核。清单不重抄：
+    登记表说哪些字段会进 overlay，这里就补哪些。阶段 overlay 收 state / experience，`[]` 由
+    `kind` 决定（单值字段在阶段里也是单值）；未定位区只收 state、一律是列表。
     """
     out: list[str] = []
     for path in paths:
@@ -63,13 +68,23 @@ def _overlay_paths(paths: tuple[str, ...]) -> tuple[str, ...]:
         spec = REGISTRY.get(base)
         if spec is None or spec.layer not in ("state", "experience"):
             continue
-        out.append(f"character_arc.phases[].overlay.{base}"
-                   + ("[]" if spec.kind == "list" else ""))
+        out.append(f"{_PHASE_OVERLAY}.{base}" + ("[]" if spec.kind == "list" else ""))
+        if spec.layer == "state":
+            out.append(f"{_UNLOCATED}.overlay.{base}[]")
     return tuple(out)
 
 
-VERIFIED_FIELDS: tuple[str, ...] = _VERIFIED_TOP + _overlay_paths(_VERIFIED_TOP)
-VERBATIM_FIELDS: tuple[str, ...] = _VERBATIM_TOP + _overlay_paths(_VERBATIM_TOP)
+def _behavior_paths(paths: tuple[str, ...]) -> tuple[str, ...]:
+    """顶层做法的路径在阶段做法、未定位做法下的那一份（做法的三个容器同一套字段）。"""
+    prefix = "situation_behaviors[]."
+    return tuple(f"{c}[].{p[len(prefix):]}" for p in paths if p.startswith(prefix)
+                 for c in ("character_arc.phases[].behaviors", f"{_UNLOCATED}.behaviors"))
+
+
+VERIFIED_FIELDS: tuple[str, ...] = (_VERIFIED_TOP + _behavior_paths(_VERIFIED_TOP)
+                                    + _overlay_paths(_VERIFIED_TOP))
+VERBATIM_FIELDS: tuple[str, ...] = (_VERBATIM_TOP + _behavior_paths(_VERBATIM_TOP)
+                                    + _overlay_paths(_VERBATIM_TOP))
 
 
 def _descend(node: Any, segs: list[str], label: str, out: list) -> None:

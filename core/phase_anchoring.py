@@ -26,21 +26,26 @@ MAX_OCCURRENCES = 3
 
 
 class Verification(NamedTuple):
-    """位置检查结果：每条条目的最终阶段、每阶段落卡用的摘录，以及监测计数。
+    """位置检查结果：每条条目的最终阶段、每阶段落卡用的摘录、每个标注落到哪，以及监测计数。
 
-    `phases` / `phase_quotes` 与传入的条目列表等长（按序号对应）。`phase_quotes[i]`
-    是第 i 条条目在每个最终阶段下该用的 `source_quote`（顶层不用它，取第一条摘录）。
-    `starts` 是各阶段起点在规范化原文里的位置（整卡跳过 / 无阶段时 None）。计数口径见
-    spec §3.2 规则 6 —— 由 `card_from_draft` 打监测行（本模块不打，避免日志出处分家）。
+    `phases` / `phase_quotes` / `tag_targets` 与传入的条目列表等长（按序号对应）。
+    `phase_quotes[i]` 是第 i 条条目在每个最终阶段下该用的 `source_quote`（顶层不用它，取第一条
+    摘录）。`tag_targets[i][p]` 是模型标的阶段 p 按摘录位置最终落到的阶段（空 = 没有位置证据）
+    —— 关系态度按它逐条分发（每个阶段的态度文字不同，不能整条挪）。`unlocated` 是有合法标注、
+    却没有任何一段摘录能定位的条目序号（由 `card_from_draft` 按类别处置）。`starts` 是各阶段
+    起点在规范化原文里的位置（整卡跳过 / 无阶段时 None）。计数口径见 spec §3 —— 由
+    `card_from_draft` 打监测行（本模块不打，避免日志出处分家）。
     """
     phases: list[list[int]]
     phase_quotes: list[dict[int, str]]
+    tag_targets: list[dict[int, list[int]]]
     skipped_card: bool
     tags: int
     dropped: int
     ambiguous: int
     unverified_quotes: int
-    fallback: int
+    rehung: int
+    unlocated: list[int]
     starts: list[int] | None
 
 
@@ -88,6 +93,14 @@ def phase_ranges(phases, source_norm: str) -> tuple[list[tuple[int, int]], str]:
     return ranges, ""
 
 
+def phase_at(ranges: list[tuple[int, int]], pos: int) -> int:
+    """规范化位置 `pos` 落在第几个阶段（1 起）；区间半开，相邻区间首尾相接、覆盖全文。"""
+    for i, (lo, hi) in enumerate(ranges, 1):
+        if lo <= pos < hi:
+            return i
+    return len(ranges)
+
+
 class PhaseAnchors(NamedTuple):
     """位置核对的上下文：规范化原文 + 各阶段区间 + 整卡跳过的原因 —— **一张卡建一次**。
 
@@ -112,22 +125,22 @@ def build_anchors(phases, source_text: str) -> PhaseAnchors:
 def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
            kind: str = "做法", label=_situation_label, name: str = "",
            warn_skip: bool = True) -> Verification:
-    """按原文位置校正每条条目的阶段 —— **对任意带 `occurrences` 的条目列表**工作。
+    """按原文位置定每条条目的阶段 —— **对任意带 `occurrences` 的条目列表**工作。
 
-    做法（`DraftBehavior`）与记忆（`DraftMemory`）各调一次：两者的位置检查口径完全一样，
-    差异只在监测/警告文案里的 `kind` 与 `label`。「整卡跳过」是卡级的，调用方对第二类条目
-    传 `warn_skip=False` 免得同一原因打两条；没有条目时也不打（这里根本没检查过东西）。
+    规则（spec `arc-phase-unlocated.md` §3.1，取代 `arc-phase-anchoring.md` 的规则 3、4）：
+    **每段摘录各是一份证据，摘录落在哪个阶段就挂哪个阶段。** 摘录有一处落在模型标的阶段 p
+    → 只认 p；一处都不在 p → 挂到它所有出现位置所在的阶段（改挂）；查不到或出现超过
+    `MAX_OCCURRENCES` 次 → 不作证据。一条条目所有标注都没有证据 → 记入 `unlocated`，
+    **不退回模型原标注**（原兜底 D5 只在整卡跳过时保留，即规则 2）。经历类「只挂最早」由
+    `card_draft.dispatch` 统一处理，这里不分类别。
 
     `valid_rows`：`card_from_draft` 先做规则 0（编号合法性过滤）后，每条条目剩下的合法阶段编号
-    （升序、去重）。本函数只对合法编号做位置检查；顺序、兜底、取值口径见 spec §3.2。
-
-    `anchors`：`card_from_draft` 开头 `build_anchors` 建一次的那个上下文（整本原文只归一化
-    一次，效率 #1）。本函数不再自己归一化原文。
+    （升序、去重）。`anchors`：`card_from_draft` 开头 `build_anchors` 建一次的上下文。
     """
     n = anchors.n
     if n == 0:                                   # 规则 5：无阶段的卡不做位置检查
-        return Verification([[] for _ in items], [{} for _ in items],
-                            False, 0, 0, 0, 0, 0, None)
+        return Verification([[] for _ in items], [{} for _ in items], [{} for _ in items],
+                            False, 0, 0, 0, 0, 0, [], None)
 
     source_norm = anchors.source_norm
     ranges, reason = anchors.ranges, anchors.reason
@@ -138,9 +151,11 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
 
     final: list[list[int]] = []
     phase_quotes: list[dict[int, str]] = []
-    tags = dropped = ambiguous = unverified = fallback = 0
+    tag_targets: list[dict[int, list[int]]] = []
+    unlocated: list[int] = []
+    tags = dropped = ambiguous = unverified = rehung = 0
 
-    for item, valid in zip(items, valid_rows):
+    for i, (item, valid) in enumerate(zip(items, valid_rows)):
         by_phase: dict[int, list[str]] = {}
         for occ in item.occurrences:
             by_phase.setdefault(occ.phase, []).append(occ.quote)
@@ -148,46 +163,54 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
         if not valid:                            # 规则 0 已整条撤回
             final.append([])
             phase_quotes.append({})
+            tag_targets.append({})
             continue
         if skipped:                              # 规则 2：保留标注，摘录取首段
             tags += len(valid)                   # 分母照常计（监测比例要用）
             final.append(list(valid))
             phase_quotes.append(_first_quotes(by_phase, valid))
+            tag_targets.append({p: [p] for p in valid})
             continue
 
-        standing: list[int] = []
-        chosen: dict[int, str] = {}
+        targets: dict[int, list[int]] = {}
+        own: dict[int, str] = {}                 # 落进所标阶段的摘录（优先作该阶段的 source_quote）
+        moved: dict[int, str] = {}               # 改挂过来的摘录
         for p in valid:                          # 计数单位是标注（条目, 阶段），不是摘录
             tags += 1
-            picked = ""
-            for quote in by_phase.get(p, []):    # 规则 3：同阶段多段摘录，任一段通过即成立
+            hit: set[int] = set()
+            for quote in by_phase.get(p, []):    # 每段摘录各是一份证据
                 loc = locate_in_normalized(source_norm, quote)
                 if loc is None or len(loc) > MAX_OCCURRENCES:
                     unverified += 1              # 查不到 / 出现太多 → 不作位置证据
                     continue
-                lo, hi = ranges[p - 1]
-                if any(lo <= x < hi for x in loc):
-                    if len(loc) > 1:
+                landed = sorted({phase_at(ranges, x) for x in loc})
+                if p in landed:                  # 落进所标阶段：只认所标阶段
+                    if p not in own and len(loc) > 1:
                         ambiguous += 1           # D6：任意一次命中即通过，记「位置不唯一」
-                    picked = quote
-                    break
-            if picked:
-                standing.append(p)
-                chosen[p] = picked
-            else:                                # 规则 3：去掉的标注各打一条 warning
+                    own.setdefault(p, quote)
+                    hit.add(p)
+                else:                            # 没落进：落在哪个阶段就挂哪个（D1）
+                    for t in landed:
+                        moved.setdefault(t, quote)
+                    hit.update(landed)
+            targets[p] = sorted(hit)
+            if not hit:                          # 去掉的标注各打一条 warning
                 dropped += 1
-                logger.warning("去掉标注：%s %r 在阶段 %d 没有落在该阶段的摘录",
+                logger.warning("去掉标注：%s %r 在阶段 %d 没有能定位的摘录",
                                kind, label(item), p)
+            elif targets[p] != [p]:
+                logger.warning("改挂：%s %r 标在阶段 %d，摘录落在阶段 %s",
+                               kind, label(item), p, targets[p])
 
-        if not standing:                         # 规则 4：全部被去掉 → 兜底，退回合法标注
-            fallback += 1
-            logger.warning("兜底：%s %r 的标注全部被去掉，退回原标注 %s",
-                           kind, label(item), valid)
-            final.append(list(valid))
-            phase_quotes.append(_first_quotes(by_phase, valid))
-        else:
-            final.append(standing)
-            phase_quotes.append(chosen)
+        landed_all = sorted({t for ts in targets.values() for t in ts})
+        tag_targets.append(targets)
+        final.append(landed_all)
+        phase_quotes.append({t: own.get(t) or moved[t] for t in landed_all})
+        if not landed_all:                       # 没有任何位置证据 → 交调用方按类别处置
+            unlocated.append(i)
+            logger.warning("未定位：%s %r 的标注 %s 都没有能定位的摘录", kind, label(item), valid)
+        elif any(ts and ts != [p] for p, ts in targets.items()):
+            rehung += 1
 
-    return Verification(final, phase_quotes, skipped, tags, dropped, ambiguous,
-                        unverified, fallback, starts)
+    return Verification(final, phase_quotes, tag_targets, skipped, tags, dropped, ambiguous,
+                        unverified, rehung, unlocated, starts)

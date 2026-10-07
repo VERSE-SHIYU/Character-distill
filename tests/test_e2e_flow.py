@@ -128,7 +128,7 @@ class TestFullUserFlow:
 
         # Update card
         updated = json.dumps({"name": "Alice", "age": 26}, ensure_ascii=False)
-        result = await store.update_card(card_ids[0], json.loads(updated))
+        result = await store.update_card(card_ids[0], json.loads(updated), expected=card["card_json"])
         assert result is not None
 
     async def test_04_chat_session_and_messages(self, store):

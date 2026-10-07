@@ -7,6 +7,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import TraitList from './common/TraitList'
 import ArcList from './common/ArcList'
+import UnlocatedList, { hasUnlocated } from './common/UnlocatedList'
 import BehaviorList from './common/BehaviorList'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import useCanWrite from '../hooks/useCanWrite'
@@ -629,6 +630,7 @@ function CardDetail({ card, textId, goBack }) {
   const setUserRole = useAppStore((s) => s.setUserRole)
   const getUserRole = useAppStore((s) => s.getUserRole)
   const updateCard = useAppStore((s) => s.updateCard)
+  const moveUnlocated = useAppStore((s) => s.moveUnlocated)
   const [showShareConfirm, setShowShareConfirm] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [cropFile, setCropFile] = useState(null)
@@ -714,8 +716,18 @@ function CardDetail({ card, textId, goBack }) {
     setCropFile(null)
   }, [])
 
+  // 选阶段 → 点「挪入」→ store.moveUnlocated（POST，后端挪动并经 out_card 回卡）→ 写回
+  // currentCard → 本组件重渲染：ArcList 与未定位区都从新卡重新算。失败只报错，不改本地卡。
+  const handleMoveUnlocated = async (section, index, phase, path) => {
+    try {
+      await moveUnlocated(card.id || card.card_id, { section, index, phase, path, revision: card.revision })
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
   const handleSaveEdit = async (cardJson) => {
-    await updateCard(card.id || card.card_id, cardJson)
+    await updateCard(card.id || card.card_id, cardJson, card.revision)
     setShowEditModal(false)
   }
 
@@ -835,6 +847,13 @@ function CardDetail({ card, textId, goBack }) {
         {data.character_arc?.phases?.length > 0 && (
           <CardSection label="角色弧线">
             <ArcList arc={data.character_arc} />
+          </CardSection>
+        )}
+
+        {/* 未定位区：只给卡主（可写账号）看、可挪；市场卡详情不渲染 */}
+        {canWrite && hasUnlocated(data.character_arc) && (
+          <CardSection label="未定位的条目">
+            <UnlocatedList arc={data.character_arc} onMove={handleMoveUnlocated} />
           </CardSection>
         )}
 

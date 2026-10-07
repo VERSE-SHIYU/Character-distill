@@ -214,8 +214,11 @@ def test_s11_import_direction():
     op = _imports(_CORE / "opening.py")
     assert not (op & {"web", "storage", "distiller"}), f"opening 导入越界：{op}"
 
+    # `fingerprint` 是只依赖标准库的叶子模块：卡的 revision 复用正文指纹那一处哈希（§13），
+    # 不在出卡模块里另写一份 hashlib。
     co = _imports(_CORE / "card_out.py")
-    assert co <= {"schema", "json", "typing"}, f"card_out 导入了越界模块（§4.0 只可导入 core.schema）：{co}"
+    assert co <= {"schema", "fingerprint", "json", "typing"}, (
+        f"card_out 导入了越界模块（§4.0 只可导入 core.schema 与叶子模块 core.fingerprint）：{co}")
 
 
 # ── S12 开场白 / 苏醒台词提示词只在 `core/opening.py` ─────────────────────────
@@ -301,8 +304,26 @@ def _callers(path: Path, func: str) -> set[str]:
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == func}
 
 
+def _returns_result_of(path: Path, method: str) -> set[str]:
+    """函数名集合：函数体里 `x = await <obj>.<method>(...)`，且某个 `return` 用到了 `x`（AST）。"""
+    out: set[str] = set()
+    for fn in ast.walk(ast.parse(_read(path))):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        bound = {t.id for n in ast.walk(fn) if isinstance(n, ast.Assign)
+                 and isinstance(n.value, ast.Await) and isinstance(n.value.value, ast.Call)
+                 and isinstance(n.value.value.func, ast.Attribute)
+                 and n.value.value.func.attr == method
+                 for t in n.targets if isinstance(t, ast.Name)}
+        used = {x.id for r in ast.walk(fn) if isinstance(r, ast.Return) and r.value is not None
+                for x in ast.walk(r.value) if isinstance(x, ast.Name)}
+        if bound & used:
+            out.add(fn.name)
+    return out
+
+
 def test_s15_out_card_is_the_only_card_out():
-    """出卡只有 `core/card_out.py::out_card` 一处，且只在两个开聊接口被调（B4）。
+    """出卡只有 `core/card_out.py::out_card` 一处；返回卡片给 store 的接口都经它（B4）。
 
     `selectable` 是派生值（起点齐全 + 指纹），**不随卡落库**：模型上不再有 `computed_field`，
     否则存库那刻算一遍写进 `card_json` 就会过期（旧卡没这个键；位置是后台作业补的，补完那张
@@ -317,9 +338,16 @@ def test_s15_out_card_is_the_only_card_out():
     assert "computed_field" not in schema, "schema 里还留着 computed_field（派生值会落库）"
     assert not re.search(r"\bdef selectable\b", schema), "schema 里还留着 selectable"
 
-    # 3) 调用点只在这两个开聊接口（`StartChatButton` 的两条取数路径）
+    # 3) 调用点 = 返回的卡会写进 store、被开聊按钮读到的接口：两个开聊列表 + 编辑保存 + 挪动
+    #    （spec arc-phase-unlocated §6：本意是「流到开聊按钮的卡都经 out_card」，不是「只两处」）。
+    #    机械判据：distill 路由里凡是**把 `storage.update_card` 的结果 return 出去**的函数，
+    #    都必须在集合里（后台任务只写不返回，不算）。
     callers = _callers(_WEB / "routers" / "distill.py", "out_card")
-    assert callers == {"list_cards", "list_standalone_cards"}, f"out_card 调用点不对：{callers}"
+    assert callers == {"list_cards", "list_standalone_cards", "update_card",
+                       "move_unlocated_item"}, f"out_card 调用点不对：{callers}"
+    returning = _returns_result_of(_WEB / "routers" / "distill.py", "update_card")
+    assert returning == {"update_card", "move_unlocated_item"}, f"返回更新后卡片的接口变了：{returning}"
+    assert returning <= callers, f"返回更新后卡片却没走 out_card：{returning - callers}"
     extra = _files(_BOTH, r"\bout_card\(") - {"core/card_out.py", "web/routers/distill.py"}
     assert not extra, f"out_card 在别处也被调/定义：{extra}"
 

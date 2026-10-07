@@ -252,7 +252,7 @@ class TestDistillOwnership:
 
     def test_update_card_404(self, store, owner, intruder_client):
         cid = _card(store, owner)
-        r = intruder_client.patch(f"/api/distill/card/{cid}", json={"card_json": {}})
+        r = intruder_client.patch(f"/api/distill/card/{cid}", json={"card_json": {}, "revision": "x"})
         assert r.status_code == 404 and r.status_code != 403
 
     def test_export_card_404(self, store, owner, intruder_client):

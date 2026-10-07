@@ -1241,15 +1241,17 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Save card failed: {exc}")
             raise
 
-    async def update_card(self, card_id: str, card_json: dict) -> dict:
-        """Update a card's JSON content by ID."""
+    async def update_card(self, card_id: str, card_json: dict, *, expected: str) -> dict | None:
+        """比较后写入，契约见 `StorageBase.update_card`。"""
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE cards SET card_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (json.dumps(card_json, ensure_ascii=False), card_id),
+                cur = await conn.execute(
+                    "UPDATE cards SET card_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND card_json = ?",
+                    (json.dumps(card_json, ensure_ascii=False), card_id, expected),
                 )
                 await conn.commit()
+                if cur.rowcount == 0:
+                    return None
                 return await self.get_card_unscoped(card_id) or {}
         except Exception as exc:
             print(f"[SQLiteStore] Update card failed: {exc}")

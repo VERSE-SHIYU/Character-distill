@@ -30,6 +30,8 @@ from core.schema import (
     CharacterCard,
     PhaseState,
     Relationship,
+    placeholder_phase_attitudes,
+    top_attitude,
 )
 
 logger = logging.getLogger(__name__)
@@ -190,6 +192,14 @@ def _valid_number_rows(items, count: int, kind: str) -> list[list[int]]:
     return valid_rows
 
 
+def experience_fallback(count: int) -> list[int]:
+    """经历类没有位置证据 → 挂最后阶段（时间不明放最后，永不泄露后续剧情；spec §3.2）。
+
+    `dispatch`（记忆、字段）与关系（一条态度都不剩的关系）共用这一处。
+    """
+    return [count]
+
+
 def _layer_phases(final_phases: list[list[int]], count: int, layer: str) -> list[list[int]]:
     """按类别把每条条目的最终阶段折成「要挂的阶段」：``experience`` 只留最早阶段。
 
@@ -203,18 +213,30 @@ def _layer_phases(final_phases: list[list[int]], count: int, layer: str) -> list
 
 def dispatch(final_phases: list[list[int]], count: int, *,
              layer: str = "state", kind: str = "list",
-             label: str = "") -> tuple[list[int], list[list[int]]]:
-    """按最终阶段把条目分发到顶层与各阶段 —— 分发只此一处（S6 / B1）。
+             label: str = "", unlocated: list[int] = ()) -> tuple[list[int], list[list[int]], list[int]]:
+    """按最终阶段把条目分发到顶层、各阶段与未定位区 —— 分发只此一处（S6 / B1）。
 
     `layer` 决定「挂到哪些阶段」：``state``（默认，做法走这条）→ 每个最终阶段都挂；
     ``experience``（记忆）→ 只挂最早阶段（`_layer_phases`）。共同规则：无阶段的卡
     （`count == 0`）或标注覆盖全部阶段 → 顶层；编号全部被撤回（`final` 空）→ 整条不出现。
 
+    `unlocated`（`phase_anchoring.verify` 给的序号：有合法标注、却没有一段摘录能定位）按类别
+    处置（spec §3.2）：``experience`` → 挂最后阶段（时间不明放最后，永不泄露后续剧情）；
+    ``state`` → 不进任何阶段，序号原样交回第三项，由调用方放进未定位区。
+
     `kind` 决定「一个格子放几条」（登记表说了算）：``list`` → 全放；``scalar`` → 顶层与
     每个阶段都只留第一条，其余丢弃 + warning（单值字段一个格子存不下两条）。
 
-    返回 `(顶层序号, by_phase)`，`by_phase[p-1]` 是挂到阶段 p 的序号，**`by_phase[` 只在这里出现**。
+    返回 `(顶层序号, by_phase, 未定位序号)`，`by_phase[p-1]` 是挂到阶段 p 的序号，
+    **`by_phase[` 只在这里出现**。
     """
+    final_phases = [list(f) for f in final_phases]
+    loose: list[int] = []
+    for i in unlocated:
+        if layer == "experience":
+            final_phases[i] = experience_fallback(count)
+        else:
+            loose.append(i)
     final_phases = _layer_phases(final_phases, count, layer)
     top: list[int] = []
     by_phase: list[list[int]] = [[] for _ in range(count)]
@@ -228,7 +250,7 @@ def dispatch(final_phases: list[list[int]], count: int, *,
         top = _cap_slot(top, label, "顶层")
         by_phase = [_cap_slot(slot, label, f"阶段 {p}") if slot else slot
                     for p, slot in enumerate(by_phase, 1)]
-    return top, by_phase
+    return top, by_phase, loose
 
 
 def _cap_slot(slot: list[int], label: str, where: str) -> list[int]:
@@ -238,38 +260,65 @@ def _cap_slot(slot: list[int], label: str, where: str) -> list[int]:
     return slot[:1]
 
 
-def _convert_relationships(rels, anchors, count: int, name: str) -> list[dict]:
-    """关系草稿 → 存卡关系：态度复用位置检查与编号过滤，写 `phase_attitudes` 与顶层 `attitude`。
+def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[dict], list[dict], int, int]:
+    """关系草稿 → 存卡关系：**每条态度单独**过位置检查与 `dispatch`，再按关系收回（spec §3.3）。
 
-    顶层 `attitude` 取它出现的最后一个（存留下来的）阶段的态度 —— k=n 与前端编辑都读它。
-    没有 `attitudes` 的关系（旧卡）原样保留。
+    态度是状态类：摘录落到哪些阶段就挂到哪些阶段（改挂，同 D1），没有位置证据的进未定位区。
+    每条态度各自是一个检查条目 —— 按关系聚合的话，同一阶段的几条态度会共用位置证据，A 的摘录
+    会把 B 也带走（审计发现 1）。同一阶段挂上多条时，**原本就标在这个阶段**的那条优先，其余按
+    标注顺序取第一条；一个阶段都没赢下的态度进未定位区，`note` 与原标阶段跟着它走。一条态度
+    都不剩的关系按经历类挂最后阶段、态度留空（`placeholder_phase_attitudes`）。顶层 `attitude`
+    取 `top_attitude`。没有 `attitudes` 的关系（旧卡）原样保留。
+    返回 `(关系, 未定位态度, 改挂条数, 挂最后阶段条数)`。
     """
     if not rels:
-        return []
+        return [], [], 0, 0
+    flat = [(i, a) for i, r in enumerate(rels) for a in r.attitudes]
     # 复用 `DraftMemory` 当载体：位置检查要的只是「带 occurrences 的条目」，target 当 label。
-    items = [DraftMemory(
-        memory=r.target,
-        occurrences=[DraftOccurrence(phase=a.phase, quote=a.quote) for a in r.attitudes],
-    ) for r in rels]
+    items = [DraftMemory(memory=rels[i].target,
+                         occurrences=[DraftOccurrence(phase=a.phase, quote=a.quote)])
+             for i, a in flat]
     res = phase_anchoring.verify(
         items, _valid_number_rows(items, count, "态度"), anchors,
         kind="态度", label=lambda x: x.memory, name=name)
+    # 未定位的态度（`dispatch` 第三项）不在任何格子里，下面自然一个阶段都赢不下 → 进未定位区
+    top, slots, _ = dispatch(res.phases, count, unlocated=res.unlocated)
     out: list[dict] = []
+    loose: list[dict] = []
+    to_last = 0
     for i, r in enumerate(rels):
         row = r.model_dump()
         row.pop("attitudes", None)
         if not r.attitudes:
             out.append(row)                       # 旧卡：顶层 attitude 原样
             continue
-        att_map = {a.phase: a.attitude for a in r.attitudes}
-        note_map = {a.phase: a.note for a in r.attitudes}
-        final = res.phases[i]
-        row["phase_attitudes"] = [
-            {"phase": p, "attitude": att_map.get(p, ""), "note": note_map.get(p, "")}
-            for p in final]
-        row["attitude"] = att_map[max(final or att_map)]
+        mine = [j for j, (ri, _) in enumerate(flat) if ri == i]
+        if count == 0:                            # 无阶段的卡：不分阶段，取最后一条态度
+            row["phase_attitudes"] = []
+            row["attitude"] = r.attitudes[-1].attitude
+            out.append(row)
+            continue
+        winners: dict[int, int] = {}              # 阶段 → 该阶段采用的态度（flat 序号）
+        for t in range(1, count + 1):
+            cands = [j for j in mine if j in top or j in slots[t - 1]]
+            if cands:
+                winners[t] = next((j for j in cands if flat[j][1].phase == t), cands[0])
+        won = set(winners.values())
+        for j in mine:
+            if j not in won:                      # 没有位置证据，或撞车全输 → 未定位区
+                a = flat[j][1]
+                loose.append({"target": r.target, "attitude": a.attitude, "note": a.note,
+                              "phase": a.phase})
+        if winners:
+            row["phase_attitudes"] = [
+                {"phase": t, "attitude": flat[j][1].attitude, "note": flat[j][1].note}
+                for t, j in sorted(winners.items())]
+        else:                                     # 一条都不剩 → 经历类：挂最后阶段、态度留空
+            to_last += 1
+            row["phase_attitudes"] = placeholder_phase_attitudes(experience_fallback(count)[0])
+        row["attitude"] = top_attitude(row["phase_attitudes"])
         out.append(row)
-    return out
+    return out, loose, res.rehung, to_last
 
 
 def card_from_draft(data: Any, source_text: str) -> CharacterCard:
@@ -277,7 +326,8 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
 
     先做阶段编号合法性过滤（越界、空 → 对不上的撤回、打 warning，一条的编号全部作废就整条
     撤回，与 `core.card_quotes.retract_unverified` 对模型输出的口径同）；再让 `phase_anchoring`
-    按 `source_text` 核对摘录位置，标错的阶段去掉，全部被去掉的退回原标注（兜底）。做法与记忆
+    按 `source_text` 核对摘录位置，摘录落在哪个阶段就挂哪个阶段（改挂）；一段都定不了位的，
+    状态类进未定位区、经历类挂最后阶段（spec `arc-phase-unlocated.md` §3）。做法与记忆
     各走一遍（位置检查口径相同），结果交 `dispatch` 分发：做法按状态类挂到每个成立阶段，记忆按
     经历类只挂最早阶段；所有阶段都成立 → 顶层，没有阶段的卡全部放顶层、不做位置检查。关系态度
     同样过一遍检查。最后写
@@ -297,16 +347,15 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
         _valid_number_rows(draft.key_memories, count, "记忆"),
         anchors, kind="记忆", name=draft.name,
         warn_skip=not draft.situation_behaviors)   # 卡的跳过警告由第一类有内容的条目打一次
-    logger.info("[phase_anchoring] card=%s tags=%d dropped=%d ambiguous=%d "
-                "unverified_quotes=%d fallback=%d skipped_card=%s memories_dropped=%d",
-                draft.name, b.tags, b.dropped, b.ambiguous,
-                b.unverified_quotes, b.fallback, b.skipped_card, m.dropped)
-
-    b_top, b_slots = dispatch(b.phases, count)
-    m_top, m_slots = dispatch(m.phases, count, layer="experience")
+    b_top, b_slots, b_loose = dispatch(b.phases, count, unlocated=b.unlocated)
+    m_top, m_slots, _ = dispatch(m.phases, count, layer="experience", unlocated=m.unlocated)
+    # 监测按四类分别计（改挂 / 进未定位区 / 挂最后阶段），日志行里再给汇总（spec §3.7）
+    kinds = {"做法": [b.rehung, len(b_loose), 0], "字段": [0, 0, 0],
+             "记忆": [m.rehung, 0, len(m.unlocated)], "关系": [0, 0, 0]}
 
     card = draft.model_dump()
     overlays: dict[int, dict[str, Any]] = {}
+    loose_overlay: dict[str, Any] = {}
     for path, spec in _GENERIC_PATHS:
         rows = get_path(draft, path)
         res = phase_anchoring.verify(
@@ -314,8 +363,12 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
             kind=path, label=lambda x: x.value, name=draft.name, warn_skip=False)
         # 列表与单值走同一个循环：`kind` 在 `dispatch` 里决定格子容量（scalar 每格只留第一条），
         # 这里只按 `kind` 决定取值形态（list → 列表，scalar → 单值）。
-        top, slots = dispatch(res.phases, count, layer=spec.layer, kind=spec.kind,
-                              label=path)
+        top, slots, loose = dispatch(res.phases, count, layer=spec.layer, kind=spec.kind,
+                                     label=path, unlocated=res.unlocated)
+        f = kinds["字段"]
+        f[0] += res.rehung
+        f[1] += len(loose)
+        f[2] += len(res.unlocated) - len(loose)
         top_vals = [rows[i].value for i in top]
         set_path(card, path,
                  top_vals if spec.kind == "list" else (top_vals[0] if top_vals else ""))
@@ -323,7 +376,11 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
             vals = [rows[i].value for i in slot]
             if not vals:
                 continue
-            overlays.setdefault(idx, {})[path] = vals if spec.kind == "list" else vals[0]
+            # overlay 与卡片同形：按登记表路径嵌套写入，不把路径当键名（spec §3.5）
+            set_path(overlays.setdefault(idx, {}), path,
+                     vals if spec.kind == "list" else vals[0])
+        if loose:                                 # 未定位区一律存列表（单值字段也可能有多条）
+            set_path(loose_overlay, path, [rows[i].value for i in loose])
 
     card["situation_behaviors"] = [
         {"situation": draft.situation_behaviors[i].situation,
@@ -332,8 +389,25 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
         for i in b_top
     ]
     card["key_memories"] = [draft.key_memories[i].memory for i in m_top]
-    card["relationships"] = _convert_relationships(
+    card["relationships"], loose_attitudes, r_rehung, r_to_last = _convert_relationships(
         draft.relationships, anchors, count, draft.name)
+    kinds["关系"] = [r_rehung, len(loose_attitudes), r_to_last]
+    rehung, unlocated, to_last = (sum(v[i] for v in kinds.values()) for i in range(3))
+    card["character_arc"]["unlocated"] = {
+        "behaviors": [
+            {"situation": draft.situation_behaviors[i].situation,
+             "behavior": draft.situation_behaviors[i].behavior,
+             "source_quote": _first_quote(draft.situation_behaviors[i])}
+            for i in b_loose],
+        "overlay": loose_overlay,
+        "attitudes": loose_attitudes,
+    }
+    logger.info("[phase_anchoring] card=%s tags=%d dropped=%d ambiguous=%d "
+                "unverified_quotes=%d rehung=%d unlocated=%d to_last=%d "
+                "skipped_card=%s memories_dropped=%d kinds=%s",
+                draft.name, b.tags, b.dropped, b.ambiguous, b.unverified_quotes,
+                rehung, unlocated, to_last, b.skipped_card, m.dropped,
+                ",".join(f"{k}:{r}/{u}/{t}" for k, (r, u, t) in kinds.items()))
 
     for idx, phase in enumerate(card["character_arc"]["phases"]):
         phase["behaviors"] = [
@@ -344,7 +418,7 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
         ]
         memories = [draft.key_memories[i].memory for i in m_slots[idx]]
         if memories:
-            overlays.setdefault(idx, {})["key_memories"] = memories
+            set_path(overlays.setdefault(idx, {}), "key_memories", memories)
         if idx in overlays:
             phase["overlay"] = overlays[idx]
     if b.starts is not None:                      # 整卡跳过位置检查 → 不写起点（D7）

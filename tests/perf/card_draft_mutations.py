@@ -72,8 +72,8 @@ MUTATIONS = [
     # 撞到 [68, 89, 96, 148]
     ('M5  位置校正的结果一律丢空：每条做法都当成「编号全废」整条撤回',
      TARGET, [("repl", DRAFT, [
-         ('    b_top, b_slots = dispatch(b.phases, count)',
-          '    b_top, b_slots = dispatch([[] for _ in b.phases], count)'),
+         ('    b_top, b_slots, b_loose = dispatch(b.phases, count, unlocated=b.unlocated)',
+          '    b_top, b_slots, b_loose = dispatch([[] for _ in b.phases], count)'),
      ])], "RED"),
     # 撞到 [104, 113]
     ('M6  删掉非法编号的 warning',
@@ -237,10 +237,12 @@ MUTATIONS = [
     # 撞到 [263]
     ('M27  分组流式校验失败的错误帧键名不是 error',
      TARGET, [("repl", DIST, [
-         ('            yield {"error": user_facing_error(exc)}\n'
-          '            return\n\n        yield json.dumps(draft.model_dump()',
-          '            yield {"message": user_facing_error(exc)}\n'
-          '            return\n\n        yield json.dumps(draft.model_dump()'),
+         # 锚点钉在「校验失败」那一支：#116 在它后面加了同形的 DistillError 分支，旧锚点
+         # 悄悄滑到那一支上（没有测试 → M27 空转；spec arc-phase-unlocated §8.3）
+         ('            logger.error("Pydantic 校验 CharacterCard 失败：%s", exc)\n'
+          '            yield {"error": user_facing_error(exc)}',
+          '            logger.error("Pydantic 校验 CharacterCard 失败：%s", exc)\n'
+          '            yield {"message": user_facing_error(exc)}'),
      ])], "RED"),
     # 撞到 [257]
     ('M28  分组流式在 distiller 里就转成卡，交出的不再是草稿（occurrences 已丢）',
