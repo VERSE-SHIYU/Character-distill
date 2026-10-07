@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
+
+from core.affinity_rules import CLOSE_FROM, RelationState, apply_event, warming_conditions
+
+logger = logging.getLogger(__name__)
 
 
 # IOS₁₁ (Scientific Reports 2024) 11级亲密度 → Bogardus 7级社会距离映射
@@ -11,8 +16,8 @@ AFFINITY_STAGES = [
     (0, 18, "陌生", "🫥"),      # IOS 1-2, Bogardus 6-7
     (18, 36, "认识", "🙂"),     # IOS 3-4, Bogardus 4-5
     (36, 55, "熟悉", "😊"),     # IOS 5-6, Bogardus 3
-    (55, 73, "朋友", "😄"),     # IOS 7-8, Bogardus 2
-    (73, 91, "亲近", "🥰"),     # IOS 9-10, Bogardus 1-2
+    (55, CLOSE_FROM, "朋友", "😄"),     # IOS 7-8, Bogardus 2
+    (CLOSE_FROM, 91, "亲近", "🥰"),     # IOS 9-10, Bogardus 1-2
     (91, 101, "心意相通", "💕"), # IOS 11, Bogardus 1
 ]
 
@@ -77,6 +82,8 @@ class AffinityService:
         # ── P1 影子模式：8 轮 delta 历史环形缓冲（纯内存，不落库） ──
         self._delta_ring: list[dict] = []
         self._ring_maxlen: int = 8
+        # 规则表的状态（原型：只在内存；落库随 spec 的落库一段做）
+        self.relation: RelationState = RelationState()
 
     def _record_delta_ring(self, *, affinity_delta: int, trust_delta: int,
                            guard_delta: int, trigger_hit: bool,
@@ -232,7 +239,18 @@ class AffinityService:
             "- 情绪有惯性：愤怒→道歉→不是立刻开心，而是'不甘+犹豫'的过渡态\n"
             "- 连续3轮正面互动才能触发阶段性好感跃升\n\n"
             + baseline_rules
-            + "重要性评分规则（用于判断对话记忆的营养程度）：\n"
+            + "好感事件判定规则（用于 affinity_event / affinity_tier / affinity_delta）：\n"
+            "- 只判断对方这一轮做了哪类事，不要自己给好感数值：\n"
+            "  met_condition=做到了下面某一条亲近条件；friendly=一般友好；"
+            "neutral=闲聊（敷衍和「嗯」「哦」这类纯应答也算闲聊，不算一般友好）；"
+            "offended=冒犯；trigger=触到雷点；repair=道歉、解释或补偿\n"
+            "- 亲近条件（met_condition 时在 met_condition_index 填满足的是第几条，从 0 数）：\n"
+            + "".join(f"  {i}. {c}\n" for i, c in enumerate(warming_conditions(psyche)))
+            + "- 必须先选档，再在该档内给整数：small（1–2）只是点到为止；"
+            "medium（3–5）切实回应了或明确搞砸了；large（6–8）真正改变了你对 ta 的态度，"
+            "大幅正向通常要前面几轮一致\n"
+            "- 不要太快接受道歉：一句好话不该带来大幅回升\n\n"
+            "重要性评分规则（用于判断对话记忆的营养程度）：\n"
             "- 情感强度高/关系转折/承诺/冲突/揭露秘密/告白/决裂：8-10分\n"
             "- 日常寒暄/打招呼/无关痛痒：1-3分\n"
             "- 普通对话/闲聊/一般信息交换：4-6分\n\n"
@@ -266,7 +284,10 @@ class AffinityService:
             "- 简单的「对不起」算 apology；详细解释原因算 explanation；用行动表示改变算 action；戳中 psyche.soft_spots 的内容算 soft_spot\n\n"
             "输出严格JSON格式（只输出JSON，不要任何其他内容）：\n"
             "{\n"
-            '  "affinity": 0-100整数,\n'
+            '  "affinity_event": "met_condition|friendly|neutral|offended|trigger|repair",\n'
+            '  "affinity_tier": "small|medium|large",\n'
+            '  "affinity_delta": 该档区间内的整数,\n'
+            '  "met_condition_index": 整数或null,\n'
             '  "trust": 0-100整数,\n'
             '  "mood": "具体情绪词（如释然/微酸/警觉/心软/嘴硬心软/又气又心疼/微微上头）",\n'
             '  "guard": 0-100整数,\n'
@@ -332,7 +353,7 @@ class AffinityService:
             and data.get("guard") == 70
         )
 
-    def apply_evaluation(self, data: dict, old_stage: str) -> int:
+    def apply_evaluation(self, data: dict, old_stage: str, psyche: Any) -> int:
         """把解析结果回写11个情感字段，返回importance。纯状态计算，无IO。
 
         LLM 返回的数值经过 delta clamp（旧值 ± 上限强制执行 prompt 声明的单轮变化约束），
@@ -344,7 +365,17 @@ class AffinityService:
         importance = max(1, min(10, int(data.get("importance", 5))))
 
         # Delta clamp enforces prompt-declared per-turn limits in code
-        self.affinity = _clamp_delta(old_affinity, data.get("affinity"), up_max=AFFINITY_DELTA_UP, down_max=AFFINITY_DELTA_DOWN)
+        # 好感：模型只报事件与档位，变多少由规则表定（core/affinity_rules.py）
+        try:
+            self.affinity, self.relation, warns = apply_event(
+                old_affinity, self.relation, psyche,
+                event=data.get("affinity_event"), tier=data.get("affinity_tier"),
+                delta=data.get("affinity_delta"), met_index=data.get("met_condition_index"),
+            )
+            for w in warns:
+                logger.warning("Affinity rule: %s", w)
+        except ValueError as exc:
+            logger.warning("Affinity event rejected, affinity unchanged: %s", exc)
         self.trust = _clamp_delta(old_trust, data.get("trust"), up_max=TRUST_DELTA_UP, down_max=TRUST_DELTA_DOWN)
         # Guard: rise fast (up +8/down -5), ease slow — symmetrical on rise but
         # extra conservative on drop (a character doesn't let their guard down quickly).

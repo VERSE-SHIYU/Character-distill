@@ -77,7 +77,7 @@ class EvaluationPipeline:
             print(f"[EvaluationPipeline] RUN SKIP session={ctx.session_id}: _core_evaluate returned None")
             return EvalResult(importance=5, applied=False)
 
-        importance = ctx.affinity_service.apply_evaluation(data, ctx.old_stage)
+        importance = ctx.affinity_service.apply_evaluation(data, ctx.old_stage, ctx.card.psyche)
         # 瞬时纠偏信号：只传递，不入库，不跨 session
         in_character = data.get("in_character", 80)
         if not isinstance(in_character, int) or in_character < 0 or in_character > 100:

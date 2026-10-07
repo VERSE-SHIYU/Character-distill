@@ -79,6 +79,21 @@ class CognitiveProfile(BaseModel):
     vocabulary_level: str = "日常"
 
 
+class RelationalModes(BaseModel):
+    """三档关系做法：对亲近的人 / 对平常的人 / 起冲突时，各一句具体做法。"""
+    close: str = ""
+    normal: str = ""
+    conflict: str = ""
+
+
+class AgreeablenessFacet(BaseModel):
+    """宜人性分面：同情 / 谦恭 / 信任，各一句概括性的行为。"""
+    facet: str = ""
+    level: str = ""
+    behavior: str = ""
+    quote: str = ""
+
+
 class PsycheProfile(BaseModel):
     """心理画像：大五人格 + 情感动力学参数，作为 set-point 基线和角色推理的统一数据源。"""
     # 大五人格（1-5 离散档，依据 PsyPlay arXiv:2502.03821）
@@ -94,6 +109,10 @@ class PsycheProfile(BaseModel):
     # 推理锚点
     triggers: list[str] = []         # 雷点：碰了就炸的具体点
     soft_spots: list[str] = []       # 软肋：戳中会心软的点
+    # ③ 好感机制的输入
+    warming_conditions: list[str] = []            # 亲近条件：对方做到什么，此人才肯更近一步
+    relational_modes: RelationalModes = RelationalModes()
+    agreeableness_facets: list[AgreeablenessFacet] = []
 
 
 class BehaviorCore(BaseModel):
