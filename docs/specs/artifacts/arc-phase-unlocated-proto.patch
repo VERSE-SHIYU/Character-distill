@@ -53,10 +53,34 @@ index f775e20..593048c 100644
  
      _project_custom(proj, card, k, view.n)
 diff --git a/core/card_draft.py b/core/card_draft.py
-index 3e9e9ca..0cc6332 100644
+index 3e9e9ca..f463e88 100644
 --- a/core/card_draft.py
 +++ b/core/card_draft.py
-@@ -203,18 +203,30 @@ def _layer_phases(final_phases: list[list[int]], count: int, layer: str) -> list
+@@ -30,6 +30,8 @@ from core.schema import (
+     CharacterCard,
+     PhaseState,
+     Relationship,
++    placeholder_phase_attitudes,
++    top_attitude,
+ )
+ 
+ logger = logging.getLogger(__name__)
+@@ -190,6 +192,14 @@ def _valid_number_rows(items, count: int, kind: str) -> list[list[int]]:
+     return valid_rows
+ 
+ 
++def experience_fallback(count: int) -> list[int]:
++    """经历类没有位置证据 → 挂最后阶段（时间不明放最后，永不泄露后续剧情；spec §3.2）。
++
++    `dispatch`（记忆、字段）与关系（一条态度都不剩的关系）共用这一处。
++    """
++    return [count]
++
++
+ def _layer_phases(final_phases: list[list[int]], count: int, layer: str) -> list[list[int]]:
+     """按类别把每条条目的最终阶段折成「要挂的阶段」：``experience`` 只留最早阶段。
+ 
+@@ -203,18 +213,30 @@ def _layer_phases(final_phases: list[list[int]], count: int, layer: str) -> list
  
  def dispatch(final_phases: list[list[int]], count: int, *,
               layer: str = "state", kind: str = "list",
@@ -84,13 +108,13 @@ index 3e9e9ca..0cc6332 100644
 +    loose: list[int] = []
 +    for i in unlocated:
 +        if layer == "experience":
-+            final_phases[i] = [count]
++            final_phases[i] = experience_fallback(count)
 +        else:
 +            loose.append(i)
      final_phases = _layer_phases(final_phases, count, layer)
      top: list[int] = []
      by_phase: list[list[int]] = [[] for _ in range(count)]
-@@ -228,7 +240,7 @@ def dispatch(final_phases: list[list[int]], count: int, *,
+@@ -228,7 +250,7 @@ def dispatch(final_phases: list[list[int]], count: int, *,
          top = _cap_slot(top, label, "顶层")
          by_phase = [_cap_slot(slot, label, f"阶段 {p}") if slot else slot
                      for p, slot in enumerate(by_phase, 1)]
@@ -99,33 +123,42 @@ index 3e9e9ca..0cc6332 100644
  
  
  def _cap_slot(slot: list[int], label: str, where: str) -> list[int]:
-@@ -238,14 +250,18 @@ def _cap_slot(slot: list[int], label: str, where: str) -> list[int]:
+@@ -238,38 +260,65 @@ def _cap_slot(slot: list[int], label: str, where: str) -> list[int]:
      return slot[:1]
  
  
 -def _convert_relationships(rels, anchors, count: int, name: str) -> list[dict]:
 -    """关系草稿 → 存卡关系：态度复用位置检查与编号过滤，写 `phase_attitudes` 与顶层 `attitude`。
 +def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[dict], list[dict], int, int]:
-+    """关系草稿 → 存卡关系：态度复用位置检查，逐条按 `tag_targets` 分发（spec §3.3）。
++    """关系草稿 → 存卡关系：**每条态度单独**过位置检查与 `dispatch`，再按关系收回（spec §3.3）。
  
 -    顶层 `attitude` 取它出现的最后一个（存留下来的）阶段的态度 —— k=n 与前端编辑都读它。
 -    没有 `attitudes` 的关系（旧卡）原样保留。
-+    每个阶段的态度文字不同，不能整条挪：模型标在阶段 p 的那条态度，摘录落到哪些阶段就挂到
-+    哪些阶段（改挂，同 D1）。同一阶段撞车时，**原本就标在这个阶段**的那条优先，其余按标注顺序
-+    取第一条。一条态度一个阶段都没挂上（没有位置证据，或撞车全输）→ 进未定位区，`note` 跟着
-+    它走。一条态度都不剩的关系 → 按经历类挂最后阶段、态度留空（时间不明放最后，不编造态度）。
-+    顶层 `attitude` 取挂上的最后一个阶段的态度 —— k=n 与前端编辑都读它。没有 `attitudes` 的
-+    关系（旧卡）原样保留。返回 `(关系, 未定位态度, 改挂条数, 挂最后阶段条数)`。
++    态度是状态类：摘录落到哪些阶段就挂到哪些阶段（改挂，同 D1），没有位置证据的进未定位区。
++    每条态度各自是一个检查条目 —— 按关系聚合的话，同一阶段的几条态度会共用位置证据，A 的摘录
++    会把 B 也带走（审计发现 1）。同一阶段挂上多条时，**原本就标在这个阶段**的那条优先，其余按
++    标注顺序取第一条；一个阶段都没赢下的态度进未定位区，`note` 与原标阶段跟着它走。一条态度
++    都不剩的关系按经历类挂最后阶段、态度留空（`placeholder_phase_attitudes`）。顶层 `attitude`
++    取 `top_attitude`。没有 `attitudes` 的关系（旧卡）原样保留。
++    返回 `(关系, 未定位态度, 改挂条数, 挂最后阶段条数)`。
      """
      if not rels:
 -        return []
 +        return [], [], 0, 0
++    flat = [(i, a) for i, r in enumerate(rels) for a in r.attitudes]
      # 复用 `DraftMemory` 当载体：位置检查要的只是「带 occurrences 的条目」，target 当 label。
-     items = [DraftMemory(
-         memory=r.target,
-@@ -255,21 +271,42 @@ def _convert_relationships(rels, anchors, count: int, name: str) -> list[dict]:
+-    items = [DraftMemory(
+-        memory=r.target,
+-        occurrences=[DraftOccurrence(phase=a.phase, quote=a.quote) for a in r.attitudes],
+-    ) for r in rels]
++    items = [DraftMemory(memory=rels[i].target,
++                         occurrences=[DraftOccurrence(phase=a.phase, quote=a.quote)])
++             for i, a in flat]
+     res = phase_anchoring.verify(
          items, _valid_number_rows(items, count, "态度"), anchors,
          kind="态度", label=lambda x: x.memory, name=name)
++    # 未定位的态度（`dispatch` 第三项）不在任何格子里，下面自然一个阶段都赢不下 → 进未定位区
++    top, slots, _ = dispatch(res.phases, count, unlocated=res.unlocated)
      out: list[dict] = []
 +    loose: list[dict] = []
 +    to_last = 0
@@ -142,39 +175,38 @@ index 3e9e9ca..0cc6332 100644
 -            {"phase": p, "attitude": att_map.get(p, ""), "note": note_map.get(p, "")}
 -            for p in final]
 -        row["attitude"] = att_map[max(final or att_map)]
++        mine = [j for j, (ri, _) in enumerate(flat) if ri == i]
 +        if count == 0:                            # 无阶段的卡：不分阶段，取最后一条态度
 +            row["phase_attitudes"] = []
 +            row["attitude"] = r.attitudes[-1].attitude
 +            out.append(row)
 +            continue
-+        winners: dict[int, Any] = {}              # 阶段 → 该阶段采用的那条态度
-+        for a in r.attitudes:                     # 原标注优先：先放「摘录落回所标阶段」的
-+            if a.phase in res.tag_targets[i].get(a.phase, []):
-+                winners.setdefault(a.phase, a)
-+        for a in r.attitudes:                     # 再放改挂过来的，按标注顺序取第一条
-+            for t in res.tag_targets[i].get(a.phase, []):
-+                winners.setdefault(t, a)
-+        placed = {id(a) for a in winners.values()}
-+        for a in r.attitudes:
-+            if id(a) not in placed:
++        winners: dict[int, int] = {}              # 阶段 → 该阶段采用的态度（flat 序号）
++        for t in range(1, count + 1):
++            cands = [j for j in mine if j in top or j in slots[t - 1]]
++            if cands:
++                winners[t] = next((j for j in cands if flat[j][1].phase == t), cands[0])
++        won = set(winners.values())
++        for j in mine:
++            if j not in won:                      # 没有位置证据，或撞车全输 → 未定位区
++                a = flat[j][1]
 +                loose.append({"target": r.target, "attitude": a.attitude, "note": a.note,
 +                              "phase": a.phase})
 +        if winners:
 +            row["phase_attitudes"] = [
-+                {"phase": p, "attitude": winners[p].attitude, "note": winners[p].note}
-+                for p in sorted(winners)]
-+            row["attitude"] = winners[max(winners)].attitude
++                {"phase": t, "attitude": flat[j][1].attitude, "note": flat[j][1].note}
++                for t, j in sorted(winners.items())]
 +        else:                                     # 一条都不剩 → 经历类：挂最后阶段、态度留空
 +            to_last += 1
-+            row["phase_attitudes"] = [{"phase": count, "attitude": "", "note": ""}]
-+            row["attitude"] = ""
++            row["phase_attitudes"] = placeholder_phase_attitudes(experience_fallback(count)[0])
++        row["attitude"] = top_attitude(row["phase_attitudes"])
          out.append(row)
 -    return out
 +    return out, loose, res.rehung, to_last
  
  
  def card_from_draft(data: Any, source_text: str) -> CharacterCard:
-@@ -277,7 +314,8 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
+@@ -277,7 +326,8 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
  
      先做阶段编号合法性过滤（越界、空 → 对不上的撤回、打 warning，一条的编号全部作废就整条
      撤回，与 `core.card_quotes.retract_unverified` 对模型输出的口径同）；再让 `phase_anchoring`
@@ -184,7 +216,7 @@ index 3e9e9ca..0cc6332 100644
      各走一遍（位置检查口径相同），结果交 `dispatch` 分发：做法按状态类挂到每个成立阶段，记忆按
      经历类只挂最早阶段；所有阶段都成立 → 顶层，没有阶段的卡全部放顶层、不做位置检查。关系态度
      同样过一遍检查。最后写
-@@ -297,16 +335,15 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
+@@ -297,16 +347,15 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
          _valid_number_rows(draft.key_memories, count, "记忆"),
          anchors, kind="记忆", name=draft.name,
          warn_skip=not draft.situation_behaviors)   # 卡的跳过警告由第一类有内容的条目打一次
@@ -207,7 +239,7 @@ index 3e9e9ca..0cc6332 100644
      for path, spec in _GENERIC_PATHS:
          rows = get_path(draft, path)
          res = phase_anchoring.verify(
-@@ -314,8 +351,12 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
+@@ -314,8 +363,12 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
              kind=path, label=lambda x: x.value, name=draft.name, warn_skip=False)
          # 列表与单值走同一个循环：`kind` 在 `dispatch` 里决定格子容量（scalar 每格只留第一条），
          # 这里只按 `kind` 决定取值形态（list → 列表，scalar → 单值）。
@@ -222,7 +254,7 @@ index 3e9e9ca..0cc6332 100644
          top_vals = [rows[i].value for i in top]
          set_path(card, path,
                   top_vals if spec.kind == "list" else (top_vals[0] if top_vals else ""))
-@@ -323,7 +364,11 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
+@@ -323,7 +376,11 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
              vals = [rows[i].value for i in slot]
              if not vals:
                  continue
@@ -235,7 +267,7 @@ index 3e9e9ca..0cc6332 100644
  
      card["situation_behaviors"] = [
          {"situation": draft.situation_behaviors[i].situation,
-@@ -332,8 +377,25 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
+@@ -332,8 +389,25 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
          for i in b_top
      ]
      card["key_memories"] = [draft.key_memories[i].memory for i in m_top]
@@ -262,7 +294,7 @@ index 3e9e9ca..0cc6332 100644
  
      for idx, phase in enumerate(card["character_arc"]["phases"]):
          phase["behaviors"] = [
-@@ -344,7 +406,7 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
+@@ -344,7 +418,7 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
          ]
          memories = [draft.key_memories[i].memory for i in m_slots[idx]]
          if memories:
@@ -644,10 +676,39 @@ index ab492ca..c9a66a7 100644
 +    return Verification(final, phase_quotes, tag_targets, skipped, tags, dropped, ambiguous,
 +                        unverified, rehung, unlocated, starts)
 diff --git a/core/schema.py b/core/schema.py
-index 50c82c4..80e46d1 100644
+index 50c82c4..4003da9 100644
 --- a/core/schema.py
 +++ b/core/schema.py
-@@ -119,7 +119,9 @@ class ArcPhase(PhaseState):
+@@ -30,6 +30,28 @@ class PhaseAttitude(BaseModel):
+     note: str = ""               # 该阶段的单向口径；空则回落关系顶层的 note
+ 
+ 
++def placeholder_phase_attitudes(count: int) -> list[dict]:
++    """一条态度都没定位的关系挂最后阶段、态度留空（spec arc-phase-unlocated §3.3）。
++
++    占位的**生成**与**识别**（`is_placeholder_attitude`）只在这里：两边靠「态度为空串」约定，
++    约定写在一处，改一边另一边不会悄悄失配。
++    """
++    return [{"phase": count, "attitude": "", "note": ""}]
++
++
++def is_placeholder_attitude(pa: dict) -> bool:
++    """`placeholder_phase_attitudes` 生成的占位：态度为空串。"""
++    return not pa["attitude"]
++
++
++def top_attitude(phase_attitudes: list[dict]) -> str:
++    """关系顶层 `attitude` = 挂上的最后一个阶段的态度（k=n 与前端编辑都读它）。
++
++    转卡（`core.card_draft`）与挪动（`core.unlocated`）共用这一处。
++    """
++    return max(phase_attitudes, key=lambda pa: pa["phase"])["attitude"] if phase_attitudes else ""
++
++
+ class Relationship(BaseModel):
+     """人际关系"""
+     target: str                  # 对方名字
+@@ -119,7 +141,9 @@ class ArcPhase(PhaseState):
      """弧线上的一个阶段。"""
      behaviors: list[SituationBehavior] = []   # 只在这一阶段成立的做法
      # 阶段特有的状态/经历字段：键 = 登记表路径，值 = 列表或单值（规则见 core.card_layers）。
@@ -658,7 +719,7 @@ index 50c82c4..80e46d1 100644
      start: int | None = None                  # 本阶段起点在**规范化原文**中的位置
      boundary_examples: list[BoundaryExample] = []  # 只在这一阶段成立的边界示范
  
-@@ -137,22 +139,48 @@ class ArcPhase(PhaseState):
+@@ -137,22 +161,48 @@ class ArcPhase(PhaseState):
              if moved and path not in overlay:
                  overlay[path] = moved
          if overlay:
@@ -719,7 +780,7 @@ index 50c82c4..80e46d1 100644
          return self
  
  
-@@ -180,6 +208,7 @@ class CharacterArc(ArcAxis):
+@@ -180,6 +230,7 @@ class CharacterArc(ArcAxis):
      """角色弧线：一条变化轴 + 按故事顺序排列的阶段（「变的部分」）。"""
      phases: list[ArcPhase] = []
      source_fingerprint: str = ""   # 阶段起点所依据的正文指纹（§3.4 坐标的前提）
@@ -729,10 +790,10 @@ index 50c82c4..80e46d1 100644
          """阶段起点是否可用于按位置截断：齐全、严格递增、且有正文指纹。
 diff --git a/core/unlocated.py b/core/unlocated.py
 new file mode 100644
-index 0000000..86df6e0
+index 0000000..91fc597
 --- /dev/null
 +++ b/core/unlocated.py
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,94 @@
 +# -*- coding: utf-8 -*-
 +"""未定位区的条目挪进某个阶段 —— 纯计算，无 IO（spec `arc-phase-unlocated.md` §3.6）。
 +
@@ -749,22 +810,39 @@ index 0000000..86df6e0
 +import pydash
 +
 +from core.card_layers import REGISTRY, get_path, set_path
-+from core.schema import CharacterCard
++from core.schema import CharacterCard, is_placeholder_attitude, top_attitude
 +
 +SECTIONS = ("behaviors", "overlay", "attitudes")
 +
 +
-+def _take(items: list, index: int, what: str):
++def _matches(item, expected) -> bool:
++    """序号处的条目是不是调用方看到的那一条：字段值逐个相等（字典取调用方给的键）。"""
++    if isinstance(item, dict):
++        return (isinstance(expected, dict) and bool(expected)
++                and all(item.get(k) == v for k, v in expected.items()))
++    return item == expected
++
++
++def _take(items: list, index: int, what: str, expected):
++    """按序号取出一条，并核对它就是调用方看到的那一条（审计发现 7）。
++
++    只按序号定位时，两个标签页先后挪动、或编辑后再挪，序号会漂移，静默挪错条目；带上调用方
++    看到的内容一并核对，对不上就拒绝（路由转 400「请刷新后重试」），不猜。
++    """
 +    if not 0 <= index < len(items):
 +        raise ValueError(f"未定位区没有这一条{what}：{index}")
++    if not _matches(items[index], expected):
++        raise ValueError(f"未定位区第 {index} 条{what}已变化")
 +    return items.pop(index)
 +
 +
 +def move_unlocated(card: CharacterCard, *, section: str, index: int, phase: int,
-+                   path: str = "") -> CharacterCard:
++                   expected, path: str = "") -> CharacterCard:
 +    """把未定位区 `section` 的第 `index` 条挪进阶段 `phase`（1 起），返回新卡（原卡不改）。
 +
 +    `section="overlay"` 时 `path` 是登记表里的 state 路径，`index` 是该路径列表里的序号。
++    `expected` 是调用方看到的那一条（做法 `{situation, behavior}`、字段值本身、态度
++    `{target, attitude, phase}`），与序号处的条目对不上即拒绝。
 +    参数不合法抛 `ValueError`（路由转 400）。
 +    """
 +    if section not in SECTIONS:
@@ -777,13 +855,13 @@ index 0000000..86df6e0
 +    target = data["character_arc"]["phases"][phase - 1]
 +
 +    if section == "behaviors":
-+        target["behaviors"].append(_take(loose["behaviors"], index, "做法"))
++        target["behaviors"].append(_take(loose["behaviors"], index, "做法", expected))
 +    elif section == "overlay":
 +        spec = REGISTRY.get(path)
 +        if spec is None or spec.layer != "state":
 +            raise ValueError(f"不是可挪动的状态字段：{path}")
 +        vals = list(get_path(loose["overlay"], path) or [])
-+        value = _take(vals, index, "字段值")
++        value = _take(vals, index, "字段值", expected)
 +        current = get_path(target["overlay"], path)
 +        if spec.kind == "list":
 +            set_path(target["overlay"], path, list(current or []) + [value])
@@ -796,11 +874,11 @@ index 0000000..86df6e0
 +        else:
 +            pydash.unset(loose["overlay"], path)
 +    else:
-+        item = _take(loose["attitudes"], index, "态度")
++        item = _take(loose["attitudes"], index, "态度", expected)
 +        rel = next((r for r in data["relationships"] if r["target"] == item["target"]), None)
 +        if rel is None:
 +            raise ValueError(f"关系已不存在：{item['target']}")
-+        kept = [pa for pa in rel["phase_attitudes"] if pa["attitude"]]   # 去掉空态度占位
++        kept = [pa for pa in rel["phase_attitudes"] if not is_placeholder_attitude(pa)]
 +        same = next((pa for pa in kept if pa["phase"] == phase), None)
 +        if same is not None:                         # 交换：原态度退回未定位区（D4）
 +            loose["attitudes"].append({"target": rel["target"], "attitude": same["attitude"],
@@ -808,15 +886,15 @@ index 0000000..86df6e0
 +            kept.remove(same)
 +        kept.append({"phase": phase, "attitude": item["attitude"], "note": item["note"]})
 +        rel["phase_attitudes"] = sorted(kept, key=lambda pa: pa["phase"])
-+        rel["attitude"] = rel["phase_attitudes"][-1]["attitude"]   # 顶层取最后一个阶段的
++        rel["attitude"] = top_attitude(rel["phase_attitudes"])
 +    return CharacterCard.model_validate(data)
 diff --git a/docs/specs/artifacts/arc_phase_unlocated_mutations.py b/docs/specs/artifacts/arc_phase_unlocated_mutations.py
 new file mode 100644
-index 0000000..19ac7da
+index 0000000..0ee7650
 --- /dev/null
 +++ b/docs/specs/artifacts/arc_phase_unlocated_mutations.py
-@@ -0,0 +1,298 @@
-+"""变异预跑（spec `arc-phase-unlocated.md` §7 对账表 X1–X33 + 前端 F1–F9）。
+@@ -0,0 +1,318 @@
++"""变异预跑（spec `arc-phase-unlocated.md` §7 对账表 X1–X37 + 前端 F1–F10）。
 +
 +逐条把改后代码改坏一处（放宽、过严两个方向），对应测试必须红；跑完逐字节还原。
 +
@@ -968,10 +1046,10 @@ index 0000000..19ac7da
 +    ("X13 过严 状态类无证据被丢（不进未定位区）", _u("test_u1_state_behavior_without_evidence_goes_to_unlocated"),
 +     [("repl", DRAFT, [("            for i in b_loose],", "            for i in []],")])], "RED"),
 +    ("X14 过严 经历类无证据被丢（不挂最后）", _u("test_u4_experience_memory_without_evidence_hangs_on_last_phase"),
-+     [("repl", DRAFT, [("        if layer == \"experience\":\n            final_phases[i] = [count]",
-+                        "        if False:\n            final_phases[i] = [count]")])], "RED"),
++     [("repl", DRAFT, [("        if layer == \"experience\":\n            final_phases[i] = experience_fallback(count)",
++                        "        if False:\n            final_phases[i] = experience_fallback(count)")])], "RED"),
 +    ("X15 放宽 经历类无证据挂阶段 1（泄露后续）", _u("test_u4_experience_memory_without_evidence_hangs_on_last_phase"),
-+     [("repl", DRAFT, [("            final_phases[i] = [count]", "            final_phases[i] = [1]")])], "RED"),
++     [("repl", DRAFT, [("    return [count]\n", "    return [1]\n")])], "RED"),
 +    ("X16 放宽 经历类改挂后挂全部落点（应只挂最早）", _u("test_u9_experience_rehung_to_several_landings_hangs_only_the_earliest"),
 +     [("repl", DRAFT, [("        return [f if (count and len(f) == count) else f[:1] for f in final_phases]",
 +                        "        return final_phases")])], "RED"),
@@ -987,17 +1065,28 @@ index 0000000..19ac7da
 +                        "    kinds[\"关系\"] = [0, 0, 0]")])], "RED"),
 +    # ── 段 3：关系态度 ──
 +    ("X20 过严 撞车时原标注不优先", _u("test_r2_collision_original_tag_wins_loser_goes_to_unlocated_with_note"),
-+     [("repl", DRAFT, [("                winners.setdefault(a.phase, a)\n        for a in r.attitudes:",
-+                        "                pass\n        for a in r.attitudes:")])], "RED"),
++     [("repl", DRAFT, [("next((j for j in cands if flat[j][1].phase == t), cands[0])", "cands[0]")])], "RED"),
 +    ("X21 过严 撞车输掉的态度被丢", _u("test_r2_collision_original_tag_wins_loser_goes_to_unlocated_with_note"),
-+     [("repl", DRAFT, [("            if id(a) not in placed:", "            if False:")])], "RED"),
++     [("repl", DRAFT, [("            if j not in won:", "            if False:")])], "RED"),
 +    ("X22 放宽 在别处赢了的也进未定位区", _u("test_r3_attitude_that_wins_elsewhere_is_not_unlocated"),
-+     [("repl", DRAFT, [("            if id(a) not in placed:", "            if True:")])], "RED"),
++     [("repl", DRAFT, [("            if j not in won:", "            if True:")])], "RED"),
 +    ("X23 放宽 无态度的关系挂阶段 1（泄露）", _u("test_r5_empty_attitude_relationship_absent_before_last_and_rendered_without_colon"),
-+     [("repl", DRAFT, [("[{\"phase\": count, \"attitude\": \"\", \"note\": \"\"}]",
-+                        "[{\"phase\": 1, \"attitude\": \"\", \"note\": \"\"}]")])], "RED"),
++     [("repl", SCHEMA, [("[{\"phase\": count, \"attitude\": \"\", \"note\": \"\"}]",
++                         "[{\"phase\": 1, \"attitude\": \"\", \"note\": \"\"}]")])], "RED"),
 +    ("X24 放宽 无态度的关系沿用模型态度（未核对）", _u("test_r4_relationship_without_any_located_attitude_hangs_last_with_empty_attitude"),
-+     [("repl", DRAFT, [("            row[\"attitude\"] = \"\"", "            row[\"attitude\"] = r.attitudes[-1].attitude")])], "RED"),
++     [("repl", DRAFT, [("            row[\"phase_attitudes\"] = placeholder_phase_attitudes(experience_fallback(count)[0])",
++                        "            row[\"phase_attitudes\"] = [{\"phase\": count, \"attitude\": r.attitudes[-1].attitude, \"note\": \"\"}]")])], "RED"),
++    ("X34 放宽 同一关系的态度共用位置证据（审计发现 1）", _u("test_r7_same_phase_tags_each_attitude_uses_only_its_own_evidence"),
++     [("repl", DRAFT, [("            cands = [j for j in mine if j in top or j in slots[t - 1]]",
++                        "            cands = [j for j in mine if j in top or any(k in slots[t - 1] for k in mine)]")])], "RED"),
++    ("X34b 同上 → 目标检查 G1（夹具「孩子们」）", _g("test_g1_every_phase_placement_has_positional_evidence"),
++     [("repl", DRAFT, [("            cands = [j for j in mine if j in top or j in slots[t - 1]]",
++                        "            cands = [j for j in mine if j in top or any(k in slots[t - 1] for k in mine)]")])], "RED"),
++    ("X37 过严 无阶段的卡状态类进未定位区（spec §3.2 原那一行，审计发现 3）",
++     _u("test_u10_card_without_phases_skips_the_check_and_puts_state_on_top"),
++     [("repl", DRAFT, [("        if count == 0 or len(final) == count:\n            top.append(i)",
++                        "        if count == 0 and layer == \"state\":\n            loose.append(i)\n"
++                        "        elif count == 0 or len(final) == count:\n            top.append(i)")])], "RED"),
 +    ("X25 渲染 空态度仍带冒号", _u("test_r5_empty_attitude_relationship_absent_before_last_and_rendered_without_colon"),
 +     [("repl", CTX, [("(f\"：{r.attitude}\" if r.attitude else \"\")", "f\"：{r.attitude}\"")])], "RED"),
 +    ("X26 无阶段的卡取第一条态度", _u("test_r6_card_without_phases_keeps_latest_attitude"),
@@ -1020,11 +1109,16 @@ index 0000000..19ac7da
 +    ("X31 过严 单值挪入不交换（原值丢）", _m("test_m4_scalar_value_into_occupied_slot_swaps_back"),
 +     [("repl", MOVE, [("            if current:                              # 交换", "            if False:  # 交换")])], "RED"),
 +    ("X32 放宽 挪入态度不去占位（投影被空态度盖住）", _m("test_m5_attitude_replaces_empty_placeholder_and_shows_in_projection"),
-+     [("repl", MOVE, [("        kept = [pa for pa in rel[\"phase_attitudes\"] if pa[\"attitude\"]]",
++     [("repl", MOVE, [("        kept = [pa for pa in rel[\"phase_attitudes\"] if not is_placeholder_attitude(pa)]",
 +                       "        kept = list(rel[\"phase_attitudes\"])")])], "RED"),
 +    ("X33 接口返回不走 out_card", _m("test_route_returns_the_card_through_out_card"),
 +     [("repl", RDIST, [("    return {\"ok\": True, \"card\": out_card(result)}   # B4：出卡只经 out_card（现算 selectable）",
 +                        "    return {\"ok\": True, \"card\": result}")])], "RED"),
++    ("X35 放宽 挪动不核对内容（序号漂移静默挪错，审计发现 7）", _m("test_route_drifted_content_is_400_and_card_untouched"),
++     [("repl", MOVE, [("    if not _matches(items[index], expected):", "    if False:")])], "RED"),
++    ("X36 过严 内容核对一律不过（合法挪动也被拒）", _m("test_m1_behavior_moves_into_phase"),
++     [("repl", MOVE, [("        return (isinstance(expected, dict) and bool(expected)",
++                       "        return (False and bool(expected)")])], "RED"),
 +    # ── 前端（vitest）──
 +    ("F1  编辑保存整体替换 character_arc（丢指纹 / 未定位区）", _run_js,
 +     [("repl", EDIT, [("        ...data.character_arc,\n", "")])], "RED"),
@@ -1040,14 +1134,17 @@ index 0000000..19ac7da
 +    ("F6  态度默认阶段不用原标注", _run_js,
 +     [("repl", UNLJ, [("      initial: a.phase >= 1 && a.phase <= last ? a.phase : last,", "      initial: last,")])], "RED"),
 +    ("F7  挪入传错路径", _run_js,
-+     [("repl", UNLJ, [("      move: (p) => onMove('overlay', i, p, path), initial: last,",
-+                       "      move: (p) => onMove('overlay', i, p, ''), initial: last,")])], "RED"),
++     [("repl", UNLJ, [("      move: (p) => onMove('overlay', i, p, path, v), initial: last,",
++                       "      move: (p) => onMove('overlay', i, p, '', v), initial: last,")])], "RED"),
 +    ("F8  只读账号也显示未定位区", _run_js,
 +     [("repl", CHAR, [("        {canWrite && hasUnlocated(data.character_arc) && (",
 +                       "        {hasUnlocated(data.character_arc) && (")])], "RED"),
 +    ("F9  挪入没接到 store", _run_js,
-+     [("repl", CHAR, [("      await moveUnlocated(card.id || card.card_id, { section, index, phase, path })",
++     [("repl", CHAR, [("      await moveUnlocated(card.id || card.card_id, { section, index, phase, path, expected })",
 +                       "      await Promise.resolve()")])], "RED"),
++    ("F10 挪入不带内容（后端无从核对序号漂移）", _run_js,
++     [("repl", UNLJ, [("      move: (p) => onMove('behaviors', i, p, '', { situation: b.situation, behavior: b.behavior }),",
++                       "      move: (p) => onMove('behaviors', i, p, ''),")])], "RED"),
 +]
 +
 +
@@ -1056,8 +1153,9 @@ index 0000000..19ac7da
 +    "1": ("X1 ", "X2 ", "X3 ", "X4 ", "X7 ", "X7b", "X7c", "X8 ", "F2 "),
 +    "2": ("F1 ", "F3 "),
 +    "3": ("X5 ", "X6 ", "X7d", "X9 ", "X10", "X11", "X12", "X13", "X14", "X15", "X16", "X17",
-+          "X18", "X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27", "X28", "X29", "X30"),
-+    "4": ("X31", "X32", "X33", "F4 ", "F5 ", "F6 ", "F7 ", "F8 ", "F9 "),
++          "X18", "X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27", "X28", "X29", "X30",
++          "X34", "X37"),
++    "4": ("X31", "X32", "X33", "X35", "X36", "F4 ", "F5 ", "F6 ", "F7 ", "F8 ", "F9 ", "F10"),
 +}
 +
 +
@@ -2286,10 +2384,10 @@ index e0c5709..c8d25c0 100644
  def test_scalar_same_phase_second_dropped_not_promoted():
 diff --git a/tests/test_arc_phase_unlocated.py b/tests/test_arc_phase_unlocated.py
 new file mode 100644
-index 0000000..b769142
+index 0000000..d509974
 --- /dev/null
 +++ b/tests/test_arc_phase_unlocated.py
-@@ -0,0 +1,376 @@
+@@ -0,0 +1,393 @@
 +# -*- coding: utf-8 -*-
 +"""阶段未验证的处理 + overlay 与卡片同形 —— spec `docs/specs/arc-phase-unlocated.md` §4。
 +
@@ -2503,6 +2601,16 @@ index 0000000..b769142
 +        ["m"], {"personality_traits": ["t"]})
 +
 +
++def test_u10_card_without_phases_skips_the_check_and_puts_state_on_top():
++    """无阶段的卡不做位置检查（规则 5）：状态类也进顶层，不进未定位区（审计发现 3）。"""
++    card = card_from_draft({"name": "角色", "personality_traits": [_timed("多疑", _occ(1, _NOWHERE))],
++                            "situation_behaviors": [{"situation": "s", "behavior": "b",
++                                                     "occurrences": [_occ(1, _NOWHERE)]}]}, _SRC)
++    loose = card.character_arc.unlocated
++    assert (card.personality_traits, [b.situation for b in card.situation_behaviors],
++            loose.overlay, loose.behaviors) == (["多疑"], ["s"], {}, [])
++
++
 +def test_u7_skipped_card_keeps_model_tags_for_items_without_evidence():
 +    """整卡跳过（锚点查不到，规则 2）原样保留：标注照挂，不进未定位区。"""
 +    card = _card(anchors={2: _Q2, 3: "锚点查无此句"}, personality_traits=[
@@ -2568,6 +2676,13 @@ index 0000000..b769142
 +        _att(2, "两处落点", "甲乙"), _att(1, "原本在1", "甲乙")))
 +    assert (_pa(card), card.character_arc.unlocated.attitudes) == (
 +        [(1, "原本在1"), (3, "两处落点")], [])
++
++
++def test_r7_same_phase_tags_each_attitude_uses_only_its_own_evidence():
++    """两条态度都标阶段 1、摘录各落一个阶段：各自挂到自己的落点，不共用证据（审计发现 1）。"""
++    card = _card(relationships=_rel(_att(1, "证据在2", _Q2), _att(1, "证据在1", _Q1)))
++    assert (_pa(card), card.character_arc.unlocated.attitudes) == (
++        [(1, "证据在1"), (2, "证据在2")], [])
 +
 +
 +def test_r4_relationship_without_any_located_attitude_hangs_last_with_empty_attitude():
@@ -2668,10 +2783,10 @@ index 0000000..b769142
 +
 diff --git a/tests/test_arc_phase_unlocated_goal.py b/tests/test_arc_phase_unlocated_goal.py
 new file mode 100644
-index 0000000..67943ff
+index 0000000..6613358
 --- /dev/null
 +++ b/tests/test_arc_phase_unlocated_goal.py
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,164 @@
 +# -*- coding: utf-8 -*-
 +"""目标检查（spec `arc-phase-unlocated.md` §1）—— 检的是「达成目标」，不是「符合 spec」。
 +
@@ -2684,6 +2799,14 @@ index 0000000..67943ff
 +- G2 守恒：草稿里每条有合法标注的条目，在卡上（顶层 / 某阶段 / 未定位区）至少出现一次；
 +- G3 不进 prompt：任一阶段的投影卡（所有拼 prompt 的入口只收投影卡，DA18）里没有未定位条目；
 +- G4 同口径：卡上每个文本叶子（含 overlay、未定位区）注入守卫都能清掉。
++
++**预言的边界（如实写明，不假装覆盖）**：
++- 摘录与原文的规范化共用被测代码的 `core.quotes.normalize` —— 规范化口径错了，预言跟着错；
++  它守的是「定位」，不是「规范化」；
++- 预言不模拟 `MAX_OCCURRENCES` 截断与规则 b（摘录多处出现时取哪一处），故 G1 只是**必要
++  条件**：挂对了的一定过，过了的不保证是规则要的那一个阶段；
++- 夹具含同一关系两条态度标同一阶段、摘录各落一个阶段的情形（「孩子们」，审计发现 1）——
++  按关系聚合证据的实现会把 A 挂到 B 的阶段，G1 当场红。
 +"""
 +from __future__ import annotations
 +
@@ -2735,6 +2858,9 @@ index 0000000..67943ff
 +        {"target": "掌柜", "relation": "债主", "attitudes": [
 +            {"phase": 1, "attitude": "A1掌柜", "quote": "排出九文大钱"},
 +            {"phase": 2, "attitude": "A2掌柜", "quote": "孔乙己长久没有来了"}]},
++        {"target": "孩子们", "relation": "邻居孩子", "attitudes": [
++            {"phase": 1, "attitude": "A撞车外", "quote": "不要取笑"},
++            {"phase": 1, "attitude": "A撞车内", "quote": "茴字"}]},
 +        {"target": "酒客", "relation": "看客", "attitudes": [
 +            {"phase": 1, "attitude": "A编造", "quote": _FAKE}]},
 +    ],
@@ -2793,6 +2919,7 @@ index 0000000..67943ff
 +    texts = ([b["situation"] for b in _DRAFT["situation_behaviors"]]
 +             + [m["memory"] for m in _DRAFT["key_memories"]]
 +             + [t["value"] for t in _DRAFT["personality_traits"]]
++             + [c["value"] for c in _DRAFT["speaking_style"]["catchphrases"]]
 +             + [a["attitude"] for r in _DRAFT["relationships"] for a in r["attitudes"]])
 +    assert [t for t in texts if t not in dump] == []
 +
@@ -2812,6 +2939,12 @@ index 0000000..67943ff
 +    assert [p for p in paths if not neutralize_one(json.loads(json.dumps(dump)), p)] == []
 +
 +
++def test_g0_fixture_really_has_a_same_phase_collision():
++    """夹具自检：「孩子们」两条态度标同一阶段、摘录落点各不相同 —— 否则发现 1 那条 G1 空转。"""
++    atts = next(r for r in _DRAFT["relationships"] if r["target"] == "孩子们")["attitudes"]
++    assert ([a["phase"] for a in atts], [_landing(a["quote"]) for a in atts]) == ([1, 1], [{2}, {1}])
++
++
 +def test_g0_fixture_really_exercises_rehang_and_unlocated():
 +    """夹具自检：确有改挂（B错标→1、M错标→1、T错标→1）与挂最后（M编造→2），否则 G1–G3 空转。"""
 +    ph = _CARD.character_arc.phases
@@ -2820,10 +2953,10 @@ index 0000000..67943ff
 +        ["B对标", "B错标"], ["M错标"], ["T错标"], ["M编造"])
 diff --git a/tests/test_arc_phase_unlocated_move.py b/tests/test_arc_phase_unlocated_move.py
 new file mode 100644
-index 0000000..8e327fd
+index 0000000..603fbf2
 --- /dev/null
 +++ b/tests/test_arc_phase_unlocated_move.py
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,183 @@
 +# -*- coding: utf-8 -*-
 +"""未定位条目挪进阶段（段 3）—— spec `docs/specs/arc-phase-unlocated.md` §6。
 +
@@ -2862,19 +2995,23 @@ index 0000000..8e327fd
 +         "phase_attitudes": [{"phase": 1, "attitude": "", "note": ""}]}]})
 +
 +
++_B = {"situation": "s", "behavior": "b"}
++_A = {"target": "甲", "attitude": "挪来的", "phase": 0}
++
++
 +def _movable_card():
 +    return CharacterCard.model_validate(_movable().model_dump())
 +
 +
 +def test_m1_behavior_moves_into_phase():
-+    card = move_unlocated(_movable_card(), section="behaviors", index=0, phase=1)
++    card = move_unlocated(_movable_card(), section="behaviors", index=0, phase=1, expected=_B)
 +    assert ([b.situation for b in card.character_arc.phases[0].behaviors],
 +            card.character_arc.unlocated.behaviors) == (["s"], [])
 +
 +
 +def test_m2_list_value_is_appended_and_leaf_pruned():
 +    card = move_unlocated(_movable_card(), section="overlay", path="personality_traits",
-+                          index=0, phase=1)
++                          index=0, phase=1, expected="多疑")
 +    assert (card.character_arc.phases[0].overlay,
 +            get_path(card.character_arc.unlocated.overlay, "personality_traits")) == (
 +        {"personality_traits": ["多疑"]}, None)
@@ -2882,7 +3019,7 @@ index 0000000..8e327fd
 +
 +def test_m3_scalar_value_into_empty_slot():
 +    card = move_unlocated(_movable_card(), section="overlay", path="speaking_style.tone",
-+                          index=0, phase=1)
++                          index=0, phase=1, expected="冷")
 +    assert (card.character_arc.phases[0].overlay,
 +            card.character_arc.unlocated.overlay["speaking_style"]) == (
 +        {"speaking_style": {"tone": "冷"}}, {"tone": ["热"]})
@@ -2890,33 +3027,40 @@ index 0000000..8e327fd
 +
 +def test_m4_scalar_value_into_occupied_slot_swaps_back():
 +    card = move_unlocated(_movable_card(), section="overlay", path="speaking_style.tone",
-+                          index=0, phase=1)
-+    card = move_unlocated(card, section="overlay", path="speaking_style.tone", index=0, phase=1)
++                          index=0, phase=1, expected="冷")
++    card = move_unlocated(card, section="overlay", path="speaking_style.tone", index=0, phase=1,
++                          expected="热")
 +    assert (get_path(card.character_arc.phases[0].overlay, "speaking_style.tone"),
 +            get_path(card.character_arc.unlocated.overlay, "speaking_style.tone")) == ("热", ["冷"])
 +
 +
 +def test_m5_attitude_replaces_empty_placeholder_and_shows_in_projection():
-+    card = move_unlocated(_movable_card(), section="attitudes", index=0, phase=1)
++    card = move_unlocated(_movable_card(), section="attitudes", index=0, phase=1, expected=_A)
 +    rel = project_card(card, 1)[0].relationships[0]
 +    assert ((rel.attitude, rel.note), card.character_arc.unlocated.attitudes) == (
 +        ("挪来的", "口径"), [])
 +
 +
 +def test_m6_attitude_into_phase_with_attitude_swaps_back():
-+    card = move_unlocated(_movable_card(), section="attitudes", index=0, phase=1)
++    card = move_unlocated(_movable_card(), section="attitudes", index=0, phase=1, expected=_A)
 +    card = card.model_copy(deep=True)
 +    card.character_arc.unlocated.attitudes.append(UnlocatedAttitude(target="甲", attitude="第二条"))
-+    card = move_unlocated(card, section="attitudes", index=0, phase=1)
++    card = move_unlocated(card, section="attitudes", index=0, phase=1,
++                          expected={"target": "甲", "attitude": "第二条"})
 +    assert (_pa(card), [a.attitude for a in card.character_arc.unlocated.attitudes]) == (
 +        [(1, "第二条")], ["挪来的"])
 +
 +
 +@pytest.mark.parametrize("kw", [
-+    {"section": "behaviors", "index": 5, "phase": 1},
-+    {"section": "behaviors", "index": 0, "phase": 2},
-+    {"section": "overlay", "path": "key_memories", "index": 0, "phase": 1},
-+    {"section": "nope", "index": 0, "phase": 1},
++    {"section": "behaviors", "index": 5, "phase": 1, "expected": _B},
++    {"section": "behaviors", "index": 0, "phase": 2, "expected": _B},
++    {"section": "overlay", "path": "key_memories", "index": 0, "phase": 1, "expected": "x"},
++    {"section": "nope", "index": 0, "phase": 1, "expected": _B},
++    # 序号还在、内容变了（另一个标签页先挪过 / 编辑过）：拒绝，不挪错（审计发现 7）
++    {"section": "behaviors", "index": 0, "phase": 1, "expected": {"situation": "s", "behavior": "旧"}},
++    {"section": "behaviors", "index": 0, "phase": 1, "expected": {}},
++    {"section": "overlay", "path": "speaking_style.tone", "index": 0, "phase": 1, "expected": "热"},
++    {"section": "attitudes", "index": 0, "phase": 1, "expected": {"target": "乙", "attitude": "挪来的"}},
 +])
 +def test_m7_invalid_move_is_rejected(kw):
 +    with pytest.raises(ValueError):
@@ -2926,7 +3070,7 @@ index 0000000..8e327fd
 +def test_m8_moved_item_reaches_the_projection_of_that_phase():
 +    """pytest 半段（Playwright 只看界面）：挪进阶段 1 后，投影到阶段 1 的卡里有它。"""
 +    card = move_unlocated(_movable_card(), section="overlay", path="personality_traits",
-+                          index=0, phase=1)
++                          index=0, phase=1, expected="多疑")
 +    assert "多疑" in project_card(card, 1)[0].personality_traits
 +
 +
@@ -2963,7 +3107,7 @@ index 0000000..8e327fd
 +def test_route_owner_move_persists():
 +    store = _Store(_movable_card())
 +    r = _client(store, "u1").post("/api/distill/card/c1/unlocated/move",
-+                                  json={"section": "behaviors", "index": 0, "phase": 1})
++                                  json={"section": "behaviors", "index": 0, "phase": 1, "expected": _B})
 +    saved = CharacterCard.model_validate_json(store.rows["c1"]["card_json"])
 +    assert (r.status_code, [b.situation for b in saved.character_arc.phases[0].behaviors]) == (
 +        200, ["s"])
@@ -2972,20 +3116,30 @@ index 0000000..8e327fd
 +def test_route_returns_the_card_through_out_card():
 +    """B4：出卡只经 `out_card` —— 返回的卡带现算的 `selectable`。"""
 +    r = _client(_Store(_movable_card()), "u1").post(
-+        "/api/distill/card/c1/unlocated/move", json={"section": "behaviors", "index": 0, "phase": 1})
++        "/api/distill/card/c1/unlocated/move", json={"section": "behaviors", "index": 0, "phase": 1, "expected": _B})
 +    assert "selectable" in json.loads(r.json()["card"]["card_json"])["character_arc"]
 +
 +
 +def test_route_intruder_gets_404():
 +    r = _client(_Store(_movable_card()), "u2").post(
-+        "/api/distill/card/c1/unlocated/move", json={"section": "behaviors", "index": 0, "phase": 1})
++        "/api/distill/card/c1/unlocated/move", json={"section": "behaviors", "index": 0, "phase": 1, "expected": _B})
 +    assert r.status_code == 404
 +
 +
 +def test_route_stale_index_is_400():
 +    r = _client(_Store(_movable_card()), "u1").post(
-+        "/api/distill/card/c1/unlocated/move", json={"section": "behaviors", "index": 9, "phase": 1})
++        "/api/distill/card/c1/unlocated/move", json={"section": "behaviors", "index": 9, "phase": 1, "expected": _B})
 +    assert r.status_code == 400
++
++
++def test_route_drifted_content_is_400_and_card_untouched():
++    """序号漂移：同一序号处已是别的条目 → 400，卡不写回（审计发现 7）。"""
++    store = _Store(_movable_card())
++    before = store.rows["c1"]["card_json"]
++    r = _client(store, "u1").post("/api/distill/card/c1/unlocated/move", json={
++        "section": "behaviors", "index": 0, "phase": 1,
++        "expected": {"situation": "s", "behavior": "别的"}})
++    assert (r.status_code, store.rows["c1"]["card_json"]) == (400, before)
 diff --git a/tests/test_card_arc_behaviors.py b/tests/test_card_arc_behaviors.py
 index f93652e..0b82ecb 100644
 --- a/tests/test_card_arc_behaviors.py
@@ -3017,6 +3171,45 @@ index f93652e..0b82ecb 100644
          "phases": [{"label": "", "state": "a", "behaviors": [], "overlay": {},
                      "start": None, "boundary_examples": []}],
      }
+diff --git a/tests/test_identify_failure_channels.py b/tests/test_identify_failure_channels.py
+index f864106..4e6690e 100644
+--- a/tests/test_identify_failure_channels.py
++++ b/tests/test_identify_failure_channels.py
+@@ -552,6 +552,10 @@ class TestOneParseableCardOnBothChannels:
+     不另抄一份字段样例 —— 抄一份就是第二处「组字段表」。
+     """
+ 
++    # 草稿摘录（`_timed` 的「开头甲甲甲」）得能在正文里定位：定不了位的状态类字段进未定位区、
++    # 不在顶层（spec arc-phase-unlocated §3.2）。本组考的是「各组都并进来」，不考位置检查。
++    BODY = _BODY + "\n开头甲甲甲。"
++
+     def _assert_all_groups_landed(self, card) -> None:
+         """各组各自的代表字段都得在卡上 —— 少一组说明那个组的帧没并进来。
+ 
+@@ -569,12 +573,12 @@ class TestOneParseableCardOnBothChannels:
+         assert [r.target for r in card.relationships] == ["某人"]        # G5
+ 
+     def test_bg_task_accumulates_one_card(self, store, user_id, monkeypatch):
+-        tid = _seed_text(store, user_id)
++        tid = _seed_text(store, user_id, self.BODY)
+         tm = _SavingTM()
+         monkeypatch.setattr(deps, "get_text_manager", lambda *a, **kw: tm)
+         distiller = _card_distiller()
+ 
+-        row = _run_bg(store, user_id, tid, distiller, monkeypatch)
++        row = _run_bg(store, user_id, tid, distiller, monkeypatch, body=self.BODY)
+ 
+         assert row["status"] == "done", row
+         assert len(tm.saved) == 1, f"落库的卡不是一张：{len(tm.saved)}"
+@@ -587,7 +591,7 @@ class TestOneParseableCardOnBothChannels:
+         )
+ 
+     def test_sse_accumulates_exactly_one_str_frame(self, store, user_id, monkeypatch):
+-        tid = _seed_text(store, user_id)
++        tid = _seed_text(store, user_id, self.BODY)
+         tm = _SavingTM()
+         client = _build_client(
+             store, user_id, monkeypatch, distiller=_card_distiller(), tm=tm)
 diff --git a/tests/test_mutation_anchors.py b/tests/test_mutation_anchors.py
 new file mode 100644
 index 0000000..7135ab5
@@ -3338,10 +3531,10 @@ index 9820850..8952348 100644
    return sent
 diff --git a/web/frontend/e2e/arc-phase-unlocated.spec.js b/web/frontend/e2e/arc-phase-unlocated.spec.js
 new file mode 100644
-index 0000000..1e593bc
+index 0000000..3386c78
 --- /dev/null
 +++ b/web/frontend/e2e/arc-phase-unlocated.spec.js
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,101 @@
 +// @ts-check
 +// spec arc-phase-unlocated §6 前端触发链的自动验收。全程 page.route 模拟（无真实后端、无凭据）。
 +// 触发链：选阶段（全站 Select 下拉）→ 点「挪入」→ store.moveUnlocated POST /unlocated/move
@@ -3409,11 +3602,13 @@ index 0000000..1e593bc
 +  return sent
 +}
 +
-+const toneRow = (page) => page.locator('.card-unlocated-item').filter({ hasText: '语气' })
++// 未定位区复用「情境→行为」的条目样式（card-behavior-item），用外层 .card-unlocated 限定范围
++const items = (page) => page.locator('.card-unlocated .card-behavior-item')
++const toneRow = (page) => items(page).filter({ hasText: '语气' })
 +
 +test('未定位区列出三类条目；阶段 overlay 按嵌套展示', async ({ page }) => {
 +  await setup(page, { status: 200, body: '{}' })
-+  await expect(page.locator('.card-unlocated-item')).toHaveCount(3)
++  await expect(items(page)).toHaveCount(3)
 +  await expect(page.locator('.card-arc-overlay').nth(0)).toContainText('语气')
 +  await expect(page.locator('.card-arc-overlay').nth(0)).toContainText('原值')
 +  await expect(page.locator('.card-arc-overlay').nth(1)).toContainText('口头禅')
@@ -3428,7 +3623,8 @@ index 0000000..1e593bc
 +  await toneRow(page).getByRole('button', { name: '挪入' }).click()
 +  await expect(page.locator('.card-arc-overlay').nth(0)).toContainText('新值')
 +  await expect(toneRow(page)).toContainText('原值')
-+  expect(sent).toEqual([{ section: 'overlay', index: 0, phase: 1, path: 'speaking_style.tone' }])
++  expect(sent).toEqual([{ section: 'overlay', index: 0, phase: 1, path: 'speaking_style.tone',
++    expected: '新值' }])
 +  await page.screenshot({ path: 'e2e/arc-phase-unlocated-after.png', fullPage: true })
 +})
 +
@@ -3441,7 +3637,7 @@ index 0000000..1e593bc
 +  await expect(toneRow(page)).toContainText('新值')
 +})
 diff --git a/web/frontend/src/components/CharCard.jsx b/web/frontend/src/components/CharCard.jsx
-index 4b67532..5f2efd0 100644
+index 4b67532..7569f9e 100644
 --- a/web/frontend/src/components/CharCard.jsx
 +++ b/web/frontend/src/components/CharCard.jsx
 @@ -7,6 +7,7 @@ import Avatar from './common/Avatar'
@@ -3466,9 +3662,9 @@ index 4b67532..5f2efd0 100644
  
 +  // 选阶段 → 点「挪入」→ store.moveUnlocated（POST，后端挪动并经 out_card 回卡）→ 写回
 +  // currentCard → 本组件重渲染：ArcList 与未定位区都从新卡重新算。失败只报错，不改本地卡。
-+  const handleMoveUnlocated = async (section, index, phase, path) => {
++  const handleMoveUnlocated = async (section, index, phase, path, expected) => {
 +    try {
-+      await moveUnlocated(card.id || card.card_id, { section, index, phase, path })
++      await moveUnlocated(card.id || card.card_id, { section, index, phase, path, expected })
 +    } catch (e) {
 +      setError(e.message)
 +    }
@@ -3536,10 +3732,10 @@ index 0000000..7a3a29f
 +})
 diff --git a/web/frontend/src/components/__tests__/CharCardUnlocated.test.jsx b/web/frontend/src/components/__tests__/CharCardUnlocated.test.jsx
 new file mode 100644
-index 0000000..47c199d
+index 0000000..e4a5c75
 --- /dev/null
 +++ b/web/frontend/src/components/__tests__/CharCardUnlocated.test.jsx
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,123 @@
 +import { describe, it, expect, vi } from 'vitest'
 +import { render, waitFor, fireEvent, screen } from '@testing-library/react'
 +import CharCard from '../CharCard'
@@ -3651,7 +3847,8 @@ index 0000000..47c199d
 +    fireEvent.click(screen.getByRole('option', { name: '阶段 1 · 早' }))
 +    fireEvent.click(screen.getByRole('button', { name: '挪入' }))
 +    await waitFor(() => expect(moveSpy).toHaveBeenCalled())
-+    expect(moveSpy.mock.calls[0]).toEqual(['c1', { section: 'behaviors', index: 0, phase: 1, path: '' }])
++    expect(moveSpy.mock.calls[0]).toEqual(['c1', { section: 'behaviors', index: 0, phase: 1, path: '',
++      expected: { situation: '被揭短', behavior: '涨红脸' } }])
 +  })
 +
 +  it('只读账号（游客 / 别人的卡）：不渲染未定位区', async () => {
@@ -3690,10 +3887,10 @@ index 0000000..ad5fd33
 +})
 diff --git a/web/frontend/src/components/__tests__/UnlocatedList.test.jsx b/web/frontend/src/components/__tests__/UnlocatedList.test.jsx
 new file mode 100644
-index 0000000..95d30c9
+index 0000000..21c8856
 --- /dev/null
 +++ b/web/frontend/src/components/__tests__/UnlocatedList.test.jsx
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,55 @@
 +/**
 + * spec arc-phase-unlocated §4 段 4：未定位区的渲染与挪动交互（选阶段 → 挪入 → onMove）。
 + */
@@ -3725,7 +3922,7 @@ index 0000000..95d30c9
 +    expect(shown).toEqual(['阶段 2 · 晚', '阶段 2 · 晚', '阶段 2 · 晚', '阶段 1 · 早'])
 +  })
 +
-+  it('选阶段 → 点挪入 → onMove(分区, 序号, 阶段, 路径)', async () => {
++  it('选阶段 → 点挪入 → onMove(分区, 序号, 阶段, 路径, 这一行渲染的条目)', async () => {
 +    const onMove = vi.fn().mockResolvedValue()
 +    render(<UnlocatedList arc={arc} onMove={onMove} />)
 +    // 打开下拉走键盘 Enter（同 common/__tests__/Select.test.jsx），再点选项
@@ -3733,7 +3930,20 @@ index 0000000..95d30c9
 +    fireEvent.click(screen.getByRole('option', { name: '阶段 1 · 早' }))
 +    fireEvent.click(screen.getAllByRole('button', { name: '挪入' })[2])
 +    await waitFor(() => expect(onMove).toHaveBeenCalled())
-+    expect(onMove.mock.calls).toEqual([['overlay', 1, 1, 'speaking_style.tone']])
++    expect(onMove.mock.calls).toEqual([['overlay', 1, 1, 'speaking_style.tone', '热']])
++  })
++
++  it('做法与态度带上各自的内容给后端核对（序号漂移时拒绝而不是挪错）', async () => {
++    const onMove = vi.fn().mockResolvedValue()
++    render(<UnlocatedList arc={arc} onMove={onMove} />)
++    const buttons = screen.getAllByRole('button', { name: '挪入' })
++    fireEvent.click(buttons[0])
++    fireEvent.click(buttons[3])
++    await waitFor(() => expect(onMove).toHaveBeenCalledTimes(2))
++    expect(onMove.mock.calls).toEqual([
++      ['behaviors', 0, 2, '', { situation: '被揭短', behavior: '涨红脸' }],
++      ['attitudes', 0, 1, '', { target: '掌柜', attitude: '怕', phase: 1 }],
++    ])
 +  })
 +})
 diff --git a/web/frontend/src/components/common/ArcList.jsx b/web/frontend/src/components/common/ArcList.jsx
@@ -3784,15 +3994,16 @@ index 6184646..ff9aeb3 100644
                ? <ul className="card-arc-overlay-list">
 diff --git a/web/frontend/src/components/common/UnlocatedList.jsx b/web/frontend/src/components/common/UnlocatedList.jsx
 new file mode 100644
-index 0000000..79f7c3d
+index 0000000..3b427c8
 --- /dev/null
 +++ b/web/frontend/src/components/common/UnlocatedList.jsx
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,83 @@
 +// 未定位区：摘录在原文里定不了位的条目（做法、字段值、关系态度）。只展示、不进聊天的 prompt；
 +// 卡主把一条挪进某个阶段，就算给了依据（spec arc-phase-unlocated §6）。
 +//
 +// 规则全在后端（core/unlocated.py：列表追加 / 单值交换 / 态度去占位），这里只渲染、收集
-+// 「挪到第几阶段」，交给 `onMove(section, index, phase, path)`。
++// 「挪到第几阶段」，交给 `onMove(section, index, phase, path, expected)` —— expected 是这一行
++// 渲染的那一条，后端拿它核对序号处的条目，序号漂移（另一个标签页先挪过）时拒绝而不是挪错。
 +// **不另写样式**：条目外观用「情境→行为」那套（card-behavior-*、pill），下拉用全站的
 +// `common/Select`（Radix，键盘与读屏现成），按钮用 btn-secondary btn-sm，按钮行用
 +// memory-edit-actions，提示用 settings-hint。默认选中：态度用它原来标的阶段，其余用最后阶段。
@@ -3840,15 +4051,16 @@ index 0000000..79f7c3d
 +  const rows = [
 +    ...(u.behaviors || []).map((b, i) => ({
 +      key: `b${i}|${b.situation}|${b.behavior}`, kind: '做法', text: `${b.situation} → ${b.behavior}`,
-+      move: (p) => onMove('behaviors', i, p, ''), initial: last,
++      move: (p) => onMove('behaviors', i, p, '', { situation: b.situation, behavior: b.behavior }),
++      initial: last,
 +    })),
 +    ...overlayLeaves(u.overlay).flatMap(([path, vals]) => (vals || []).map((v, i) => ({
 +      key: `o${path}|${i}|${v}`, kind: overlayLabel(path), text: v,
-+      move: (p) => onMove('overlay', i, p, path), initial: last,
++      move: (p) => onMove('overlay', i, p, path, v), initial: last,
 +    }))),
 +    ...(u.attitudes || []).map((a, i) => ({
 +      key: `a${i}|${a.target}|${a.attitude}`, kind: `对${a.target}的态度`, text: a.attitude,
-+      move: (p) => onMove('attitudes', i, p, ''),
++      move: (p) => onMove('attitudes', i, p, '', { target: a.target, attitude: a.attitude, phase: a.phase }),
 +      initial: a.phase >= 1 && a.phase <= last ? a.phase : last,
 +    })),
 +  ]
@@ -3915,7 +4127,7 @@ index 0000000..029a2ae
 +})
 diff --git a/web/frontend/src/store/moveUnlocated.test.js b/web/frontend/src/store/moveUnlocated.test.js
 new file mode 100644
-index 0000000..ee78c45
+index 0000000..13ffa43
 --- /dev/null
 +++ b/web/frontend/src/store/moveUnlocated.test.js
 @@ -0,0 +1,47 @@
@@ -3950,12 +4162,12 @@ index 0000000..ee78c45
 +  it('moveUnlocated：POST 到挪动接口，写回返回的卡', async () => {
 +    vi.mocked(fetchWithTimeout).mockResolvedValueOnce(
 +      reply({ ok: true, card: server({ selectable: true, phases: [{ behaviors: [{ situation: 's' }] }] }) }))
-+    await useAppStore.getState().moveUnlocated('c1', { section: 'behaviors', index: 0, phase: 1 })
++    await useAppStore.getState().moveUnlocated('c1', { section: 'behaviors', index: 0, phase: 1, expected: { situation: 's' } })
 +    const [url, init] = vi.mocked(fetchWithTimeout).mock.calls[0]
 +    expect([url, JSON.parse(init.body),
 +      useAppStore.getState().currentCard.card_json.character_arc.phases[0].behaviors[0].situation])
 +      .toEqual(['/api/distill/card/c1/unlocated/move',
-+        { section: 'behaviors', index: 0, phase: 1, path: '' }, 's'])
++        { section: 'behaviors', index: 0, phase: 1, path: '', expected: { situation: 's' } }, 's'])
 +  })
 +
 +  it('moveUnlocated 失败：抛错，本地卡不动', async () => {
@@ -3967,7 +4179,7 @@ index 0000000..ee78c45
 +  })
 +})
 diff --git a/web/frontend/src/store/useAppStore.js b/web/frontend/src/store/useAppStore.js
-index a758619..229e5c2 100644
+index a758619..482e5bd 100644
 --- a/web/frontend/src/store/useAppStore.js
 +++ b/web/frontend/src/store/useAppStore.js
 @@ -1782,6 +1782,30 @@ const useAppStore = create((set, get) => {
@@ -4032,11 +4244,11 @@ index a758619..229e5c2 100644
    },
 +
 +  // 把未定位区的一条挪进阶段 `phase`（规则只在后端 core/unlocated.py；这里只调接口、写回结果）。
-+  moveUnlocated: async (cardId, { section, index, phase, path = '' }) => {
++  moveUnlocated: async (cardId, { section, index, phase, path = '', expected }) => {
 +    const res = await fetchWithTimeout(`/api/distill/card/${cardId}/unlocated/move`, {
 +      method: 'POST',
 +      headers: { 'Content-Type': 'application/json' },
-+      body: JSON.stringify({ section, index, phase, path }),
++      body: JSON.stringify({ section, index, phase, path, expected }),
 +    })
 +    const data = await res.json()
 +    if (!res.ok || !data.ok) throw new Error(data.detail || '挪动失败，请刷新后重试')
@@ -4047,7 +4259,7 @@ index a758619..229e5c2 100644
  })
  
 diff --git a/web/routers/distill.py b/web/routers/distill.py
-index 72c3bbf..1437ac1 100644
+index 72c3bbf..a1a7223 100644
 --- a/web/routers/distill.py
 +++ b/web/routers/distill.py
 @@ -27,6 +27,7 @@ from core.card_out import out_card
@@ -4058,7 +4270,7 @@ index 72c3bbf..1437ac1 100644
  from core.export import export_tavern_json
  from core.card_draft import card_from_draft
  from core.schema import CharacterCard
-@@ -1274,7 +1275,37 @@ async def update_card(
+@@ -1274,7 +1275,38 @@ async def update_card(
          logger.warning("[distill] Card validation failed: %s", exc)
          raise HTTPException(400, "角色卡数据校验失败，请检查字段后重试") from exc
      result = await storage.update_card(card_id, validated.model_dump())
@@ -4071,6 +4283,7 @@ index 72c3bbf..1437ac1 100644
 +    index: int
 +    phase: int            # 1 起
 +    path: str = ""        # section=overlay 时的登记表路径
++    expected: Any         # 调用方看到的那一条，与序号处的条目对不上即 400（防序号漂移挪错）
 +
 +
 +@router.post("/card/{card_id}/unlocated/move")
@@ -4088,7 +4301,7 @@ index 72c3bbf..1437ac1 100644
 +    card = CharacterCard.model_validate_json(record["card_json"])
 +    try:
 +        moved = move_unlocated(card, section=req.section, index=req.index,
-+                               phase=req.phase, path=req.path)
++                               phase=req.phase, path=req.path, expected=req.expected)
 +    except ValueError as exc:
 +        logger.warning("[distill] move_unlocated rejected: %s", exc)
 +        raise HTTPException(400, "这一条已经不在未定位区，请刷新后重试") from exc

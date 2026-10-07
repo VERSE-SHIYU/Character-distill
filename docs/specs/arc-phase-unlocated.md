@@ -1,6 +1,6 @@
 # spec：阶段未验证的处理（①补完 B）+ overlay 与卡片同形
 
-基线 main `c97116b0`（2026-10-07 核） · 参考实现 `docs/specs/artifacts/arc-phase-unlocated-proto.patch`（sha256 `83ec2dbcadd55e9891aec8f9fb1d50bd9461b0cabe9ae5a566155bc955c048a6`，在 `c97116b0` 上 `git apply --check` 通过）
+基线 main `c97116b0`（2026-10-07 核） · 参考实现 `docs/specs/artifacts/arc-phase-unlocated-proto.patch`（sha256 `f9a68be3b131e8d70ca3ad7cbda19754ccebb7bb15156353a06a4a9d56052fcc`，在 `c97116b0` 上 `git apply --check` 通过）
 决策记录：本对话 2026-10-06/07 与 Shiyu 逐条定的（D1–D4、方案 2 未定位区、d 同形 overlay、S15 选 A + 机械判定、锚点锁），总计划 `arc-reactions-plan.md`「①补完 B」一节。
 
 **分 4 段、4 个 PR，按 1 → 2 → 3 → 4 合并**（段 1 与段 2 文件不重叠，可两条 lane 并行；段 3、4 串行）。每段先过本段的目标检查（§1），再对账本段变异（§7，脚本带段号），再开下一段。参考补丁是 4 段的合集：每段只取 §4 列给它的文件和改动。
@@ -103,15 +103,15 @@ h. warning：去掉的标注各一条（`去掉标注：%s %r 在阶段 %d 没�
 |---|---|---|
 | 状态类（做法、性格、价值观、语气等） | 未定位区：保留、展示、**不进 prompt** | CDT：不注入未验证的 |
 | 经历类（记忆、知识范围） | 挂最后阶段 | 由 DREAM 时间约束推出：时间不明放最后，永不泄露后续剧情 |
-| 无阶段的卡（`count == 0`） | 经历类进顶层；状态类进未定位区 | — |
+| 无阶段的卡（`count == 0`） | 不做位置检查：两类都进顶层，不进未定位区（`test_u10_…`） | 规则 5：没有阶段就没有「挂错阶段」 |
 | 整卡跳过 | 保留模型标注（现状） | 代码事实：这类卡只按最后阶段聊 |
 
 ### 3.3 关系态度（`card_draft._convert_relationships`）
 
-- 走同一个 `verify`，按 `Verification.tag_targets` **逐条**分发（每个阶段的态度文字不同，不能整条挪）。
+- **每条态度单独**作为一个检查条目走同一个 `verify` 与 `dispatch`，再按关系收回（每个阶段的态度文字不同，不能整条挪）。不按关系聚合：聚合后同一阶段的几条态度共用位置证据，A 的摘录会把 B 也带走（补充·审计发现 1，`test_r7_…` 与目标夹具「孩子们」）。
 - 撞车（两条态度落到同一阶段）：原本就标在这个阶段的优先，其余按标注顺序取第一条；**输掉且在别处没赢**的进未定位区，`note` 跟着走，带上原来标的阶段 `phase`（挪回时预选用）。在别处赢了的不进。
-- 一条态度都不剩的关系 → 挂最后阶段、态度留空（不编造）。态度留空时：`context_engine.py` 卡片扩展层那一行不带冒号；`chat_engine.py` 那一行不带逗号；群聊回落「普通群聊关系」（`group_session.py:298`，已核）。
-- 顶层 `attitude` 取挂上的最后一个阶段的态度；无阶段的卡取最后一条态度。
+- 一条态度都不剩的关系 → 挂最后阶段、态度留空（不编造）。态度留空时：`context_engine.py` 卡片扩展层那一行不带冒号；`chat_engine.py` 那一行不带逗号；群聊回落「普通群聊关系」（`group_session.py:297`，已核）。
+- 顶层 `attitude` 取挂上的最后一个阶段的态度；无阶段的卡取最后一条态度。占位的生成与识别（`schema.placeholder_phase_attitudes` / `is_placeholder_attitude`）、顶层取值（`schema.top_attitude`）、经历类无证据挂最后（`card_draft.experience_fallback`）各只一处，转卡与挪动共用。
 
 ### 3.4 未定位区形态
 
@@ -138,10 +138,10 @@ character_arc.unlocated = {
 
 ### 3.6 挪进阶段（段 4）
 
-- 规则只在后端纯函数 `core/unlocated.py::move_unlocated(card, *, section, index, phase, path="")`：「列表还是单值」只认登记表 `kind`；列表追加；**单值交换**（原值退回未定位区，D4）；态度挪入先去掉「态度留空」占位（不然投影取 ≤k 最新一条会被空态度盖住），阶段 k 已有态度也交换。参数不合法抛 `ValueError`。
-- 接口 `POST /api/distill/card/{card_id}/unlocated/move`，body `{section, index, phase, path}`：复用 `get_card_owned` 归属鉴权（非属主与不存在同判 404）；`ValueError` → 400「这一条已经不在未定位区，请刷新后重试」；**返回值走 `out_card`**。演示账号门禁自动拦住这个 POST（`test_demo_gate.py` 已跑过，绿）。
+- 规则只在后端纯函数 `core/unlocated.py::move_unlocated(card, *, section, index, phase, expected, path="")`：「列表还是单值」只认登记表 `kind`；列表追加；**单值交换**（原值退回未定位区，D4）；态度挪入先去掉「态度留空」占位（不然投影取 ≤k 最新一条会被空态度盖住），阶段 k 已有态度也交换。参数不合法抛 `ValueError`。**`expected` 是调用方看到的那一条**（做法 `{situation, behavior}`、字段值本身、态度 `{target, attitude, phase}`），与序号处的条目对不上也抛 —— 只按序号定位时，两个标签页先后挪动或编辑后再挪，序号漂移会静默挪错（补充·审计发现 7）。
+- 接口 `POST /api/distill/card/{card_id}/unlocated/move`，body `{section, index, phase, path, expected}`：复用 `get_card_owned` 归属鉴权（非属主与不存在同判 404）；`ValueError` → 400「这一条已经不在未定位区，请刷新后重试」；**返回值走 `out_card`**。演示账号门禁自动拦住这个 POST（`test_demo_gate.py` 已跑过，绿）。
 - 前端：按钮放卡片详情（`CharCard.jsx` 的 `CardDetail`）的「未定位的条目」一节，**只在 `useCanWrite()` 为真时渲染**；市场卡详情（`MarketCardDetail`）不渲染。不放编辑弹窗（弹窗有未保存的本地改动，会互相覆盖）。阶段选择用全站的 `common/Select`（Radix），条目与按钮复用现有样式类，不另写 CSS。默认选中：态度用它原来标的阶段（在 1..n 内），其余用最后阶段。
-- **触发链**：选阶段（`Select` onChange → `MoveControl` 本地 state）→ 点「挪入」→ `MoveControl.run` → `onMove(phase)` → `CardDetail.handleMoveUnlocated(section, index, phase, path)` → `store.moveUnlocated(cardId, {...})` → POST → 成功：`store._applyServerCard(cardId, data.card)` 写 `cards` 与 `currentCard` → `CardDetail` 重渲染：`parseCardJson` → `ArcList` 与 `UnlocatedList` 都从新卡重算；失败：抛错 → `setError` 上屏，本地卡不动。
+- **触发链**：选阶段（`Select` onChange → `MoveControl` 本地 state）→ 点「挪入」→ `MoveControl.run` → `onMove(phase)` → `CardDetail.handleMoveUnlocated(section, index, phase, path, expected)` → `store.moveUnlocated(cardId, {...})` → POST → 成功：`store._applyServerCard(cardId, data.card)` 写 `cards` 与 `currentCard` → `CardDetail` 重渲染：`parseCardJson` → `ArcList` 与 `UnlocatedList` 都从新卡重算；失败：抛错 → `setError` 上屏，本地卡不动。
 
 ### 3.7 监测（`[phase_anchoring]` 一行）
 
@@ -158,8 +158,8 @@ character_arc.unlocated = {
 |---|---|---|---|
 | **1** 安全 | overlay 同形 + 根因锁 | `core/card_layers.py`（`overlay_leaves`、`check_overlay`、`nest_flat_keys`；**不含**未定位区 3 条登记与 `map`）；`core/schema.py`（`ArcPhase` 的 overlay 类型、迁移调用、`_check_overlay` 调 `check_overlay`）；`core/arc_view.py`（3 处 `get_path`）；`core/card_draft.py`（overlay 写入改 `set_path`，含 `key_memories`）；`web/frontend/src/components/common/ArcList.jsx`；`tests/test_arc_phase_fields_readers.py`、`_unit.py` 里测试夹具改 `set_path` | `tests/test_arc_phase_unlocated.py` 的 N1–N4、N5（段 1 夹具不碰未定位区）、N6、G1–G3；`ArcListNested.test.jsx`；`arc-phase-fields.spec.js` 照绿 |
 | **2** 正确性 | 编辑保存不丢阶段信息 + 出卡统一 | `EditCardModal.jsx`（`...data.character_arc`）；`distill.py` PATCH 返回 `out_card(result)`；`useAppStore.js` 的 `_applyServerCard` + `updateCard` 写服务端返回值；S15 锁（§6）；`e2e/arc-phase-select.spec.js` 夹具补 `selectable: true` + 等 `authUser` 再注入 | `EditCardModalArcKeep.test.jsx`、`applyServerCard.test.js`、S15 两个方向（§6）、`arc-phase-select.spec.js` |
-| **3** 规则 | 位置规则 + 未定位区 + 关系逐条 + 监测 + 驱动修复 + 锚点锁 | `core/phase_anchoring.py`；`core/card_draft.py`（`dispatch` 三元组、`_convert_relationships`、`card_from_draft`、监测行）；`core/schema.py`（`UnlocatedAttitude`、`UnlocatedItems`、`CharacterArc.unlocated`）；`core/card_layers.py`（3 条登记 + `map`）；`core/card_quotes.py`；`core/arc_view.py`（投影清空未定位区）；`core/context_engine.py`、`core/chat_engine.py`（空态度）；`tests/perf/arc_phase_anchoring_mutations.py` + `card_draft_mutations.py` + 两个 `*_red_lines.json`（重跑生成）；`tests/test_mutation_anchors.py` | `test_arc_phase_unlocated_goal.py`；`test_arc_phase_unlocated.py` 其余各组（N4b、U、R、P、Q）；`test_phase_anchoring.py`（U7、U13–U15 改写，新增 U13b–d，U19、U20、U22 改写）；`test_arc_phase_fields_unit.py`（总数 40、`dispatch` 三元组）；`test_card_arc_behaviors.py`；两个常设驱动；元锁；锚点锁 |
-| **4** 功能 | 挪进阶段 | `core/unlocated.py`；`distill.py` 挪动接口；`useAppStore.js` 的 `moveUnlocated`；`UnlocatedList.jsx`；`CharCard.jsx`；`global.css`；S15 白名单加 `move_unlocated_item` | `test_arc_phase_unlocated_move.py`；`UnlocatedList.test.jsx`、`CharCardUnlocated.test.jsx`、`moveUnlocated.test.js`；`e2e/arc-phase-unlocated.spec.js` |
+| **3** 规则 | 位置规则 + 未定位区 + 关系逐条 + 监测 + 驱动修复 + 锚点锁 | `core/phase_anchoring.py`；`core/card_draft.py`（`dispatch` 三元组、`_convert_relationships`、`card_from_draft`、监测行）；`core/schema.py`（`UnlocatedAttitude`、`UnlocatedItems`、`CharacterArc.unlocated`）；`core/card_layers.py`（3 条登记 + `map`）；`core/card_quotes.py`；`core/arc_view.py`（投影清空未定位区）；`core/context_engine.py`、`core/chat_engine.py`（空态度）；`tests/perf/arc_phase_anchoring_mutations.py` + `card_draft_mutations.py` + 两个 `*_red_lines.json`（重跑生成）；`tests/test_mutation_anchors.py` | `test_arc_phase_unlocated_goal.py`；`test_arc_phase_unlocated.py` 其余各组（N4b、U、R、P、Q）；`test_phase_anchoring.py`（U7、U13–U15 改写，新增 U13b–d，U19、U20、U22 改写）；`test_arc_phase_fields_unit.py`（总数 40、`dispatch` 三元组）；`test_card_arc_behaviors.py`；`test_identify_failure_channels.py`（夹具正文补摘录，补充 8）；两个常设驱动；元锁；锚点锁 |
+| **4** 功能 | 挪进阶段 | `core/unlocated.py`；`distill.py` 挪动接口；`useAppStore.js` 的 `moveUnlocated`；`UnlocatedList.jsx`；`CharCard.jsx`（不改 `global.css`：复用现有样式类）；S15 白名单加 `move_unlocated_item` | `test_arc_phase_unlocated_move.py`；`UnlocatedList.test.jsx`、`CharCardUnlocated.test.jsx`、`moveUnlocated.test.js`；`e2e/arc-phase-unlocated.spec.js` |
 
 ---
 
@@ -213,10 +213,10 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
 |---|---|---|
 | 1 | X1 旧扁平键不转换 → N1；X2 扁平重复覆盖嵌套（过严）→ N2；X3 不查登记 → N3；X4 不查形态 → N4；X7 回到扁平存法（写入+不转换+不拒点，三处一起）→ N5 根因锁；X7b 守卫寻址不按点分层 → G1；X7c 带点字段不派生核对路径 → G2；X8 阶段 overlay 不进核对 → G3；F2 ArcList 不走嵌套 → vitest |
 | 2 | F1 编辑保存整体替换 `character_arc` → vitest；F3 `updateCard` 写本地卡 → vitest |
-| 3 | X5 不拒带点键名、X6 未定位区不走同一校验器 → N4b；X7d 根因复发 → 目标 G4；X9 恢复兜底 → 目标 G1；X10 未定位做法被丢 → 目标 G2；X11/X11b 未定位区进投影 → 目标 G3 / P1；X12 不改挂 → 目标 G0；X13 状态类被丢；X14 经历类被丢；X15 经历类挂阶段 1（泄露）；X16 经历类挂全部落点；X17 未定位单值存成单值；X18 整卡跳过也进未定位区（过严）；X19 分类计数漏关系；X20 撞车原标注不优先；X21 输掉的态度被丢；X22 在别处赢的也进未定位区；X23 无态度关系挂阶段 1；X24 无态度关系沿用模型态度；X25 空态度带冒号；X26 无阶段卡取第一条态度；X27/X27b 未定位做法不进核对；X28 未定位 overlay 不进核对；X29 未定位态度不进核对；X30 审核遍历跳过未定位区 |
-| 4 | X31 单值不交换；X32 态度不去占位；X33 接口不走 `out_card`；F4 打错接口；F5 失败也写回；F6 态度默认阶段不用原标注；F7 传错路径；F8 只读账号也显示；F9 挪入没接 store |
+| 3 | X5 不拒带点键名、X6 未定位区不走同一校验器 → N4b；X7d 根因复发 → 目标 G4；X9 恢复兜底 → 目标 G1；X10 未定位做法被丢 → 目标 G2；X11/X11b 未定位区进投影 → 目标 G3 / P1；X12 不改挂 → 目标 G0；X13 状态类被丢；X14 经历类被丢；X15 经历类挂阶段 1（泄露）；X16 经历类挂全部落点；X17 未定位单值存成单值；X18 整卡跳过也进未定位区（过严）；X19 分类计数漏关系；X20 撞车原标注不优先；X21 输掉的态度被丢；X22 在别处赢的也进未定位区；X23 无态度关系挂阶段 1；X24 无态度关系沿用模型态度；X25 空态度带冒号；X26 无阶段卡取第一条态度；X27/X27b 未定位做法不进核对；X28 未定位 overlay 不进核对；X29 未定位态度不进核对；X30 审核遍历跳过未定位区；X34/X34b 同一关系的态度共用位置证据 → R7 / 目标 G1；X37 无阶段卡的状态类进未定位区（过严）→ U10 |
+| 4 | X31 单值不交换；X32 态度不去占位；X33 接口不走 `out_card`；F4 打错接口；F5 失败也写回；F6 态度默认阶段不用原标注；F7 传错路径；F8 只读账号也显示；F9 挪入没接 store；X35 挪动不核对内容（放宽）→ route 漂移用例；X36 内容核对一律不过（过严）→ M1；F10 挪入不带内容 → vitest |
 
-**预跑结果**：`结论：47/47 条全红`，16 个目标文件还原后 sha256 逐字节一致。第一轮 X7b/X7c 没红：变异打在写侧，而对应测试测读侧 —— 改成读侧变异后红；写侧复发由 X7、X7d 管。
+**预跑结果**：`结论：53/53 条全红`（审计后补 X34/X34b/X35/X36/X37/F10；首轮 47/47），16 个目标文件还原后 sha256 逐字节一致。第一轮 X7b/X7c 没红：变异打在写侧，而对应测试测读侧 —— 改成读侧变异后红；写侧复发由 X7、X7d 管。
 
 常设驱动（段 3）：
 - `arc_phase_anchoring_mutations.py`：M1–M4 按新规则重写（M1 恒认所标、M2 命中也挂全部落点、M3 恢复兜底、M4 不改挂、M4b 只取最早落点），M7–M9、M11、M18、M21、M25、M34、M35 换锚点，M17、M30 修 main 上的锚点漂移，新增 M37（删改挂 warning）、M38（rehung 按标注计）、M39（改挂摘录压过自己的）。**42/42 红，产物重写，元锁 31 passed。** 预跑中补的判别器：M3 → `test_u13b`，M38 → `test_u13d`，M39 → `test_u13c`；M25 原写法让代码崩溃、元锁判「没撞判据」，改成不崩溃的等价写法。
@@ -239,7 +239,7 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
 |---|---|---|
 | 每卡做法 | 5–13 条（4 张样本卡全量） | 未定位区同量级，列表全展示 |
 | 摘录最多出现次数 | `MAX_OCCURRENCES = 3`（`phase_anchoring.py`） | 超过不作证据 |
-| 阶段数 | 样本 2–4 | `<select>` 全列 |
+| 阶段数 | 样本 2–4 | `common/Select` 全列 |
 | 带点的 state/experience 路径 | 7（登记表扫描） | N1、G1、G2 逐个参数化 |
 | 登记表叶子 | 37 → 40 | U1 断言 |
 
@@ -247,13 +247,13 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
 
 | 调用点 | 落卡阶段 / 未定位 | 监测行 | prompt | 守卫/核对 | 前端 |
 |---|---|---|---|---|---|
-| `card_from_draft` 做法 | U1、U13、G0–G2 | U8、U22 | P2、G3 | Q1、Q2 | — |
+| `card_from_draft` 做法 | U1、U10、U13、G0–G2 | U8、U22 | P2、G3 | Q1、Q2 | — |
 | 通用字段（含带点） | U2、U3、N6 | U8 | P2 | G1–G3、Q3、Q6 | ArcListNested |
 | 记忆 | U4、U9 | U8 | P2（正控：挂最后的只在阶段 3） | — | — |
-| 关系态度 | R1–R4、R6 | U8 | R5 | Q4 | — |
+| 关系态度 | R1–R4、R6、R7、目标「孩子们」 | U8 | R5 | Q4 | — |
 | 整卡跳过 | U7 | 原有 | — | — | — |
 | PATCH | — | — | — | — | applyServerCard、S15 |
-| 挪动接口 | M1–M8、route ×3 | — | M5、M8 | — | UnlocatedList、CharCardUnlocated、moveUnlocated、e2e |
+| 挪动接口 | M1–M8（M7 含内容漂移 4 例）、route ×4 | — | M5、M8 | — | UnlocatedList、CharCardUnlocated、moveUnlocated、e2e |
 
 ---
 
@@ -261,28 +261,38 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
 
 - 本地只跑本段受影响的文件 + `npm test`；PG 用 docker 测试库（§2.5）。
 - 本段变异：`python docs/specs/artifacts/arc_phase_unlocated_mutations.py <段号>`；段 3 另跑两个常设驱动与元锁、锚点锁。
-- Playwright：`cd web/frontend && npx playwright test e2e/arc-phase-unlocated.spec.js`（段 4）/ `arc-phase-select.spec.js`（段 2）。截图 `e2e/arc-phase-unlocated-before.png` / `-after.png` 给 Shiyu 看排版。沙箱预跑：新 spec `--repeat-each=10` 30/30；`arc-phase-select` + `arc-phase-fields` `--repeat-each=3` 21/21。
+- Playwright：`cd web/frontend && npx playwright test e2e/arc-phase-unlocated.spec.js`（段 4）/ `arc-phase-select.spec.js`（段 2）。截图 `e2e/arc-phase-unlocated-before.png` / `-after.png` 给 Shiyu 看排版。沙箱预跑（审计后重跑）：三个 spec 一起 10 passed。**首轮的「30/30」是改样式之前跑的**，改样式后 `arc-phase-unlocated.spec.js` 的 `.card-unlocated-item` 选择器已失效而未重跑（补充·审计发现 4）—— 改样式类后必须重跑 e2e。沙箱的 Playwright 浏览器版本与锁不符时，用临时配置 `launchOptions.executablePath` 指到 `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`（不入库）。
 - 合并门是分支 CI；合并只做 `gh pr create` → `gh pr merge --merge`。报告里不写本地全量数字。
 
-沙箱预跑（全部段合起来）：后端受影响选集 908 passed / 1 failed（即 §2.5 main 原有的那条）；前端 91 文件 468 passed；CI lint 0 error（10 个 warning 全在本 spec 没碰的文件，main 原样）。
+沙箱预跑（全部段合起来，审计后重跑）：后端受影响选集（46 个文件）995 passed / 1 failed（即 §2.5 main 原有的那条）；前端 469 passed；CI lint 0 error（10 个 warning 全在本 spec 没碰的文件，main 原样）。
 
 ## §12 要 Shiyu 定的（不在本 spec 范围内）
 
 1. **出卡全面接入**：其余 14 个返回卡片的接口是否也一律走 `out_card`、S15 改成「凡返回卡片」的机械判定（§6）。
-2. **main 原有的失败用例** `test_relationship_batch_splits_and_merges`：断言并发调用的开始顺序，修法是只断言批大小的多重集与输出顺序（输出顺序才是被保证的性质）。是否另开一个小 PR。
+2. **挪动与 PATCH 的丢失更新**：两者都是「读出、修改、整卡写回」。`expected` 挡住了序号漂移，挡不住两个请求同时在途（都读到旧卡、后写覆盖先写）。要挡就加乐观锁（请求带卡的 `updated_at`，写回时 `WHERE updated_at = ?`，不符 409），PATCH 与挪动一起改，波及编辑弹窗的报错文案。是否做、何时做？
+3. **main 原有的失败用例** `test_relationship_batch_splits_and_merges`：断言并发调用的开始顺序，修法是只断言批大小的多重集与输出顺序（输出顺序才是被保证的性质）。是否另开一个小 PR。
 
 ## 自检表
 
 | 项 | 结果 |
 |---|---|
 | 每条代码判断附了读过的行或原始输出 | §2 全部带坐标 / 输出 |
-| 与自身规则冲突 | 无：同形与未定位区共用一个校验器；分发、出卡、位置判定各只一处 |
+| 与自身规则冲突 | 首轮有：关系绕开 `dispatch`、顶层取值与占位各写两处（补充·审计发现 2）；已收为各一处 |
 | 对照调研结论 | 「未验证不注入」= 阶段未验证的状态类不进 prompt；经历类挂最后不泄露 |
 | 每条边界两侧都测 | 放宽 / 过严成对：X1/X2、X13/X15、X21/X22、X18、U13b/U13c |
 | 拒侧用例另有能通过的标注 | `test_phase_anchoring.py` 约定沿用（约定 1 的说明已改为「否则整条进未定位区」） |
-| 变异预跑无存活 | 47/47、42/42、38/38 |
+| 变异预跑无存活 | 53/53、42/42、38/38 |
 | 目标检查独立于被测代码 | G1 用 `str.find` 预言，不调 `phase_at` / `verify` |
 
 ## 补充（审计发现写这里）
 
-（空）
+审计（中途报告，基线 `9c414c2`）7 条 + 修复时自查 1 条。每条：原因 → 处置 → 守它的测试 / 变异。
+
+1. **关系态度撞车时归错阶段**（spec 设计错，§3.3 原写「按 `tag_targets` 逐条分发」）。`tag_targets` 按「条目 × 所标阶段」聚合，而条目是整条关系（拿 `DraftMemory` 当载体），同一阶段的几条态度共用位置证据。复现：两条都标阶段 1，A 的摘录在阶段 2、B 的在阶段 1 → 输出 `[(1,A),(2,A)]`，B 进未定位区。**处置**：每条态度单独过 `verify` 与 `dispatch`，再按关系收回。**测试**：`test_r7_…`；目标夹具加「孩子们」（旧实现下 G1 红在 `[(1, 'A撞车外')]`）+ 夹具自检 `test_g0_fixture_really_has_a_same_phase_collision`。**变异**：X34 / X34b。
+2. **同一规则写在两处**（根因同 1：关系绕开了 `dispatch`）。**处置**：关系走 `dispatch`；`experience_fallback`（经历类无证据挂最后）、`top_attitude`（顶层取最后阶段）、`placeholder_phase_attitudes` / `is_placeholder_attitude`（占位生成与识别）各一处，转卡与挪动共用。**变异**：X15、X23 改打到这几处。
+3. **§3.2「无阶段的卡：状态类进未定位区」与代码不符**（spec 写错，代码对：规则 5 无阶段不做位置检查）。**处置**：改 §3.2 那一行。**测试**：`test_u10_…`（原先无测试守这一行，`test_u6` 测的是单阶段卡）。**变异**：X37。
+4. **e2e 选择器失效**（实现偏离：改样式类后没重跑 e2e）。`.card-unlocated-item` → `.card-unlocated .card-behavior-item`。审计后重跑三个 spec 10 passed，截图已重出。
+5. **spec 文字没跟上代码**：§4 段 4 去掉 `global.css`；§3.3 `:298` → `:297`。
+6. **目标文件的不足**：G2 补 `catchphrases`；docstring 写明预言共用 `normalize`、不模拟 `MAX_OCCURRENCES` 与规则 b（G1 只是必要条件）；补同一关系两条态度标同一阶段的夹具（见 1）。
+7. **挪动接口只按序号寻址**（spec 设计，§3.6）。**处置**：请求带 `expected`（调用方看到的那一条），与序号处的条目对不上 → 400、卡不写回。**测试**：M7 新增 4 例、`test_route_drifted_content_is_400_and_card_untouched`、`UnlocatedList.test.jsx` 新增一例。**变异**：X35（放宽）、X36（过严）、F10。**没挡住的**：两个请求同时在途的丢失更新（PATCH 同样），要乐观锁，列入 §12 第 2 条待定。
+8. **（修复时自查）本分支让 `test_identify_failure_channels.py::TestOneParseableCardOnBothChannels::test_bg_task_accumulates_one_card` 变红**，首轮预跑与审计都没跑到这个文件。原因：夹具的草稿摘录「开头甲甲甲」不在正文里，按 §3.2 状态类字段（`decision_style`）进未定位区、顶层为空；该用例考的是「4 组都并进来」，不考位置检查。**处置**：本组两条用例的正文补上这句摘录（`BODY` 类常量，注释写明为什么），`_run_bg` 也传同一份正文。main 上照绿，本分支修后照绿。教训：受影响选集要按「会走到 `card_from_draft` 的入口」划，不只按 import 了哪些模块划 —— 审计后的选集加了 `Distiller`，46 个文件。
