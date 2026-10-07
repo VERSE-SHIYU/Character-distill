@@ -29,7 +29,7 @@ describe('UnlocatedList 挪动交互', () => {
     expect(shown).toEqual(['阶段 2 · 晚', '阶段 2 · 晚', '阶段 2 · 晚', '阶段 1 · 早'])
   })
 
-  it('选阶段 → 点挪入 → onMove(分区, 序号, 阶段, 路径, 这一行渲染的条目)', async () => {
+  it('选阶段 → 点挪入 → onMove(分区, 序号, 阶段, 路径)', async () => {
     const onMove = vi.fn().mockResolvedValue()
     render(<UnlocatedList arc={arc} onMove={onMove} />)
     // 打开下拉走键盘 Enter（同 common/__tests__/Select.test.jsx），再点选项
@@ -37,19 +37,6 @@ describe('UnlocatedList 挪动交互', () => {
     fireEvent.click(screen.getByRole('option', { name: '阶段 1 · 早' }))
     fireEvent.click(screen.getAllByRole('button', { name: '挪入' })[2])
     await waitFor(() => expect(onMove).toHaveBeenCalled())
-    expect(onMove.mock.calls).toEqual([['overlay', 1, 1, 'speaking_style.tone', '热']])
-  })
-
-  it('做法与态度带上各自的内容给后端核对（序号漂移时拒绝而不是挪错）', async () => {
-    const onMove = vi.fn().mockResolvedValue()
-    render(<UnlocatedList arc={arc} onMove={onMove} />)
-    const buttons = screen.getAllByRole('button', { name: '挪入' })
-    fireEvent.click(buttons[0])
-    fireEvent.click(buttons[3])
-    await waitFor(() => expect(onMove).toHaveBeenCalledTimes(2))
-    expect(onMove.mock.calls).toEqual([
-      ['behaviors', 0, 2, '', { situation: '被揭短', behavior: '涨红脸' }],
-      ['attitudes', 0, 1, '', { target: '掌柜', attitude: '怕', phase: 1 }],
-    ])
+    expect(onMove.mock.calls).toEqual([['overlay', 1, 1, 'speaking_style.tone']])
   })
 })

@@ -1,4 +1,4 @@
-"""变异预跑（spec `arc-phase-unlocated.md` §7 对账表 X1–X37 + 前端 F1–F10）。
+"""变异预跑（spec `arc-phase-unlocated.md` §7 对账表 X1–X37 + 乐观锁 L1–L7 + 前端 F1–F13）。
 
 逐条把改后代码改坏一处（放宽、过严两个方向），对应测试必须红；跑完逐字节还原。
 
@@ -53,22 +53,36 @@ ARCL = FE / "src" / "components" / "common" / "ArcList.jsx"
 UNLJ = FE / "src" / "components" / "common" / "UnlocatedList.jsx"
 CHAR = FE / "src" / "components" / "CharCard.jsx"
 STORE = FE / "src" / "store" / "useAppStore.js"
+TXTP = FE / "src" / "components" / "TextPanel.jsx"
+OUT = ROOT / "core" / "card_out.py"
+PGS = ROOT / "storage" / "postgres_store.py"
 TARGETS = (LAYERS, SCHEMA, DRAFT, ANCH, VIEW, QUOTES, CTX, WALK, GUARD, MOVE, RDIST,
-           EDIT, ARCL, UNLJ, CHAR, STORE)
+           EDIT, ARCL, UNLJ, CHAR, STORE, TXTP, OUT, PGS)
 JS = ("src/components/__tests__/ArcListNested.test.jsx",          # 段 1
       "src/components/__tests__/EditCardModalArcKeep.test.jsx",   # 段 2
       "src/store/applyServerCard.test.js",                        # 段 2
       "src/components/__tests__/UnlocatedList.test.jsx",          # 段 4
       "src/components/__tests__/CharCardUnlocated.test.jsx",      # 段 4
-      "src/store/moveUnlocated.test.js")                          # 段 4
+      "src/store/moveUnlocated.test.js",                          # 段 4
+      "src/components/__tests__/TextPanelEditSave.test.jsx")      # 段 4（§13）
 
 UNL = "tests/test_arc_phase_unlocated.py"
 GOAL = "tests/test_arc_phase_unlocated_goal.py"
 MV = "tests/test_arc_phase_unlocated_move.py"
+LOCK = "tests/test_card_optimistic_lock.py"
+PGT = "tests/test_postgres_store.py"
 
 
 def _u(name: str) -> str:
     return f"{UNL}::{name}"
+
+
+def _l(name: str) -> str:
+    return f"{LOCK}::{name}"
+
+
+def _pg(name: str) -> str:
+    return f"{PGT}::{name}"
 
 
 def _g(name: str) -> str:
@@ -218,19 +232,37 @@ MUTANTS = [
     ("X33 接口返回不走 out_card", _m("test_route_returns_the_card_through_out_card"),
      [("repl", RDIST, [("    return {\"ok\": True, \"card\": out_card(result)}   # B4：出卡只经 out_card（现算 selectable）",
                         "    return {\"ok\": True, \"card\": result}")])], "RED"),
-    ("X35 放宽 挪动不核对内容（序号漂移静默挪错，审计发现 7）", _m("test_route_drifted_content_is_400_and_card_untouched"),
-     [("repl", MOVE, [("    if not _matches(items[index], expected):", "    if False:")])], "RED"),
-    ("X36 过严 内容核对一律不过（合法挪动也被拒）", _m("test_m1_behavior_moves_into_phase"),
-     [("repl", MOVE, [("        return (isinstance(expected, dict) and bool(expected)",
-                       "        return (False and bool(expected)")])], "RED"),
+    # ── 乐观锁（§13）──
+    ("L1  放宽 PATCH 不核对 revision（旧版覆盖）", _l("test_patch_with_stale_revision_is_409_and_card_untouched"),
+     [("repl", RDIST, [("    if card_revision(record[\"card_json\"]) != req.revision:\n        raise HTTPException(409, CARD_CONFLICT)\n    result = await storage.update_card(card_id, validated",
+                        "    result = await storage.update_card(card_id, validated")])], "RED"),
+    ("L2  放宽 挪动不核对 revision（按漂移的序号挪错）", _l("test_move_with_stale_revision_is_409_and_card_untouched"),
+     [("repl", RDIST, [("    if card_revision(record[\"card_json\"]) != req.revision:\n        raise HTTPException(409, CARD_CONFLICT)\n    card = CharacterCard",
+                        "    card = CharacterCard")])], "RED"),
+    ("L3  放宽 存储不比较就写（核对与写入之间的竞争）", _pg("TestPgCardCompareAndSwap::test_stale_expected_writes_nothing"),
+     [("repl", PGS, [("WHERE id = $2 AND card_json = $4\",\n                    json.dumps(card_json, ensure_ascii=False), card_id, now, expected,",
+                      "WHERE id = $2\",\n                    json.dumps(card_json, ensure_ascii=False), card_id, now,")])], "RED"),
+    ("L4  放宽 PATCH 存储比较失败当成功（竞争时吞掉）", _l("test_patch_racing_another_write_is_409_and_keeps_the_other_write"),
+     [("repl", RDIST, [("    result = await storage.update_card(card_id, validated.model_dump(), expected=record[\"card_json\"])\n    if result is None:\n        raise HTTPException(409, CARD_CONFLICT)",
+                        "    result = await storage.update_card(card_id, validated.model_dump(), expected=record[\"card_json\"]) or record")])], "RED"),
+    ("L5  唤醒语拿内存里的旧卡整卡写回（覆盖用户编辑）", _l("test_awakening_lands_on_the_latest_card_and_keeps_the_users_edit"),
+     [("repl", RDIST, [("    card = CharacterCard.model_validate_json(rec[\"card_json\"])\n    card.awakening_message = awakening",
+                        "    card = CharacterCard.model_validate({\"name\": \"x\"})\n    card.awakening_message = awakening")])], "RED"),
+    ("L6  过严 PATCH 一律 409（合法保存也被拒）", _l("test_patch_with_current_revision_saves_and_returns_the_new_revision"),
+     [("repl", RDIST, [("    if card_revision(record[\"card_json\"]) != req.revision:\n        raise HTTPException(409, CARD_CONFLICT)\n    result = await storage.update_card(card_id, validated",
+                        "    raise HTTPException(409, CARD_CONFLICT)\n    result = await storage.update_card(card_id, validated")])], "RED"),
+    ("L7  revision 按补过 selectable 的串算（出卡与核对口径不一）", _l("test_out_card_revision_is_the_raw_stored_text_and_follows_content"),
+     [("repl", OUT, [("    row = {**row, \"revision\": card_revision(raw)}\n", "")]),
+      ("repl", OUT, [("        return {**row, \"card_json\": json.dumps(card, ensure_ascii=False)}",
+                      "        return {**row, \"card_json\": json.dumps(card, ensure_ascii=False), \"revision\": card_revision(json.dumps(card, ensure_ascii=False))}")])], "RED"),
     # ── 前端（vitest）──
     ("F1  编辑保存整体替换 character_arc（丢指纹 / 未定位区）", _run_js,
      [("repl", EDIT, [("        ...data.character_arc,\n", "")])], "RED"),
     ("F2  ArcList 不往下走嵌套（只认扁平键）", _run_js,
      [("repl", ARCL, [("    v && typeof v === 'object' && !Array.isArray(v)", "    false")])], "RED"),
     ("F3  updateCard 写回本地提交的卡（过期 selectable）", _run_js,
-     [("repl", STORE, [("      if (data.ok) get()._applyServerCard(cardId, data.card)",
-                        "      if (data.ok) get()._applyServerCard(cardId, { card_json: cardJson })")])], "RED"),
+     [("repl", STORE, [("    if (data.ok) get()._applyServerCard(cardId, data.card)",
+                        "    if (data.ok) get()._applyServerCard(cardId, { card_json: cardJson })")])], "RED"),
     ("F4  moveUnlocated 打错接口", _run_js,
      [("repl", STORE, [("/unlocated/move`", "/move`")])], "RED"),
     ("F5  moveUnlocated 失败也写回", _run_js,
@@ -238,17 +270,26 @@ MUTANTS = [
     ("F6  态度默认阶段不用原标注", _run_js,
      [("repl", UNLJ, [("      initial: a.phase >= 1 && a.phase <= last ? a.phase : last,", "      initial: last,")])], "RED"),
     ("F7  挪入传错路径", _run_js,
-     [("repl", UNLJ, [("      move: (p) => onMove('overlay', i, p, path, v), initial: last,",
-                       "      move: (p) => onMove('overlay', i, p, '', v), initial: last,")])], "RED"),
+     [("repl", UNLJ, [("      move: (p) => onMove('overlay', i, p, path), initial: last,",
+                       "      move: (p) => onMove('overlay', i, p, ''), initial: last,")])], "RED"),
     ("F8  只读账号也显示未定位区", _run_js,
      [("repl", CHAR, [("        {canWrite && hasUnlocated(data.character_arc) && (",
                        "        {hasUnlocated(data.character_arc) && (")])], "RED"),
     ("F9  挪入没接到 store", _run_js,
-     [("repl", CHAR, [("      await moveUnlocated(card.id || card.card_id, { section, index, phase, path, expected })",
+     [("repl", CHAR, [("      await moveUnlocated(card.id || card.card_id, { section, index, phase, path, revision: card.revision })",
                        "      await Promise.resolve()")])], "RED"),
-    ("F10 挪入不带内容（后端无从核对序号漂移）", _run_js,
-     [("repl", UNLJ, [("      move: (p) => onMove('behaviors', i, p, '', { situation: b.situation, behavior: b.behavior }),",
-                       "      move: (p) => onMove('behaviors', i, p, ''),")])], "RED"),
+    ("F10 编辑保存不带 revision", _run_js,
+     [("repl", CHAR, [("    await updateCard(card.id || card.card_id, cardJson, card.revision)",
+                       "    await updateCard(card.id || card.card_id, cardJson)")])], "RED"),
+    ("F11 写回后 store 留着旧 revision（连续第二次保存必 409）", _run_js,
+     [("repl", STORE, [("          ? { ...s.currentCard, ...obj, card_json: obj, revision: row.revision }",
+                        "          ? { ...s.currentCard, ...obj, card_json: obj }")])], "RED"),
+    ("F12 角色管理编辑改回自己发 PUT（必 405）", _run_js,
+     [("repl", TXTP, [("            await updateCard(editCard.id || editCard.card_id, cardJson, editCard.revision)",
+                       "            await fetchWithTimeout(`/api/distill/card/${editCard.id}`, { method: 'PUT', body: JSON.stringify({ card_json: JSON.stringify(cardJson) }) })")])], "RED"),
+    ("F13 挪动不带 revision", _run_js,
+     [("repl", CHAR, [("{ section, index, phase, path, revision: card.revision })",
+                       "{ section, index, phase, path })")])], "RED"),
 ]
 
 
@@ -259,7 +300,7 @@ SEGMENTS = {
     "3": ("X5 ", "X6 ", "X7d", "X9 ", "X10", "X11", "X12", "X13", "X14", "X15", "X16", "X17",
           "X18", "X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27", "X28", "X29", "X30",
           "X34", "X37"),
-    "4": ("X31", "X32", "X33", "X35", "X36", "F4 ", "F5 ", "F6 ", "F7 ", "F8 ", "F9 ", "F10"),
+    "4": ("X31", "X32", "X33", "L", "F4 ", "F5 ", "F6 ", "F7 ", "F8 ", "F9 ", "F10", "F11", "F12", "F13"),
 }
 
 
@@ -269,7 +310,7 @@ def main() -> int:
     baseline = {p: p.read_bytes() for p in TARGETS}
 
     print("== 先验基线 ==")
-    for lock in (UNL, GOAL, MV):
+    for lock in (UNL, GOAL, MV, LOCK):
         if not (ROOT / lock).exists():                    # 早段还没有这个文件
             continue
         summary, _, _, _ = framework._run(lock)

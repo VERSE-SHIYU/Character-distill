@@ -214,8 +214,11 @@ def test_s11_import_direction():
     op = _imports(_CORE / "opening.py")
     assert not (op & {"web", "storage", "distiller"}), f"opening 导入越界：{op}"
 
+    # `fingerprint` 是只依赖标准库的叶子模块：卡的 revision 复用正文指纹那一处哈希（§13），
+    # 不在出卡模块里另写一份 hashlib。
     co = _imports(_CORE / "card_out.py")
-    assert co <= {"schema", "json", "typing"}, f"card_out 导入了越界模块（§4.0 只可导入 core.schema）：{co}"
+    assert co <= {"schema", "fingerprint", "json", "typing"}, (
+        f"card_out 导入了越界模块（§4.0 只可导入 core.schema 与叶子模块 core.fingerprint）：{co}")
 
 
 # ── S12 开场白 / 苏醒台词提示词只在 `core/opening.py` ─────────────────────────

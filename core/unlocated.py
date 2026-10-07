@@ -19,34 +19,19 @@ from core.schema import CharacterCard, is_placeholder_attitude, top_attitude
 SECTIONS = ("behaviors", "overlay", "attitudes")
 
 
-def _matches(item, expected) -> bool:
-    """序号处的条目是不是调用方看到的那一条：字段值逐个相等（字典取调用方给的键）。"""
-    if isinstance(item, dict):
-        return (isinstance(expected, dict) and bool(expected)
-                and all(item.get(k) == v for k, v in expected.items()))
-    return item == expected
-
-
-def _take(items: list, index: int, what: str, expected):
-    """按序号取出一条，并核对它就是调用方看到的那一条（审计发现 7）。
-
-    只按序号定位时，两个标签页先后挪动、或编辑后再挪，序号会漂移，静默挪错条目；带上调用方
-    看到的内容一并核对，对不上就拒绝（路由转 400「请刷新后重试」），不猜。
-    """
+def _take(items: list, index: int, what: str):
     if not 0 <= index < len(items):
         raise ValueError(f"未定位区没有这一条{what}：{index}")
-    if not _matches(items[index], expected):
-        raise ValueError(f"未定位区第 {index} 条{what}已变化")
     return items.pop(index)
 
 
 def move_unlocated(card: CharacterCard, *, section: str, index: int, phase: int,
-                   expected, path: str = "") -> CharacterCard:
+                   path: str = "") -> CharacterCard:
     """把未定位区 `section` 的第 `index` 条挪进阶段 `phase`（1 起），返回新卡（原卡不改）。
 
     `section="overlay"` 时 `path` 是登记表里的 state 路径，`index` 是该路径列表里的序号。
-    `expected` 是调用方看到的那一条（做法 `{situation, behavior}`、字段值本身、态度
-    `{target, attitude, phase}`），与序号处的条目对不上即拒绝。
+    序号漂移（另一个标签页先挪过、编辑过）不在这里判：路由先按卡的版本核对（§13），卡变过
+    即 409，传进来的卡就是调用方看到的那一版，序号必然对得上。
     参数不合法抛 `ValueError`（路由转 400）。
     """
     if section not in SECTIONS:
@@ -59,13 +44,13 @@ def move_unlocated(card: CharacterCard, *, section: str, index: int, phase: int,
     target = data["character_arc"]["phases"][phase - 1]
 
     if section == "behaviors":
-        target["behaviors"].append(_take(loose["behaviors"], index, "做法", expected))
+        target["behaviors"].append(_take(loose["behaviors"], index, "做法"))
     elif section == "overlay":
         spec = REGISTRY.get(path)
         if spec is None or spec.layer != "state":
             raise ValueError(f"不是可挪动的状态字段：{path}")
         vals = list(get_path(loose["overlay"], path) or [])
-        value = _take(vals, index, "字段值", expected)
+        value = _take(vals, index, "字段值")
         current = get_path(target["overlay"], path)
         if spec.kind == "list":
             set_path(target["overlay"], path, list(current or []) + [value])
@@ -78,7 +63,7 @@ def move_unlocated(card: CharacterCard, *, section: str, index: int, phase: int,
         else:
             pydash.unset(loose["overlay"], path)
     else:
-        item = _take(loose["attitudes"], index, "态度", expected)
+        item = _take(loose["attitudes"], index, "态度")
         rel = next((r for r in data["relationships"] if r["target"] == item["target"]), None)
         if rel is None:
             raise ValueError(f"关系已不存在：{item['target']}")

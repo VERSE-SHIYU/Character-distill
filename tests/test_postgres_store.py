@@ -1622,6 +1622,29 @@ class TestPgMigrationLedger:
 # 静态锁在同一次改动里也红 —— 但那是两个独立的红源：静态锁看**文本**，本类看**真库返回**。
 
 @_pg
+class TestPgCardCompareAndSwap:
+    """乐观锁的存储一半（spec arc-phase-unlocated §13）：`update_card` 只在库里的 `card_json`
+    仍等于调用方读到的那一份时写入，比较与写入是同一条 UPDATE。"""
+
+    async def test_matching_expected_writes(self, store, text_id, card_id, user_id):
+        await store.save_text(text_id, "src.txt", "source", user_id=user_id)
+        await store.save_card(card_id, text_id, "Alice", json.dumps({"name": "Alice"}), user_id=user_id)
+        base = (await store.get_card_owned(card_id, user_id))["card_json"]
+        out = await store.update_card(card_id, {"name": "Bob"}, expected=base)
+        assert (json.loads(out["card_json"])["name"],
+                json.loads((await store.get_card_owned(card_id, user_id))["card_json"])["name"]) == ("Bob", "Bob")
+
+    async def test_stale_expected_writes_nothing(self, store, text_id, card_id, user_id):
+        await store.save_text(text_id, "src.txt", "source", user_id=user_id)
+        await store.save_card(card_id, text_id, "Alice", json.dumps({"name": "Alice"}), user_id=user_id)
+        base = (await store.get_card_owned(card_id, user_id))["card_json"]
+        await store.update_card(card_id, {"name": "先写的"}, expected=base)
+        out = await store.update_card(card_id, {"name": "后写的"}, expected=base)   # 依据的是旧版
+        assert (out, json.loads((await store.get_card_owned(card_id, user_id))["card_json"])["name"]) == (
+            None, "先写的")
+
+
+@_pg
 class TestPgOwnedIdentityIsolation:
     async def test_get_text_owned_hides_non_owner_rows(self, store, text_id, user_id):
         await store.save_text(text_id, "src.txt", "属主内容", user_id=user_id)
@@ -1931,7 +1954,8 @@ class TestPgUnpublishIsWithdrawingTheRelease:
             "点赞没挂上，下面那条「点赞保留」会恒绿"
 
         await store.update_card_visibility(copy_id, "private")          # 下架
-        await store.update_card(draft, {"name": "李四"})                 # 草稿改名
+        await store.update_card(draft, {"name": "李四"},                 # 草稿改名
+                                expected=(await store.get_card_owned(draft, a))["card_json"])
         await store.save_card_avatar(draft, a, "NEWAV")                 # 草稿改头像
 
         again = await store.publish_card(draft, a, "新desc", "新tag", "v2", '{"name": "李四"}')

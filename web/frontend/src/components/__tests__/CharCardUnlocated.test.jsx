@@ -21,13 +21,14 @@ if (typeof window !== 'undefined') {
   }
 }
 
-const { currentCardBox, setCurrentCard, canWriteBox, moveSpy } = vi.hoisted(() => {
+const { currentCardBox, setCurrentCard, canWriteBox, moveSpy, updateSpy } = vi.hoisted(() => {
   const box = { card: null, canWrite: true }
   return {
     currentCardBox: () => box.card,
     setCurrentCard: (c) => { box.card = c },
     canWriteBox: { get: () => box.canWrite, set: (v) => { box.canWrite = v } },
     moveSpy: vi.fn(() => Promise.resolve({ ok: true })),
+    updateSpy: vi.fn(() => Promise.resolve({ ok: true })),
   }
 })
 
@@ -40,7 +41,7 @@ const ARC = {
   unlocated: { behaviors: [{ situation: '被揭短', behavior: '涨红脸' }], overlay: {}, attitudes: [] },
 }
 const card = () => ({
-  id: 'c1', name: '测试角色', published_id: null, market_description: '', market_tags: '',
+  id: 'c1', name: '测试角色', published_id: null, market_description: '', market_tags: '', revision: 'r1',
   card_json: JSON.stringify({ name: '测试角色', key_memories: ['记忆一'], character_arc: ARC }),
 })
 
@@ -75,7 +76,7 @@ vi.mock('../../store/useAppStore', () => {
     userRolesByCard: {},
     setUserRole: noop,
     getUserRole: noop,
-    updateCard: noop,
+    updateCard: updateSpy,
     moveUnlocated: moveSpy,
   })
   return { default: hook }
@@ -94,7 +95,10 @@ vi.mock('../../store/db', () => ({
 }))
 
 vi.mock('../RoleSetupModal', () => ({ default: () => null }))
-vi.mock('../EditCardModal', () => ({ default: () => null }))
+// 编辑弹窗只留「保存」这一个出口：看 CardDetail 把它接到 store.updateCard 时带没带 revision
+vi.mock('../EditCardModal', () => ({
+  default: ({ isOpen, onSave }) => (isOpen ? <button onClick={() => onSave({ name: '改' })}>假保存</button> : null),
+}))
 vi.mock('../common/ImageCropModal', () => ({ default: () => null }))
 vi.mock('../common/ConfirmModal', () => ({ default: () => null }))
 vi.mock('../common/Avatar', () => ({ default: () => null }))
@@ -109,8 +113,17 @@ describe('CharCard 未定位区', () => {
     fireEvent.click(screen.getByRole('option', { name: '阶段 1 · 早' }))
     fireEvent.click(screen.getByRole('button', { name: '挪入' }))
     await waitFor(() => expect(moveSpy).toHaveBeenCalled())
-    expect(moveSpy.mock.calls[0]).toEqual(['c1', { section: 'behaviors', index: 0, phase: 1, path: '',
-      expected: { situation: '被揭短', behavior: '涨红脸' } }])
+    expect(moveSpy.mock.calls[0]).toEqual(['c1', { section: 'behaviors', index: 0, phase: 1, path: '', revision: 'r1' }])
+  })
+
+  it('编辑保存调 store.updateCard(卡 id, 卡内容, revision)（乐观锁，后端 §13）', async () => {
+    canWriteBox.set(true)
+    setCurrentCard(card())
+    render(<CharCard />)
+    fireEvent.click(await screen.findByRole('button', { name: /编辑/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '假保存' }))
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled())
+    expect(updateSpy.mock.calls[0]).toEqual(['c1', { name: '改' }, 'r1'])
   })
 
   it('只读账号（游客 / 别人的卡）：不渲染未定位区', async () => {

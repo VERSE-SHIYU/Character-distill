@@ -23,7 +23,7 @@ from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
 from adapters.llm_adapter import LLMAdapter, user_facing_error
 from core.arc_view import project_card, valid_phase
-from core.card_out import out_card
+from core.card_out import CARD_CONFLICT, card_revision, out_card
 from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core.embeddings import EMBEDDING_KEY_REQUIRED
@@ -288,6 +288,25 @@ async def cancel_distill_tasks_by_user_id(user_id: str) -> int:
                 task.update({"status": "error", "message": "账号已删除，任务已取消"})
                 n += 1
     return n
+
+
+async def _persist_awakening(storage, card_id: str, user_id: str, awakening: str) -> None:
+    """把唤醒语写进**库里当前那张卡**：读最新 → 只改这一项 → 比较后写入。
+
+    不拿蒸馏时内存里那张卡整卡写回：存卡到这里之间用户可能已经改过卡，整卡写回会把它盖掉
+    （乐观锁，spec arc-phase-unlocated §13）。读写之间又被改 → 不写，打 warning；唤醒语本来
+    就是 non-fatal，调用方照常收尾。
+    """
+    rec = await storage.get_card_owned(card_id, user_id)
+    if not rec:
+        logger.warning("[distill] awakening not persisted: card %s gone", card_id)
+        return
+    card = CharacterCard.model_validate_json(rec["card_json"])
+    card.awakening_message = awakening
+    if await storage.update_card(card_id, card.model_dump(), expected=rec["card_json"]) is None:
+        logger.warning("[distill] awakening not persisted: card %s changed meanwhile", card_id)
+        return
+    print(f"[distill] Persisted awakening_message to card {card_id}")
 
 
 def _generate_awakening(llm, card: CharacterCard, storage=None) -> str:
@@ -573,12 +592,10 @@ def _run_distill_task(
         # Persist awakening_message to card (non-fatal)
         if awakening:
             try:
-                card.awakening_message = awakening
                 submit_to_main_loop(
-                    get_storage().update_card(result["card_id"], card.model_dump()),
+                    _persist_awakening(get_storage(), result["card_id"], user_id, awakening),
                     timeout=30,
                 )
-                print(f"[distill] Persisted awakening_message to card {result['card_id']}")
             except Exception as exc:
                 logger.warning("Persist awakening_message to card failed (non-fatal): %s", exc, exc_info=True)
 
@@ -1184,9 +1201,7 @@ async def distill_stream(
         # Persist awakening_message to card (non-fatal)
         if awakening:
             try:
-                card.awakening_message = awakening
-                await get_storage().update_card(result.get("card_id", ""), card.model_dump())
-                print(f"[distill] Persisted awakening_message to card {result.get('card_id', '')}")
+                await _persist_awakening(get_storage(), result.get("card_id", ""), user_id, awakening)
             except Exception as exc:
                 logger.warning("Persist awakening_message to card failed (non-fatal): %s", exc, exc_info=True)
 
@@ -1251,6 +1266,7 @@ async def reindex_rag(
 
 class UpdateCardRequest(BaseModel):
     card_json: dict
+    revision: str         # 编辑所依据的那一版（出卡时 `out_card` 给的），不符即 409
 
 @router.patch("/card/{card_id}")
 async def update_card(
@@ -1274,7 +1290,13 @@ async def update_card(
         # 上屏不带 `{exc}`：那是 pydantic 的字段级报错（内部字段名），细节只进日志。
         logger.warning("[distill] Card validation failed: %s", exc)
         raise HTTPException(400, "角色卡数据校验失败，请检查字段后重试") from exc
-    result = await storage.update_card(card_id, validated.model_dump())
+    # 乐观锁（§13）：先核对版本（读到的已不是用户编辑所依据的那一版 → 409），再比较后写入
+    # （核对与写入之间又被改 → 存储层不写、返回 None → 同样 409）。
+    if card_revision(record["card_json"]) != req.revision:
+        raise HTTPException(409, CARD_CONFLICT)
+    result = await storage.update_card(card_id, validated.model_dump(), expected=record["card_json"])
+    if result is None:
+        raise HTTPException(409, CARD_CONFLICT)
     return {"ok": True, "card": out_card(result)}   # B4：返回的卡写进 store，出卡只经 out_card
 
 
@@ -1283,7 +1305,7 @@ class MoveUnlocatedRequest(BaseModel):
     index: int
     phase: int            # 1 起
     path: str = ""        # section=overlay 时的登记表路径
-    expected: Any         # 调用方看到的那一条，与序号处的条目对不上即 400（防序号漂移挪错）
+    revision: str         # 挪动所依据的那一版；卡变过（序号可能漂移）即 409，不按旧序号挪
 
 
 @router.post("/card/{card_id}/unlocated/move")
@@ -1298,14 +1320,18 @@ async def move_unlocated_item(
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
     if not record:
         raise HTTPException(404, "Card not found")
+    if card_revision(record["card_json"]) != req.revision:
+        raise HTTPException(409, CARD_CONFLICT)
     card = CharacterCard.model_validate_json(record["card_json"])
     try:
         moved = move_unlocated(card, section=req.section, index=req.index,
-                               phase=req.phase, path=req.path, expected=req.expected)
+                               phase=req.phase, path=req.path)
     except ValueError as exc:
         logger.warning("[distill] move_unlocated rejected: %s", exc)
         raise HTTPException(400, "这一条已经不在未定位区，请刷新后重试") from exc
-    result = await storage.update_card(card_id, moved.model_dump())
+    result = await storage.update_card(card_id, moved.model_dump(), expected=record["card_json"])
+    if result is None:
+        raise HTTPException(409, CARD_CONFLICT)
     return {"ok": True, "card": out_card(result)}   # B4：出卡只经 out_card（现算 selectable）
 
 

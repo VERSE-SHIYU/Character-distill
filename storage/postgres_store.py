@@ -707,15 +707,17 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Save card failed: {exc}")
             raise
 
-    async def update_card(self, card_id: str, card_json: dict) -> dict:
-        """Update a card's JSON content by ID."""
+    async def update_card(self, card_id: str, card_json: dict, *, expected: str) -> dict | None:
+        """比较后写入，契约见 `StorageBase.update_card`。比较与写入是同一条 UPDATE（原子）。"""
         try:
             async with await self._connect() as conn:
                 now = datetime.now(timezone.utc).isoformat()
-                await conn.execute(
-                    "UPDATE cards SET card_json = $1, updated_at = $3 WHERE id = $2",
-                    json.dumps(card_json, ensure_ascii=False), card_id, now,
+                status = await conn.execute(
+                    "UPDATE cards SET card_json = $1, updated_at = $3 WHERE id = $2 AND card_json = $4",
+                    json.dumps(card_json, ensure_ascii=False), card_id, now, expected,
                 )
+                if status == "UPDATE 0":
+                    return None
                 return await self.get_card_unscoped(card_id) or {}
         except Exception as exc:
             print(f"[PostgresStore] Update card failed: {exc}")

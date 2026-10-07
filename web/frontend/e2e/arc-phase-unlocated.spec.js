@@ -58,7 +58,7 @@ async function setup(page, moveReply) {
     window.__appStore.setState({
       isLoggedIn: true, currentView: 'character', currentTextId: 't1',
       texts: [{ id: 't1', filename: 'mock.txt' }], cards: [],
-      currentCard: { id: 'c1', name: '孔乙己', text_id: 't1', card_json: json },
+      currentCard: { id: 'c1', name: '孔乙己', text_id: 't1', card_json: json, revision: 'r1' },
     })
   }, JSON.stringify(card('原值', ['新值'])))
   await expect(page.locator('.card-unlocated')).toBeVisible({ timeout: 8000 })
@@ -87,7 +87,7 @@ test('单值交换：挪入阶段 1 后两边都变，请求体正确', async ({
   await expect(page.locator('.card-arc-overlay').nth(0)).toContainText('新值')
   await expect(toneRow(page)).toContainText('原值')
   expect(sent).toEqual([{ section: 'overlay', index: 0, phase: 1, path: 'speaking_style.tone',
-    expected: '新值' }])
+    revision: 'r1' }])
   await page.screenshot({ path: 'e2e/arc-phase-unlocated-after.png', fullPage: true })
 })
 
