@@ -718,9 +718,9 @@ function CardDetail({ card, textId, goBack }) {
 
   // 选阶段 → 点「挪入」→ store.moveUnlocated（POST，后端挪动并经 out_card 回卡）→ 写回
   // currentCard → 本组件重渲染：ArcList 与未定位区都从新卡重新算。失败只报错，不改本地卡。
-  const handleMoveUnlocated = async (section, index, phase, path) => {
+  const handleMoveUnlocated = async (section, index, phase, path, expected) => {
     try {
-      await moveUnlocated(card.id || card.card_id, { section, index, phase, path })
+      await moveUnlocated(card.id || card.card_id, { section, index, phase, path, expected })
     } catch (e) {
       setError(e.message)
     }

@@ -211,6 +211,16 @@ def test_u6_single_phase_card_experience_goes_top_state_goes_unlocated():
         ["m"], {"personality_traits": ["t"]})
 
 
+def test_u10_card_without_phases_skips_the_check_and_puts_state_on_top():
+    """无阶段的卡不做位置检查（规则 5）：状态类也进顶层，不进未定位区（审计发现 3）。"""
+    card = card_from_draft({"name": "角色", "personality_traits": [_timed("多疑", _occ(1, _NOWHERE))],
+                            "situation_behaviors": [{"situation": "s", "behavior": "b",
+                                                     "occurrences": [_occ(1, _NOWHERE)]}]}, _SRC)
+    loose = card.character_arc.unlocated
+    assert (card.personality_traits, [b.situation for b in card.situation_behaviors],
+            loose.overlay, loose.behaviors) == (["多疑"], ["s"], {}, [])
+
+
 def test_u7_skipped_card_keeps_model_tags_for_items_without_evidence():
     """整卡跳过（锚点查不到，规则 2）原样保留：标注照挂，不进未定位区。"""
     card = _card(anchors={2: _Q2, 3: "锚点查无此句"}, personality_traits=[
@@ -276,6 +286,13 @@ def test_r3_attitude_that_wins_elsewhere_is_not_unlocated():
         _att(2, "两处落点", "甲乙"), _att(1, "原本在1", "甲乙")))
     assert (_pa(card), card.character_arc.unlocated.attitudes) == (
         [(1, "原本在1"), (3, "两处落点")], [])
+
+
+def test_r7_same_phase_tags_each_attitude_uses_only_its_own_evidence():
+    """两条态度都标阶段 1、摘录各落一个阶段：各自挂到自己的落点，不共用证据（审计发现 1）。"""
+    card = _card(relationships=_rel(_att(1, "证据在2", _Q2), _att(1, "证据在1", _Q1)))
+    assert (_pa(card), card.character_arc.unlocated.attitudes) == (
+        [(1, "证据在1"), (2, "证据在2")], [])
 
 
 def test_r4_relationship_without_any_located_attitude_hangs_last_with_empty_attitude():

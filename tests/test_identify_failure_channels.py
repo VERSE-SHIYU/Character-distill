@@ -552,6 +552,10 @@ class TestOneParseableCardOnBothChannels:
     不另抄一份字段样例 —— 抄一份就是第二处「组字段表」。
     """
 
+    # 草稿摘录（`_timed` 的「开头甲甲甲」）得能在正文里定位：定不了位的状态类字段进未定位区、
+    # 不在顶层（spec arc-phase-unlocated §3.2）。本组考的是「各组都并进来」，不考位置检查。
+    BODY = _BODY + "\n开头甲甲甲。"
+
     def _assert_all_groups_landed(self, card) -> None:
         """各组各自的代表字段都得在卡上 —— 少一组说明那个组的帧没并进来。
 
@@ -569,12 +573,12 @@ class TestOneParseableCardOnBothChannels:
         assert [r.target for r in card.relationships] == ["某人"]        # G5
 
     def test_bg_task_accumulates_one_card(self, store, user_id, monkeypatch):
-        tid = _seed_text(store, user_id)
+        tid = _seed_text(store, user_id, self.BODY)
         tm = _SavingTM()
         monkeypatch.setattr(deps, "get_text_manager", lambda *a, **kw: tm)
         distiller = _card_distiller()
 
-        row = _run_bg(store, user_id, tid, distiller, monkeypatch)
+        row = _run_bg(store, user_id, tid, distiller, monkeypatch, body=self.BODY)
 
         assert row["status"] == "done", row
         assert len(tm.saved) == 1, f"落库的卡不是一张：{len(tm.saved)}"
@@ -587,7 +591,7 @@ class TestOneParseableCardOnBothChannels:
         )
 
     def test_sse_accumulates_exactly_one_str_frame(self, store, user_id, monkeypatch):
-        tid = _seed_text(store, user_id)
+        tid = _seed_text(store, user_id, self.BODY)
         tm = _SavingTM()
         client = _build_client(
             store, user_id, monkeypatch, distiller=_card_distiller(), tm=tm)

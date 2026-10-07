@@ -10,6 +10,14 @@
 - G2 守恒：草稿里每条有合法标注的条目，在卡上（顶层 / 某阶段 / 未定位区）至少出现一次；
 - G3 不进 prompt：任一阶段的投影卡（所有拼 prompt 的入口只收投影卡，DA18）里没有未定位条目；
 - G4 同口径：卡上每个文本叶子（含 overlay、未定位区）注入守卫都能清掉。
+
+**预言的边界（如实写明，不假装覆盖）**：
+- 摘录与原文的规范化共用被测代码的 `core.quotes.normalize` —— 规范化口径错了，预言跟着错；
+  它守的是「定位」，不是「规范化」；
+- 预言不模拟 `MAX_OCCURRENCES` 截断与规则 b（摘录多处出现时取哪一处），故 G1 只是**必要
+  条件**：挂对了的一定过，过了的不保证是规则要的那一个阶段；
+- 夹具含同一关系两条态度标同一阶段、摘录各落一个阶段的情形（「孩子们」，审计发现 1）——
+  按关系聚合证据的实现会把 A 挂到 B 的阶段，G1 当场红。
 """
 from __future__ import annotations
 
@@ -61,6 +69,9 @@ _DRAFT = {
         {"target": "掌柜", "relation": "债主", "attitudes": [
             {"phase": 1, "attitude": "A1掌柜", "quote": "排出九文大钱"},
             {"phase": 2, "attitude": "A2掌柜", "quote": "孔乙己长久没有来了"}]},
+        {"target": "孩子们", "relation": "邻居孩子", "attitudes": [
+            {"phase": 1, "attitude": "A撞车外", "quote": "不要取笑"},
+            {"phase": 1, "attitude": "A撞车内", "quote": "茴字"}]},
         {"target": "酒客", "relation": "看客", "attitudes": [
             {"phase": 1, "attitude": "A编造", "quote": _FAKE}]},
     ],
@@ -119,6 +130,7 @@ def test_g2_nothing_with_a_valid_tag_is_lost():
     texts = ([b["situation"] for b in _DRAFT["situation_behaviors"]]
              + [m["memory"] for m in _DRAFT["key_memories"]]
              + [t["value"] for t in _DRAFT["personality_traits"]]
+             + [c["value"] for c in _DRAFT["speaking_style"]["catchphrases"]]
              + [a["attitude"] for r in _DRAFT["relationships"] for a in r["attitudes"]])
     assert [t for t in texts if t not in dump] == []
 
@@ -136,6 +148,12 @@ def test_g4_guard_reaches_every_text_leaf():
     dump = _CARD.model_dump()
     paths = [p for p, _ in iter_texts(dump)]
     assert [p for p in paths if not neutralize_one(json.loads(json.dumps(dump)), p)] == []
+
+
+def test_g0_fixture_really_has_a_same_phase_collision():
+    """夹具自检：「孩子们」两条态度标同一阶段、摘录落点各不相同 —— 否则发现 1 那条 G1 空转。"""
+    atts = next(r for r in _DRAFT["relationships"] if r["target"] == "孩子们")["attitudes"]
+    assert ([a["phase"] for a in atts], [_landing(a["quote"]) for a in atts]) == ([1, 1], [{2}, {1}])
 
 
 def test_g0_fixture_really_exercises_rehang_and_unlocated():

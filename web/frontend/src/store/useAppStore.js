@@ -1823,11 +1823,11 @@ const useAppStore = create((set, get) => {
   },
 
   // 把未定位区的一条挪进阶段 `phase`（规则只在后端 core/unlocated.py；这里只调接口、写回结果）。
-  moveUnlocated: async (cardId, { section, index, phase, path = '' }) => {
+  moveUnlocated: async (cardId, { section, index, phase, path = '', expected }) => {
     const res = await fetchWithTimeout(`/api/distill/card/${cardId}/unlocated/move`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ section, index, phase, path }),
+      body: JSON.stringify({ section, index, phase, path, expected }),
     })
     const data = await res.json()
     if (!res.ok || !data.ok) throw new Error(data.detail || '挪动失败，请刷新后重试')

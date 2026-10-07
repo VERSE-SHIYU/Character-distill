@@ -30,6 +30,8 @@ from core.schema import (
     CharacterCard,
     PhaseState,
     Relationship,
+    placeholder_phase_attitudes,
+    top_attitude,
 )
 
 logger = logging.getLogger(__name__)
@@ -190,6 +192,14 @@ def _valid_number_rows(items, count: int, kind: str) -> list[list[int]]:
     return valid_rows
 
 
+def experience_fallback(count: int) -> list[int]:
+    """经历类没有位置证据 → 挂最后阶段（时间不明放最后，永不泄露后续剧情；spec §3.2）。
+
+    `dispatch`（记忆、字段）与关系（一条态度都不剩的关系）共用这一处。
+    """
+    return [count]
+
+
 def _layer_phases(final_phases: list[list[int]], count: int, layer: str) -> list[list[int]]:
     """按类别把每条条目的最终阶段折成「要挂的阶段」：``experience`` 只留最早阶段。
 
@@ -224,7 +234,7 @@ def dispatch(final_phases: list[list[int]], count: int, *,
     loose: list[int] = []
     for i in unlocated:
         if layer == "experience":
-            final_phases[i] = [count]
+            final_phases[i] = experience_fallback(count)
         else:
             loose.append(i)
     final_phases = _layer_phases(final_phases, count, layer)
@@ -251,25 +261,28 @@ def _cap_slot(slot: list[int], label: str, where: str) -> list[int]:
 
 
 def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[dict], list[dict], int, int]:
-    """关系草稿 → 存卡关系：态度复用位置检查，逐条按 `tag_targets` 分发（spec §3.3）。
+    """关系草稿 → 存卡关系：**每条态度单独**过位置检查与 `dispatch`，再按关系收回（spec §3.3）。
 
-    每个阶段的态度文字不同，不能整条挪：模型标在阶段 p 的那条态度，摘录落到哪些阶段就挂到
-    哪些阶段（改挂，同 D1）。同一阶段撞车时，**原本就标在这个阶段**的那条优先，其余按标注顺序
-    取第一条。一条态度一个阶段都没挂上（没有位置证据，或撞车全输）→ 进未定位区，`note` 跟着
-    它走。一条态度都不剩的关系 → 按经历类挂最后阶段、态度留空（时间不明放最后，不编造态度）。
-    顶层 `attitude` 取挂上的最后一个阶段的态度 —— k=n 与前端编辑都读它。没有 `attitudes` 的
-    关系（旧卡）原样保留。返回 `(关系, 未定位态度, 改挂条数, 挂最后阶段条数)`。
+    态度是状态类：摘录落到哪些阶段就挂到哪些阶段（改挂，同 D1），没有位置证据的进未定位区。
+    每条态度各自是一个检查条目 —— 按关系聚合的话，同一阶段的几条态度会共用位置证据，A 的摘录
+    会把 B 也带走（审计发现 1）。同一阶段挂上多条时，**原本就标在这个阶段**的那条优先，其余按
+    标注顺序取第一条；一个阶段都没赢下的态度进未定位区，`note` 与原标阶段跟着它走。一条态度
+    都不剩的关系按经历类挂最后阶段、态度留空（`placeholder_phase_attitudes`）。顶层 `attitude`
+    取 `top_attitude`。没有 `attitudes` 的关系（旧卡）原样保留。
+    返回 `(关系, 未定位态度, 改挂条数, 挂最后阶段条数)`。
     """
     if not rels:
         return [], [], 0, 0
+    flat = [(i, a) for i, r in enumerate(rels) for a in r.attitudes]
     # 复用 `DraftMemory` 当载体：位置检查要的只是「带 occurrences 的条目」，target 当 label。
-    items = [DraftMemory(
-        memory=r.target,
-        occurrences=[DraftOccurrence(phase=a.phase, quote=a.quote) for a in r.attitudes],
-    ) for r in rels]
+    items = [DraftMemory(memory=rels[i].target,
+                         occurrences=[DraftOccurrence(phase=a.phase, quote=a.quote)])
+             for i, a in flat]
     res = phase_anchoring.verify(
         items, _valid_number_rows(items, count, "态度"), anchors,
         kind="态度", label=lambda x: x.memory, name=name)
+    # 未定位的态度（`dispatch` 第三项）不在任何格子里，下面自然一个阶段都赢不下 → 进未定位区
+    top, slots, _ = dispatch(res.phases, count, unlocated=res.unlocated)
     out: list[dict] = []
     loose: list[dict] = []
     to_last = 0
@@ -279,32 +292,31 @@ def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[d
         if not r.attitudes:
             out.append(row)                       # 旧卡：顶层 attitude 原样
             continue
+        mine = [j for j, (ri, _) in enumerate(flat) if ri == i]
         if count == 0:                            # 无阶段的卡：不分阶段，取最后一条态度
             row["phase_attitudes"] = []
             row["attitude"] = r.attitudes[-1].attitude
             out.append(row)
             continue
-        winners: dict[int, Any] = {}              # 阶段 → 该阶段采用的那条态度
-        for a in r.attitudes:                     # 原标注优先：先放「摘录落回所标阶段」的
-            if a.phase in res.tag_targets[i].get(a.phase, []):
-                winners.setdefault(a.phase, a)
-        for a in r.attitudes:                     # 再放改挂过来的，按标注顺序取第一条
-            for t in res.tag_targets[i].get(a.phase, []):
-                winners.setdefault(t, a)
-        placed = {id(a) for a in winners.values()}
-        for a in r.attitudes:
-            if id(a) not in placed:
+        winners: dict[int, int] = {}              # 阶段 → 该阶段采用的态度（flat 序号）
+        for t in range(1, count + 1):
+            cands = [j for j in mine if j in top or j in slots[t - 1]]
+            if cands:
+                winners[t] = next((j for j in cands if flat[j][1].phase == t), cands[0])
+        won = set(winners.values())
+        for j in mine:
+            if j not in won:                      # 没有位置证据，或撞车全输 → 未定位区
+                a = flat[j][1]
                 loose.append({"target": r.target, "attitude": a.attitude, "note": a.note,
                               "phase": a.phase})
         if winners:
             row["phase_attitudes"] = [
-                {"phase": p, "attitude": winners[p].attitude, "note": winners[p].note}
-                for p in sorted(winners)]
-            row["attitude"] = winners[max(winners)].attitude
+                {"phase": t, "attitude": flat[j][1].attitude, "note": flat[j][1].note}
+                for t, j in sorted(winners.items())]
         else:                                     # 一条都不剩 → 经历类：挂最后阶段、态度留空
             to_last += 1
-            row["phase_attitudes"] = [{"phase": count, "attitude": "", "note": ""}]
-            row["attitude"] = ""
+            row["phase_attitudes"] = placeholder_phase_attitudes(experience_fallback(count)[0])
+        row["attitude"] = top_attitude(row["phase_attitudes"])
         out.append(row)
     return out, loose, res.rehung, to_last
 

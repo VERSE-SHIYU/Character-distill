@@ -2,7 +2,8 @@
 // 卡主把一条挪进某个阶段，就算给了依据（spec arc-phase-unlocated §6）。
 //
 // 规则全在后端（core/unlocated.py：列表追加 / 单值交换 / 态度去占位），这里只渲染、收集
-// 「挪到第几阶段」，交给 `onMove(section, index, phase, path)`。
+// 「挪到第几阶段」，交给 `onMove(section, index, phase, path, expected)` —— expected 是这一行
+// 渲染的那一条，后端拿它核对序号处的条目，序号漂移（另一个标签页先挪过）时拒绝而不是挪错。
 // **不另写样式**：条目外观用「情境→行为」那套（card-behavior-*、pill），下拉用全站的
 // `common/Select`（Radix，键盘与读屏现成），按钮用 btn-secondary btn-sm，按钮行用
 // memory-edit-actions，提示用 settings-hint。默认选中：态度用它原来标的阶段，其余用最后阶段。
@@ -50,15 +51,16 @@ export default function UnlocatedList({ arc, onMove }) {
   const rows = [
     ...(u.behaviors || []).map((b, i) => ({
       key: `b${i}|${b.situation}|${b.behavior}`, kind: '做法', text: `${b.situation} → ${b.behavior}`,
-      move: (p) => onMove('behaviors', i, p, ''), initial: last,
+      move: (p) => onMove('behaviors', i, p, '', { situation: b.situation, behavior: b.behavior }),
+      initial: last,
     })),
     ...overlayLeaves(u.overlay).flatMap(([path, vals]) => (vals || []).map((v, i) => ({
       key: `o${path}|${i}|${v}`, kind: overlayLabel(path), text: v,
-      move: (p) => onMove('overlay', i, p, path), initial: last,
+      move: (p) => onMove('overlay', i, p, path, v), initial: last,
     }))),
     ...(u.attitudes || []).map((a, i) => ({
       key: `a${i}|${a.target}|${a.attitude}`, kind: `对${a.target}的态度`, text: a.attitude,
-      move: (p) => onMove('attitudes', i, p, ''),
+      move: (p) => onMove('attitudes', i, p, '', { target: a.target, attitude: a.attitude, phase: a.phase }),
       initial: a.phase >= 1 && a.phase <= last ? a.phase : last,
     })),
   ]

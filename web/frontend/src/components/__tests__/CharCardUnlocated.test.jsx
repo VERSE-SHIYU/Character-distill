@@ -109,7 +109,8 @@ describe('CharCard 未定位区', () => {
     fireEvent.click(screen.getByRole('option', { name: '阶段 1 · 早' }))
     fireEvent.click(screen.getByRole('button', { name: '挪入' }))
     await waitFor(() => expect(moveSpy).toHaveBeenCalled())
-    expect(moveSpy.mock.calls[0]).toEqual(['c1', { section: 'behaviors', index: 0, phase: 1, path: '' }])
+    expect(moveSpy.mock.calls[0]).toEqual(['c1', { section: 'behaviors', index: 0, phase: 1, path: '',
+      expected: { situation: '被揭短', behavior: '涨红脸' } }])
   })
 
   it('只读账号（游客 / 别人的卡）：不渲染未定位区', async () => {

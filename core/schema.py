@@ -30,6 +30,28 @@ class PhaseAttitude(BaseModel):
     note: str = ""               # 该阶段的单向口径；空则回落关系顶层的 note
 
 
+def placeholder_phase_attitudes(count: int) -> list[dict]:
+    """一条态度都没定位的关系挂最后阶段、态度留空（spec arc-phase-unlocated §3.3）。
+
+    占位的**生成**与**识别**（`is_placeholder_attitude`）只在这里：两边靠「态度为空串」约定，
+    约定写在一处，改一边另一边不会悄悄失配。
+    """
+    return [{"phase": count, "attitude": "", "note": ""}]
+
+
+def is_placeholder_attitude(pa: dict) -> bool:
+    """`placeholder_phase_attitudes` 生成的占位：态度为空串。"""
+    return not pa["attitude"]
+
+
+def top_attitude(phase_attitudes: list[dict]) -> str:
+    """关系顶层 `attitude` = 挂上的最后一个阶段的态度（k=n 与前端编辑都读它）。
+
+    转卡（`core.card_draft`）与挪动（`core.unlocated`）共用这一处。
+    """
+    return max(phase_attitudes, key=lambda pa: pa["phase"])["attitude"] if phase_attitudes else ""
+
+
 class Relationship(BaseModel):
     """人际关系"""
     target: str                  # 对方名字

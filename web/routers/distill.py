@@ -1283,6 +1283,7 @@ class MoveUnlocatedRequest(BaseModel):
     index: int
     phase: int            # 1 起
     path: str = ""        # section=overlay 时的登记表路径
+    expected: Any         # 调用方看到的那一条，与序号处的条目对不上即 400（防序号漂移挪错）
 
 
 @router.post("/card/{card_id}/unlocated/move")
@@ -1300,7 +1301,7 @@ async def move_unlocated_item(
     card = CharacterCard.model_validate_json(record["card_json"])
     try:
         moved = move_unlocated(card, section=req.section, index=req.index,
-                               phase=req.phase, path=req.path)
+                               phase=req.phase, path=req.path, expected=req.expected)
     except ValueError as exc:
         logger.warning("[distill] move_unlocated rejected: %s", exc)
         raise HTTPException(400, "这一条已经不在未定位区，请刷新后重试") from exc

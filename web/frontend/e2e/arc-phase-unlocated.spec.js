@@ -65,11 +65,13 @@ async function setup(page, moveReply) {
   return sent
 }
 
-const toneRow = (page) => page.locator('.card-unlocated-item').filter({ hasText: '语气' })
+// 未定位区复用「情境→行为」的条目样式（card-behavior-item），用外层 .card-unlocated 限定范围
+const items = (page) => page.locator('.card-unlocated .card-behavior-item')
+const toneRow = (page) => items(page).filter({ hasText: '语气' })
 
 test('未定位区列出三类条目；阶段 overlay 按嵌套展示', async ({ page }) => {
   await setup(page, { status: 200, body: '{}' })
-  await expect(page.locator('.card-unlocated-item')).toHaveCount(3)
+  await expect(items(page)).toHaveCount(3)
   await expect(page.locator('.card-arc-overlay').nth(0)).toContainText('语气')
   await expect(page.locator('.card-arc-overlay').nth(0)).toContainText('原值')
   await expect(page.locator('.card-arc-overlay').nth(1)).toContainText('口头禅')
@@ -84,7 +86,8 @@ test('单值交换：挪入阶段 1 后两边都变，请求体正确', async ({
   await toneRow(page).getByRole('button', { name: '挪入' }).click()
   await expect(page.locator('.card-arc-overlay').nth(0)).toContainText('新值')
   await expect(toneRow(page)).toContainText('原值')
-  expect(sent).toEqual([{ section: 'overlay', index: 0, phase: 1, path: 'speaking_style.tone' }])
+  expect(sent).toEqual([{ section: 'overlay', index: 0, phase: 1, path: 'speaking_style.tone',
+    expected: '新值' }])
   await page.screenshot({ path: 'e2e/arc-phase-unlocated-after.png', fullPage: true })
 })
 

@@ -29,12 +29,12 @@ describe('moveUnlocated（段 4）', () => {
   it('moveUnlocated：POST 到挪动接口，写回返回的卡', async () => {
     vi.mocked(fetchWithTimeout).mockResolvedValueOnce(
       reply({ ok: true, card: server({ selectable: true, phases: [{ behaviors: [{ situation: 's' }] }] }) }))
-    await useAppStore.getState().moveUnlocated('c1', { section: 'behaviors', index: 0, phase: 1 })
+    await useAppStore.getState().moveUnlocated('c1', { section: 'behaviors', index: 0, phase: 1, expected: { situation: 's' } })
     const [url, init] = vi.mocked(fetchWithTimeout).mock.calls[0]
     expect([url, JSON.parse(init.body),
       useAppStore.getState().currentCard.card_json.character_arc.phases[0].behaviors[0].situation])
       .toEqual(['/api/distill/card/c1/unlocated/move',
-        { section: 'behaviors', index: 0, phase: 1, path: '' }, 's'])
+        { section: 'behaviors', index: 0, phase: 1, path: '', expected: { situation: 's' } }, 's'])
   })
 
   it('moveUnlocated 失败：抛错，本地卡不动', async () => {
