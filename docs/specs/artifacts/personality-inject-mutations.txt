@@ -15,6 +15,7 @@
 红 | 放宽 | M15 永远用默认亲近条件（审计 L2） | test_g7_evaluator_is_shown_the_cards_own_conditions
 红 | 放宽 | M16 不核对亲近条件编号 | test_g7_condition_index_out_of_range_does_not_count
 红 | 放宽 | M17 正向大档不设门槛 | test_g6_large_positive_needs_two_non_negative_turns_first
+# 第 1–17 条：存活 0；还原后 sha256 一致：True
 红 | 放宽 | M18 客气按报的档算 | test_g2_low_affinity_does_not_soften
 红 | 过严 | M19 闲聊也触发冲突档（审计 T1） | test_g2_low_affinity_does_not_soften
 红 | 过严 | M20 亲近门槛 3→4（审计 T2） | test_g3_meeting_conditions_opens_closeness_not_before_third
@@ -22,4 +23,13 @@
 红 | 过严 | M22 有卡上条件时仍追加默认条件 | test_g7_evaluator_is_shown_the_cards_own_conditions
 红 | 过严 | M23 规则状态不落库 | test_g8_gate_count_survives_a_new_engine
 红 | 放宽 | M24 恢复时不读规则状态 | test_g8_gate_count_survives_a_new_engine
-结论：24/24 条打红；还原后 sha256 一致：True
+红 | 放宽 | M25 默认条件卡不设单轮上限（R18） | test_g11_default_condition_card_rises_at_most_five_per_turn
+红 | 过严 | M26 所有卡都套旧的单轮上限（R18） | test_g6_large_positive_needs_two_non_negative_turns_first
+红 | 过严 | M27 每次冒犯都重记冒犯前的值（R7） | test_r7_r8_r9_offence_repair_and_clearing
+红 | 过严 | M28 冒犯前的值永不清空（R9） | test_r7_r8_r9_offence_repair_and_clearing
+红 | 放宽 | M29 亲近门槛只拦 met_condition（R10、R11） | test_r11_gate_wins_over_a_baseline_above_the_close_threshold
+红 | 放宽 | M30 未知事件当闲聊处理（R16） | test_r16_invalid_input_raises_so_the_caller_keeps_everything
+红 | 放宽 | M31 三档没填全也用（R15） | test_g9_incomplete_modes_fall_back_to_the_generic_tone
+红 | 过严 | M32 代码按记仇让小档道歉不加分（R12） | test_g10_code_does_not_read_grudge_or_volatility
+红 | 放宽 | M33 性格特征仍填 values（F12） | test_g10_eval_prompt_labels_traits_and_values_correctly
+# 第 18–33 条：存活 0；还原后 sha256 一致：True

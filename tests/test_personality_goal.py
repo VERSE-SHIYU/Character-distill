@@ -19,6 +19,9 @@ G3（验收 3 的同卡部分）全程做到亲近条件能进亲近档，且不
     负对照：把「做到亲近条件」换成「冒犯」，G3 的判定必须失败。
 G5 模型给的数被档位卡住：报小档却给大数，每轮最多变 2；报大档最多变 8；档内的数原样生效（Q12）。
 G6 正向大档要前面连续 2 轮非负才生效，否则按中档算（设计稿 §5）。
+G9 卡上没有新字段（或三档没填全）时，人格块仍是改造前的文案 —— 段 1 上线后所有旧卡都走这条路。
+G10 评估 prompt：性格特征与价值观各归各位；不再有与新规则矛盾的旧句子；记仇只进 prompt，代码不读。
+G11 用默认亲近条件的卡：门槛同为 3 次；单轮最多涨 5（设计稿 Q4）。
 G8 换一个引擎接着聊（单聊存档、群聊行两种落库形态），次数、待修复的冒犯、冲突档都还在。
 G7 评估时看的是这张卡自己的亲近条件；卡上没有才用默认两条；编号对不上的「做到亲近条件」不算数。
 G4 转折：冒犯后下一轮换成冲突档（优先于亲近档）；不再冒犯就退出冲突档；
@@ -66,11 +69,19 @@ _DEFAULT_WARMING = ["对方向你说了自己的心事", "对方认真回应了�
 _TIER_CAP = {"small": 2, "medium": 5, "large": 8}      # 档位上限（设计稿 Q12）
 
 
-def _raw(name: str, *, own_conditions: bool = True) -> dict:
+def _raw(name: str, *, own_conditions: bool = True, overlay: bool = True,
+         psyche_overrides: dict | None = None) -> dict:
     raw = json.loads((_SAMPLES / f"{name}.json").read_text(encoding="utf-8"))
-    raw["psyche"].update(_FIX[name])
+    if overlay:
+        raw["psyche"].update(json.loads(json.dumps(_FIX[name], ensure_ascii=False)))
     if not own_conditions:
         raw["psyche"]["warming_conditions"] = []
+    for path, value in (psyche_overrides or {}).items():
+        node = raw["psyche"]
+        *parents, leaf = path.split(".")
+        for key in parents:
+            node = node[key]
+        node[leaf] = value
     return raw
 
 
@@ -197,8 +208,8 @@ def test_g2_low_affinity_does_not_soften(name, start, event, tier, delta):
             assert _modes(name)["conflict"] in sp, "冒犯后的下一轮没有换成冲突档"
 
 
-def _g3_check(name: str, start: int, event: str, *, exact: bool = False):
-    prompts, aff, stage = _run(name, start, [(event, "large", 8)] * _TURNS)
+def _g3_check(name: str, start: int, event: str, *, exact: bool = False, **card_kw):
+    prompts, aff, stage = _run(name, start, [(event, "large", 8)] * _TURNS, **card_kw)
     entered = [i for i, a in enumerate(aff) if a >= _CLOSE_FROM]
     assert entered, f"{_TURNS} 轮都做到亲近条件仍进不了亲近档：{aff}"
     first = entered[0]                     # 第 first+1 次「做到亲近条件」之后进入
@@ -214,6 +225,7 @@ def _g3_check(name: str, start: int, event: str, *, exact: bool = False):
 @pytest.mark.parametrize("start", [15, 68])
 def test_g3_meeting_conditions_opens_closeness_not_before_third(name, start):
     _g3_check(name, start, "met_condition", exact=start >= 68)
+    _g3_check(name, start, "met_condition", exact=start >= 68, own_conditions=False)     # G11
 
 
 @pytest.mark.parametrize("name", _CARDS)
@@ -328,3 +340,59 @@ def test_g8_pending_offence_survives_a_new_engine(shape):
     prompts, aff, _ = _run(name, 0, [("repair", "large", 8)] * 4, resume_from=_saved(llm, shape))
     assert _modes(name)["conflict"] in prompts[0], "换引擎后的第一轮没有停在冲突档"
     assert max(aff) <= start and aff[-1] == start, f"换引擎后修复上限丢了：{aff}（冒犯前 {start}）"
+
+
+def test_g9_card_without_new_fields_keeps_the_old_persona_text():
+    # 赵太爷：好感 20 落在「认识」档，宜人性 1 —— 改造前就是这两句
+    (sp, *_), _, _ = _run("赵太爷", 20, [("neutral", "small", 1)], overlay=False)
+    assert "客气有距离，礼貌但疏远" in sp and "你天生有保留" in sp
+
+
+def test_g9_incomplete_modes_fall_back_to_the_generic_tone():
+    name = "赵太爷"
+    (sp, *_), _, _ = _run(name, 20, [("neutral", "small", 1)],
+                          psyche_overrides={"relational_modes.conflict": ""})
+    assert "客气有距离，礼貌但疏远" in sp, "三档没填全，却没有退回通用语气"
+    assert _modes(name)["normal"] not in sp, "三档没填全，却用了其中一句"
+    (sp, *_), _, _ = _run(name, 20, [("neutral", "small", 1)],
+                          psyche_overrides={"agreeableness_facets": []})
+    assert "你天生有保留" in sp, "没有分面，却没有退回按分数的文案"
+
+
+@pytest.mark.parametrize("name", _CARDS)
+def test_g10_eval_prompt_labels_traits_and_values_correctly(name):
+    raw = _raw(name)
+    ep = _run_full(name, 40, [("neutral", "small", 1)])[3].eval_prompts[0]
+    line = {k: next((ln for ln in ep.splitlines() if ln.startswith(k)), "") for k in ("性格特征：", "价值观：")}
+    assert raw["personality_traits"][0][:6] in line["性格特征："], "「性格特征」后面不是 personality_traits"
+    assert raw["values"][0][:6] not in line["性格特征："], "「性格特征」后面还是 values"
+    assert raw["values"][0][:6] in line["价值观："], "缺「价值观」一行"
+
+
+_STALE_EVAL_LINES = [      # 与「好感由规则表算、没有回落」矛盾的旧句子
+    "连续3轮正面互动才能触发阶段性好感跃升", "自然回到基线附近", "好感围绕这条基线波动",
+    "基线上移要慢", '"affinity": 0-100整数',
+]
+
+
+def test_g10_eval_prompt_has_no_stale_rules_and_carries_grudge():
+    ep = _run_full("赵太爷", 40, [("neutral", "small", 1)])[3].eval_prompts[0]
+    for line in _STALE_EVAL_LINES:
+        assert line not in ep, f"评估 prompt 里还有旧句子：{line}"
+    assert "记仇" in ep and "不要太快接受道歉" in ep, "评估 prompt 没带记仇程度或「不要太快接受道歉」"
+
+
+def test_g10_code_does_not_read_grudge_or_volatility():
+    script = [("offended", "medium", 4), ("repair", "small", 2), ("repair", "medium", 4),
+              ("met_condition", "large", 8), ("friendly", "small", 2)]
+    runs = [_run("孔乙己", 50, script, psyche_overrides=o)[1] for o in (
+        {"grudge_inertia": "记仇", "volatility": "剧烈"}, {"grudge_inertia": "大度", "volatility": "平稳"})]
+    assert runs[0] == runs[1], f"同一组评估输出，记仇 / 大度的卡算出了不同的好感：{runs}"
+
+
+def test_g11_default_condition_card_rises_at_most_five_per_turn():
+    script = [("neutral", "small", 1)] * 2 + [("met_condition", "large", 8)] * 3
+    for own, cap in ((False, 5), (True, _TIER_CAP["large"])):
+        _, aff, _ = _run("赵太爷", 20, script, own_conditions=own)
+        steps = [b - a for a, b in zip([20] + aff, aff)][2:]
+        assert max(steps) == cap, f"own_conditions={own}：单轮最多应涨 {cap}，实际 {steps}"

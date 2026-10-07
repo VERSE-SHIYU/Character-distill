@@ -1,9 +1,9 @@
 diff --git a/core/affinity_rules.py b/core/affinity_rules.py
 new file mode 100644
-index 00000000..dcade0b4
+index 00000000..0f9742ad
 --- /dev/null
 +++ b/core/affinity_rules.py
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,112 @@
 +"""好感规则表（③b-1）：评估模型只报「发生了哪类事、哪一档、档内的整数」，好感怎么变由这里定。
 +
 +纯函数，无 IO、不读卡片以外的东西。出处见 `docs/specs/personality-3a-design.md` v6 §5：
@@ -18,6 +18,7 @@ index 00000000..dcade0b4
 +CLOSE_FROM = 73        # 亲近档下界：只此一处，`affinity_service.AFFINITY_STAGES` 引用它
 +MET_REQUIRED = 3       # 跨进亲近档前要累计的 `met_condition` 次数
 +LARGE_NEEDS_STREAK = 2  # 正向大档要求此前连续几轮非负
++LEGACY_UP_MAX = 5      # 用默认亲近条件的卡，单轮最多涨这么多（沿用改造前的上限，设计稿 Q4）
 +
 +TIERS: dict[str, tuple[int, int]] = {"small": (1, 2), "medium": (3, 5), "large": (6, 8)}
 +POSITIVE = frozenset({"met_condition", "friendly", "repair"})
@@ -106,6 +107,8 @@ index 00000000..dcade0b4
 +        pre = affinity if pre is None else pre
 +        new = affinity - _magnitude(tier, delta)
 +
++    if not getattr(psyche, "warming_conditions", None):  # 卡上没有亲近条件：保留改造前的单轮上限
++        new = min(new, affinity + LEGACY_UP_MAX)
 +    if affinity < CLOSE_FROM and met < MET_REQUIRED:   # 没挣够次数，不能跨进亲近档
 +        new = min(new, CLOSE_FROM - 1)
 +    new = max(0, min(100, new))
@@ -114,7 +117,7 @@ index 00000000..dcade0b4
 +    streak = 0 if event in NEGATIVE else state.nonneg_streak + 1
 +    return new, RelationState(event, met, streak, pre), warnings
 diff --git a/core/affinity_service.py b/core/affinity_service.py
-index c0cb5a15..1904b6a0 100644
+index c0cb5a15..487f9a65 100644
 --- a/core/affinity_service.py
 +++ b/core/affinity_service.py
 @@ -3,16 +3,23 @@
@@ -143,7 +146,16 @@ index c0cb5a15..1904b6a0 100644
      (91, 101, "心意相通", "💕"), # IOS 11, Bogardus 1
  ]
  
-@@ -77,6 +84,8 @@ class AffinityService:
+@@ -45,8 +52,6 @@ def _clamp_delta(old: int, new: int | None, up_max: int, down_max: int) -> int:
+ 
+ # Per-turn delta limits — enforced by _clamp_delta so the prompt-level
+ # "不超过 ±8" rule is backed by code-level hard caps.
+-AFFINITY_DELTA_UP = 5
+-AFFINITY_DELTA_DOWN = -8
+ TRUST_DELTA_UP = 5
+ TRUST_DELTA_DOWN = -8
+ GUARD_DELTA_UP = 8
+@@ -77,6 +82,8 @@ class AffinityService:
          # ── P1 影子模式：8 轮 delta 历史环形缓冲（纯内存，不落库） ──
          self._delta_ring: list[dict] = []
          self._ring_maxlen: int = 8
@@ -152,7 +164,7 @@ index c0cb5a15..1904b6a0 100644
  
      def _record_delta_ring(self, *, affinity_delta: int, trust_delta: int,
                             guard_delta: int, trigger_hit: bool,
-@@ -140,6 +149,12 @@ class AffinityService:
+@@ -140,6 +147,12 @@ class AffinityService:
                  self.mood_emoji = "😊"
              self.user_catchwords = _parsed.get("user_catchwords", []) if isinstance(_parsed, dict) else []
              self.stage, self.stage_emoji = calc_stage(self.affinity)
@@ -165,7 +177,7 @@ index c0cb5a15..1904b6a0 100644
          self.prev_stage = self.stage
  
      def get(self) -> dict[str, Any]:
-@@ -168,45 +183,28 @@ class AffinityService:
+@@ -168,45 +181,28 @@ class AffinityService:
      ) -> str:
          """构建情感评估 LLM prompt（纯函数：只读状态，无副作用/IO）。"""
          _values = getattr(card, 'values', []) or []
@@ -226,7 +238,7 @@ index c0cb5a15..1904b6a0 100644
              f"内在矛盾：{', '.join(_tensions[:2])}\n"
              f"对话者身份：{user_role}\n\n"
              f"当前情感状态：好感={self.affinity}, 信任={self.trust}, 情绪={self.mood}, 防御={self.guard}\n"
-@@ -226,13 +224,23 @@ class AffinityService:
+@@ -226,13 +222,23 @@ class AffinityService:
              "3. 如果对方触碰了你的痛点或雷区，反应要激烈但符合你的性格。\n"
              "4. 如果上一刻你在生气，对方道歉了，你不应该立刻原谅——你需要时间消化。\n\n"
              "情绪惯性规则（依据AnnaAgent ACL 2025情绪动态演化模型）：\n"
@@ -254,7 +266,7 @@ index c0cb5a15..1904b6a0 100644
              "- 情感强度高/关系转折/承诺/冲突/揭露秘密/告白/决裂：8-10分\n"
              "- 日常寒暄/打招呼/无关痛痒：1-3分\n"
              "- 普通对话/闲聊/一般信息交换：4-6分\n\n"
-@@ -266,7 +274,10 @@ class AffinityService:
+@@ -266,7 +272,10 @@ class AffinityService:
              "- 简单的「对不起」算 apology；详细解释原因算 explanation；用行动表示改变算 action；戳中 psyche.soft_spots 的内容算 soft_spot\n\n"
              "输出严格JSON格式（只输出JSON，不要任何其他内容）：\n"
              "{\n"
@@ -266,7 +278,7 @@ index c0cb5a15..1904b6a0 100644
              '  "trust": 0-100整数,\n'
              '  "mood": "具体情绪词（如释然/微酸/警觉/心软/嘴硬心软/又气又心疼/微微上头）",\n'
              '  "guard": 0-100整数,\n'
-@@ -332,7 +343,7 @@ class AffinityService:
+@@ -332,11 +341,11 @@ class AffinityService:
              and data.get("guard") == 70
          )
  
@@ -274,8 +286,14 @@ index c0cb5a15..1904b6a0 100644
 +    def apply_evaluation(self, data: dict, old_stage: str, psyche: Any) -> int:
          """把解析结果回写11个情感字段，返回importance。纯状态计算，无IO。
  
-         LLM 返回的数值经过 delta clamp（旧值 ± 上限强制执行 prompt 声明的单轮变化约束），
-@@ -344,7 +355,17 @@ class AffinityService:
+-        LLM 返回的数值经过 delta clamp（旧值 ± 上限强制执行 prompt 声明的单轮变化约束），
+-        LLM 自觉遵守规则再好不过，不遵守时由代码兜底。
++        好感：模型只报事件、档位、档内整数，变多少由规则表定（core/affinity_rules.py）。
++        信任、防御：模型给数值，经 delta clamp（旧值 ± 上限）兜底。
+         """
+         import json as _json
+         # Snapshot old values before applying LLM output
+@@ -344,7 +353,17 @@ class AffinityService:
          importance = max(1, min(10, int(data.get("importance", 5))))
  
          # Delta clamp enforces prompt-declared per-turn limits in code
@@ -294,7 +312,7 @@ index c0cb5a15..1904b6a0 100644
          self.trust = _clamp_delta(old_trust, data.get("trust"), up_max=TRUST_DELTA_UP, down_max=TRUST_DELTA_DOWN)
          # Guard: rise fast (up +8/down -5), ease slow — symmetrical on rise but
          # extra conservative on drop (a character doesn't let their guard down quickly).
-@@ -374,6 +395,7 @@ class AffinityService:
+@@ -374,6 +393,7 @@ class AffinityService:
              "stage": self.stage,
              "stage_emoji": self.stage_emoji,
              "user_catchwords": self.user_catchwords,
@@ -416,3 +434,179 @@ index 4003da91..8733a21f 100644
  
  
  class BehaviorCore(BaseModel):
+diff --git a/tests/test_affinity_rules.py b/tests/test_affinity_rules.py
+new file mode 100644
+index 00000000..7369f8de
+--- /dev/null
++++ b/tests/test_affinity_rules.py
+@@ -0,0 +1,170 @@
++# -*- coding: utf-8 -*-
++"""好感规则表的单元测试（spec `docs/specs/personality-inject.md` §2 的 R2–R18）。直接测纯函数。"""
++
++from __future__ import annotations
++
++import os
++import sys
++
++import pytest
++
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
++
++from core.affinity_rules import (
++    DEFAULT_WARMING, RelationState, apply_event, relation_from_dict, relation_to_dict,
++    relational_tier, warming_conditions,
++)
++from core.card_layers import REGISTRY
++from core.schema import PsycheProfile
++
++OWN = ["条件甲", "条件乙"]
++
++
++def psy(baseline=50, own=True, **kw):
++    return PsycheProfile(affinity_baseline=baseline, warming_conditions=OWN if own else [], **kw)
++
++
++def step(aff, event, tier="small", delta=1, *, state=None, psyche=None, idx=0):
++    return apply_event(aff, state or RelationState(), psyche or psy(), event=event, tier=tier,
++                       delta=delta, met_index=idx)
++
++
++WARM = RelationState(nonneg_streak=2, met_count=3)      # 大档可生效、亲近门槛已过
++
++
++@pytest.mark.parametrize("tier,delta,expect", [
++    ("small", 0, 1), ("small", 1, 1), ("small", 2, 2), ("small", 9, 2),
++    ("medium", 1, 3), ("medium", 4, 4), ("medium", 9, 5),
++    ("large", 1, 6), ("large", 7, 7), ("large", 40, 8),
++])
++def test_r2_number_is_clipped_into_its_tier(tier, delta, expect):
++    assert step(40, "met_condition", tier, delta, state=WARM)[0] == 40 + expect
++    assert step(40, "offended", tier, delta)[0] == 40 - expect
++
++
++def test_r2_sign_comes_from_the_event_not_the_model():
++    assert step(40, "met_condition", "medium", -4, state=WARM)[0] == 44
++    assert step(40, "offended", "medium", -4)[0] == 36
++
++
++@pytest.mark.parametrize("aff", [10, 50, 90])
++def test_r3_neutral_never_moves(aff):
++    assert step(aff, "neutral", None, None, state=WARM)[0] == aff
++
++
++def test_r4_friendly_adds_only_below_baseline_and_stops_at_it():
++    assert step(47, "friendly", "large", 8)[0] == 49            # 一律按小档
++    assert step(49, "friendly", "small", 2)[0] == 50            # 加到基线为止
++    assert step(50, "friendly", "small", 2)[0] == 50            # 基线及以上不加
++    assert step(60, "friendly", "small", 2)[0] == 60
++
++
++def test_r11_gate_wins_over_a_baseline_above_the_close_threshold():
++    assert step(71, "friendly", "small", 2, psyche=psy(baseline=80))[0] == 72
++
++
++@pytest.mark.parametrize("idx", [2, -1, None, "0", True, 1.0])
++def test_r5_bad_condition_index_counts_as_friendly(idx):
++    new, state, warns = step(60, "met_condition", "medium", 4, idx=idx)
++    assert (new, state.met_count, state.last_event) == (60, 0, "friendly") and warns
++
++
++def test_r5_valid_index_counts_also_for_default_conditions():
++    assert step(40, "met_condition", "small", 2, idx=1)[1].met_count == 1
++    assert step(40, "met_condition", "small", 2, idx=1, psyche=psy(own=False))[1].met_count == 1
++    assert step(40, "met_condition", "small", 2, idx=2, psyche=psy(own=False))[1].met_count == 0
++
++
++@pytest.mark.parametrize("streak,expect", [(0, 5), (1, 5), (2, 8), (5, 8)])
++def test_r6_large_needs_two_non_negative_turns(streak, expect):
++    assert step(20, "met_condition", "large", 8, state=RelationState(nonneg_streak=streak))[0] == 20 + expect
++
++
++def test_r6_streak_counts_neutral_and_resets_on_offence():
++    s = RelationState()
++    for event in ("neutral", "friendly"):
++        _, s, _ = step(20, event, "small", 1, state=s)
++    assert s.nonneg_streak == 2
++    assert step(20, "offended", "small", 1, state=s)[1].nonneg_streak == 0
++
++
++def test_r7_r8_r9_offence_repair_and_clearing():
++    a, s, _ = step(50, "offended", "medium", 4)
++    assert (a, s.pre_offence) == (46, 50)
++    a, s, _ = step(a, "trigger", "small", 1, state=s)
++    assert (a, s.pre_offence) == (45, 50), "连续冒犯只记第一次的值"
++    a, s, _ = step(a, "repair", "large", 8, state=s)
++    assert (a, s.pre_offence) == (50, None), "大档修复按中档算，到冒犯前的值为止并清空"
++    assert step(50, "repair", "medium", 4, state=s)[0] == 50, "没有待修复的冒犯：按 friendly，基线上不加"
++
++
++def test_r9_any_non_negative_event_reaching_the_old_value_clears_it():
++    s = RelationState(pre_offence=40)
++    assert step(39, "friendly", "small", 2, state=s)[1].pre_offence is None       # 基线 50 以下，客气补回
++    assert step(38, "friendly", "small", 1, state=s)[1].pre_offence == 40         # 还没回到
++    assert step(38, "met_condition", "medium", 5, state=s)[1].pre_offence is None
++
++
++@pytest.mark.parametrize("met_before,expect", [(0, 72), (1, 72), (2, 75), (3, 75)])
++def test_r10_third_condition_opens_the_close_tier(met_before, expect):
++    assert step(70, "met_condition", "medium", 5, state=RelationState(met_count=met_before))[0] == expect
++
++
++def test_r10_applies_to_every_event_and_not_once_already_close():
++    s = RelationState(pre_offence=80)
++    assert step(70, "repair", "medium", 5, state=s)[0] == 72
++    assert step(74, "met_condition", "medium", 5)[0] == 79
++
++
++@pytest.mark.parametrize("kw", [
++    dict(event="praise", tier="small", delta=1), dict(event=None, tier="small", delta=1),
++    dict(event="friendly", tier="huge", delta=1), dict(event="friendly", tier="small", delta="2"),
++    dict(event="offended", tier="small", delta=1.5), dict(event="offended", tier="small", delta=True),
++])
++def test_r16_invalid_input_raises_so_the_caller_keeps_everything(kw):
++    with pytest.raises(ValueError):
++        apply_event(40, RelationState(), psy(), met_index=0, **kw)
++
++
++def test_r17_state_round_trips_and_old_saves_get_defaults():
++    s = RelationState("offended", 2, 0, 55)
++    assert relation_from_dict(relation_to_dict(s)) == s
++    for junk in (None, "x", [], {}, {"last_event": "praise", "met_count": "2", "pre_offence": "55"}):
++        assert relation_from_dict(junk) == RelationState()
++
++
++def test_r18_default_condition_cards_keep_the_old_per_turn_ceiling():
++    assert step(20, "met_condition", "large", 8, state=WARM, psyche=psy(own=False))[0] == 25
++    assert step(20, "met_condition", "large", 8, state=WARM, psyche=psy(own=True))[0] == 28
++    assert step(20, "offended", "large", 8, psyche=psy(own=False))[0] == 12
++
++
++def test_r12_code_ignores_grudge_and_volatility():
++    a = step(40, "repair", "small", 2, state=RelationState(pre_offence=60), psyche=psy(grudge_inertia="记仇", volatility="剧烈"))
++    b = step(40, "repair", "small", 2, state=RelationState(pre_offence=60), psyche=psy(grudge_inertia="大度", volatility="平稳"))
++    assert a == b
++
++
++def test_r13_default_conditions_only_when_the_card_has_none():
++    assert warming_conditions(psy()) == OWN
++    assert warming_conditions(psy(own=False)) == list(DEFAULT_WARMING) and len(DEFAULT_WARMING) == 2
++
++
++@pytest.mark.parametrize("aff,last,expect", [
++    (80, "offended", "conflict"), (10, "trigger", "conflict"), (80, "neutral", "close"),
++    (73, "", "close"), (72, "friendly", "normal"), (10, "repair", "normal"),
++])
++def test_r14_tier_selection(aff, last, expect):
++    assert relational_tier(aff, RelationState(last_event=last)) == expect
++
++
++def test_registry_has_the_five_new_psyche_fields():
++    got = {k: (v.layer, v.kind) for k, v in REGISTRY.items() if k.startswith("psyche.") and
++           k.split(".")[1] in ("warming_conditions", "relational_modes", "agreeableness_facets")}
++    assert got == {
++        "psyche.warming_conditions": ("state", "list"),
++        "psyche.relational_modes.close": ("state", "scalar"),
++        "psyche.relational_modes.normal": ("state", "scalar"),
++        "psyche.relational_modes.conflict": ("state", "scalar"),
++        "psyche.agreeableness_facets": ("stable", "list"),
++    }
