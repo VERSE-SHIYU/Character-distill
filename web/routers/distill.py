@@ -27,7 +27,7 @@ from core.card_out import CARD_CONFLICT, card_revision, out_card
 from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core.embeddings import EMBEDDING_KEY_REQUIRED
-from core.unlocated import move_unlocated
+from core.unlocated import UnknownPhase, move_unlocated
 from core.export import export_tavern_json
 from core.card_draft import card_from_draft
 from core.schema import CharacterCard
@@ -1326,6 +1326,9 @@ async def move_unlocated_item(
     try:
         moved = move_unlocated(card, section=req.section, index=req.index,
                                phase=req.phase, path=req.path)
+    except UnknownPhase as exc:                  # 补充 17：阶段号越界单独报，不说「不在未定位区」
+        logger.warning("[distill] move_unlocated rejected: %s", exc)
+        raise HTTPException(400, "所选的阶段已不存在，请刷新后重新选择") from exc
     except ValueError as exc:
         logger.warning("[distill] move_unlocated rejected: %s", exc)
         raise HTTPException(400, "这一条已经不在未定位区，请刷新后重试") from exc

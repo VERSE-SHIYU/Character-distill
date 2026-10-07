@@ -13,7 +13,7 @@ from core.arc_view import project_card
 from core.card_out import card_revision
 from core.card_layers import get_path
 from core.schema import CharacterCard, UnlocatedAttitude
-from core.unlocated import move_unlocated
+from core.unlocated import UnknownPhase, move_unlocated
 
 
 def _loose_card(**unlocated):
@@ -83,8 +83,9 @@ def test_m6_attitude_into_phase_with_attitude_swaps_back():
     card = card.model_copy(deep=True)
     card.character_arc.unlocated.attitudes.append(UnlocatedAttitude(target="甲", attitude="第二条"))
     card = move_unlocated(card, section="attitudes", index=0, phase=1)
-    assert (_pa(card), [a.attitude for a in card.character_arc.unlocated.attitudes]) == (
-        [(1, "第二条")], ["挪来的"])
+    # 补充 16：被换下的态度带着它原来所在的阶段号退回（挪回时下拉预选用，§3.4）
+    assert (_pa(card), [(a.attitude, a.phase) for a in card.character_arc.unlocated.attitudes]) == (
+        [(1, "第二条")], [("挪来的", 1)])
 
 
 @pytest.mark.parametrize("kw", [
@@ -173,4 +174,30 @@ def test_route_stale_index_is_400():
     r = _client(store, "u1").post(
         "/api/distill/card/c1/unlocated/move",
         json={"section": "behaviors", "index": 9, "phase": 1, "revision": _rev(store)})
-    assert r.status_code == 400
+    assert (r.status_code, r.json()["detail"]) == (400, "这一条已经不在未定位区，请刷新后重试")
+
+
+def test_route_phase_out_of_range_is_400_with_its_own_message():
+    """补充 17：阶段号越界单独报（条目其实还在，不能说「不在未定位区」）；另一侧见上一条。"""
+    store = _Store(_movable_card())
+    r = _client(store, "u1").post(
+        "/api/distill/card/c1/unlocated/move",
+        json={"section": "behaviors", "index": 0, "phase": 5, "revision": _rev(store)})
+    assert (r.status_code, r.json()["detail"]) == (400, "所选的阶段已不存在，请刷新后重新选择")
+
+
+def test_m9_only_phase_out_of_range_is_unknown_phase():
+    """补充 17 的分类本身：越界（两侧：0 与 n+1）是 `UnknownPhase`，其他参数错不是。"""
+    def kind(**kw):
+        try:
+            move_unlocated(_movable_card(), **kw)
+        except UnknownPhase:
+            return "phase"
+        except ValueError:
+            return "other"
+        return "ok"
+
+    assert [kind(section="behaviors", index=0, phase=p) for p in (0, 1, 2)] + [
+        kind(section="behaviors", index=5, phase=1), kind(section="nope", index=0, phase=1),
+        kind(section="overlay", path="key_memories", index=0, phase=1)] == [
+        "phase", "ok", "phase", "other", "other", "other"]

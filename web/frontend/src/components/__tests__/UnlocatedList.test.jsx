@@ -34,6 +34,25 @@ describe('UnlocatedList 挪动交互', () => {
     expect(container.querySelectorAll('.card-unlocated .card-behavior-item')).toHaveLength(1)
   })
 
+  // 补充 17：原来标的阶段不在 1..n（卡在编辑里删过阶段，或为 0）→ 预选最后阶段；
+  // 不查上界时下拉框值不在选项里、显示空白，点「挪入」会发出越界的阶段号。另一侧（在范围内用原阶段）见下一条。
+  it('态度原阶段越界（0 或大于阶段数）：预选最后阶段', () => {
+    const unlocated = { behaviors: [], overlay: {}, attitudes: [
+      { target: '掌柜', attitude: '怕', note: '', phase: 5 },
+      { target: '掌柜', attitude: '恨', note: '', phase: 0 }] }
+    render(<UnlocatedList arc={{ phases: PHASES, unlocated }} onMove={vi.fn()} />)
+    expect(screen.getAllByRole('combobox').map((s) => s.textContent)).toEqual(['阶段 2 · 晚', '阶段 2 · 晚'])
+  })
+
+  // 补充 18：单阶段卡也有未定位区（后端 test_u6：无证据的状态类进未定位区），整块照样渲染、可挪进阶段 1。
+  it('单阶段卡：未定位区照样渲染，下拉只有阶段 1', () => {
+    const unlocated = { behaviors: [{ situation: '被揭短', behavior: '涨红脸' }], overlay: {}, attitudes: [] }
+    const { container } = render(<UnlocatedList arc={{ phases: [PHASES[0]], unlocated }} onMove={vi.fn()} />)
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' })
+    expect([Boolean(container.querySelector('.card-unlocated')), screen.getAllByRole('option').length,
+      Boolean(screen.getByRole('option', { name: '阶段 1 · 早' }))]).toEqual([true, 1, true])
+  })
+
   it('默认阶段：态度用原来标的阶段，其余用最后阶段', () => {
     render(<UnlocatedList arc={arc} onMove={vi.fn()} />)
     // 全站 Select（Radix）：触发器显示所选项的 label

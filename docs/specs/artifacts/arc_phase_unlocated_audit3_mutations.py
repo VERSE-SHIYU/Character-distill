@@ -2,7 +2,7 @@
 `arc_phase_unlocated_audit_mutations.py` 里的放宽 / 过严各若干条。一次性产物，不登记进元锁。
 
 用法：仓库根目录 `python docs/specs/artifacts/arc_phase_unlocated_audit3_mutations.py`。
-期望：R1、S2、S3 红；R2、R3、R4、S1 在补用例前存活（= 补充 15–18），补后应全红。
+期望：全部红。R2、R3、R4、S1 在补用例前存活（= 补充 15–18），R5、R6、S4 守补充 17 的 400 文案拆分。
 """
 import pathlib, shutil, subprocess, sys
 
@@ -35,6 +35,13 @@ M = [
      '            raise ValueError(f"{where}[{path}] 不许为空")\n', "py"),
     ("S3 过严 不许挪进最后阶段", "core/unlocated.py",
      "    if not 1 <= phase <= n:", "    if not 1 <= phase < n:", "py"),
+    # ── 补充 17 的 400 文案拆分，两侧 ──
+    ("R5 放宽 阶段越界与其他参数错共用一句文案（路由不分）", "web/routers/distill.py",
+     "    except UnknownPhase as exc:", "    except ArithmeticError as exc:", "py"),
+    ("R6 放宽 越界仍抛普通 ValueError（分类在源头丢掉）", "core/unlocated.py",
+     '        raise UnknownPhase(f"阶段号越界', '        raise ValueError(f"阶段号越界', "py"),
+    ("S4 过严 所有参数错都报「阶段已不存在」", "web/routers/distill.py",
+     "    except UnknownPhase as exc:", "    except ValueError as exc:", "py"),
 ]
 
 

@@ -842,10 +842,10 @@ index 50c82c4..4003da9 100644
          """阶段起点是否可用于按位置截断：齐全、严格递增、且有正文指纹。
 diff --git a/core/unlocated.py b/core/unlocated.py
 new file mode 100644
-index 0000000..0e5c91e
+index 0000000..9d2351e
 --- /dev/null
 +++ b/core/unlocated.py
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,83 @@
 +# -*- coding: utf-8 -*-
 +"""未定位区的条目挪进某个阶段 —— 纯计算，无 IO（spec `arc-phase-unlocated.md` §3.6）。
 +
@@ -867,6 +867,10 @@ index 0000000..0e5c91e
 +SECTIONS = ("behaviors", "overlay", "attitudes")
 +
 +
++class UnknownPhase(ValueError):
++    """目标阶段号不在 1..n —— 与其他参数错分开，路由给它单独的文案（spec 补充 17）。"""
++
++
 +def _take(items: list, index: int, what: str):
 +    if not 0 <= index < len(items):
 +        raise ValueError(f"未定位区没有这一条{what}：{index}")
@@ -880,13 +884,13 @@ index 0000000..0e5c91e
 +    `section="overlay"` 时 `path` 是登记表里的 state 路径，`index` 是该路径列表里的序号。
 +    序号漂移（另一个标签页先挪过、编辑过）不在这里判：路由先按卡的版本核对（§13），卡变过
 +    即 409，传进来的卡就是调用方看到的那一版，序号必然对得上。
-+    参数不合法抛 `ValueError`（路由转 400）。
++    参数不合法抛 `ValueError`（路由转 400）；其中阶段号越界抛它的子类 `UnknownPhase`。
 +    """
 +    if section not in SECTIONS:
 +        raise ValueError(f"未知的未定位分区：{section}")
 +    n = len(card.character_arc.phases)
 +    if not 1 <= phase <= n:
-+        raise ValueError(f"阶段号越界：{phase}（共 {n} 个阶段）")
++        raise UnknownPhase(f"阶段号越界：{phase}（共 {n} 个阶段）")
 +    data = card.model_dump()
 +    loose = data["character_arc"]["unlocated"]
 +    target = data["character_arc"]["phases"][phase - 1]
@@ -2549,10 +2553,10 @@ index e0c5709..c8d25c0 100644
  def test_scalar_same_phase_second_dropped_not_promoted():
 diff --git a/tests/test_arc_phase_unlocated.py b/tests/test_arc_phase_unlocated.py
 new file mode 100644
-index 0000000..d509974
+index 0000000..fb968c3
 --- /dev/null
 +++ b/tests/test_arc_phase_unlocated.py
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,403 @@
 +# -*- coding: utf-8 -*-
 +"""阶段未验证的处理 + overlay 与卡片同形 —— spec `docs/specs/arc-phase-unlocated.md` §4。
 +
@@ -2656,6 +2660,16 @@ index 0000000..d509974
 +        CharacterCard.model_validate({"name": "x", "character_arc": {"unlocated": {
 +            "overlay": {"speaking_style.catchphrases": ["哼"]}}}})
 +
++
++
++def test_n4c_unlocated_overlay_rejects_experience_path():
++    """补充 15：未定位区只收 state 路径 —— 校验器第二个调用点的 `layers` 参数（阶段一侧是 N3）。
++
++    经历类进了未定位区就挪不出（`move_unlocated` 只收 state）、也不进引文核对。
++    """
++    with pytest.raises(ValueError, match="未登记"):
++        CharacterCard.model_validate({"name": "x", "character_arc": {"unlocated": {
++            "overlay": {"key_memories": ["某事"]}}}})
 +
 +def _full_card():
 +    """每个 state / experience 路径都有阶段 2 特有的取值和一条没有证据的取值，外加做法与关系。
@@ -3118,10 +3132,10 @@ index 0000000..6613358
 +        ["B对标", "B错标"], ["M错标"], ["T错标"], ["M编造"])
 diff --git a/tests/test_arc_phase_unlocated_move.py b/tests/test_arc_phase_unlocated_move.py
 new file mode 100644
-index 0000000..8907299
+index 0000000..6f3c8ce
 --- /dev/null
 +++ b/tests/test_arc_phase_unlocated_move.py
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,203 @@
 +# -*- coding: utf-8 -*-
 +"""未定位条目挪进阶段（段 3）—— spec `docs/specs/arc-phase-unlocated.md` §6。
 +
@@ -3137,7 +3151,7 @@ index 0000000..8907299
 +from core.card_out import card_revision
 +from core.card_layers import get_path
 +from core.schema import CharacterCard, UnlocatedAttitude
-+from core.unlocated import move_unlocated
++from core.unlocated import UnknownPhase, move_unlocated
 +
 +
 +def _loose_card(**unlocated):
@@ -3207,8 +3221,9 @@ index 0000000..8907299
 +    card = card.model_copy(deep=True)
 +    card.character_arc.unlocated.attitudes.append(UnlocatedAttitude(target="甲", attitude="第二条"))
 +    card = move_unlocated(card, section="attitudes", index=0, phase=1)
-+    assert (_pa(card), [a.attitude for a in card.character_arc.unlocated.attitudes]) == (
-+        [(1, "第二条")], ["挪来的"])
++    # 补充 16：被换下的态度带着它原来所在的阶段号退回（挪回时下拉预选用，§3.4）
++    assert (_pa(card), [(a.attitude, a.phase) for a in card.character_arc.unlocated.attitudes]) == (
++        [(1, "第二条")], [("挪来的", 1)])
 +
 +
 +@pytest.mark.parametrize("kw", [
@@ -3297,7 +3312,33 @@ index 0000000..8907299
 +    r = _client(store, "u1").post(
 +        "/api/distill/card/c1/unlocated/move",
 +        json={"section": "behaviors", "index": 9, "phase": 1, "revision": _rev(store)})
-+    assert r.status_code == 400
++    assert (r.status_code, r.json()["detail"]) == (400, "这一条已经不在未定位区，请刷新后重试")
++
++
++def test_route_phase_out_of_range_is_400_with_its_own_message():
++    """补充 17：阶段号越界单独报（条目其实还在，不能说「不在未定位区」）；另一侧见上一条。"""
++    store = _Store(_movable_card())
++    r = _client(store, "u1").post(
++        "/api/distill/card/c1/unlocated/move",
++        json={"section": "behaviors", "index": 0, "phase": 5, "revision": _rev(store)})
++    assert (r.status_code, r.json()["detail"]) == (400, "所选的阶段已不存在，请刷新后重新选择")
++
++
++def test_m9_only_phase_out_of_range_is_unknown_phase():
++    """补充 17 的分类本身：越界（两侧：0 与 n+1）是 `UnknownPhase`，其他参数错不是。"""
++    def kind(**kw):
++        try:
++            move_unlocated(_movable_card(), **kw)
++        except UnknownPhase:
++            return "phase"
++        except ValueError:
++            return "other"
++        return "ok"
++
++    assert [kind(section="behaviors", index=0, phase=p) for p in (0, 1, 2)] + [
++        kind(section="behaviors", index=5, phase=1), kind(section="nope", index=0, phase=1),
++        kind(section="overlay", path="key_memories", index=0, phase=1)] == [
++        "phase", "ok", "phase", "other", "other", "other"]
 diff --git a/tests/test_card_arc_behaviors.py b/tests/test_card_arc_behaviors.py
 index f93652e..0b82ecb 100644
 --- a/tests/test_card_arc_behaviors.py
@@ -4510,10 +4551,10 @@ index 0000000..2f02152
 +})
 diff --git a/web/frontend/src/components/__tests__/UnlocatedList.test.jsx b/web/frontend/src/components/__tests__/UnlocatedList.test.jsx
 new file mode 100644
-index 0000000..211906c
+index 0000000..10e3cfd
 --- /dev/null
 +++ b/web/frontend/src/components/__tests__/UnlocatedList.test.jsx
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,73 @@
 +/**
 + * spec arc-phase-unlocated §4 段 4：未定位区的渲染与挪动交互（选阶段 → 挪入 → onMove）。
 + */
@@ -4548,6 +4589,25 @@ index 0000000..211906c
 +    const { container } = render(<UnlocatedList arc={{ phases: PHASES, unlocated }} onMove={vi.fn()} />)
 +    expect(container.querySelector('.card-unlocated')).toBeTruthy()
 +    expect(container.querySelectorAll('.card-unlocated .card-behavior-item')).toHaveLength(1)
++  })
++
++  // 补充 17：原来标的阶段不在 1..n（卡在编辑里删过阶段，或为 0）→ 预选最后阶段；
++  // 不查上界时下拉框值不在选项里、显示空白，点「挪入」会发出越界的阶段号。另一侧（在范围内用原阶段）见下一条。
++  it('态度原阶段越界（0 或大于阶段数）：预选最后阶段', () => {
++    const unlocated = { behaviors: [], overlay: {}, attitudes: [
++      { target: '掌柜', attitude: '怕', note: '', phase: 5 },
++      { target: '掌柜', attitude: '恨', note: '', phase: 0 }] }
++    render(<UnlocatedList arc={{ phases: PHASES, unlocated }} onMove={vi.fn()} />)
++    expect(screen.getAllByRole('combobox').map((s) => s.textContent)).toEqual(['阶段 2 · 晚', '阶段 2 · 晚'])
++  })
++
++  // 补充 18：单阶段卡也有未定位区（后端 test_u6：无证据的状态类进未定位区），整块照样渲染、可挪进阶段 1。
++  it('单阶段卡：未定位区照样渲染，下拉只有阶段 1', () => {
++    const unlocated = { behaviors: [{ situation: '被揭短', behavior: '涨红脸' }], overlay: {}, attitudes: [] }
++    const { container } = render(<UnlocatedList arc={{ phases: [PHASES[0]], unlocated }} onMove={vi.fn()} />)
++    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' })
++    expect([Boolean(container.querySelector('.card-unlocated')), screen.getAllByRole('option').length,
++      Boolean(screen.getByRole('option', { name: '阶段 1 · 早' }))]).toEqual([true, 1, true])
 +  })
 +
 +  it('默认阶段：态度用原来标的阶段，其余用最后阶段', () => {
@@ -4907,7 +4967,7 @@ index a758619..9ba3756 100644
    }
  })
 diff --git a/web/routers/distill.py b/web/routers/distill.py
-index 72c3bbf..360f187 100644
+index 72c3bbf..52bbe47 100644
 --- a/web/routers/distill.py
 +++ b/web/routers/distill.py
 @@ -23,10 +23,11 @@ from core.scheduling import submit_to_main_loop
@@ -4919,7 +4979,7 @@ index 72c3bbf..360f187 100644
  from core.character_roster import aliases_for, resolve_characters, target_character_name
  from core.distiller import DistillError, Distiller, text_fingerprint
  from core.embeddings import EMBEDDING_KEY_REQUIRED
-+from core.unlocated import move_unlocated
++from core.unlocated import UnknownPhase, move_unlocated
  from core.export import export_tavern_json
  from core.card_draft import card_from_draft
  from core.schema import CharacterCard
@@ -4982,7 +5042,7 @@ index 72c3bbf..360f187 100644
  
  @router.patch("/card/{card_id}")
  async def update_card(
-@@ -1273,8 +1290,49 @@ async def update_card(
+@@ -1273,8 +1290,52 @@ async def update_card(
          # 上屏不带 `{exc}`：那是 pydantic 的字段级报错（内部字段名），细节只进日志。
          logger.warning("[distill] Card validation failed: %s", exc)
          raise HTTPException(400, "角色卡数据校验失败，请检查字段后重试") from exc
@@ -5024,6 +5084,9 @@ index 72c3bbf..360f187 100644
 +    try:
 +        moved = move_unlocated(card, section=req.section, index=req.index,
 +                               phase=req.phase, path=req.path)
++    except UnknownPhase as exc:                  # 补充 17：阶段号越界单独报，不说「不在未定位区」
++        logger.warning("[distill] move_unlocated rejected: %s", exc)
++        raise HTTPException(400, "所选的阶段已不存在，请刷新后重新选择") from exc
 +    except ValueError as exc:
 +        logger.warning("[distill] move_unlocated rejected: %s", exc)
 +        raise HTTPException(400, "这一条已经不在未定位区，请刷新后重试") from exc

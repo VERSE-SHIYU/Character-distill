@@ -1,6 +1,6 @@
 # spec：阶段未验证的处理（①补完 B）+ overlay 与卡片同形
 
-基线 main `c97116b0`（2026-10-07 核） · 参考实现 `docs/specs/artifacts/arc-phase-unlocated-proto.patch`（sha256 `53e9166a21d91c2f521b189a3e1649d75aac0e4e7f2a8e8b7d60b3a5fcea0f4e`，在 `c97116b0` 上 `git apply --check` 通过）
+基线 main `c97116b0`（2026-10-07 核） · 参考实现 `docs/specs/artifacts/arc-phase-unlocated-proto.patch`（sha256 `7f8b53124e1a16f70583fad7108eaedd2808a28474c390d411692418076c3910`，在 `c97116b0` 上 `git apply --check` 通过）
 决策记录：本对话 2026-10-06/07 与 Shiyu 逐条定的（D1–D4、方案 2 未定位区、d 同形 overlay、S15 选 A + 机械判定、锚点锁），总计划 `arc-reactions-plan.md`「①补完 B」一节。
 
 **分 4 段、4 个 PR，按 1 → 2 → 3 → 4 合并**（段 1 与段 2 文件不重叠，可两条 lane 并行；段 3、4 串行）。每段先过本段的目标检查（§1），再对账本段变异（§7，脚本带段号），再开下一段。参考补丁是 4 段的合集：每段只取 §4 列给它的文件和改动。
@@ -139,7 +139,7 @@ character_arc.unlocated = {
 ### 3.6 挪进阶段（段 4）
 
 - 规则只在后端纯函数 `core/unlocated.py::move_unlocated(card, *, section, index, phase, path="")`：「列表还是单值」只认登记表 `kind`；列表追加；**单值交换**（原值退回未定位区，D4）；态度挪入先去掉「态度留空」占位（不然投影取 ≤k 最新一条会被空态度盖住），阶段 k 已有态度也交换。参数不合法抛 `ValueError`。序号漂移（两个标签页先后挪动、编辑后再挪）不在这里判：路由先按卡的 `revision` 核对（§13），卡变过即 409，传进来的就是调用方看到的那一版。（补充·审计发现 7 首轮的修法是请求带条目内容 `expected` 逐条比对，§13 落地后被版本核对取代、已删。）
-- 接口 `POST /api/distill/card/{card_id}/unlocated/move`，body `{section, index, phase, path, revision}`：复用 `get_card_owned` 归属鉴权（非属主与不存在同判 404）；`revision` 不符或写入时比较失败 → 409（§13）；`ValueError` → 400「这一条已经不在未定位区，请刷新后重试」；**返回值走 `out_card`**。演示账号门禁自动拦住这个 POST（`test_demo_gate.py` 已跑过，绿）。
+- 接口 `POST /api/distill/card/{card_id}/unlocated/move`，body `{section, index, phase, path, revision}`：复用 `get_card_owned` 归属鉴权（非属主与不存在同判 404）；`revision` 不符或写入时比较失败 → 409（§13）；阶段号越界（`UnknownPhase`，`ValueError` 的子类）→ 400「所选的阶段已不存在，请刷新后重新选择」，其余 `ValueError` → 400「这一条已经不在未定位区，请刷新后重试」（补充 17 定）；**返回值走 `out_card`**。演示账号门禁自动拦住这个 POST（`test_demo_gate.py` 已跑过，绿）。
 - 前端：按钮放卡片详情（`CharCard.jsx` 的 `CardDetail`）的「未定位的条目」一节，**只在 `useCanWrite()` 为真时渲染**；市场卡详情（`MarketCardDetail`）不渲染。不放编辑弹窗（弹窗有未保存的本地改动，会互相覆盖）。阶段选择用全站的 `common/Select`（Radix），条目与按钮复用现有样式类，不另写 CSS。默认选中：态度用它原来标的阶段（在 1..n 内），其余用最后阶段。
 - **触发链**：选阶段（`Select` onChange → `MoveControl` 本地 state）→ 点「挪入」→ `MoveControl.run` → `onMove(phase)` → `CardDetail.handleMoveUnlocated(section, index, phase, path)` → `store.moveUnlocated(cardId, {..., revision: card.revision})` → POST → 成功：`store._applyServerCard(cardId, data.card)` 写 `cards` 与 `currentCard` → `CardDetail` 重渲染：`parseCardJson` → `ArcList` 与 `UnlocatedList` 都从新卡重算；失败：抛错 → `setError` 上屏，本地卡不动。
 
@@ -409,3 +409,27 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
     - **建议修法**：`UnlocatedList.test.jsx` 加一条单阶段夹具，断言 `.card-unlocated` 在、下拉只有「阶段 1」一个选项。
 
 **结论**：15–18 补完用例，并让 audit3 脚本 7/7 全红之后，本 spec 的审计才算闭合。在那之前不建议开 PR。
+
+**补充 15–18 的处置（2026-10-07）**：
+
+- **Shiyu 拍板**：补充 17 的 400 文案要区分，阶段号越界单独报。
+- **实现**：`core/unlocated.py` 新增 `UnknownPhase(ValueError)`，只在阶段号越界时抛。路由先捕获它，再捕获其余 `ValueError`，两句文案各只出现一处。§3.6 已同步修改。
+- **测试**：15、16、18 只加用例，实现没动。
+
+| 发现 | 加的用例 | 打红的变异（audit3 脚本） |
+|---|---|---|
+| 15 | `test_arc_phase_unlocated.py::test_n4c_unlocated_overlay_rejects_experience_path` | R2 |
+| 16 | `test_arc_phase_unlocated_move.py::test_m6_…` 断言被换下的态度带 `phase == 1` | R3 |
+| 17 前端 | `UnlocatedList.test.jsx`：态度原阶段为 5 或 0 时，预选最后阶段（在范围内时用原阶段，由原有用例覆盖） | R4 |
+| 17 后端 | 文案两侧：`test_route_stale_index_is_400` 断言原文案；`test_route_phase_out_of_range_is_400_with_its_own_message` 断言新文案。分类本身：`test_m9_only_phase_out_of_range_is_unknown_phase`，越界取 0 与 n+1 两侧，另有三种非越界参数错 | R5（路由不分）、R6（源头不分）、S4（全报越界） |
+| 18 | `UnlocatedList.test.jsx`：单阶段卡照样渲染，下拉只有「阶段 1」 | S1 |
+
+**沙箱验证**（一次性 PG 16，端口 55432）：
+
+- 变异脚本：audit3 10/10 全红；一次性脚本 61/61 全红；审计第二轮脚本 15/15。
+- 后端受影响选集：431 passed、1 skipped。已排除 §2.5 那条 main 原有的不稳定用例。
+- 前端：全量 92 个文件、481 passed（原 479，+2）；lint 0 error。
+- Playwright：10 passed。
+- 每次跑完 `git status` 只剩本次的改动。
+
+**待做**：执行方新开会话独立复核，之后按 §4 走 PR。

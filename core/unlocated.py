@@ -19,6 +19,10 @@ from core.schema import CharacterCard, is_placeholder_attitude, top_attitude
 SECTIONS = ("behaviors", "overlay", "attitudes")
 
 
+class UnknownPhase(ValueError):
+    """目标阶段号不在 1..n —— 与其他参数错分开，路由给它单独的文案（spec 补充 17）。"""
+
+
 def _take(items: list, index: int, what: str):
     if not 0 <= index < len(items):
         raise ValueError(f"未定位区没有这一条{what}：{index}")
@@ -32,13 +36,13 @@ def move_unlocated(card: CharacterCard, *, section: str, index: int, phase: int,
     `section="overlay"` 时 `path` 是登记表里的 state 路径，`index` 是该路径列表里的序号。
     序号漂移（另一个标签页先挪过、编辑过）不在这里判：路由先按卡的版本核对（§13），卡变过
     即 409，传进来的卡就是调用方看到的那一版，序号必然对得上。
-    参数不合法抛 `ValueError`（路由转 400）。
+    参数不合法抛 `ValueError`（路由转 400）；其中阶段号越界抛它的子类 `UnknownPhase`。
     """
     if section not in SECTIONS:
         raise ValueError(f"未知的未定位分区：{section}")
     n = len(card.character_arc.phases)
     if not 1 <= phase <= n:
-        raise ValueError(f"阶段号越界：{phase}（共 {n} 个阶段）")
+        raise UnknownPhase(f"阶段号越界：{phase}（共 {n} 个阶段）")
     data = card.model_dump()
     loose = data["character_arc"]["unlocated"]
     target = data["character_arc"]["phases"][phase - 1]
