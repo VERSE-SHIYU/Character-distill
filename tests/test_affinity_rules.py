@@ -113,10 +113,26 @@ def test_r10_does_not_apply_once_already_close():
     assert step(74, "met_condition", "medium", 5)[0] == 79
 
 
-def test_r10_repair_returns_to_the_pre_offence_value_even_across_the_gate():
-    s = RelationState(pre_offence=82)                 # 起点就在亲近档的关系，被冒犯后掉到 73 以下
-    assert step(70, "repair", "medium", 5, state=s) == (75, RelationState("repair", 0, 1, 82), [])
-    assert step(80, "repair", "medium", 5, state=s) == (82, RelationState("repair", 0, 1, None), [])
+def test_r10_gate_only_guards_the_first_entry():
+    """到过亲近档（含起点就在亲近档）的关系掉下去后，修复、做到亲近条件都不再受门槛限制。"""
+    been = RelationState(pre_offence=82, reached_close=True)
+    assert step(70, "repair", "medium", 5, state=been) == (75, RelationState("repair", 0, 1, 82, True), [])
+    assert step(80, "repair", "medium", 5, state=been) == (82, RelationState("repair", 0, 1, None, True), [])
+    assert step(70, "met_condition", "medium", 5, state=been)[0] == 75      # 一次就能回去，次数仍如实记 1
+    assert step(70, "met_condition", "medium", 5, state=been)[1].met_count == 1
+
+
+def test_r10_never_reached_close_is_still_gated():
+    never = RelationState(pre_offence=80)             # 构造出来的状态：没到过亲近档
+    assert step(70, "repair", "medium", 5, state=never)[0] == 72
+    assert step(70, "met_condition", "medium", 5)[0] == 72
+
+
+def test_r10_reaching_close_is_recorded():
+    assert step(82, "offended", "small", 1)[1].reached_close is True         # 起点就在亲近档
+    assert step(70, "met_condition", "medium", 5, state=RelationState(met_count=2))[1].reached_close is True
+    assert step(60, "met_condition", "medium", 5, state=RelationState(met_count=2))[1].reached_close is False
+    assert step(50, "offended", "small", 1)[1].reached_close is False
 
 
 def test_r8_large_repair_counts_as_medium():
@@ -143,10 +159,11 @@ def test_r16_invalid_input_raises_so_the_caller_keeps_everything(kw):
 
 
 def test_r17_state_round_trips_and_old_saves_get_defaults():
-    s = RelationState("offended", 2, 0, 55)
+    s = RelationState("offended", 2, 0, 55, True)
     assert RelationState.from_dict(s.to_dict()) == s
     for junk in (None, "x", [], {}, {"last_event": "praise", "met_count": "2", "pre_offence": "55"},
-                 {"last_event": ["offended"]}, {"last_event": {"a": 1}, "met_count": [3]}):
+                 {"last_event": ["offended"]}, {"last_event": {"a": 1}, "met_count": [3]},
+                 {"reached_close": "yes"}, {"reached_close": 1}):
         assert RelationState.from_dict(junk) == RelationState()
 
 

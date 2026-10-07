@@ -5,7 +5,7 @@
 出处：`docs/specs/personality-inject.md` §2（R1–R18）。
 
 结构：先把事件规整（R5、R8 的降级）→ 算出这类事该变多少（R2–R7）→ 取所有上限里最低的
-一条（R4、R8、R10、R18）→ 更新状态。加一条上限规则 = 在 `_CEILINGS` 里加一个函数。
+一条（R4、R8、R10、R18）→ 更新状态。门槛（R10）只管第一次进亲近档：到过的关系不再受它限制。加一条上限规则 = 在 `_CEILINGS` 里加一个函数。
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ class RelationState:
     met_count: int = 0              # 本存档累计 `met_condition` 次数
     nonneg_streak: int = 0          # 连续非负轮数
     pre_offence: int | None = None  # 冒犯前的值；非空 = 有待修复的冒犯
+    reached_close: bool = False     # 到过亲近档（含起点就在亲近档）；到过就不再受门槛限制（R10）
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -56,8 +57,10 @@ class RelationState:
         pick = lambda key, ok: data[key] if ok(data.get(key)) else getattr(base, key)
         is_int = lambda v: type(v) is int
         is_event = lambda v: isinstance(v, str) and v in EVENTS
+        is_bool = lambda v: type(v) is bool
         return cls(pick("last_event", is_event), pick("met_count", is_int),
-                   pick("nonneg_streak", is_int), pick("pre_offence", is_int))
+                   pick("nonneg_streak", is_int), pick("pre_offence", is_int),
+                   pick("reached_close", is_bool))
 
 
 def relational_tier(affinity: int, state: RelationState) -> str:
@@ -121,10 +124,9 @@ def _legacy_step(affinity, event, state, psyche):            # R18：默认条�
     return None if psyche.warming_conditions else affinity + LEGACY_UP_MAX
 
 
-def _close_gate(affinity, event, state, psyche):             # R10：没挣够次数，进不了亲近档
-    if event == "repair":       # 修复只是回到冒犯前已有的位置（R8 管上限），不算新进亲近档
-        return None
-    return CLOSE_FROM - 1 if affinity < CLOSE_FROM and state.met_count < MET_REQUIRED else None
+def _close_gate(affinity, event, state, psyche):             # R10：第一次进亲近档要挣够次数
+    blocked = affinity < CLOSE_FROM and not state.reached_close and state.met_count < MET_REQUIRED
+    return CLOSE_FROM - 1 if blocked else None
 
 
 _CEILINGS: tuple[Ceiling, ...] = (_baseline_line, _repair_limit, _legacy_step, _close_gate)
@@ -141,6 +143,7 @@ def apply_event(affinity: int, state: RelationState, psyche, *, event, tier, del
     negative = event in NEGATIVE
     state = replace(
         state,
+        reached_close=state.reached_close or affinity >= CLOSE_FROM,   # 起点就在亲近档的也算到过
         last_event=event,
         met_count=state.met_count + (event == "met_condition"),
         nonneg_streak=0 if negative else state.nonneg_streak + 1,
@@ -151,6 +154,8 @@ def apply_event(affinity: int, state: RelationState, psyche, *, event, tier, del
         bounds = [b for b in (c(affinity, event, state, psyche) for c in _CEILINGS) if b is not None]
         new = max(affinity, min([new, *bounds]))
     new = max(0, min(100, new))
+    if new >= CLOSE_FROM:
+        state = replace(state, reached_close=True)
     if state.pre_offence is not None and not negative and new >= state.pre_offence:
         state = replace(state, pre_offence=None)                          # R9：补回来了，冒犯了结
     return new, state, warnings

@@ -15,7 +15,7 @@ system prompt 与引擎对外的好感状态（`get_affinity()`）。
 G0 夹具自检：各卡各档的句子、分面行为两两不同，否则 G1 空转。
 G1（验收 1）同一档位下，prompt 里只有这张卡自己这一档的做法和分面。
 G2（验收 2）全程闲聊 / 客气 / 冒犯，始终进不了亲近档；客气最多涨到基线。
-G3（验收 3 的同卡部分）全程做到亲近条件能进亲近档，且不早于第 3 次；
+G3（验收 3 的同卡部分）全程做到亲近条件能进亲近档，且不早于第 3 次；门槛只管第一次，到过亲近档的不再受限；
     负对照：把「做到亲近条件」换成「冒犯」，G3 的判定必须失败。
 G5 模型给的数被档位卡住：报小档却给大数，每轮最多变 2；报大档最多变 8；档内的数原样生效（Q12）。
 G6 正向大档要前面连续 2 轮非负才生效，否则按中档算（设计稿 §5）。
@@ -438,9 +438,30 @@ def test_g8_rule_state_survives_the_catchword_save():
     assert aff[0] >= _CLOSE_FROM, f"口头禅保存之后次数丢了：第 3 次没能进亲近档（{aff}）"
 
 
+_DROP_OUT = [("offended", "large", 8)] * 2          # 82 → 66：掉出亲近档
+
+
 def test_g4_repair_restores_a_relationship_that_started_close():
     """起点就在亲近档的关系（恋人、家人）被冒犯掉出亲近档后，修复能回到原处，不用重新挣 3 次。"""
     name, start = "孔乙己", 82
-    _, aff, _ = _run(name, start, [("offended", "large", 8)] * 2 + [("repair", "medium", 5)] * 5)
+    _, aff, _ = _run(name, start, _DROP_OUT + [("repair", "medium", 5)] * 6)
     assert aff[1] < _CLOSE_FROM, f"夹具前提不成立：两次冒犯后应掉出亲近档（{aff}）"
-    assert max(aff[2:]) <= start and aff[-1] == start, f"修复没能回到冒犯前的 {start}：{aff}"
+    assert max(aff[2:]) <= start and aff[-2:] == [start, start], f"修复没能回到并停在冒犯前的 {start}：{aff}"
+
+
+def test_g3_gate_only_guards_the_first_entry():
+    """到过亲近档的关系掉下去后，做到一次亲近条件就能回去；从没到过的，门槛照旧。"""
+    name, met = "孔乙己", ("met_condition", "medium", 5)
+    _, aff, _ = _run(name, 82, _DROP_OUT + [("neutral", "small", 1)] * 2 + [met] * 2)
+    assert aff[3] < _CLOSE_FROM <= aff[5], f"到过亲近档的关系没能靠做到亲近条件回去：{aff}"
+    _, aff, _ = _run(name, 66, [met] * 2)
+    assert max(aff) < _CLOSE_FROM, f"从没到过亲近档，两次就进去了：{aff}"
+
+
+@pytest.mark.parametrize("shape", ["single", "group"])
+def test_g8_having_been_close_survives_a_new_engine(shape):
+    name, met = "孔乙己", ("met_condition", "medium", 5)
+    *_, llm = _run_full(name, 82, _DROP_OUT)
+    assert llm.saved["affinity"] < _CLOSE_FROM, "夹具前提不成立：应已掉出亲近档"
+    _, aff, _ = _run(name, 0, [met] * 2, resume_from=_saved(llm, shape))
+    assert aff[-1] >= _CLOSE_FROM, f"换引擎后忘了这段关系到过亲近档：{aff}"

@@ -39,7 +39,7 @@ _TIER = '    if state.last_event in NEGATIVE:\n        return "conflict"'
 _BASELINE = '    return max(affinity, psyche.affinity_baseline) if event == "friendly" else None'
 _REPAIR = '    return state.pre_offence if event == "repair" else None'
 _LEGACY = '    return None if psyche.warming_conditions else affinity + LEGACY_UP_MAX'
-_GATE = '    return CLOSE_FROM - 1 if affinity < CLOSE_FROM and state.met_count < MET_REQUIRED else None'
+_GATE = '    blocked = affinity < CLOSE_FROM and not state.reached_close and state.met_count < MET_REQUIRED'
 _SIZE = '    size = max(lo, min(hi, abs(delta)))'
 _WARMING = '    return list(psyche.warming_conditions or DEFAULT_WARMING)'
 _COMPLETE = '        return bool(self.close and self.normal and self.conflict)'
@@ -76,16 +76,21 @@ MUTANTS = [
     _m("过严 R8 道歉修复不加分", GOAL, RULES, _REPAIR, '    return affinity if event == "repair" else None'),
     _m("放宽 R8 修复的大档不降成中档（审计 A12）", UNIT, RULES,
        '    elif event == "repair" and tier == "large":', '    elif False:'),
-    _m("过严 R8 修复也被亲近门槛拦住（审计 B2）", GOAL, RULES,
-       '    if event == "repair":       # 修复只是回到冒犯前已有的位置（R8 管上限），不算新进亲近档\n        return None\n', ''),
+    _m("过严 R10 门槛判断时忽略「到过亲近档」（审计 B2）", GOAL, RULES, ' and not state.reached_close and ', ' and '),
+    _m("过严 R10 起点就在亲近档的不算到过", GOAL, RULES,
+       '        reached_close=state.reached_close or affinity >= CLOSE_FROM,', '        reached_close=state.reached_close,'),
+    _m("放宽 R10 所有关系都当作到过亲近档", GOAL, RULES,
+       '        reached_close=state.reached_close or affinity >= CLOSE_FROM,', '        reached_close=True,'),
+    _m("过严 R17 恢复时不读「到过亲近档」", GOAL, RULES,
+       '                   pick("reached_close", is_bool))', '                   False)'),
     _m("过严 R9 冒犯前的值永不清空", UNIT, RULES,
        '    if state.pre_offence is not None and not negative and new >= state.pre_offence:', '    if False:'),
     _m("放宽 R10 亲近门槛 3→2", GOAL, RULES, 'MET_REQUIRED = 3 ', 'MET_REQUIRED = 2 '),
     _m("过严 R10 亲近门槛 3→4", GOAL, RULES, 'MET_REQUIRED = 3 ', 'MET_REQUIRED = 4 '),
     _m("过严 R10 亲近门槛永远不开", GOAL, RULES, 'MET_REQUIRED = 3 ', 'MET_REQUIRED = 999 '),
     _m("放宽 R10/R11 门槛只拦 met_condition", UNIT, RULES, _GATE,
-       '    return CLOSE_FROM - 1 if event == "met_condition" and affinity < CLOSE_FROM '
-       'and state.met_count < MET_REQUIRED else None'),
+       '    blocked = event == "met_condition" and affinity < CLOSE_FROM and not state.reached_close '
+       'and state.met_count < MET_REQUIRED'),
     _m("过严 R12 代码按记仇让小档道歉不算数", GOAL, RULES,
        '    if event == "friendly":                                               # R4：一律小档',
        '    if event == "repair" and psyche.grudge_inertia == "记仇" and tier == "small":\n'
