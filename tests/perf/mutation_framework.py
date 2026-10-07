@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 
@@ -151,6 +152,128 @@ def _run_py(code: str) -> tuple[str, list[str]]:
 # ── 主循环（各驱动共用）───────────────────────────────────────────────────────
 
 
+def _trial(edits, target, baseline):
+    """一条变异：施加 → 跑靶子 → 按基线字节还原。`run_matrix` 与 `run_oneoff` 共用这一处。
+
+    `target` 是字符串 → `_run`，判档由 `lock_coverage.outcome` 做；是可调用对象 → 直接调用，
+    返回 `(判档, 红源摘要, 红行, 问题)`。`_apply` 也在 try 里：一条变异有多处改动时，后一处
+    锚点没命中会当场 assert，前一处已经写进树了 —— 不还原就带着半个变异退出。
+
+    返回 `(判档, 汇总行或 None, 红源摘要, 红行, 问题, 本条新建的文件)`。
+    """
+    summary = None
+    try:
+        _apply(edits)
+        if callable(target):
+            got, keep, lines, problems = target()
+        else:
+            summary, keep, lines, problems = _run(target)
+            got = lock_coverage.outcome(summary)
+    finally:
+        created = set(_CREATED)
+        _restore(baseline)
+    return got, summary, keep, lines, problems, created
+
+
+def _report_restore(baseline, created, root=ROOT) -> list[str]:
+    """收尾核对：基线文件逐字节还原、无隐藏文件残留、新建文件已删。打印并回问题列表。"""
+    problems: list[str] = []
+    print("\n== 还原核对（sha256 逐字节）==")
+    for p in baseline:
+        got_hash = hashlib.sha256(p.read_bytes()).hexdigest()
+        same = got_hash == hashlib.sha256(baseline[p]).hexdigest()
+        if not same:
+            problems.append(f"{p.name} 还原后 sha256 不符")
+        if _hidden(p).exists():
+            problems.append(f"{_hidden(p).name} 残留在树里（移走的文件没还原）")
+        print(f"  {str(p.relative_to(root)):38s} {same}  {got_hash[:16]}")
+    for p in sorted(created):
+        if p.exists():
+            problems.append(f"{p.name} 残留在树里（变异新建的文件没清掉）")
+        print(f"  {p.name:38s} {'不存在' if not p.exists() else '仍在！'}")
+    return problems
+
+
+def vitest(*files: str, cwd: pathlib.Path = ROOT / "web" / "frontend"):
+    """前端靶子：返回一个可调用对象，跑这几个 vitest 用例文件；非 0 退出码 = RED。
+
+    给 `_trial` / `run_oneoff` 当 `target` 用（同 `_run` 的四元返回）。子进程按 UTF-8 解码，
+    中文 Windows（GBK）上不崩；不经 shell。
+    """
+    def run() -> tuple[str, list[str], set[str], list[str]]:
+        npx = shutil.which("npx")
+        if npx is None:
+            raise SystemExit("找不到 npx：前端变异需要 Node 环境")
+        r = subprocess.run([npx, "vitest", "run", *files], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", cwd=str(cwd))
+        out = r.stdout + r.stderr
+        keep = [ln.strip()[:200] for ln in out.splitlines()
+                if ln.strip().startswith(("FAIL", "×", "AssertionError"))][:4]
+        return (lock_coverage.RED if r.returncode != 0 else lock_coverage.GREEN), keep, set(), []
+    return run
+
+
+def _gates(items) -> list:
+    """基线门要跑的靶子 = 变异表里出现过的全部靶子：字符串靶子取文件（去掉 `::用例`），
+    可调用靶子（如 `vitest(...)`）按对象去重；保持首次出现的顺序。"""
+    out: list = []
+    for _label, target, _edits, _expect in items:
+        gate = target if callable(target) else target.split("::")[0]
+        if gate not in out:
+            out.append(gate)
+    return out
+
+
+def run_oneoff(items, *, targets, root=ROOT) -> int:
+    """一次性变异脚本（`docs/specs/artifacts/*_mutations.py`）的唯一跑法：基线门 → 逐条
+    `_trial` → 还原核对 → 结论。不写产物、不进覆盖闭合（那是 `run_matrix` 的事）。
+
+    `items`：`(label, target, edits, expect)`，`target` 同 `_trial`；`expect` 为 `"RED"` 或
+    `lock_coverage.GREEN`。**基线门由 `items` 推导**（`_gates`）：每个被用到的靶子文件、每个
+    前端靶子都先跑一遍，全绿才跑矩阵 —— 不另列一份清单，靶子加了就自动进门，漏不掉。
+    退出码：0 = 全部符合预期；1 = 有不符；基线门拒跑时为 `lock_coverage.refuse_on_baseline`
+    的退出码（基线红 / 跑不起来分开）。
+    """
+    print("== 先验基线 ==")
+    bad: dict[str, str] = {}
+    for gate in _gates(items):
+        if callable(gate):
+            got = gate()[0]
+            name = "前端用例"
+            cause = "" if got == lock_coverage.GREEN else lock_coverage.BASELINE_RED
+        else:
+            got, name = _run(gate)[0], gate
+            cause = lock_coverage.baseline_verdict(got)
+        print(f"  {name}  {got}")
+        if cause:
+            bad[name] = cause
+    if bad:
+        return lock_coverage.refuse_on_baseline(bad)
+
+    baseline = {p: p.read_bytes() for p in targets}
+    problems: list[str] = []
+    created_all: set[pathlib.Path] = set()
+    n_ok = 0
+    for label, target, edits, expect in items:
+        got, summary, keep, _lines, run_problems, created = _trial(edits, target, baseline)
+        created_all |= created
+        ok = got == expect and not run_problems
+        n_ok += ok
+        if not ok:
+            problems.append(f"{label}：实得 {got}（期望 {expect}）{'；'.join(run_problems)}")
+        print(f"\n### {label}   实得={got}   {'OK' if ok else 'MISS'}")
+        for k in keep[:3]:
+            print("   ", k)
+        if summary:
+            print("   >>", summary)
+
+    problems += _report_restore(baseline, created_all, root)
+    print(f"\n结论：{n_ok}/{len(items)} 条符合预期")
+    for p in problems:
+        print("  -", p)
+    return 1 if problems else 0
+
+
 def run_matrix(items, *, domain, targets, artifact, driver_rel, root=ROOT,
                may_skip=frozenset(), pre_skipped=()) -> int:
     """跑完整张变异表：逐条施加 → 跑 → 还原 → 判档归类；无 mismatch 才写产物。
@@ -181,18 +304,8 @@ def run_matrix(items, *, domain, targets, artifact, driver_rel, root=ROOT,
     for item in items:
         label, target, edits, expect = item[:4]
         marker = item[4] if len(item) > 4 else None
-        try:
-            # `_apply` 也在 try 里：一条变异有多处改动时，后一处锚点没命中会当场 assert，
-            # 前一处已经写进树了 —— 不还原就带着半个变异退出。
-            _apply(edits)
-            if callable(target):
-                got, keep, lines, problems = target()
-            else:
-                summary, keep, lines, problems = _run(target)
-                got = lock_coverage.outcome(summary)
-        finally:
-            created_all |= _CREATED
-            _restore(baseline)
+        got, summary, keep, lines, problems, created = _trial(edits, target, baseline)
+        created_all |= created
         if problems:
             mismatches.append(f"{label}：{'；'.join(problems)}")
         # **期望红的进 `hits`，期望绿/OK（红源天生为空）的进 `controls`。** 一条「期望绿」的
@@ -239,19 +352,7 @@ def run_matrix(items, *, domain, targets, artifact, driver_rel, root=ROOT,
         if not callable(target):
             print("   >>", summary)
 
-    print("\n== 还原核对（sha256 逐字节）==")
-    for p in targets:
-        got_hash = hashlib.sha256(p.read_bytes()).hexdigest()
-        same = got_hash == hashlib.sha256(baseline[p]).hexdigest()
-        if not same:
-            mismatches.append(f"{p.name} 还原后 sha256 不符")
-        if _hidden(p).exists():
-            mismatches.append(f"{_hidden(p).name} 残留在树里（移走的文件没还原）")
-        print(f"  {str(p.relative_to(root)):38s} {same}  {got_hash[:16]}")
-    for p in sorted(created_all):
-        if p.exists():
-            mismatches.append(f"{p.name} 残留在树里（变异新建的文件没清掉）")
-        print(f"  {p.name:38s} {'不存在' if not p.exists() else '仍在！'}")
+    mismatches += _report_restore(baseline, created_all, root)
 
     print("\n== 结论 ==")
     if mismatches:

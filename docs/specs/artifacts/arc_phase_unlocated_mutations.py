@@ -17,10 +17,7 @@
 """
 from __future__ import annotations
 
-import hashlib
 import pathlib
-import shutil
-import subprocess
 import sys
 
 for _s in (sys.stdout, sys.stderr):
@@ -33,7 +30,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tests" / "perf"))
 sys.path.insert(0, str(ROOT / "tests"))
 
-import lock_coverage  # noqa: E402
 import mutation_framework as framework  # noqa: E402
 
 LAYERS = ROOT / "core" / "card_layers.py"
@@ -93,18 +89,7 @@ def _m(name: str) -> str:
     return f"{MV}::{name}"
 
 
-def _run_js() -> tuple[str, list[str], list[str], list[str]]:
-    """跑前端三个用例文件；非 0 退出码 = RED（不经 shell，同 arc_phase_select_mutations）。"""
-    npx = shutil.which("npx")
-    if npx is None:
-        raise SystemExit("找不到 npx：前端变异需要 Node 环境")
-    files = [f for f in JS if (FE / f).exists()]          # 早段只有自己那几份
-    r = subprocess.run([npx, "vitest", "run", *files], capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", cwd=str(FE))
-    out = r.stdout + r.stderr
-    keep = [ln.strip()[:200] for ln in out.splitlines()
-            if ln.strip().startswith(("FAIL", "×", "AssertionError"))][:4]
-    return ("RED" if r.returncode != 0 else lock_coverage.GREEN), keep, [], []
+_run_js = framework.vitest(*JS)   # 前端靶子：跑法在框架里（补充 20 的根因修法）
 
 
 # 「回到 #116 的扁平存法」：写成扁平键 + 不转换 + 不拒带点键名（三处一起，模拟根因复发）
@@ -307,52 +292,7 @@ SEGMENTS = {
 def main() -> int:
     seg = sys.argv[1] if len(sys.argv) > 1 else None
     mutants = [m for m in MUTANTS if seg is None or m[0].startswith(SEGMENTS[seg])]
-    baseline = {p: p.read_bytes() for p in TARGETS}
-
-    print("== 先验基线 ==")
-    for lock in (UNL, GOAL, MV, LOCK):
-        if not (ROOT / lock).exists():                    # 早段还没有这个文件
-            continue
-        summary, _, _, _ = framework._run(lock)
-        print(f"  {lock}  {summary}")
-        cause = lock_coverage.baseline_verdict(summary)
-        if cause:
-            return lock_coverage.refuse_on_baseline({lock: cause})
-    got, _, _, _ = _run_js()
-    print(f"  前端用例文件（存在的）  {got}")
-    if got != lock_coverage.GREEN:
-        return lock_coverage.refuse_on_baseline({"frontend": "前端基线不绿"})
-
-    problems: list[str] = []
-    for label, target, edits, expect in mutants:
-        try:
-            framework._apply(edits)
-            if callable(target):
-                outcome, keep, _, _ = target()
-            else:
-                summary, keep, _, _ = framework._run(target)
-                outcome = lock_coverage.outcome(summary)
-        finally:
-            framework._restore(baseline)
-        ok = outcome == expect
-        if not ok:
-            problems.append(f"{label}：实得 {outcome}（期望 {expect}）")
-        print(f"\n### {label}   实得={outcome}   {'OK' if ok else 'MISS'}")
-        for k in keep[:3]:
-            print("   ", k)
-
-    print("\n== 还原核对（sha256 逐字节）==")
-    for p in TARGETS:
-        same = hashlib.sha256(p.read_bytes()).digest() == hashlib.sha256(baseline[p]).digest()
-        if not same:
-            problems.append(f"{p.relative_to(ROOT)} 还原后 sha256 不符")
-        print(f"  {p.relative_to(ROOT)}  {same}")
-
-    n_red = len(mutants) - len(problems)
-    print(f"\n结论：{n_red}/{len(mutants)} 条全红" if not problems else "有问题")
-    for p in problems:
-        print("  -", p)
-    return 1 if problems else 0
+    return framework.run_oneoff(mutants, targets=TARGETS)
 
 
 if __name__ == "__main__":
