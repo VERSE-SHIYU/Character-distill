@@ -1,16 +1,16 @@
 # spec：② 「情境→做法」注入
 
-基线 `proto/arc-phase-unlocated` HEAD `40e9c75b`（= ①补完 B 最终版；main 仍是 `c97116b0`）· 参考实现 `docs/specs/artifacts/arc-behavior-inject-proto.patch`（sha256 `9f3ecc394cccb3e6f6caff9a95809aa7a3a26a088682869e99d4c088c850d84c`，在 `40e9c75b` 上 `git apply --check` 通过）
+基线 `proto/arc-phase-unlocated` HEAD `a469358f`（①补完 B 最新；main 仍是 `c97116b0`）。§2 的行号读自 `40e9c75b`：② 改到的 4 个文件在 `40e9c75b..a469358f` 之间**一字未变**（`git diff --stat` 为空），坐标照样成立· 参考实现 `docs/specs/artifacts/arc-behavior-inject-proto.patch`（sha256 `e5343dbc9212c41b02c6d8de866fefd9cbe0ff55916af217dd30ecc1999dd376`，在 `a469358f` 上 `git apply --check` 通过）
 决策来源：总计划「② 情境→做法注入」一节（调研 v1.3 + 10-06 两项补充决定）；重注入间隔 Shiyu 2026-10-07 定「每 4 轮」。
 
-**一个 PR。等 ①补完 B 的 4 个 PR 全部合进 main 后再开工**（本补丁依赖 B 的 `UnlocatedItems` 与 `_project_custom` 现状）。纯后端，不改前端、不改蒸馏、不改存卡结构。
+**一个 PR。等 ①补完 B（10-07 定合成 1 个 PR）合进 main 后再开 PR**（本补丁依赖 B 的 `UnlocatedItems` 与 `_project_custom` 现状）。纯后端，不改前端、不改蒸馏、不改存卡结构。
 
 ---
 
 ## S0（开工前，分钟级）
 
 1. `Test-Path` + `Get-FileHash` 核 worktree 里的本 spec 与补丁，sha256 必须等于上面那串；不符就停。
-2. 在**当时的 main**（B 已全部合入）上 `git apply --check docs/specs/artifacts/arc-behavior-inject-proto.patch`。失败就停下报告，不手改补丁。
+2. 在**当时的 main**（B 已合入）上 `git apply --check docs/specs/artifacts/arc-behavior-inject-proto.patch`。失败就停下报告，不手改补丁。
 3. 逐条复核 §2 的坐标（`git show HEAD:<file> | Select-String`），行号可漂，**内容对不上就停**。
 4. 审对账表（§5）：逐行确认变异在改后代码上可观测、每个行为都有测试；有问题先报告，再动手。
 
@@ -139,7 +139,7 @@
 - 变异：`python docs/specs/artifacts/arc_behavior_inject_mutations.py`，必须 `27/27 条全红`。
 - 合并门是分支 CI；合并只做 `gh pr create` → `gh pr merge --merge`，PR 标题与描述用英文。
 
-沙箱预跑（`40e9c75b` + 补丁）：受影响选集 76 个文件（`grep -l` 命中 `chat_engine|context_engine|arc_view|group_session|ChatEngine|ContextEngine|project_card|run_agent_eval|text_manager|routers.(chat|history|distill|group)`）**1448 passed, 1 skipped**（未含目标检查文件）；`test_arc_behavior_inject.py` 32 passed；`test_arc_behavior_inject_goal.py` 12 passed；锁 `test_arc_phase_fields_locks.py` 全绿。
+沙箱预跑（`a469358f` + 补丁）：受影响选集 77 个文件（含目标检查文件）（`grep -l` 命中 `chat_engine|context_engine|arc_view|group_session|ChatEngine|ContextEngine|project_card|run_agent_eval|text_manager|routers.(chat|history|distill|group)`）**1465 passed, 1 skipped**；`test_arc_behavior_inject.py` 32 passed；`test_arc_behavior_inject_goal.py` 12 passed；锁 `test_arc_phase_fields_locks.py` 全绿。
 
 ---
 
