@@ -390,6 +390,58 @@ index d53df65..2f0a10a 100644
  def get_path(obj, path: str):
      """按点号路径读嵌套字段（pydash 薄封装，路径形态见登记表）。"""
      return pydash.get(obj, path)
+diff --git a/core/card_out.py b/core/card_out.py
+index 53f8655..3e031c3 100644
+--- a/core/card_out.py
++++ b/core/card_out.py
+@@ -9,25 +9,45 @@
+ 故模型里不再把它当计算字段自动序列化；改在**出卡这一处**按当前 phases / 指纹现算。新增接口
+ 只要走 `out_card`，不必各自记得补这个键。
+ 
+-导入方向（§4.0）：本模块只可导入 `core.schema`。
++**`revision`（乐观锁，spec arc-phase-unlocated §13）同理是算出来的**：存储行里 `card_json`
++原文的内容摘要（`card_revision`）。卡的内容一变它就变，任何写入方都不用记得「顺手加一」；
++编辑保存与挪动带上它，路由按同一函数核对、存储层按原文比较后写入。
++
++导入方向（§4.0）：本模块只可导入 `core.schema` 与叶子模块 `core.fingerprint`。
+ """
+ from __future__ import annotations
+ 
+ import json
+ from typing import Any
+ 
++from core.fingerprint import content_fingerprint
+ from core.schema import ArcPositions
+ 
+ 
++# 编辑保存、挪动、市场编辑在版本不符时共用的上屏文案（409）。
++CARD_CONFLICT = "这张卡已在别处更新，请刷新后再改"
++
++
++def card_revision(raw: str | dict) -> str:
++    """一张卡当前内容的版本标识：存储行里 `card_json` 原文的内容指纹（`content_fingerprint`）。
++
++    **只此一处定义**：出卡（`out_card`）与写入前的核对（编辑保存、挪动）都调它。传 dict（调用方
++    已解析）时按存库同一口径（`ensure_ascii=False`）序列化再算。
++    """
++    return content_fingerprint(raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False))
++
++
+ def out_card(row: dict[str, Any]) -> dict[str, Any]:
+     """把一行存储记录转成前端卡片负载：`card_json` 里的 `character_arc.selectable` 现算。
+ 
+-    **只补这一个派生键**，其余字段原样透传（卡的内容是存下来的，不在此重算）。`card_json`
++    **只补两个派生键**：卡内的 `selectable` 与行上的 `revision`（`card_revision`，按存储
++    原文算，不按补过 `selectable` 的串算），其余字段原样透传（卡的内容是存下来的，不在此重算）。`card_json`
+     是字符串（存库时 `model_dump_json`）或已是 dict（调用方解好的）都收。
+     """
+     raw = row.get("card_json")
+     if raw is None:
+         return row
++    row = {**row, "revision": card_revision(raw)}
+     card = json.loads(raw) if isinstance(raw, str) else dict(raw)
+     arc = card.get("character_arc")
+     if isinstance(arc, dict):
 diff --git a/core/card_quotes.py b/core/card_quotes.py
 index 58cf123..b0c2845 100644
 --- a/core/card_quotes.py
@@ -790,10 +842,10 @@ index 50c82c4..4003da9 100644
          """阶段起点是否可用于按位置截断：齐全、严格递增、且有正文指纹。
 diff --git a/core/unlocated.py b/core/unlocated.py
 new file mode 100644
-index 0000000..91fc597
+index 0000000..0e5c91e
 --- /dev/null
 +++ b/core/unlocated.py
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,79 @@
 +# -*- coding: utf-8 -*-
 +"""未定位区的条目挪进某个阶段 —— 纯计算，无 IO（spec `arc-phase-unlocated.md` §3.6）。
 +
@@ -815,34 +867,19 @@ index 0000000..91fc597
 +SECTIONS = ("behaviors", "overlay", "attitudes")
 +
 +
-+def _matches(item, expected) -> bool:
-+    """序号处的条目是不是调用方看到的那一条：字段值逐个相等（字典取调用方给的键）。"""
-+    if isinstance(item, dict):
-+        return (isinstance(expected, dict) and bool(expected)
-+                and all(item.get(k) == v for k, v in expected.items()))
-+    return item == expected
-+
-+
-+def _take(items: list, index: int, what: str, expected):
-+    """按序号取出一条，并核对它就是调用方看到的那一条（审计发现 7）。
-+
-+    只按序号定位时，两个标签页先后挪动、或编辑后再挪，序号会漂移，静默挪错条目；带上调用方
-+    看到的内容一并核对，对不上就拒绝（路由转 400「请刷新后重试」），不猜。
-+    """
++def _take(items: list, index: int, what: str):
 +    if not 0 <= index < len(items):
 +        raise ValueError(f"未定位区没有这一条{what}：{index}")
-+    if not _matches(items[index], expected):
-+        raise ValueError(f"未定位区第 {index} 条{what}已变化")
 +    return items.pop(index)
 +
 +
 +def move_unlocated(card: CharacterCard, *, section: str, index: int, phase: int,
-+                   expected, path: str = "") -> CharacterCard:
++                   path: str = "") -> CharacterCard:
 +    """把未定位区 `section` 的第 `index` 条挪进阶段 `phase`（1 起），返回新卡（原卡不改）。
 +
 +    `section="overlay"` 时 `path` 是登记表里的 state 路径，`index` 是该路径列表里的序号。
-+    `expected` 是调用方看到的那一条（做法 `{situation, behavior}`、字段值本身、态度
-+    `{target, attitude, phase}`），与序号处的条目对不上即拒绝。
++    序号漂移（另一个标签页先挪过、编辑过）不在这里判：路由先按卡的版本核对（§13），卡变过
++    即 409，传进来的卡就是调用方看到的那一版，序号必然对得上。
 +    参数不合法抛 `ValueError`（路由转 400）。
 +    """
 +    if section not in SECTIONS:
@@ -855,13 +892,13 @@ index 0000000..91fc597
 +    target = data["character_arc"]["phases"][phase - 1]
 +
 +    if section == "behaviors":
-+        target["behaviors"].append(_take(loose["behaviors"], index, "做法", expected))
++        target["behaviors"].append(_take(loose["behaviors"], index, "做法"))
 +    elif section == "overlay":
 +        spec = REGISTRY.get(path)
 +        if spec is None or spec.layer != "state":
 +            raise ValueError(f"不是可挪动的状态字段：{path}")
 +        vals = list(get_path(loose["overlay"], path) or [])
-+        value = _take(vals, index, "字段值", expected)
++        value = _take(vals, index, "字段值")
 +        current = get_path(target["overlay"], path)
 +        if spec.kind == "list":
 +            set_path(target["overlay"], path, list(current or []) + [value])
@@ -874,7 +911,7 @@ index 0000000..91fc597
 +        else:
 +            pydash.unset(loose["overlay"], path)
 +    else:
-+        item = _take(loose["attitudes"], index, "态度", expected)
++        item = _take(loose["attitudes"], index, "态度")
 +        rel = next((r for r in data["relationships"] if r["target"] == item["target"]), None)
 +        if rel is None:
 +            raise ValueError(f"关系已不存在：{item['target']}")
@@ -890,11 +927,11 @@ index 0000000..91fc597
 +    return CharacterCard.model_validate(data)
 diff --git a/docs/specs/artifacts/arc_phase_unlocated_mutations.py b/docs/specs/artifacts/arc_phase_unlocated_mutations.py
 new file mode 100644
-index 0000000..0ee7650
+index 0000000..9703b95
 --- /dev/null
 +++ b/docs/specs/artifacts/arc_phase_unlocated_mutations.py
-@@ -0,0 +1,318 @@
-+"""变异预跑（spec `arc-phase-unlocated.md` §7 对账表 X1–X37 + 前端 F1–F10）。
+@@ -0,0 +1,359 @@
++"""变异预跑（spec `arc-phase-unlocated.md` §7 对账表 X1–X37 + 乐观锁 L1–L7 + 前端 F1–F13）。
 +
 +逐条把改后代码改坏一处（放宽、过严两个方向），对应测试必须红；跑完逐字节还原。
 +
@@ -949,22 +986,36 @@ index 0000000..0ee7650
 +UNLJ = FE / "src" / "components" / "common" / "UnlocatedList.jsx"
 +CHAR = FE / "src" / "components" / "CharCard.jsx"
 +STORE = FE / "src" / "store" / "useAppStore.js"
++TXTP = FE / "src" / "components" / "TextPanel.jsx"
++OUT = ROOT / "core" / "card_out.py"
++PGS = ROOT / "storage" / "postgres_store.py"
 +TARGETS = (LAYERS, SCHEMA, DRAFT, ANCH, VIEW, QUOTES, CTX, WALK, GUARD, MOVE, RDIST,
-+           EDIT, ARCL, UNLJ, CHAR, STORE)
++           EDIT, ARCL, UNLJ, CHAR, STORE, TXTP, OUT, PGS)
 +JS = ("src/components/__tests__/ArcListNested.test.jsx",          # 段 1
 +      "src/components/__tests__/EditCardModalArcKeep.test.jsx",   # 段 2
 +      "src/store/applyServerCard.test.js",                        # 段 2
 +      "src/components/__tests__/UnlocatedList.test.jsx",          # 段 4
 +      "src/components/__tests__/CharCardUnlocated.test.jsx",      # 段 4
-+      "src/store/moveUnlocated.test.js")                          # 段 4
++      "src/store/moveUnlocated.test.js",                          # 段 4
++      "src/components/__tests__/TextPanelEditSave.test.jsx")      # 段 4（§13）
 +
 +UNL = "tests/test_arc_phase_unlocated.py"
 +GOAL = "tests/test_arc_phase_unlocated_goal.py"
 +MV = "tests/test_arc_phase_unlocated_move.py"
++LOCK = "tests/test_card_optimistic_lock.py"
++PGT = "tests/test_postgres_store.py"
 +
 +
 +def _u(name: str) -> str:
 +    return f"{UNL}::{name}"
++
++
++def _l(name: str) -> str:
++    return f"{LOCK}::{name}"
++
++
++def _pg(name: str) -> str:
++    return f"{PGT}::{name}"
 +
 +
 +def _g(name: str) -> str:
@@ -1114,19 +1165,37 @@ index 0000000..0ee7650
 +    ("X33 接口返回不走 out_card", _m("test_route_returns_the_card_through_out_card"),
 +     [("repl", RDIST, [("    return {\"ok\": True, \"card\": out_card(result)}   # B4：出卡只经 out_card（现算 selectable）",
 +                        "    return {\"ok\": True, \"card\": result}")])], "RED"),
-+    ("X35 放宽 挪动不核对内容（序号漂移静默挪错，审计发现 7）", _m("test_route_drifted_content_is_400_and_card_untouched"),
-+     [("repl", MOVE, [("    if not _matches(items[index], expected):", "    if False:")])], "RED"),
-+    ("X36 过严 内容核对一律不过（合法挪动也被拒）", _m("test_m1_behavior_moves_into_phase"),
-+     [("repl", MOVE, [("        return (isinstance(expected, dict) and bool(expected)",
-+                       "        return (False and bool(expected)")])], "RED"),
++    # ── 乐观锁（§13）──
++    ("L1  放宽 PATCH 不核对 revision（旧版覆盖）", _l("test_patch_with_stale_revision_is_409_and_card_untouched"),
++     [("repl", RDIST, [("    if card_revision(record[\"card_json\"]) != req.revision:\n        raise HTTPException(409, CARD_CONFLICT)\n    result = await storage.update_card(card_id, validated",
++                        "    result = await storage.update_card(card_id, validated")])], "RED"),
++    ("L2  放宽 挪动不核对 revision（按漂移的序号挪错）", _l("test_move_with_stale_revision_is_409_and_card_untouched"),
++     [("repl", RDIST, [("    if card_revision(record[\"card_json\"]) != req.revision:\n        raise HTTPException(409, CARD_CONFLICT)\n    card = CharacterCard",
++                        "    card = CharacterCard")])], "RED"),
++    ("L3  放宽 存储不比较就写（核对与写入之间的竞争）", _pg("TestPgCardCompareAndSwap::test_stale_expected_writes_nothing"),
++     [("repl", PGS, [("WHERE id = $2 AND card_json = $4\",\n                    json.dumps(card_json, ensure_ascii=False), card_id, now, expected,",
++                      "WHERE id = $2\",\n                    json.dumps(card_json, ensure_ascii=False), card_id, now,")])], "RED"),
++    ("L4  放宽 PATCH 存储比较失败当成功（竞争时吞掉）", _l("test_patch_racing_another_write_is_409_and_keeps_the_other_write"),
++     [("repl", RDIST, [("    result = await storage.update_card(card_id, validated.model_dump(), expected=record[\"card_json\"])\n    if result is None:\n        raise HTTPException(409, CARD_CONFLICT)",
++                        "    result = await storage.update_card(card_id, validated.model_dump(), expected=record[\"card_json\"]) or record")])], "RED"),
++    ("L5  唤醒语拿内存里的旧卡整卡写回（覆盖用户编辑）", _l("test_awakening_lands_on_the_latest_card_and_keeps_the_users_edit"),
++     [("repl", RDIST, [("    card = CharacterCard.model_validate_json(rec[\"card_json\"])\n    card.awakening_message = awakening",
++                        "    card = CharacterCard.model_validate({\"name\": \"x\"})\n    card.awakening_message = awakening")])], "RED"),
++    ("L6  过严 PATCH 一律 409（合法保存也被拒）", _l("test_patch_with_current_revision_saves_and_returns_the_new_revision"),
++     [("repl", RDIST, [("    if card_revision(record[\"card_json\"]) != req.revision:\n        raise HTTPException(409, CARD_CONFLICT)\n    result = await storage.update_card(card_id, validated",
++                        "    raise HTTPException(409, CARD_CONFLICT)\n    result = await storage.update_card(card_id, validated")])], "RED"),
++    ("L7  revision 按补过 selectable 的串算（出卡与核对口径不一）", _l("test_out_card_revision_is_the_raw_stored_text_and_follows_content"),
++     [("repl", OUT, [("    row = {**row, \"revision\": card_revision(raw)}\n", "")]),
++      ("repl", OUT, [("        return {**row, \"card_json\": json.dumps(card, ensure_ascii=False)}",
++                      "        return {**row, \"card_json\": json.dumps(card, ensure_ascii=False), \"revision\": card_revision(json.dumps(card, ensure_ascii=False))}")])], "RED"),
 +    # ── 前端（vitest）──
 +    ("F1  编辑保存整体替换 character_arc（丢指纹 / 未定位区）", _run_js,
 +     [("repl", EDIT, [("        ...data.character_arc,\n", "")])], "RED"),
 +    ("F2  ArcList 不往下走嵌套（只认扁平键）", _run_js,
 +     [("repl", ARCL, [("    v && typeof v === 'object' && !Array.isArray(v)", "    false")])], "RED"),
 +    ("F3  updateCard 写回本地提交的卡（过期 selectable）", _run_js,
-+     [("repl", STORE, [("      if (data.ok) get()._applyServerCard(cardId, data.card)",
-+                        "      if (data.ok) get()._applyServerCard(cardId, { card_json: cardJson })")])], "RED"),
++     [("repl", STORE, [("    if (data.ok) get()._applyServerCard(cardId, data.card)",
++                        "    if (data.ok) get()._applyServerCard(cardId, { card_json: cardJson })")])], "RED"),
 +    ("F4  moveUnlocated 打错接口", _run_js,
 +     [("repl", STORE, [("/unlocated/move`", "/move`")])], "RED"),
 +    ("F5  moveUnlocated 失败也写回", _run_js,
@@ -1134,17 +1203,26 @@ index 0000000..0ee7650
 +    ("F6  态度默认阶段不用原标注", _run_js,
 +     [("repl", UNLJ, [("      initial: a.phase >= 1 && a.phase <= last ? a.phase : last,", "      initial: last,")])], "RED"),
 +    ("F7  挪入传错路径", _run_js,
-+     [("repl", UNLJ, [("      move: (p) => onMove('overlay', i, p, path, v), initial: last,",
-+                       "      move: (p) => onMove('overlay', i, p, '', v), initial: last,")])], "RED"),
++     [("repl", UNLJ, [("      move: (p) => onMove('overlay', i, p, path), initial: last,",
++                       "      move: (p) => onMove('overlay', i, p, ''), initial: last,")])], "RED"),
 +    ("F8  只读账号也显示未定位区", _run_js,
 +     [("repl", CHAR, [("        {canWrite && hasUnlocated(data.character_arc) && (",
 +                       "        {hasUnlocated(data.character_arc) && (")])], "RED"),
 +    ("F9  挪入没接到 store", _run_js,
-+     [("repl", CHAR, [("      await moveUnlocated(card.id || card.card_id, { section, index, phase, path, expected })",
++     [("repl", CHAR, [("      await moveUnlocated(card.id || card.card_id, { section, index, phase, path, revision: card.revision })",
 +                       "      await Promise.resolve()")])], "RED"),
-+    ("F10 挪入不带内容（后端无从核对序号漂移）", _run_js,
-+     [("repl", UNLJ, [("      move: (p) => onMove('behaviors', i, p, '', { situation: b.situation, behavior: b.behavior }),",
-+                       "      move: (p) => onMove('behaviors', i, p, ''),")])], "RED"),
++    ("F10 编辑保存不带 revision", _run_js,
++     [("repl", CHAR, [("    await updateCard(card.id || card.card_id, cardJson, card.revision)",
++                       "    await updateCard(card.id || card.card_id, cardJson)")])], "RED"),
++    ("F11 写回后 store 留着旧 revision（连续第二次保存必 409）", _run_js,
++     [("repl", STORE, [("          ? { ...s.currentCard, ...obj, card_json: obj, revision: row.revision }",
++                        "          ? { ...s.currentCard, ...obj, card_json: obj }")])], "RED"),
++    ("F12 角色管理编辑改回自己发 PUT（必 405）", _run_js,
++     [("repl", TXTP, [("            await updateCard(editCard.id || editCard.card_id, cardJson, editCard.revision)",
++                       "            await fetchWithTimeout(`/api/distill/card/${editCard.id}`, { method: 'PUT', body: JSON.stringify({ card_json: JSON.stringify(cardJson) }) })")])], "RED"),
++    ("F13 挪动不带 revision", _run_js,
++     [("repl", CHAR, [("{ section, index, phase, path, revision: card.revision })",
++                       "{ section, index, phase, path })")])], "RED"),
 +]
 +
 +
@@ -1155,7 +1233,7 @@ index 0000000..0ee7650
 +    "3": ("X5 ", "X6 ", "X7d", "X9 ", "X10", "X11", "X12", "X13", "X14", "X15", "X16", "X17",
 +          "X18", "X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27", "X28", "X29", "X30",
 +          "X34", "X37"),
-+    "4": ("X31", "X32", "X33", "X35", "X36", "F4 ", "F5 ", "F6 ", "F7 ", "F8 ", "F9 ", "F10"),
++    "4": ("X31", "X32", "X33", "L", "F4 ", "F5 ", "F6 ", "F7 ", "F8 ", "F9 ", "F10", "F11", "F12", "F13"),
 +}
 +
 +
@@ -1165,7 +1243,7 @@ index 0000000..0ee7650
 +    baseline = {p: p.read_bytes() for p in TARGETS}
 +
 +    print("== 先验基线 ==")
-+    for lock in (UNL, GOAL, MV):
++    for lock in (UNL, GOAL, MV, LOCK):
 +        if not (ROOT / lock).exists():                    # 早段还没有这个文件
 +            continue
 +        summary, _, _, _ = framework._run(lock)
@@ -1212,6 +1290,80 @@ index 0000000..0ee7650
 +
 +if __name__ == "__main__":
 +    sys.exit(main())
+diff --git a/storage/base.py b/storage/base.py
+index bf04f91..28273b0 100644
+--- a/storage/base.py
++++ b/storage/base.py
+@@ -181,8 +181,13 @@ class StorageBase(ABC):
+         """List cards under a text ID."""
+ 
+     @abstractmethod
+-    async def update_card(self, card_id: str, card_json: dict) -> dict:
+-        """Update a card's JSON and return the updated record."""
++    async def update_card(self, card_id: str, card_json: dict, *, expected: str) -> dict | None:
++        """整卡写回，**比较后写入**：库里的 `card_json` 仍等于调用方读到的 `expected` 才写，
++        返回写后的记录；不等（读写之间别的请求改过这张卡）→ 不写，返回 None，由调用方报冲突。
++
++        乐观锁（spec arc-phase-unlocated §13）：每处整卡写回都是「读出、修改、写回」，
++        不比较的话后写的会静默覆盖先写的。`expected` 必填，新调用点不会漏掉这一步。
++        """
+ 
+     # ── Card domain (market / fork / versions) ────────────
+     #
+diff --git a/storage/postgres_store.py b/storage/postgres_store.py
+index 175582b..f6aba10 100644
+--- a/storage/postgres_store.py
++++ b/storage/postgres_store.py
+@@ -707,15 +707,17 @@ class PostgresStore(StorageBase):
+             print(f"[PostgresStore] Save card failed: {exc}")
+             raise
+ 
+-    async def update_card(self, card_id: str, card_json: dict) -> dict:
+-        """Update a card's JSON content by ID."""
++    async def update_card(self, card_id: str, card_json: dict, *, expected: str) -> dict | None:
++        """比较后写入，契约见 `StorageBase.update_card`。比较与写入是同一条 UPDATE（原子）。"""
+         try:
+             async with await self._connect() as conn:
+                 now = datetime.now(timezone.utc).isoformat()
+-                await conn.execute(
+-                    "UPDATE cards SET card_json = $1, updated_at = $3 WHERE id = $2",
+-                    json.dumps(card_json, ensure_ascii=False), card_id, now,
++                status = await conn.execute(
++                    "UPDATE cards SET card_json = $1, updated_at = $3 WHERE id = $2 AND card_json = $4",
++                    json.dumps(card_json, ensure_ascii=False), card_id, now, expected,
+                 )
++                if status == "UPDATE 0":
++                    return None
+                 return await self.get_card_unscoped(card_id) or {}
+         except Exception as exc:
+             print(f"[PostgresStore] Update card failed: {exc}")
+diff --git a/storage/sqlite_store.py b/storage/sqlite_store.py
+index 1542065..eab6ec4 100644
+--- a/storage/sqlite_store.py
++++ b/storage/sqlite_store.py
+@@ -1241,15 +1241,17 @@ class SQLiteStore(StorageBase):
+             print(f"[SQLiteStore] Save card failed: {exc}")
+             raise
+ 
+-    async def update_card(self, card_id: str, card_json: dict) -> dict:
+-        """Update a card's JSON content by ID."""
++    async def update_card(self, card_id: str, card_json: dict, *, expected: str) -> dict | None:
++        """比较后写入，契约见 `StorageBase.update_card`。"""
+         try:
+             async with await self._connect() as conn:
+-                await conn.execute(
+-                    "UPDATE cards SET card_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+-                    (json.dumps(card_json, ensure_ascii=False), card_id),
++                cur = await conn.execute(
++                    "UPDATE cards SET card_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND card_json = ?",
++                    (json.dumps(card_json, ensure_ascii=False), card_id, expected),
+                 )
+                 await conn.commit()
++                if cur.rowcount == 0:
++                    return None
+                 return await self.get_card_unscoped(card_id) or {}
+         except Exception as exc:
+             print(f"[SQLiteStore] Update card failed: {exc}")
 diff --git a/tests/perf/arc_phase_anchoring_mutations.py b/tests/perf/arc_phase_anchoring_mutations.py
 index 61ed436..f2a3ca3 100644
 --- a/tests/perf/arc_phase_anchoring_mutations.py
@@ -2217,10 +2369,23 @@ index fabf6f7..5518167 100644
      ],
      "M9  编号全部作废的做法改放顶层，而不是整条撤回": [
 diff --git a/tests/test_arc_phase_fields_locks.py b/tests/test_arc_phase_fields_locks.py
-index 2a3c4bb..9fd6e0f 100644
+index 2a3c4bb..209f8e4 100644
 --- a/tests/test_arc_phase_fields_locks.py
 +++ b/tests/test_arc_phase_fields_locks.py
-@@ -301,8 +301,26 @@ def _callers(path: Path, func: str) -> set[str]:
+@@ -214,8 +214,11 @@ def test_s11_import_direction():
+     op = _imports(_CORE / "opening.py")
+     assert not (op & {"web", "storage", "distiller"}), f"opening 导入越界：{op}"
+ 
++    # `fingerprint` 是只依赖标准库的叶子模块：卡的 revision 复用正文指纹那一处哈希（§13），
++    # 不在出卡模块里另写一份 hashlib。
+     co = _imports(_CORE / "card_out.py")
+-    assert co <= {"schema", "json", "typing"}, f"card_out 导入了越界模块（§4.0 只可导入 core.schema）：{co}"
++    assert co <= {"schema", "fingerprint", "json", "typing"}, (
++        f"card_out 导入了越界模块（§4.0 只可导入 core.schema 与叶子模块 core.fingerprint）：{co}")
+ 
+ 
+ # ── S12 开场白 / 苏醒台词提示词只在 `core/opening.py` ─────────────────────────
+@@ -301,8 +304,26 @@ def _callers(path: Path, func: str) -> set[str]:
              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == func}
  
  
@@ -2248,7 +2413,7 @@ index 2a3c4bb..9fd6e0f 100644
  
      `selectable` 是派生值（起点齐全 + 指纹），**不随卡落库**：模型上不再有 `computed_field`，
      否则存库那刻算一遍写进 `card_json` 就会过期（旧卡没这个键；位置是后台作业补的，补完那张
-@@ -317,9 +335,16 @@ def test_s15_out_card_is_the_only_card_out():
+@@ -317,9 +338,16 @@ def test_s15_out_card_is_the_only_card_out():
      assert "computed_field" not in schema, "schema 里还留着 computed_field（派生值会落库）"
      assert not re.search(r"\bdef selectable\b", schema), "schema 里还留着 selectable"
  
@@ -2953,10 +3118,10 @@ index 0000000..6613358
 +        ["B对标", "B错标"], ["M错标"], ["T错标"], ["M编造"])
 diff --git a/tests/test_arc_phase_unlocated_move.py b/tests/test_arc_phase_unlocated_move.py
 new file mode 100644
-index 0000000..603fbf2
+index 0000000..8907299
 --- /dev/null
 +++ b/tests/test_arc_phase_unlocated_move.py
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,176 @@
 +# -*- coding: utf-8 -*-
 +"""未定位条目挪进阶段（段 3）—— spec `docs/specs/arc-phase-unlocated.md` §6。
 +
@@ -2969,6 +3134,7 @@ index 0000000..603fbf2
 +import pytest
 +
 +from core.arc_view import project_card
++from core.card_out import card_revision
 +from core.card_layers import get_path
 +from core.schema import CharacterCard, UnlocatedAttitude
 +from core.unlocated import move_unlocated
@@ -2995,23 +3161,19 @@ index 0000000..603fbf2
 +         "phase_attitudes": [{"phase": 1, "attitude": "", "note": ""}]}]})
 +
 +
-+_B = {"situation": "s", "behavior": "b"}
-+_A = {"target": "甲", "attitude": "挪来的", "phase": 0}
-+
-+
 +def _movable_card():
 +    return CharacterCard.model_validate(_movable().model_dump())
 +
 +
 +def test_m1_behavior_moves_into_phase():
-+    card = move_unlocated(_movable_card(), section="behaviors", index=0, phase=1, expected=_B)
++    card = move_unlocated(_movable_card(), section="behaviors", index=0, phase=1)
 +    assert ([b.situation for b in card.character_arc.phases[0].behaviors],
 +            card.character_arc.unlocated.behaviors) == (["s"], [])
 +
 +
 +def test_m2_list_value_is_appended_and_leaf_pruned():
 +    card = move_unlocated(_movable_card(), section="overlay", path="personality_traits",
-+                          index=0, phase=1, expected="多疑")
++                          index=0, phase=1)
 +    assert (card.character_arc.phases[0].overlay,
 +            get_path(card.character_arc.unlocated.overlay, "personality_traits")) == (
 +        {"personality_traits": ["多疑"]}, None)
@@ -3019,7 +3181,7 @@ index 0000000..603fbf2
 +
 +def test_m3_scalar_value_into_empty_slot():
 +    card = move_unlocated(_movable_card(), section="overlay", path="speaking_style.tone",
-+                          index=0, phase=1, expected="冷")
++                          index=0, phase=1)
 +    assert (card.character_arc.phases[0].overlay,
 +            card.character_arc.unlocated.overlay["speaking_style"]) == (
 +        {"speaking_style": {"tone": "冷"}}, {"tone": ["热"]})
@@ -3027,40 +3189,33 @@ index 0000000..603fbf2
 +
 +def test_m4_scalar_value_into_occupied_slot_swaps_back():
 +    card = move_unlocated(_movable_card(), section="overlay", path="speaking_style.tone",
-+                          index=0, phase=1, expected="冷")
-+    card = move_unlocated(card, section="overlay", path="speaking_style.tone", index=0, phase=1,
-+                          expected="热")
++                          index=0, phase=1)
++    card = move_unlocated(card, section="overlay", path="speaking_style.tone", index=0, phase=1)
 +    assert (get_path(card.character_arc.phases[0].overlay, "speaking_style.tone"),
 +            get_path(card.character_arc.unlocated.overlay, "speaking_style.tone")) == ("热", ["冷"])
 +
 +
 +def test_m5_attitude_replaces_empty_placeholder_and_shows_in_projection():
-+    card = move_unlocated(_movable_card(), section="attitudes", index=0, phase=1, expected=_A)
++    card = move_unlocated(_movable_card(), section="attitudes", index=0, phase=1)
 +    rel = project_card(card, 1)[0].relationships[0]
 +    assert ((rel.attitude, rel.note), card.character_arc.unlocated.attitudes) == (
 +        ("挪来的", "口径"), [])
 +
 +
 +def test_m6_attitude_into_phase_with_attitude_swaps_back():
-+    card = move_unlocated(_movable_card(), section="attitudes", index=0, phase=1, expected=_A)
++    card = move_unlocated(_movable_card(), section="attitudes", index=0, phase=1)
 +    card = card.model_copy(deep=True)
 +    card.character_arc.unlocated.attitudes.append(UnlocatedAttitude(target="甲", attitude="第二条"))
-+    card = move_unlocated(card, section="attitudes", index=0, phase=1,
-+                          expected={"target": "甲", "attitude": "第二条"})
++    card = move_unlocated(card, section="attitudes", index=0, phase=1)
 +    assert (_pa(card), [a.attitude for a in card.character_arc.unlocated.attitudes]) == (
 +        [(1, "第二条")], ["挪来的"])
 +
 +
 +@pytest.mark.parametrize("kw", [
-+    {"section": "behaviors", "index": 5, "phase": 1, "expected": _B},
-+    {"section": "behaviors", "index": 0, "phase": 2, "expected": _B},
-+    {"section": "overlay", "path": "key_memories", "index": 0, "phase": 1, "expected": "x"},
-+    {"section": "nope", "index": 0, "phase": 1, "expected": _B},
-+    # 序号还在、内容变了（另一个标签页先挪过 / 编辑过）：拒绝，不挪错（审计发现 7）
-+    {"section": "behaviors", "index": 0, "phase": 1, "expected": {"situation": "s", "behavior": "旧"}},
-+    {"section": "behaviors", "index": 0, "phase": 1, "expected": {}},
-+    {"section": "overlay", "path": "speaking_style.tone", "index": 0, "phase": 1, "expected": "热"},
-+    {"section": "attitudes", "index": 0, "phase": 1, "expected": {"target": "乙", "attitude": "挪来的"}},
++    {"section": "behaviors", "index": 5, "phase": 1},
++    {"section": "behaviors", "index": 0, "phase": 2},
++    {"section": "overlay", "path": "key_memories", "index": 0, "phase": 1},
++    {"section": "nope", "index": 0, "phase": 1},
 +])
 +def test_m7_invalid_move_is_rejected(kw):
 +    with pytest.raises(ValueError):
@@ -3070,7 +3225,7 @@ index 0000000..603fbf2
 +def test_m8_moved_item_reaches_the_projection_of_that_phase():
 +    """pytest 半段（Playwright 只看界面）：挪进阶段 1 后，投影到阶段 1 的卡里有它。"""
 +    card = move_unlocated(_movable_card(), section="overlay", path="personality_traits",
-+                          index=0, phase=1, expected="多疑")
++                          index=0, phase=1)
 +    assert "多疑" in project_card(card, 1)[0].personality_traits
 +
 +
@@ -3082,11 +3237,17 @@ index 0000000..603fbf2
 +
 +    async def get_card_owned(self, card_id, user_id):
 +        row = self.rows.get(card_id)
-+        return row if row and row["user_id"] == user_id else None
++        return dict(row) if row and row["user_id"] == user_id else None
 +
-+    async def update_card(self, card_id, card_json):
++    async def update_card(self, card_id, card_json, *, expected):
++        if self.rows[card_id]["card_json"] != expected:               # 同 PG：比较后写入
++            return None
 +        self.rows[card_id]["card_json"] = json.dumps(card_json, ensure_ascii=False)
 +        return {"id": card_id, "card_json": self.rows[card_id]["card_json"]}   # 同 PG：回整行
++
++
++def _rev(store, card_id="c1"):
++    return card_revision(store.rows[card_id]["card_json"])
 +
 +
 +def _client(store, user_id):
@@ -3107,7 +3268,8 @@ index 0000000..603fbf2
 +def test_route_owner_move_persists():
 +    store = _Store(_movable_card())
 +    r = _client(store, "u1").post("/api/distill/card/c1/unlocated/move",
-+                                  json={"section": "behaviors", "index": 0, "phase": 1, "expected": _B})
++                                  json={"section": "behaviors", "index": 0, "phase": 1,
++                                        "revision": _rev(store)})
 +    saved = CharacterCard.model_validate_json(store.rows["c1"]["card_json"])
 +    assert (r.status_code, [b.situation for b in saved.character_arc.phases[0].behaviors]) == (
 +        200, ["s"])
@@ -3115,31 +3277,27 @@ index 0000000..603fbf2
 +
 +def test_route_returns_the_card_through_out_card():
 +    """B4：出卡只经 `out_card` —— 返回的卡带现算的 `selectable`。"""
-+    r = _client(_Store(_movable_card()), "u1").post(
-+        "/api/distill/card/c1/unlocated/move", json={"section": "behaviors", "index": 0, "phase": 1, "expected": _B})
++    store = _Store(_movable_card())
++    r = _client(store, "u1").post(
++        "/api/distill/card/c1/unlocated/move",
++        json={"section": "behaviors", "index": 0, "phase": 1, "revision": _rev(store)})
 +    assert "selectable" in json.loads(r.json()["card"]["card_json"])["character_arc"]
 +
 +
 +def test_route_intruder_gets_404():
-+    r = _client(_Store(_movable_card()), "u2").post(
-+        "/api/distill/card/c1/unlocated/move", json={"section": "behaviors", "index": 0, "phase": 1, "expected": _B})
++    store = _Store(_movable_card())
++    r = _client(store, "u2").post(
++        "/api/distill/card/c1/unlocated/move",
++        json={"section": "behaviors", "index": 0, "phase": 1, "revision": _rev(store)})
 +    assert r.status_code == 404
 +
 +
 +def test_route_stale_index_is_400():
-+    r = _client(_Store(_movable_card()), "u1").post(
-+        "/api/distill/card/c1/unlocated/move", json={"section": "behaviors", "index": 9, "phase": 1, "expected": _B})
-+    assert r.status_code == 400
-+
-+
-+def test_route_drifted_content_is_400_and_card_untouched():
-+    """序号漂移：同一序号处已是别的条目 → 400，卡不写回（审计发现 7）。"""
 +    store = _Store(_movable_card())
-+    before = store.rows["c1"]["card_json"]
-+    r = _client(store, "u1").post("/api/distill/card/c1/unlocated/move", json={
-+        "section": "behaviors", "index": 0, "phase": 1,
-+        "expected": {"situation": "s", "behavior": "别的"}})
-+    assert (r.status_code, store.rows["c1"]["card_json"]) == (400, before)
++    r = _client(store, "u1").post(
++        "/api/distill/card/c1/unlocated/move",
++        json={"section": "behaviors", "index": 9, "phase": 1, "revision": _rev(store)})
++    assert r.status_code == 400
 diff --git a/tests/test_card_arc_behaviors.py b/tests/test_card_arc_behaviors.py
 index f93652e..0b82ecb 100644
 --- a/tests/test_card_arc_behaviors.py
@@ -3171,6 +3329,180 @@ index f93652e..0b82ecb 100644
          "phases": [{"label": "", "state": "a", "behaviors": [], "overlay": {},
                      "start": None, "boundary_examples": []}],
      }
+diff --git a/tests/test_card_optimistic_lock.py b/tests/test_card_optimistic_lock.py
+new file mode 100644
+index 0000000..208fdcc
+--- /dev/null
++++ b/tests/test_card_optimistic_lock.py
+@@ -0,0 +1,155 @@
++# -*- coding: utf-8 -*-
++"""卡片整卡写回的乐观锁（spec `docs/specs/arc-phase-unlocated.md` §13）。
++
++编辑保存、挪动、唤醒语回写都是「读出、修改、整卡写回」。两个请求同时在途时，后写的会静默
++覆盖先写的。修法分两半：出卡带 `revision`（`card_out.card_revision`，按存储原文现算，不落库），
++路由先核对请求带来的 revision；存储层按读到的原文**比较后写入**，核对与写入之间又被改也拦得住。
++冲突一律 409。存储那一半在 PG 上真跑见 `test_postgres_store.py::TestPgCardCompareAndSwap`。
++"""
++from __future__ import annotations
++
++import json
++import logging
++
++from core.card_out import CARD_CONFLICT, card_revision, out_card
++from core.schema import CharacterCard
++
++
++def _card(**kw) -> CharacterCard:
++    return CharacterCard.model_validate({"name": "x", "character_arc": {
++        "phases": [{"state": "s"}],
++        "unlocated": {"behaviors": [{"situation": "s", "behavior": "b"}]}}, **kw})
++
++
++class _Store:
++    """与 PG 同契约的假存储：`update_card` 比较后写入。`meddle` 在读与写之间插一次别人的写入。"""
++
++    def __init__(self, card: CharacterCard):
++        self.rows = {"c1": {"id": "c1", "user_id": "u1", "card_json": card.model_dump_json()}}
++        self.meddle = None
++
++    def stored(self) -> dict:
++        return json.loads(self.rows["c1"]["card_json"])
++
++    async def get_card_owned(self, card_id, user_id):
++        row = self.rows.get(card_id)
++        if not row or row["user_id"] != user_id:
++            return None
++        snapshot = dict(row)
++        if self.meddle:                       # 读完之后、写之前，别的请求改了这张卡
++            self.meddle(self.rows[card_id])
++            self.meddle = None
++        return snapshot
++
++    async def update_card(self, card_id, card_json, *, expected):
++        if self.rows[card_id]["card_json"] != expected:
++            return None
++        self.rows[card_id]["card_json"] = json.dumps(card_json, ensure_ascii=False)
++        return dict(self.rows[card_id])
++
++
++def _client(store):
++    from fastapi import FastAPI
++
++    from conftest import app_lifespan, open_test_client
++    from deps import get_storage
++    from routers.auth import get_current_user
++    from routers.distill import router
++
++    app = FastAPI(lifespan=app_lifespan)
++    app.include_router(router)
++    app.dependency_overrides[get_storage] = lambda: store
++    app.dependency_overrides[get_current_user] = lambda: {"id": "u1", "role": "user"}
++    return open_test_client(app)
++
++
++def _someone_renames(row):
++    data = json.loads(row["card_json"])
++    data["name"] = "别人改的"
++    row["card_json"] = json.dumps(data, ensure_ascii=False)
++
++
++def _patch(store, revision, name="我改的"):
++    data = store.stored()
++    data["name"] = name
++    return _client(store).patch("/api/distill/card/c1", json={"card_json": data, "revision": revision})
++
++
++def _move(store, revision):
++    return _client(store).post("/api/distill/card/c1/unlocated/move", json={
++        "section": "behaviors", "index": 0, "phase": 1, "revision": revision})
++
++
++# ── revision：出卡现算，按存储原文 ───────────────────────────────────
++
++def test_out_card_revision_is_the_raw_stored_text_and_follows_content():
++    a, b = _card().model_dump_json(), _card(identity="变了").model_dump_json()
++    assert (out_card({"card_json": a})["revision"], out_card({"card_json": b})["revision"] != card_revision(a)) == (
++        card_revision(a), True)
++
++
++# ── 编辑保存（PATCH） ─────────────────────────────────────────────
++
++def test_patch_with_current_revision_saves_and_returns_the_new_revision():
++    store = _Store(_card())
++    r = _patch(store, card_revision(store.rows["c1"]["card_json"]))
++    assert (r.status_code, store.stored()["name"], r.json()["card"]["revision"]) == (
++        200, "我改的", card_revision(store.rows["c1"]["card_json"]))
++
++
++def test_patch_with_stale_revision_is_409_and_card_untouched():
++    store = _Store(_card())
++    stale = card_revision(store.rows["c1"]["card_json"])
++    _someone_renames(store.rows["c1"])
++    r = _patch(store, stale)
++    assert (r.status_code, r.json()["detail"], store.stored()["name"]) == (409, CARD_CONFLICT, "别人改的")
++
++
++def test_patch_racing_another_write_is_409_and_keeps_the_other_write():
++    """核对通过之后、写入之前别人写了：存储层比较失败 → 409，不覆盖别人的写入。"""
++    store = _Store(_card())
++    rev = card_revision(store.rows["c1"]["card_json"])
++    store.meddle = _someone_renames
++    r = _patch(store, rev)
++    assert (r.status_code, store.stored()["name"]) == (409, "别人改的")
++
++
++# ── 挪动 ─────────────────────────────────────────────────────────
++
++def test_move_with_stale_revision_is_409_and_card_untouched():
++    store = _Store(_card())
++    stale = card_revision(store.rows["c1"]["card_json"])
++    _someone_renames(store.rows["c1"])
++    r = _move(store, stale)
++    assert (r.status_code, len(store.stored()["character_arc"]["unlocated"]["behaviors"])) == (409, 1)
++
++
++def test_move_racing_another_write_is_409_and_keeps_the_other_write():
++    store = _Store(_card())
++    rev = card_revision(store.rows["c1"]["card_json"])
++    store.meddle = _someone_renames
++    r = _move(store, rev)
++    assert (r.status_code, store.stored()["name"],
++            len(store.stored()["character_arc"]["unlocated"]["behaviors"])) == (409, "别人改的", 1)
++
++
++# ── 唤醒语回写：写进库里当前那张卡，不拿内存里的旧卡整卡覆盖 ─────────────
++
++async def test_awakening_lands_on_the_latest_card_and_keeps_the_users_edit():
++    from routers.distill import _persist_awakening
++
++    store = _Store(_card())
++    _someone_renames(store.rows["c1"])            # 存卡之后、唤醒语回写之前，用户改了名
++    await _persist_awakening(store, "c1", "u1", "醒来了")
++    assert (store.stored()["name"], store.stored()["awakening_message"]) == ("别人改的", "醒来了")
++
++
++async def test_awakening_racing_another_write_writes_nothing_and_warns(caplog):
++    from routers.distill import _persist_awakening
++
++    store = _Store(_card())
++    store.meddle = _someone_renames
++    with caplog.at_level(logging.WARNING, logger="routers.distill"):
++        await _persist_awakening(store, "c1", "u1", "醒来了")
++    assert (store.stored()["name"], store.stored().get("awakening_message", ""),
++            any("changed meanwhile" in r.getMessage() for r in caplog.records)) == ("别人改的", "", True)
+diff --git a/tests/test_e2e_flow.py b/tests/test_e2e_flow.py
+index 23bf9fa..21e2018 100644
+--- a/tests/test_e2e_flow.py
++++ b/tests/test_e2e_flow.py
+@@ -128,7 +128,7 @@ class TestFullUserFlow:
+ 
+         # Update card
+         updated = json.dumps({"name": "Alice", "age": 26}, ensure_ascii=False)
+-        result = await store.update_card(card_ids[0], json.loads(updated))
++        result = await store.update_card(card_ids[0], json.loads(updated), expected=card["card_json"])
+         assert result is not None
+ 
+     async def test_04_chat_session_and_messages(self, store):
 diff --git a/tests/test_identify_failure_channels.py b/tests/test_identify_failure_channels.py
 index f864106..4e6690e 100644
 --- a/tests/test_identify_failure_channels.py
@@ -3306,6 +3638,19 @@ index 0000000..7135ab5
 +            ("D2 命中多次", "", [("repl", me, [("import ", "x")])], "RED"),
 +            ("D1 恰一次", "", [("repl", me, [("def test_lock_sees_a_" + "drifted_anchor", "x")])], "RED")]
 +    assert [p.split("：")[0] for p in _problems(fake)] == ["D0 命中 0 次", "D2 命中多次"]
+diff --git a/tests/test_ownership_404.py b/tests/test_ownership_404.py
+index 3e20ac8..57e0397 100644
+--- a/tests/test_ownership_404.py
++++ b/tests/test_ownership_404.py
+@@ -252,7 +252,7 @@ class TestDistillOwnership:
+ 
+     def test_update_card_404(self, store, owner, intruder_client):
+         cid = _card(store, owner)
+-        r = intruder_client.patch(f"/api/distill/card/{cid}", json={"card_json": {}})
++        r = intruder_client.patch(f"/api/distill/card/{cid}", json={"card_json": {}, "revision": "x"})
+         assert r.status_code == 404 and r.status_code != 403
+ 
+     def test_export_card_404(self, store, owner, intruder_client):
 diff --git a/tests/test_phase_anchoring.py b/tests/test_phase_anchoring.py
 index 0b919af..0571205 100644
 --- a/tests/test_phase_anchoring.py
@@ -3506,6 +3851,64 @@ index 0b919af..0571205 100644
      _Q1, _Q3,                                     # 阶段 1 / 阶段 3 首条的 source_quote
  )
  
+diff --git a/tests/test_postgres_store.py b/tests/test_postgres_store.py
+index 92f7e1c..c949e24 100644
+--- a/tests/test_postgres_store.py
++++ b/tests/test_postgres_store.py
+@@ -1621,6 +1621,29 @@ class TestPgMigrationLedger:
+ # asyncpg 参数数不符）→ `test_get_text_owned_hides_non_owner_rows` 红（真库返回了非属主行）。
+ # 静态锁在同一次改动里也红 —— 但那是两个独立的红源：静态锁看**文本**，本类看**真库返回**。
+ 
++@_pg
++class TestPgCardCompareAndSwap:
++    """乐观锁的存储一半（spec arc-phase-unlocated §13）：`update_card` 只在库里的 `card_json`
++    仍等于调用方读到的那一份时写入，比较与写入是同一条 UPDATE。"""
++
++    async def test_matching_expected_writes(self, store, text_id, card_id, user_id):
++        await store.save_text(text_id, "src.txt", "source", user_id=user_id)
++        await store.save_card(card_id, text_id, "Alice", json.dumps({"name": "Alice"}), user_id=user_id)
++        base = (await store.get_card_owned(card_id, user_id))["card_json"]
++        out = await store.update_card(card_id, {"name": "Bob"}, expected=base)
++        assert (json.loads(out["card_json"])["name"],
++                json.loads((await store.get_card_owned(card_id, user_id))["card_json"])["name"]) == ("Bob", "Bob")
++
++    async def test_stale_expected_writes_nothing(self, store, text_id, card_id, user_id):
++        await store.save_text(text_id, "src.txt", "source", user_id=user_id)
++        await store.save_card(card_id, text_id, "Alice", json.dumps({"name": "Alice"}), user_id=user_id)
++        base = (await store.get_card_owned(card_id, user_id))["card_json"]
++        await store.update_card(card_id, {"name": "先写的"}, expected=base)
++        out = await store.update_card(card_id, {"name": "后写的"}, expected=base)   # 依据的是旧版
++        assert (out, json.loads((await store.get_card_owned(card_id, user_id))["card_json"])["name"]) == (
++            None, "先写的")
++
++
+ @_pg
+ class TestPgOwnedIdentityIsolation:
+     async def test_get_text_owned_hides_non_owner_rows(self, store, text_id, user_id):
+@@ -1931,7 +1954,8 @@ class TestPgUnpublishIsWithdrawingTheRelease:
+             "点赞没挂上，下面那条「点赞保留」会恒绿"
+ 
+         await store.update_card_visibility(copy_id, "private")          # 下架
+-        await store.update_card(draft, {"name": "李四"})                 # 草稿改名
++        await store.update_card(draft, {"name": "李四"},                 # 草稿改名
++                                expected=(await store.get_card_owned(draft, a))["card_json"])
+         await store.save_card_avatar(draft, a, "NEWAV")                 # 草稿改头像
+ 
+         again = await store.publish_card(draft, a, "新desc", "新tag", "v2", '{"name": "李四"}')
+diff --git a/tests/test_published_copy_relation.py b/tests/test_published_copy_relation.py
+index 2b4d15e..f1b3eed 100644
+--- a/tests/test_published_copy_relation.py
++++ b/tests/test_published_copy_relation.py
+@@ -371,7 +371,8 @@ class TestUnpublishIsWithdrawingTheRelease:
+             "点赞没挂上，下面那条「点赞保留」会恒绿"
+ 
+         await store.update_card_visibility(copy_id, "private")          # 下架
+-        await store.update_card(draft, {"name": "李四"})                 # 草稿改名
++        await store.update_card(draft, {"name": "李四"},                 # 草稿改名
++                                expected=(await store.get_card_owned(draft, user_a))["card_json"])
+         await store.save_card_avatar(draft, user_a, "NEWAV")             # 草稿改头像
+ 
+         again = await store.publish_card(draft, user_a, "新desc", "新tag", "v2", '{"name": "李四"}')
 diff --git a/web/frontend/e2e/arc-phase-select.spec.js b/web/frontend/e2e/arc-phase-select.spec.js
 index 9820850..8952348 100644
 --- a/web/frontend/e2e/arc-phase-select.spec.js
@@ -3531,7 +3934,7 @@ index 9820850..8952348 100644
    return sent
 diff --git a/web/frontend/e2e/arc-phase-unlocated.spec.js b/web/frontend/e2e/arc-phase-unlocated.spec.js
 new file mode 100644
-index 0000000..3386c78
+index 0000000..f0d516b
 --- /dev/null
 +++ b/web/frontend/e2e/arc-phase-unlocated.spec.js
 @@ -0,0 +1,101 @@
@@ -3595,7 +3998,7 @@ index 0000000..3386c78
 +    window.__appStore.setState({
 +      isLoggedIn: true, currentView: 'character', currentTextId: 't1',
 +      texts: [{ id: 't1', filename: 'mock.txt' }], cards: [],
-+      currentCard: { id: 'c1', name: '孔乙己', text_id: 't1', card_json: json },
++      currentCard: { id: 'c1', name: '孔乙己', text_id: 't1', card_json: json, revision: 'r1' },
 +    })
 +  }, JSON.stringify(card('原值', ['新值'])))
 +  await expect(page.locator('.card-unlocated')).toBeVisible({ timeout: 8000 })
@@ -3624,7 +4027,7 @@ index 0000000..3386c78
 +  await expect(page.locator('.card-arc-overlay').nth(0)).toContainText('新值')
 +  await expect(toneRow(page)).toContainText('原值')
 +  expect(sent).toEqual([{ section: 'overlay', index: 0, phase: 1, path: 'speaking_style.tone',
-+    expected: '新值' }])
++    revision: 'r1' }])
 +  await page.screenshot({ path: 'e2e/arc-phase-unlocated-after.png', fullPage: true })
 +})
 +
@@ -3637,7 +4040,7 @@ index 0000000..3386c78
 +  await expect(toneRow(page)).toContainText('新值')
 +})
 diff --git a/web/frontend/src/components/CharCard.jsx b/web/frontend/src/components/CharCard.jsx
-index 4b67532..7569f9e 100644
+index 4b67532..f20c4e1 100644
 --- a/web/frontend/src/components/CharCard.jsx
 +++ b/web/frontend/src/components/CharCard.jsx
 @@ -7,6 +7,7 @@ import Avatar from './common/Avatar'
@@ -3656,23 +4059,26 @@ index 4b67532..7569f9e 100644
    const [showShareConfirm, setShowShareConfirm] = useState(false)
    const [showEditModal, setShowEditModal] = useState(false)
    const [cropFile, setCropFile] = useState(null)
-@@ -714,6 +716,16 @@ function CardDetail({ card, textId, goBack }) {
+@@ -714,8 +716,18 @@ function CardDetail({ card, textId, goBack }) {
      setCropFile(null)
    }, [])
  
 +  // 选阶段 → 点「挪入」→ store.moveUnlocated（POST，后端挪动并经 out_card 回卡）→ 写回
 +  // currentCard → 本组件重渲染：ArcList 与未定位区都从新卡重新算。失败只报错，不改本地卡。
-+  const handleMoveUnlocated = async (section, index, phase, path, expected) => {
++  const handleMoveUnlocated = async (section, index, phase, path) => {
 +    try {
-+      await moveUnlocated(card.id || card.card_id, { section, index, phase, path, expected })
++      await moveUnlocated(card.id || card.card_id, { section, index, phase, path, revision: card.revision })
 +    } catch (e) {
 +      setError(e.message)
 +    }
 +  }
 +
    const handleSaveEdit = async (cardJson) => {
-     await updateCard(card.id || card.card_id, cardJson)
+-    await updateCard(card.id || card.card_id, cardJson)
++    await updateCard(card.id || card.card_id, cardJson, card.revision)
      setShowEditModal(false)
+   }
+ 
 @@ -838,6 +850,13 @@ function CardDetail({ card, textId, goBack }) {
            </CardSection>
          )}
@@ -3701,6 +4107,34 @@ index d665703..5842ead 100644
          axis: form.arc_axis.trim(),
          phases: cleanRows(arcPhases, ARC_COLUMNS)
            .map((p) => ({ ...p, behaviors: cleanRows(p.behaviors || [], BEHAVIOR_COLUMNS) })),
+diff --git a/web/frontend/src/components/TextPanel.jsx b/web/frontend/src/components/TextPanel.jsx
+index 0152772..7ddd100 100644
+--- a/web/frontend/src/components/TextPanel.jsx
++++ b/web/frontend/src/components/TextPanel.jsx
+@@ -514,6 +514,7 @@ export default function TextPanel() {
+ function CharacterManagement({ setView, selectText, startChat, pushView, setCurrentMarketCardId }) {
+   const canWrite = useCanWrite()
+   const texts = useAppStore((s) => s.texts)
++  const updateCard = useAppStore((s) => s.updateCard)
+   const [allCards, setAllCards] = useState([])
+   const [loading, setLoading] = useState(true)
+   const [filterTextId, setFilterTextId] = useState('')
+@@ -787,12 +788,9 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
+           data={parseCardJson(editCard)}
+           cardId={editCard.id || editCard.card_id}
+           onSave={async (cardJson) => {
+-            // 失败不在这里吞：错误抛给 EditCardModal，由弹窗自己呈现
+-            await fetchWithTimeout(`/api/distill/card/${editCard.id}`, {
+-              method: 'PUT',
+-              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+-              body: JSON.stringify({ card_json: JSON.stringify(cardJson) }),
+-            })
++            // 走 store 的唯一 PATCH 出口（带 revision，乐观锁）。失败不在这里吞：错误抛给
++            // EditCardModal，由弹窗自己呈现。原先这里自己发 PUT —— 后端只有 PATCH，必 405。
++            await updateCard(editCard.id || editCard.card_id, cardJson, editCard.revision)
+             setEditCard(null)
+             // Refresh all cards
+             const res = await fetchCardsByText(editCard.text_id)
 diff --git a/web/frontend/src/components/__tests__/ArcListNested.test.jsx b/web/frontend/src/components/__tests__/ArcListNested.test.jsx
 new file mode 100644
 index 0000000..7a3a29f
@@ -3732,10 +4166,10 @@ index 0000000..7a3a29f
 +})
 diff --git a/web/frontend/src/components/__tests__/CharCardUnlocated.test.jsx b/web/frontend/src/components/__tests__/CharCardUnlocated.test.jsx
 new file mode 100644
-index 0000000..e4a5c75
+index 0000000..bfb4888
 --- /dev/null
 +++ b/web/frontend/src/components/__tests__/CharCardUnlocated.test.jsx
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,136 @@
 +import { describe, it, expect, vi } from 'vitest'
 +import { render, waitFor, fireEvent, screen } from '@testing-library/react'
 +import CharCard from '../CharCard'
@@ -3759,13 +4193,14 @@ index 0000000..e4a5c75
 +  }
 +}
 +
-+const { currentCardBox, setCurrentCard, canWriteBox, moveSpy } = vi.hoisted(() => {
++const { currentCardBox, setCurrentCard, canWriteBox, moveSpy, updateSpy } = vi.hoisted(() => {
 +  const box = { card: null, canWrite: true }
 +  return {
 +    currentCardBox: () => box.card,
 +    setCurrentCard: (c) => { box.card = c },
 +    canWriteBox: { get: () => box.canWrite, set: (v) => { box.canWrite = v } },
 +    moveSpy: vi.fn(() => Promise.resolve({ ok: true })),
++    updateSpy: vi.fn(() => Promise.resolve({ ok: true })),
 +  }
 +})
 +
@@ -3778,7 +4213,7 @@ index 0000000..e4a5c75
 +  unlocated: { behaviors: [{ situation: '被揭短', behavior: '涨红脸' }], overlay: {}, attitudes: [] },
 +}
 +const card = () => ({
-+  id: 'c1', name: '测试角色', published_id: null, market_description: '', market_tags: '',
++  id: 'c1', name: '测试角色', published_id: null, market_description: '', market_tags: '', revision: 'r1',
 +  card_json: JSON.stringify({ name: '测试角色', key_memories: ['记忆一'], character_arc: ARC }),
 +})
 +
@@ -3813,7 +4248,7 @@ index 0000000..e4a5c75
 +    userRolesByCard: {},
 +    setUserRole: noop,
 +    getUserRole: noop,
-+    updateCard: noop,
++    updateCard: updateSpy,
 +    moveUnlocated: moveSpy,
 +  })
 +  return { default: hook }
@@ -3832,7 +4267,10 @@ index 0000000..e4a5c75
 +}))
 +
 +vi.mock('../RoleSetupModal', () => ({ default: () => null }))
-+vi.mock('../EditCardModal', () => ({ default: () => null }))
++// 编辑弹窗只留「保存」这一个出口：看 CardDetail 把它接到 store.updateCard 时带没带 revision
++vi.mock('../EditCardModal', () => ({
++  default: ({ isOpen, onSave }) => (isOpen ? <button onClick={() => onSave({ name: '改' })}>假保存</button> : null),
++}))
 +vi.mock('../common/ImageCropModal', () => ({ default: () => null }))
 +vi.mock('../common/ConfirmModal', () => ({ default: () => null }))
 +vi.mock('../common/Avatar', () => ({ default: () => null }))
@@ -3847,8 +4285,17 @@ index 0000000..e4a5c75
 +    fireEvent.click(screen.getByRole('option', { name: '阶段 1 · 早' }))
 +    fireEvent.click(screen.getByRole('button', { name: '挪入' }))
 +    await waitFor(() => expect(moveSpy).toHaveBeenCalled())
-+    expect(moveSpy.mock.calls[0]).toEqual(['c1', { section: 'behaviors', index: 0, phase: 1, path: '',
-+      expected: { situation: '被揭短', behavior: '涨红脸' } }])
++    expect(moveSpy.mock.calls[0]).toEqual(['c1', { section: 'behaviors', index: 0, phase: 1, path: '', revision: 'r1' }])
++  })
++
++  it('编辑保存调 store.updateCard(卡 id, 卡内容, revision)（乐观锁，后端 §13）', async () => {
++    canWriteBox.set(true)
++    setCurrentCard(card())
++    render(<CharCard />)
++    fireEvent.click(await screen.findByRole('button', { name: /编辑/ }))
++    fireEvent.click(await screen.findByRole('button', { name: '假保存' }))
++    await waitFor(() => expect(updateSpy).toHaveBeenCalled())
++    expect(updateSpy.mock.calls[0]).toEqual(['c1', { name: '改' }, 'r1'])
 +  })
 +
 +  it('只读账号（游客 / 别人的卡）：不渲染未定位区', async () => {
@@ -3885,12 +4332,113 @@ index 0000000..ad5fd33
 +    expect([arc.source_fingerprint, arc.unlocated, arc.axis]).toEqual(['FP', unlocated, 'a'])
 +  })
 +})
+diff --git a/web/frontend/src/components/__tests__/TextPanelEditSave.test.jsx b/web/frontend/src/components/__tests__/TextPanelEditSave.test.jsx
+new file mode 100644
+index 0000000..b35a787
+--- /dev/null
++++ b/web/frontend/src/components/__tests__/TextPanelEditSave.test.jsx
+@@ -0,0 +1,95 @@
++import { describe, it, expect, beforeEach, vi } from 'vitest'
++import { render, fireEvent, waitFor } from '@testing-library/react'
++import TextPanel from '../TextPanel'
++import { fetchWithTimeout } from '../../api/client'
++
++// 角色管理（TextPanel 内层组件）的编辑保存：走 store 的唯一 PATCH 出口 updateCard，并带上
++// 这张卡出卡时的 revision（乐观锁，后端 spec arc-phase-unlocated §13）。
++// 原先这里自己发 `PUT /api/distill/card/{id}`，后端只有 PATCH → 必 405，编辑从来存不上。
++// 红源：变异 = 改回自己发 PUT，本用例必红（updateCard 没被调）。
++
++if (typeof window !== 'undefined') {
++  if (!window.matchMedia) {
++    window.matchMedia = (query) => ({
++      matches: false, media: query,
++      addEventListener: () => {}, removeEventListener: () => {},
++      addListener: () => {}, removeListener: () => {}, onchange: null,
++      dispatchEvent: () => false,
++    })
++  }
++  if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {}
++}
++
++const { TEXT_CARDS } = vi.hoisted(() => ({
++  TEXT_CARDS: [
++    { id: 'card1', name: '角色甲', card_json: '{"name":"角色甲"}', text_id: 't1', created_at: '2026-01-01T00:00:00', revision: 'rev-1' },
++  ],
++}))
++
++vi.mock('../../api/client', () => ({
++  fetchWithTimeout: vi.fn(),
++  getAuthHeaders: vi.fn(() => ({})),
++  exportCard: vi.fn(),
++}))
++vi.mock('../../api/cards', () => ({
++  fetchCardsByText: vi.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(TEXT_CARDS) })),
++  fetchStandaloneCards: vi.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) })),
++  fetchAllCards: vi.fn(() => Promise.resolve(TEXT_CARDS)),
++}))
++vi.mock('../../store/db', () => ({
++  saveAvatar: vi.fn(),
++  getAvatar: vi.fn(() => Promise.resolve(null)),
++  loadCardAvatar: vi.fn(() => Promise.resolve(null)),
++}))
++const { mockState } = vi.hoisted(() => ({
++  mockState: {
++    authUser: { id: 'u1', role: 'user' },
++    texts: [{ id: 't1', title: '文本甲', filename: 'a.txt', char_count: 100 }],
++    loading: false,
++    error: null,
++    loadTexts: () => {},
++    uploadText: () => {},
++    uploadProgress: null,
++    uploadTaskProgress: {},
++    deleteText: () => {},
++    selectText: () => {},
++    currentTextId: null,
++    setCurrentTextDetailId: () => {},
++    navigateTo: () => {},
++    pushView: () => {},
++    setCurrentMarketCardId: () => {},
++    startChat: () => Promise.resolve(),
++    updateCard: vi.fn(() => Promise.resolve({ ok: true })),
++  },
++}))
++
++vi.mock('../../store/useAppStore', () => {
++  const hook = (sel) => sel(mockState)
++  hook.getState = () => mockState
++  hook.setState = () => {}
++  return { default: hook }
++})
++
++beforeEach(() => {
++  vi.mocked(fetchWithTimeout).mockReset()
++  vi.mocked(fetchWithTimeout).mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve([]) })
++  mockState.updateCard.mockClear()
++})
++
++describe('角色管理：编辑保存', () => {
++  it('保存走 store.updateCard(卡 id, 卡内容, revision)，不自己发请求', async () => {
++    const { container } = render(<TextPanel />)
++    fireEvent.click([...container.querySelectorAll('.creation-tab')].find((b) => b.textContent === '角色管理'))
++    await waitFor(() => expect(container.querySelector('.creation-char-menu-btn')).toBeInTheDocument())
++
++    fireEvent.click(container.querySelector('.creation-char-menu-btn'))
++    fireEvent.click([...container.querySelectorAll('.creation-char-dropdown button')].find((b) => b.textContent === '编辑'))
++    await waitFor(() => expect([...document.querySelectorAll('button')].some((b) => b.textContent === '保存')).toBe(true))
++    fireEvent.click([...document.querySelectorAll('button')].find((b) => b.textContent === '保存'))
++
++    await waitFor(() => expect(mockState.updateCard).toHaveBeenCalled())
++    const [id, , revision] = mockState.updateCard.mock.calls[0]
++    expect([id, revision]).toEqual(['card1', 'rev-1'])
++    expect(vi.mocked(fetchWithTimeout).mock.calls.filter(([u, o]) => u.startsWith('/api/distill/card/') && o?.method)).toEqual([])
++  })
++})
 diff --git a/web/frontend/src/components/__tests__/UnlocatedList.test.jsx b/web/frontend/src/components/__tests__/UnlocatedList.test.jsx
 new file mode 100644
-index 0000000..21c8856
+index 0000000..95d30c9
 --- /dev/null
 +++ b/web/frontend/src/components/__tests__/UnlocatedList.test.jsx
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,42 @@
 +/**
 + * spec arc-phase-unlocated §4 段 4：未定位区的渲染与挪动交互（选阶段 → 挪入 → onMove）。
 + */
@@ -3922,7 +4470,7 @@ index 0000000..21c8856
 +    expect(shown).toEqual(['阶段 2 · 晚', '阶段 2 · 晚', '阶段 2 · 晚', '阶段 1 · 早'])
 +  })
 +
-+  it('选阶段 → 点挪入 → onMove(分区, 序号, 阶段, 路径, 这一行渲染的条目)', async () => {
++  it('选阶段 → 点挪入 → onMove(分区, 序号, 阶段, 路径)', async () => {
 +    const onMove = vi.fn().mockResolvedValue()
 +    render(<UnlocatedList arc={arc} onMove={onMove} />)
 +    // 打开下拉走键盘 Enter（同 common/__tests__/Select.test.jsx），再点选项
@@ -3930,20 +4478,7 @@ index 0000000..21c8856
 +    fireEvent.click(screen.getByRole('option', { name: '阶段 1 · 早' }))
 +    fireEvent.click(screen.getAllByRole('button', { name: '挪入' })[2])
 +    await waitFor(() => expect(onMove).toHaveBeenCalled())
-+    expect(onMove.mock.calls).toEqual([['overlay', 1, 1, 'speaking_style.tone', '热']])
-+  })
-+
-+  it('做法与态度带上各自的内容给后端核对（序号漂移时拒绝而不是挪错）', async () => {
-+    const onMove = vi.fn().mockResolvedValue()
-+    render(<UnlocatedList arc={arc} onMove={onMove} />)
-+    const buttons = screen.getAllByRole('button', { name: '挪入' })
-+    fireEvent.click(buttons[0])
-+    fireEvent.click(buttons[3])
-+    await waitFor(() => expect(onMove).toHaveBeenCalledTimes(2))
-+    expect(onMove.mock.calls).toEqual([
-+      ['behaviors', 0, 2, '', { situation: '被揭短', behavior: '涨红脸' }],
-+      ['attitudes', 0, 1, '', { target: '掌柜', attitude: '怕', phase: 1 }],
-+    ])
++    expect(onMove.mock.calls).toEqual([['overlay', 1, 1, 'speaking_style.tone']])
 +  })
 +})
 diff --git a/web/frontend/src/components/common/ArcList.jsx b/web/frontend/src/components/common/ArcList.jsx
@@ -3994,16 +4529,16 @@ index 6184646..ff9aeb3 100644
                ? <ul className="card-arc-overlay-list">
 diff --git a/web/frontend/src/components/common/UnlocatedList.jsx b/web/frontend/src/components/common/UnlocatedList.jsx
 new file mode 100644
-index 0000000..3b427c8
+index 0000000..b8541ac
 --- /dev/null
 +++ b/web/frontend/src/components/common/UnlocatedList.jsx
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,82 @@
 +// 未定位区：摘录在原文里定不了位的条目（做法、字段值、关系态度）。只展示、不进聊天的 prompt；
 +// 卡主把一条挪进某个阶段，就算给了依据（spec arc-phase-unlocated §6）。
 +//
 +// 规则全在后端（core/unlocated.py：列表追加 / 单值交换 / 态度去占位），这里只渲染、收集
-+// 「挪到第几阶段」，交给 `onMove(section, index, phase, path, expected)` —— expected 是这一行
-+// 渲染的那一条，后端拿它核对序号处的条目，序号漂移（另一个标签页先挪过）时拒绝而不是挪错。
++// 「挪到第几阶段」，交给 `onMove(section, index, phase, path)`。序号漂移（另一个标签页先挪过）
++// 由调用方带上卡的 revision、后端按版本核对拦下（409），这里不另带条目内容。
 +// **不另写样式**：条目外观用「情境→行为」那套（card-behavior-*、pill），下拉用全站的
 +// `common/Select`（Radix，键盘与读屏现成），按钮用 btn-secondary btn-sm，按钮行用
 +// memory-edit-actions，提示用 settings-hint。默认选中：态度用它原来标的阶段，其余用最后阶段。
@@ -4051,16 +4586,15 @@ index 0000000..3b427c8
 +  const rows = [
 +    ...(u.behaviors || []).map((b, i) => ({
 +      key: `b${i}|${b.situation}|${b.behavior}`, kind: '做法', text: `${b.situation} → ${b.behavior}`,
-+      move: (p) => onMove('behaviors', i, p, '', { situation: b.situation, behavior: b.behavior }),
-+      initial: last,
++      move: (p) => onMove('behaviors', i, p, ''), initial: last,
 +    })),
 +    ...overlayLeaves(u.overlay).flatMap(([path, vals]) => (vals || []).map((v, i) => ({
 +      key: `o${path}|${i}|${v}`, kind: overlayLabel(path), text: v,
-+      move: (p) => onMove('overlay', i, p, path, v), initial: last,
++      move: (p) => onMove('overlay', i, p, path), initial: last,
 +    }))),
 +    ...(u.attitudes || []).map((a, i) => ({
 +      key: `a${i}|${a.target}|${a.attitude}`, kind: `对${a.target}的态度`, text: a.attitude,
-+      move: (p) => onMove('attitudes', i, p, '', { target: a.target, attitude: a.attitude, phase: a.phase }),
++      move: (p) => onMove('attitudes', i, p, ''),
 +      initial: a.phase >= 1 && a.phase <= last ? a.phase : last,
 +    })),
 +  ]
@@ -4083,10 +4617,10 @@ index 0000000..3b427c8
 +}
 diff --git a/web/frontend/src/store/applyServerCard.test.js b/web/frontend/src/store/applyServerCard.test.js
 new file mode 100644
-index 0000000..029a2ae
+index 0000000..90f65cf
 --- /dev/null
 +++ b/web/frontend/src/store/applyServerCard.test.js
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,55 @@
 +import { describe, it, expect, beforeEach, vi } from 'vitest'
 +import useAppStore from './useAppStore'
 +import { fetchWithTimeout } from '../api/client'
@@ -4105,12 +4639,12 @@ index 0000000..029a2ae
 +  removeAuth: vi.fn(),
 +}))
 +
-+const server = (arc) => ({ id: 'c1', card_json: JSON.stringify({ name: 'x', character_arc: arc }) })
++const server = (arc) => ({ id: 'c1', revision: 'r2', card_json: JSON.stringify({ name: 'x', character_arc: arc }) })
 +const reply = (body, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => body })
 +
 +beforeEach(() => {
 +  vi.mocked(fetchWithTimeout).mockReset()
-+  const card = { id: 'c1', card_json: JSON.stringify({ name: 'x', character_arc: { selectable: false } }) }
++  const card = { id: 'c1', revision: 'r1', card_json: JSON.stringify({ name: 'x', character_arc: { selectable: false } }) }
 +  useAppStore.setState({ cards: [card], currentCard: { ...card }, sessionId: null })
 +})
 +
@@ -4118,16 +4652,33 @@ index 0000000..029a2ae
 +  it('updateCard：store 里是服务端的 selectable，不是本地提交的', async () => {
 +    vi.mocked(fetchWithTimeout).mockResolvedValueOnce(
 +      reply({ ok: true, card: server({ selectable: true, phases: [] }) }))
-+    await useAppStore.getState().updateCard('c1', { name: 'x', character_arc: { selectable: false } })
++    await useAppStore.getState().updateCard('c1', { name: 'x', character_arc: { selectable: false } }, 'r1')
 +    const s = useAppStore.getState()
 +    expect([JSON.parse(s.cards[0].card_json).character_arc.selectable,
 +      s.currentCard.card_json.character_arc.selectable]).toEqual([true, true])
 +  })
 +
++  // 乐观锁（后端 spec §13）：请求带编辑所依据的 revision；写回后 store 换成服务端的新 revision，
++  // 下一次编辑按新的一版核对 —— 留着旧 revision 的话，连续两次保存第二次必 409。
++  it('updateCard：请求带 revision，写回后 cards 与 currentCard 换成新 revision', async () => {
++    vi.mocked(fetchWithTimeout).mockResolvedValueOnce(reply({ ok: true, card: server({ phases: [] }) }))
++    await useAppStore.getState().updateCard('c1', { name: 'x' }, 'r1')
++    const s = useAppStore.getState()
++    expect([JSON.parse(vi.mocked(fetchWithTimeout).mock.calls[0][1].body).revision,
++      s.cards[0].revision, s.currentCard.revision]).toEqual(['r1', 'r2', 'r2'])
++  })
++
++  it('updateCard 失败（409）：抛给调用方，不写全局 error（弹窗自己呈现，不报两遍）', async () => {
++    vi.mocked(fetchWithTimeout).mockRejectedValueOnce(new Error('这张卡已在别处更新，请刷新后再改'))
++    useAppStore.setState({ error: null })
++    await expect(useAppStore.getState().updateCard('c1', { name: 'x' }, 'r0')).rejects.toThrow('别处更新')
++    expect([useAppStore.getState().error, useAppStore.getState().currentCard.revision]).toEqual([null, 'r1'])
++  })
++
 +})
 diff --git a/web/frontend/src/store/moveUnlocated.test.js b/web/frontend/src/store/moveUnlocated.test.js
 new file mode 100644
-index 0000000..13ffa43
+index 0000000..10715e3
 --- /dev/null
 +++ b/web/frontend/src/store/moveUnlocated.test.js
 @@ -0,0 +1,47 @@
@@ -4162,12 +4713,12 @@ index 0000000..13ffa43
 +  it('moveUnlocated：POST 到挪动接口，写回返回的卡', async () => {
 +    vi.mocked(fetchWithTimeout).mockResolvedValueOnce(
 +      reply({ ok: true, card: server({ selectable: true, phases: [{ behaviors: [{ situation: 's' }] }] }) }))
-+    await useAppStore.getState().moveUnlocated('c1', { section: 'behaviors', index: 0, phase: 1, expected: { situation: 's' } })
++    await useAppStore.getState().moveUnlocated('c1', { section: 'behaviors', index: 0, phase: 1, revision: 'r1' })
 +    const [url, init] = vi.mocked(fetchWithTimeout).mock.calls[0]
 +    expect([url, JSON.parse(init.body),
 +      useAppStore.getState().currentCard.card_json.character_arc.phases[0].behaviors[0].situation])
 +      .toEqual(['/api/distill/card/c1/unlocated/move',
-+        { section: 'behaviors', index: 0, phase: 1, path: '', expected: { situation: 's' } }, 's'])
++        { section: 'behaviors', index: 0, phase: 1, path: '', revision: 'r1' }, 's'])
 +  })
 +
 +  it('moveUnlocated 失败：抛错，本地卡不动', async () => {
@@ -4179,44 +4730,21 @@ index 0000000..13ffa43
 +  })
 +})
 diff --git a/web/frontend/src/store/useAppStore.js b/web/frontend/src/store/useAppStore.js
-index a758619..482e5bd 100644
+index a758619..9ba3756 100644
 --- a/web/frontend/src/store/useAppStore.js
 +++ b/web/frontend/src/store/useAppStore.js
-@@ -1782,6 +1782,30 @@ const useAppStore = create((set, get) => {
+@@ -1782,37 +1782,55 @@ const useAppStore = create((set, get) => {
      }),
    })),
  
-+  // 写回服务端返回的卡（接口经 out_card：带现算的 `character_arc.selectable`）—— 编辑保存与
-+  // 挪动未定位条目共用这一处，store 里不再存本地拼的那份（旧做法会留着过期的 selectable）。
-+  _applyServerCard: (cardId, row) => {
-+    const raw = row?.card_json
-+    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw
-+    if (!obj) return
-+    set((s) => {
-+      const updated = {
-+        cards: s.cards.map((c) =>
-+          c.id === cardId
-+            ? { ...c, card_json: typeof c.card_json === 'string' ? JSON.stringify(obj) : obj }
-+            : c
-+        ),
-+        currentCard: s.currentCard?.id === cardId
-+          ? { ...s.currentCard, ...obj, card_json: obj }
-+          : s.currentCard,
-+      }
-+      if (s.sessionId && s.currentCard?.id === cardId) {
-+        updated.messages = [...s.messages, withCid({ role: 'system', content: '角色卡已更新' })]
-+      }
-+      return updated
-+    })
-+  },
-+
-   updateCard: async (cardId, cardJson) => {
-     try {
-       const res = await fetchWithTimeout(`/api/distill/card/${cardId}`, {
-@@ -1790,30 +1814,26 @@ const useAppStore = create((set, get) => {
-         body: JSON.stringify({ card_json: cardJson }),
-       })
-       const data = await res.json()
+-  updateCard: async (cardId, cardJson) => {
+-    try {
+-      const res = await fetchWithTimeout(`/api/distill/card/${cardId}`, {
+-        method: 'PATCH',
+-        headers: { 'Content-Type': 'application/json' },
+-        body: JSON.stringify({ card_json: cardJson }),
+-      })
+-      const data = await res.json()
 -      if (data.ok) {
 -        set((s) => {
 -          const updated = {
@@ -4234,35 +4762,73 @@ index a758619..482e5bd 100644
 -          }
 -          return updated
 -        })
--      }
-+      if (data.ok) get()._applyServerCard(cardId, data.card)
-       return data
-     } catch (err) {
-       set({ error: err.message })
-       throw err
-     }
-   },
++  // 写回服务端返回的卡（接口经 out_card：带现算的 `character_arc.selectable`）—— 编辑保存与
++  // 挪动未定位条目共用这一处，store 里不再存本地拼的那份（旧做法会留着过期的 selectable）。
++  _applyServerCard: (cardId, row) => {
++    const raw = row?.card_json
++    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw
++    if (!obj) return
++    set((s) => {
++      const updated = {
++        // revision 跟着卡走：下一次编辑 / 挪动要按写回后的这一版核对（乐观锁，后端 §13）
++        cards: s.cards.map((c) =>
++          c.id === cardId
++            ? { ...c, card_json: typeof c.card_json === 'string' ? JSON.stringify(obj) : obj, revision: row.revision }
++            : c
++        ),
++        currentCard: s.currentCard?.id === cardId
++          ? { ...s.currentCard, ...obj, card_json: obj, revision: row.revision }
++          : s.currentCard,
+       }
+-      return data
+-    } catch (err) {
+-      set({ error: err.message })
+-      throw err
+-    }
++      if (s.sessionId && s.currentCard?.id === cardId) {
++        updated.messages = [...s.messages, withCid({ role: 'system', content: '角色卡已更新' })]
++      }
++      return updated
++    })
++  },
++
++  // revision：这次编辑所依据的那一版（出卡时给的）；卡在别处变过 → 后端 409，错误抛给调用方
++  // 失败只抛给调用方（编辑弹窗自己呈现），不写全局 error —— 写了会在弹窗外再报一遍。
++  updateCard: async (cardId, cardJson, revision) => {
++    const res = await fetchWithTimeout(`/api/distill/card/${cardId}`, {
++      method: 'PATCH',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ card_json: cardJson, revision }),
++    })
++    const data = await res.json()
++    if (data.ok) get()._applyServerCard(cardId, data.card)
++    return data
++  },
 +
 +  // 把未定位区的一条挪进阶段 `phase`（规则只在后端 core/unlocated.py；这里只调接口、写回结果）。
-+  moveUnlocated: async (cardId, { section, index, phase, path = '', expected }) => {
++  moveUnlocated: async (cardId, { section, index, phase, path = '', revision }) => {
 +    const res = await fetchWithTimeout(`/api/distill/card/${cardId}/unlocated/move`, {
 +      method: 'POST',
 +      headers: { 'Content-Type': 'application/json' },
-+      body: JSON.stringify({ section, index, phase, path, expected }),
++      body: JSON.stringify({ section, index, phase, path, revision }),
 +    })
 +    const data = await res.json()
 +    if (!res.ok || !data.ok) throw new Error(data.detail || '挪动失败，请刷新后重试')
 +    get()._applyServerCard(cardId, data.card)
 +    return data
-+  },
+   },
    }
  })
- 
 diff --git a/web/routers/distill.py b/web/routers/distill.py
-index 72c3bbf..a1a7223 100644
+index 72c3bbf..360f187 100644
 --- a/web/routers/distill.py
 +++ b/web/routers/distill.py
-@@ -27,6 +27,7 @@ from core.card_out import out_card
+@@ -23,10 +23,11 @@ from core.scheduling import submit_to_main_loop
+ from deps import get_indexing_service, get_sessions, get_storage
+ from adapters.llm_adapter import LLMAdapter, user_facing_error
+ from core.arc_view import project_card, valid_phase
+-from core.card_out import out_card
++from core.card_out import CARD_CONFLICT, card_revision, out_card
  from core.character_roster import aliases_for, resolve_characters, target_character_name
  from core.distiller import DistillError, Distiller, text_fingerprint
  from core.embeddings import EMBEDDING_KEY_REQUIRED
@@ -4270,11 +4836,78 @@ index 72c3bbf..a1a7223 100644
  from core.export import export_tavern_json
  from core.card_draft import card_from_draft
  from core.schema import CharacterCard
-@@ -1274,7 +1275,38 @@ async def update_card(
+@@ -289,6 +290,25 @@ async def cancel_distill_tasks_by_user_id(user_id: str) -> int:
+     return n
+ 
+ 
++async def _persist_awakening(storage, card_id: str, user_id: str, awakening: str) -> None:
++    """把唤醒语写进**库里当前那张卡**：读最新 → 只改这一项 → 比较后写入。
++
++    不拿蒸馏时内存里那张卡整卡写回：存卡到这里之间用户可能已经改过卡，整卡写回会把它盖掉
++    （乐观锁，spec arc-phase-unlocated §13）。读写之间又被改 → 不写，打 warning；唤醒语本来
++    就是 non-fatal，调用方照常收尾。
++    """
++    rec = await storage.get_card_owned(card_id, user_id)
++    if not rec:
++        logger.warning("[distill] awakening not persisted: card %s gone", card_id)
++        return
++    card = CharacterCard.model_validate_json(rec["card_json"])
++    card.awakening_message = awakening
++    if await storage.update_card(card_id, card.model_dump(), expected=rec["card_json"]) is None:
++        logger.warning("[distill] awakening not persisted: card %s changed meanwhile", card_id)
++        return
++    print(f"[distill] Persisted awakening_message to card {card_id}")
++
++
+ def _generate_awakening(llm, card: CharacterCard, storage=None) -> str:
+     """Generate an awakening line for a newly distilled character.
+ 
+@@ -572,12 +592,10 @@ def _run_distill_task(
+         # Persist awakening_message to card (non-fatal)
+         if awakening:
+             try:
+-                card.awakening_message = awakening
+                 submit_to_main_loop(
+-                    get_storage().update_card(result["card_id"], card.model_dump()),
++                    _persist_awakening(get_storage(), result["card_id"], user_id, awakening),
+                     timeout=30,
+                 )
+-                print(f"[distill] Persisted awakening_message to card {result['card_id']}")
+             except Exception as exc:
+                 logger.warning("Persist awakening_message to card failed (non-fatal): %s", exc, exc_info=True)
+ 
+@@ -1183,9 +1201,7 @@ async def distill_stream(
+         # Persist awakening_message to card (non-fatal)
+         if awakening:
+             try:
+-                card.awakening_message = awakening
+-                await get_storage().update_card(result.get("card_id", ""), card.model_dump())
+-                print(f"[distill] Persisted awakening_message to card {result.get('card_id', '')}")
++                await _persist_awakening(get_storage(), result.get("card_id", ""), user_id, awakening)
+             except Exception as exc:
+                 logger.warning("Persist awakening_message to card failed (non-fatal): %s", exc, exc_info=True)
+ 
+@@ -1250,6 +1266,7 @@ async def reindex_rag(
+ 
+ class UpdateCardRequest(BaseModel):
+     card_json: dict
++    revision: str         # 编辑所依据的那一版（出卡时 `out_card` 给的），不符即 409
+ 
+ @router.patch("/card/{card_id}")
+ async def update_card(
+@@ -1273,8 +1290,49 @@ async def update_card(
+         # 上屏不带 `{exc}`：那是 pydantic 的字段级报错（内部字段名），细节只进日志。
          logger.warning("[distill] Card validation failed: %s", exc)
          raise HTTPException(400, "角色卡数据校验失败，请检查字段后重试") from exc
-     result = await storage.update_card(card_id, validated.model_dump())
+-    result = await storage.update_card(card_id, validated.model_dump())
 -    return {"ok": True, "card": result}
++    # 乐观锁（§13）：先核对版本（读到的已不是用户编辑所依据的那一版 → 409），再比较后写入
++    # （核对与写入之间又被改 → 存储层不写、返回 None → 同样 409）。
++    if card_revision(record["card_json"]) != req.revision:
++        raise HTTPException(409, CARD_CONFLICT)
++    result = await storage.update_card(card_id, validated.model_dump(), expected=record["card_json"])
++    if result is None:
++        raise HTTPException(409, CARD_CONFLICT)
 +    return {"ok": True, "card": out_card(result)}   # B4：返回的卡写进 store，出卡只经 out_card
 +
 +
@@ -4283,7 +4916,7 @@ index 72c3bbf..a1a7223 100644
 +    index: int
 +    phase: int            # 1 起
 +    path: str = ""        # section=overlay 时的登记表路径
-+    expected: Any         # 调用方看到的那一条，与序号处的条目对不上即 400（防序号漂移挪错）
++    revision: str         # 挪动所依据的那一版；卡变过（序号可能漂移）即 409，不按旧序号挪
 +
 +
 +@router.post("/card/{card_id}/unlocated/move")
@@ -4298,14 +4931,18 @@ index 72c3bbf..a1a7223 100644
 +    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
 +    if not record:
 +        raise HTTPException(404, "Card not found")
++    if card_revision(record["card_json"]) != req.revision:
++        raise HTTPException(409, CARD_CONFLICT)
 +    card = CharacterCard.model_validate_json(record["card_json"])
 +    try:
 +        moved = move_unlocated(card, section=req.section, index=req.index,
-+                               phase=req.phase, path=req.path, expected=req.expected)
++                               phase=req.phase, path=req.path)
 +    except ValueError as exc:
 +        logger.warning("[distill] move_unlocated rejected: %s", exc)
 +        raise HTTPException(400, "这一条已经不在未定位区，请刷新后重试") from exc
-+    result = await storage.update_card(card_id, moved.model_dump())
++    result = await storage.update_card(card_id, moved.model_dump(), expected=record["card_json"])
++    if result is None:
++        raise HTTPException(409, CARD_CONFLICT)
 +    return {"ok": True, "card": out_card(result)}   # B4：出卡只经 out_card（现算 selectable）
  
  
