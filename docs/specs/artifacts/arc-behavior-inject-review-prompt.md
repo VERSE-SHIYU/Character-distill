@@ -5,7 +5,7 @@
 
 ## 背景
 
-- 分支 `feat/arc-behavior-inject`（远端已推），叠在 `proto/arc-phase-unlocated`（①补完 B，HEAD `a469358f`）之上，比它多 5 个提交（实现 + 单测 + 变异脚本、目标检查、spec + 补丁、变异日志）。
+- 分支 `feat/arc-behavior-inject`（远端已推），叠在 `proto/arc-phase-unlocated`（①补完 B，HEAD `a469358f`）之上，只多了 ② 自己的提交（`git log --oneline a469358f..HEAD` 可看）。
 - spec：`docs/specs/arc-behavior-inject.md`（全部规则、坐标、对账表都在里面）。
 - 实现方是 Claude（沙箱），所以要你独立复核。**本次只验收，不合并、不开 PR**：B 还没合进 main（10-07 定合成 1 个 PR），现在开 PR 会把 B 的提交一起带进去。
 
