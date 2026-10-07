@@ -21,7 +21,7 @@ if (typeof window !== 'undefined') {
   }
 }
 
-const { currentCardBox, setCurrentCard, canWriteBox, moveSpy, updateSpy } = vi.hoisted(() => {
+const { currentCardBox, setCurrentCard, canWriteBox, moveSpy, updateSpy, saveOutcome } = vi.hoisted(() => {
   const box = { card: null, canWrite: true }
   return {
     currentCardBox: () => box.card,
@@ -29,6 +29,7 @@ const { currentCardBox, setCurrentCard, canWriteBox, moveSpy, updateSpy } = vi.h
     canWriteBox: { get: () => box.canWrite, set: (v) => { box.canWrite = v } },
     moveSpy: vi.fn(() => Promise.resolve({ ok: true })),
     updateSpy: vi.fn(() => Promise.resolve({ ok: true })),
+    saveOutcome: vi.fn(),   // 假弹窗记下 onSave 的结局：'resolved' 或抛出的错误文案
   }
 })
 
@@ -95,9 +96,12 @@ vi.mock('../../store/db', () => ({
 }))
 
 vi.mock('../RoleSetupModal', () => ({ default: () => null }))
-// 编辑弹窗只留「保存」这一个出口：看 CardDetail 把它接到 store.updateCard 时带没带 revision
+// 编辑弹窗只留「保存」这一个出口：看 CardDetail 把它接到 store.updateCard 时带没带 revision，
+// 以及 onSave 的结局（成功 / 把错误抛回弹窗）—— 真弹窗靠这个结局决定报错还是收工。
 vi.mock('../EditCardModal', () => ({
-  default: ({ isOpen, onSave }) => (isOpen ? <button onClick={() => onSave({ name: '改' })}>假保存</button> : null),
+  default: ({ isOpen, onSave }) => (isOpen
+    ? <button onClick={() => onSave({ name: '改' }).then(() => saveOutcome('resolved'), (e) => saveOutcome(e.message))}>假保存</button>
+    : null),
 }))
 vi.mock('../common/ImageCropModal', () => ({ default: () => null }))
 vi.mock('../common/ConfirmModal', () => ({ default: () => null }))
@@ -124,6 +128,31 @@ describe('CharCard 未定位区', () => {
     fireEvent.click(await screen.findByRole('button', { name: '假保存' }))
     await waitFor(() => expect(updateSpy).toHaveBeenCalled())
     expect(updateSpy.mock.calls[0]).toEqual(['c1', { name: '改' }, 'r1'])
+  })
+
+  // spec §13.3：保存成功才关弹窗；失败（409 等）把错误抛回弹窗、弹窗不关 —— 关了，用户改的
+  // 内容就跟着丢了（补充 12）。两侧都测：只测失败侧，「永远不关」也能过。
+  it('编辑保存成功：弹窗关闭', async () => {
+    canWriteBox.set(true)
+    setCurrentCard(card())
+    saveOutcome.mockClear()
+    render(<CharCard />)
+    fireEvent.click(await screen.findByRole('button', { name: /编辑/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '假保存' }))
+    await waitFor(() => expect(saveOutcome).toHaveBeenCalledWith('resolved'))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '假保存' })).toBeNull())
+  })
+
+  it('编辑保存失败（409）：错误抛回弹窗，弹窗不关', async () => {
+    canWriteBox.set(true)
+    setCurrentCard(card())
+    saveOutcome.mockClear()
+    updateSpy.mockRejectedValueOnce(new Error('这张卡已在别处更新，请刷新后再改'))
+    render(<CharCard />)
+    fireEvent.click(await screen.findByRole('button', { name: /编辑/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '假保存' }))
+    await waitFor(() => expect(saveOutcome).toHaveBeenCalledWith('这张卡已在别处更新，请刷新后再改'))
+    expect(screen.getByRole('button', { name: '假保存' })).toBeTruthy()
   })
 
   it('只读账号（游客 / 别人的卡）：不渲染未定位区', async () => {

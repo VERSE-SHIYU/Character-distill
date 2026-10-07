@@ -3331,10 +3331,10 @@ index f93652e..0b82ecb 100644
      }
 diff --git a/tests/test_card_optimistic_lock.py b/tests/test_card_optimistic_lock.py
 new file mode 100644
-index 0000000..208fdcc
+index 0000000..a780591
 --- /dev/null
 +++ b/tests/test_card_optimistic_lock.py
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,167 @@
 +# -*- coding: utf-8 -*-
 +"""卡片整卡写回的乐观锁（spec `docs/specs/arc-phase-unlocated.md` §13）。
 +
@@ -3349,6 +3349,7 @@ index 0000000..208fdcc
 +import logging
 +
 +from core.card_out import CARD_CONFLICT, card_revision, out_card
++from core.fingerprint import content_fingerprint
 +from core.schema import CharacterCard
 +
 +
@@ -3423,6 +3424,17 @@ index 0000000..208fdcc
 +    a, b = _card().model_dump_json(), _card(identity="变了").model_dump_json()
 +    assert (out_card({"card_json": a})["revision"], out_card({"card_json": b})["revision"] != card_revision(a)) == (
 +        card_revision(a), True)
++
++
++def test_card_revision_is_the_full_fingerprint_of_the_stored_text():
++    """版本 = 存储原文的**全量**内容指纹（§13.2，补充 13）。
++
++    上一条两边都经 `card_revision`，函数内部怎么变都过得去；这里拿它之外的真值比：唯一的指纹
++    实现 `content_fingerprint`，外加位宽（SHA-256 十六进制 64 位）。截短之后旧版本可能碰巧等于
++    新版本，那就是一次放行的静默覆盖 —— 乐观锁挡不挡得住，全看这个碰撞面。
++    """
++    raw = _card().model_dump_json()
++    assert (card_revision(raw), len(card_revision(raw))) == (content_fingerprint(raw), 64)
 +
 +
 +# ── 编辑保存（PATCH） ─────────────────────────────────────────────
@@ -4166,10 +4178,10 @@ index 0000000..7a3a29f
 +})
 diff --git a/web/frontend/src/components/__tests__/CharCardUnlocated.test.jsx b/web/frontend/src/components/__tests__/CharCardUnlocated.test.jsx
 new file mode 100644
-index 0000000..bfb4888
+index 0000000..97007fe
 --- /dev/null
 +++ b/web/frontend/src/components/__tests__/CharCardUnlocated.test.jsx
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,165 @@
 +import { describe, it, expect, vi } from 'vitest'
 +import { render, waitFor, fireEvent, screen } from '@testing-library/react'
 +import CharCard from '../CharCard'
@@ -4193,7 +4205,7 @@ index 0000000..bfb4888
 +  }
 +}
 +
-+const { currentCardBox, setCurrentCard, canWriteBox, moveSpy, updateSpy } = vi.hoisted(() => {
++const { currentCardBox, setCurrentCard, canWriteBox, moveSpy, updateSpy, saveOutcome } = vi.hoisted(() => {
 +  const box = { card: null, canWrite: true }
 +  return {
 +    currentCardBox: () => box.card,
@@ -4201,6 +4213,7 @@ index 0000000..bfb4888
 +    canWriteBox: { get: () => box.canWrite, set: (v) => { box.canWrite = v } },
 +    moveSpy: vi.fn(() => Promise.resolve({ ok: true })),
 +    updateSpy: vi.fn(() => Promise.resolve({ ok: true })),
++    saveOutcome: vi.fn(),   // 假弹窗记下 onSave 的结局：'resolved' 或抛出的错误文案
 +  }
 +})
 +
@@ -4267,9 +4280,12 @@ index 0000000..bfb4888
 +}))
 +
 +vi.mock('../RoleSetupModal', () => ({ default: () => null }))
-+// 编辑弹窗只留「保存」这一个出口：看 CardDetail 把它接到 store.updateCard 时带没带 revision
++// 编辑弹窗只留「保存」这一个出口：看 CardDetail 把它接到 store.updateCard 时带没带 revision，
++// 以及 onSave 的结局（成功 / 把错误抛回弹窗）—— 真弹窗靠这个结局决定报错还是收工。
 +vi.mock('../EditCardModal', () => ({
-+  default: ({ isOpen, onSave }) => (isOpen ? <button onClick={() => onSave({ name: '改' })}>假保存</button> : null),
++  default: ({ isOpen, onSave }) => (isOpen
++    ? <button onClick={() => onSave({ name: '改' }).then(() => saveOutcome('resolved'), (e) => saveOutcome(e.message))}>假保存</button>
++    : null),
 +}))
 +vi.mock('../common/ImageCropModal', () => ({ default: () => null }))
 +vi.mock('../common/ConfirmModal', () => ({ default: () => null }))
@@ -4296,6 +4312,31 @@ index 0000000..bfb4888
 +    fireEvent.click(await screen.findByRole('button', { name: '假保存' }))
 +    await waitFor(() => expect(updateSpy).toHaveBeenCalled())
 +    expect(updateSpy.mock.calls[0]).toEqual(['c1', { name: '改' }, 'r1'])
++  })
++
++  // spec §13.3：保存成功才关弹窗；失败（409 等）把错误抛回弹窗、弹窗不关 —— 关了，用户改的
++  // 内容就跟着丢了（补充 12）。两侧都测：只测失败侧，「永远不关」也能过。
++  it('编辑保存成功：弹窗关闭', async () => {
++    canWriteBox.set(true)
++    setCurrentCard(card())
++    saveOutcome.mockClear()
++    render(<CharCard />)
++    fireEvent.click(await screen.findByRole('button', { name: /编辑/ }))
++    fireEvent.click(await screen.findByRole('button', { name: '假保存' }))
++    await waitFor(() => expect(saveOutcome).toHaveBeenCalledWith('resolved'))
++    await waitFor(() => expect(screen.queryByRole('button', { name: '假保存' })).toBeNull())
++  })
++
++  it('编辑保存失败（409）：错误抛回弹窗，弹窗不关', async () => {
++    canWriteBox.set(true)
++    setCurrentCard(card())
++    saveOutcome.mockClear()
++    updateSpy.mockRejectedValueOnce(new Error('这张卡已在别处更新，请刷新后再改'))
++    render(<CharCard />)
++    fireEvent.click(await screen.findByRole('button', { name: /编辑/ }))
++    fireEvent.click(await screen.findByRole('button', { name: '假保存' }))
++    await waitFor(() => expect(saveOutcome).toHaveBeenCalledWith('这张卡已在别处更新，请刷新后再改'))
++    expect(screen.getByRole('button', { name: '假保存' })).toBeTruthy()
 +  })
 +
 +  it('只读账号（游客 / 别人的卡）：不渲染未定位区', async () => {
@@ -4334,10 +4375,10 @@ index 0000000..ad5fd33
 +})
 diff --git a/web/frontend/src/components/__tests__/TextPanelEditSave.test.jsx b/web/frontend/src/components/__tests__/TextPanelEditSave.test.jsx
 new file mode 100644
-index 0000000..b35a787
+index 0000000..2f02152
 --- /dev/null
 +++ b/web/frontend/src/components/__tests__/TextPanelEditSave.test.jsx
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,129 @@
 +import { describe, it, expect, beforeEach, vi } from 'vitest'
 +import { render, fireEvent, waitFor } from '@testing-library/react'
 +import TextPanel from '../TextPanel'
@@ -4416,7 +4457,41 @@ index 0000000..b35a787
 +  mockState.updateCard.mockClear()
 +})
 +
++async function openEdit(container) {
++  fireEvent.click([...container.querySelectorAll('.creation-tab')].find((b) => b.textContent === '角色管理'))
++  await waitFor(() => expect(container.querySelector('.creation-char-menu-btn')).toBeInTheDocument())
++  fireEvent.click(container.querySelector('.creation-char-menu-btn'))
++  fireEvent.click([...container.querySelectorAll('.creation-char-dropdown button')].find((b) => b.textContent === '编辑'))
++  await waitFor(() => expect(document.querySelector('.edit-card-modal')).toBeInTheDocument())
++}
++
++const saveButton = () => [...document.querySelectorAll('.edit-card-modal button')].find((b) => b.textContent === '保存')
++
 +describe('角色管理：编辑保存', () => {
++  // spec §13.3（补充 12）：这里用真的 EditCardModal —— 409 时弹窗内报错、弹窗不关、用户改的
++  // 内容还在；成功才关。两侧都测。
++  it('保存失败（409）：弹窗不关，报错上屏，用户改的内容还在', async () => {
++    mockState.updateCard.mockRejectedValueOnce(new Error('这张卡已在别处更新，请刷新后再改'))
++    const { container } = render(<TextPanel />)
++    await openEdit(container)
++    const traits = document.querySelector('.edit-card-modal textarea.modal-textarea')
++    fireEvent.change(traits, { target: { value: '我刚改的一行' } })
++    fireEvent.click(saveButton())
++
++    await waitFor(() => expect(document.querySelector('.edit-card-modal .error-box')).toBeInTheDocument())
++    expect(document.querySelector('.edit-card-modal .error-box').textContent).toContain('这张卡已在别处更新，请刷新后再改')
++    expect(document.querySelector('.edit-card-modal textarea.modal-textarea').value).toBe('我刚改的一行')
++    expect(mockState.updateCard).toHaveBeenCalledTimes(1)
++  })
++
++  it('保存成功：弹窗关闭', async () => {
++    const { container } = render(<TextPanel />)
++    await openEdit(container)
++    fireEvent.click(saveButton())
++    await waitFor(() => expect(mockState.updateCard).toHaveBeenCalled())
++    await waitFor(() => expect(document.querySelector('.edit-card-modal')).toBeNull())
++  })
++
 +  it('保存走 store.updateCard(卡 id, 卡内容, revision)，不自己发请求', async () => {
 +    const { container } = render(<TextPanel />)
 +    fireEvent.click([...container.querySelectorAll('.creation-tab')].find((b) => b.textContent === '角色管理'))
@@ -4435,10 +4510,10 @@ index 0000000..b35a787
 +})
 diff --git a/web/frontend/src/components/__tests__/UnlocatedList.test.jsx b/web/frontend/src/components/__tests__/UnlocatedList.test.jsx
 new file mode 100644
-index 0000000..95d30c9
+index 0000000..211906c
 --- /dev/null
 +++ b/web/frontend/src/components/__tests__/UnlocatedList.test.jsx
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,54 @@
 +/**
 + * spec arc-phase-unlocated §4 段 4：未定位区的渲染与挪动交互（选阶段 → 挪入 → onMove）。
 + */
@@ -4461,6 +4536,18 @@ index 0000000..95d30c9
 +  it('没有未定位条目：整块不渲染', () => {
 +    const { container } = render(<UnlocatedList arc={{ phases: PHASES, unlocated: {} }} onMove={vi.fn()} />)
 +    expect(container.innerHTML).toBe('')
++  })
++
++  // 渲染门三类条目各自都算数：只剩一类时整块仍在（补充 14）。少认一类，那类卡的残留条目
++  // 在界面上就够不着、挪不动 —— 数据没丢，但对用户等于丢了。
++  it.each([
++    ['只有做法', { behaviors: [{ situation: '被揭短', behavior: '涨红脸' }], overlay: {}, attitudes: [] }],
++    ['只有字段值', { behaviors: [], overlay: { speaking_style: { tone: ['冷'] } }, attitudes: [] }],
++    ['只有关系态度', { behaviors: [], overlay: {}, attitudes: [{ target: '掌柜', attitude: '怕', note: '', phase: 1 }] }],
++  ])('只剩一类未定位条目（%s）：整块仍渲染，列出这一条', (_name, unlocated) => {
++    const { container } = render(<UnlocatedList arc={{ phases: PHASES, unlocated }} onMove={vi.fn()} />)
++    expect(container.querySelector('.card-unlocated')).toBeTruthy()
++    expect(container.querySelectorAll('.card-unlocated .card-behavior-item')).toHaveLength(1)
 +  })
 +
 +  it('默认阶段：态度用原来标的阶段，其余用最后阶段', () => {

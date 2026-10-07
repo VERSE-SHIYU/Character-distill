@@ -22,6 +22,18 @@ describe('UnlocatedList 挪动交互', () => {
     expect(container.innerHTML).toBe('')
   })
 
+  // 渲染门三类条目各自都算数：只剩一类时整块仍在（补充 14）。少认一类，那类卡的残留条目
+  // 在界面上就够不着、挪不动 —— 数据没丢，但对用户等于丢了。
+  it.each([
+    ['只有做法', { behaviors: [{ situation: '被揭短', behavior: '涨红脸' }], overlay: {}, attitudes: [] }],
+    ['只有字段值', { behaviors: [], overlay: { speaking_style: { tone: ['冷'] } }, attitudes: [] }],
+    ['只有关系态度', { behaviors: [], overlay: {}, attitudes: [{ target: '掌柜', attitude: '怕', note: '', phase: 1 }] }],
+  ])('只剩一类未定位条目（%s）：整块仍渲染，列出这一条', (_name, unlocated) => {
+    const { container } = render(<UnlocatedList arc={{ phases: PHASES, unlocated }} onMove={vi.fn()} />)
+    expect(container.querySelector('.card-unlocated')).toBeTruthy()
+    expect(container.querySelectorAll('.card-unlocated .card-behavior-item')).toHaveLength(1)
+  })
+
   it('默认阶段：态度用原来标的阶段，其余用最后阶段', () => {
     render(<UnlocatedList arc={arc} onMove={vi.fn()} />)
     // 全站 Select（Radix）：触发器显示所选项的 label

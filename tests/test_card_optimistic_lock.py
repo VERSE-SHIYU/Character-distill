@@ -12,6 +12,7 @@ import json
 import logging
 
 from core.card_out import CARD_CONFLICT, card_revision, out_card
+from core.fingerprint import content_fingerprint
 from core.schema import CharacterCard
 
 
@@ -86,6 +87,17 @@ def test_out_card_revision_is_the_raw_stored_text_and_follows_content():
     a, b = _card().model_dump_json(), _card(identity="变了").model_dump_json()
     assert (out_card({"card_json": a})["revision"], out_card({"card_json": b})["revision"] != card_revision(a)) == (
         card_revision(a), True)
+
+
+def test_card_revision_is_the_full_fingerprint_of_the_stored_text():
+    """版本 = 存储原文的**全量**内容指纹（§13.2，补充 13）。
+
+    上一条两边都经 `card_revision`，函数内部怎么变都过得去；这里拿它之外的真值比：唯一的指纹
+    实现 `content_fingerprint`，外加位宽（SHA-256 十六进制 64 位）。截短之后旧版本可能碰巧等于
+    新版本，那就是一次放行的静默覆盖 —— 乐观锁挡不挡得住，全看这个碰撞面。
+    """
+    raw = _card().model_dump_json()
+    assert (card_revision(raw), len(card_revision(raw))) == (content_fingerprint(raw), 64)
 
 
 # ── 编辑保存（PATCH） ─────────────────────────────────────────────

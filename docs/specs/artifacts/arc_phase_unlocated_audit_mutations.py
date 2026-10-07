@@ -2,7 +2,8 @@
 
 **来历**：独立审计第 8 步「自己补想漏测的变异」—— 放宽（把锁改弱）、过严（把正常路径改拒）
 两个方向各补若干条，专挑 §13 乐观锁那一面。**期望红的红了 = 这条性质已被现有测试钉住；
-没红的 = 一条发现**（写进 spec「补充」）。
+没红的 = 一条发现**（写进 spec「补充」）。首跑 13 条里 A2、A4、B2 三条存活（补充 12–14）；
+补上用例后三条都红，并加了 A2b（A2 的另一个调用点）与 B5（A2 的另一侧），现为 15 条。
 
 **这份不是常设守卫**：与 `arc_phase_unlocated_mutations.py` 同处置，不登记进覆盖闭合元锁
 （`tests/perf/*_mutations.py` 才登记）。执行框架、还原、判档全走
@@ -41,7 +42,8 @@ STORE = FE / "src" / "store" / "useAppStore.js"
 CHAR = FE / "src" / "components" / "CharCard.jsx"
 UNLJ = FE / "src" / "components" / "common" / "UnlocatedList.jsx"
 EDIT = FE / "src" / "components" / "EditCardModal.jsx"
-TARGETS = (OUT, RDIST, STORE, CHAR, UNLJ, EDIT)
+TEXTP = FE / "src" / "components" / "TextPanel.jsx"
+TARGETS = (OUT, RDIST, STORE, CHAR, UNLJ, EDIT, TEXTP)
 
 JS = ("src/store/applyServerCard.test.js",
       "src/store/moveUnlocated.test.js",
@@ -83,6 +85,12 @@ MUTANTS = [
          "    setShowEditModal(false)",
          "    try { await updateCard(card.id || card.card_id, cardJson, card.revision) } catch { /* 吞 */ }\n"
          "    setShowEditModal(false)")])], "RED"),
+    ("A2b 放宽 角色管理的编辑保存吞掉失败、照常关弹窗（A2 的另一个调用点，补充 12 处置时加）", _run_js,
+     [("repl", TEXTP, [(
+         "            await updateCard(editCard.id || editCard.card_id, cardJson, editCard.revision)\n"
+         "            setEditCard(null)",
+         "            try { await updateCard(editCard.id || editCard.card_id, cardJson, editCard.revision) } catch { /* 吞 */ }\n"
+         "            setEditCard(null)")])], "RED"),
     ("A3  放宽 唤醒语回写在比较失败时强制写（盖掉别人的改动）", f"{LOCK}::test_awakening_racing_another_write_writes_nothing_and_warns",
      [("repl", RDIST, [(
          "        logger.warning(\"[distill] awakening not persisted: card %s changed meanwhile\", card_id)\n"
@@ -92,7 +100,8 @@ MUTANTS = [
          "        if fresh:\n"
          "            await storage.update_card(card_id, card.model_dump(), expected=fresh[\"card_json\"])\n"
          "        return\n")])], "RED"),
-    ("A4  放宽 revision 用截断的指纹（碰撞面扩大）", f"{LOCK}::test_out_card_revision_is_the_raw_stored_text_and_follows_content",
+    # 靶子原是 test_out_card_revision_…（两边同一个函数，自指，打不红 = 补充 13）；改指补上的那条。
+    ("A4  放宽 revision 用截断的指纹（碰撞面扩大）", f"{LOCK}::test_card_revision_is_the_full_fingerprint_of_the_stored_text",
      [("repl", OUT, [(
          "    return content_fingerprint(raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False))",
          "    return content_fingerprint(raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False))[:8]")])], "RED"),
@@ -149,6 +158,11 @@ MUTANTS = [
      [("repl", OUT, [(
          "        card[\"character_arc\"] = {**arc, \"selectable\": ArcPositions.model_validate(arc).has_positions()}",
          "        card[\"character_arc\"] = {**arc, \"selectable\": False}")])], "RED"),
+    ("B5  过严 卡片详情编辑保存成功也不关弹窗（A2 的另一侧，补充 12 处置时加）", _run_js,
+     [("repl", CHAR, [(
+         "    await updateCard(card.id || card.card_id, cardJson, card.revision)\n"
+         "    setShowEditModal(false)",
+         "    await updateCard(card.id || card.card_id, cardJson, card.revision)")])], "RED"),
     ("B4  过严 编辑保存整体替换 character_arc（丢指纹 / 未定位区）", _run_js,
      [("repl", EDIT, [(
          "      character_arc: {\n        ...data.character_arc,\n        axis: form.arc_axis.trim(),",

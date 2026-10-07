@@ -1,6 +1,6 @@
 # spec：阶段未验证的处理（①补完 B）+ overlay 与卡片同形
 
-基线 main `c97116b0`（2026-10-07 核） · 参考实现 `docs/specs/artifacts/arc-phase-unlocated-proto.patch`（sha256 `8a13a71dd623ceb715813052c598a57b20d1d7d27859ea11abad585eac5fba65`，在 `c97116b0` 上 `git apply --check` 通过）
+基线 main `c97116b0`（2026-10-07 核） · 参考实现 `docs/specs/artifacts/arc-phase-unlocated-proto.patch`（sha256 `53e9166a21d91c2f521b189a3e1649d75aac0e4e7f2a8e8b7d60b3a5fcea0f4e`，在 `c97116b0` 上 `git apply --check` 通过）
 决策记录：本对话 2026-10-06/07 与 Shiyu 逐条定的（D1–D4、方案 2 未定位区、d 同形 overlay、S15 选 A + 机械判定、锚点锁），总计划 `arc-reactions-plan.md`「①补完 B」一节。
 
 **分 4 段、4 个 PR，按 1 → 2 → 3 → 4 合并**（段 1 与段 2 文件不重叠，可两条 lane 并行；段 3、4 串行）。每段先过本段的目标检查（§1），再对账本段变异（§7，脚本带段号），再开下一段。参考补丁是 4 段的合集：每段只取 §4 列给它的文件和改动。
@@ -302,9 +302,9 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
 
 ### 13.4 测试与变异
 
-- `tests/test_card_optimistic_lock.py`（9 条）：出卡 revision 按原文且随内容变；PATCH 正确版本 → 200 且返回新 revision；PATCH 旧版本 → 409、卡不动；PATCH 竞争（核对后被改）→ 409、别人的写入保留；挪动旧版本、挪动竞争同理；唤醒语写进最新卡、保留用户编辑；唤醒语竞争 → 不写、有 warning。
+- `tests/test_card_optimistic_lock.py`（9 条）：出卡 revision 按原文且随内容变；PATCH 正确版本 → 200 且返回新 revision；PATCH 旧版本 → 409、卡不动；PATCH 竞争（核对后被改）→ 409、别人的写入保留；挪动旧版本、挪动竞争同理；唤醒语写进最新卡、保留用户编辑；唤醒语竞争 → 不写、有 warning；`card_revision` 等于存储原文的全量指纹（补充 13）。
 - `tests/test_postgres_store.py::TestPgCardCompareAndSwap`（2 条，真 PG）：版本对 → 写入；版本旧 → 返回 None、库里是先写的那份。
-- 前端：`applyServerCard.test.js`（请求带 revision、写回换新 revision、失败不写全局 error）、`CharCardUnlocated.test.jsx`（编辑保存与挪动都带 revision）、`TextPanelEditSave.test.jsx`（角色管理保存走 `updateCard` 且带 revision，不再自己发请求）。
+- 前端：`applyServerCard.test.js`（请求带 revision、写回换新 revision、失败不写全局 error）、`CharCardUnlocated.test.jsx`（编辑保存与挪动都带 revision）、`TextPanelEditSave.test.jsx`（角色管理保存走 `updateCard` 且带 revision，不再自己发请求）。保存后的弹窗（§13.3，补充 12）：两个调用点各测两侧 —— 成功才关；失败不关、错误交回弹窗，`TextPanelEditSave` 用真弹窗断言报错上屏、用户改的内容还在。
 - 一次性变异脚本新增 L1–L7、F10–F13（替换首轮的 X35/X36/F10），段 4 20/20 红，全部 61/61 红（§7）。
 - Playwright 三个文件 10 passed（挪动请求体带 revision）。
 
@@ -347,3 +347,13 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
 13. **`revision` 必须等于「存储原文的全量内容指纹」—— 没有测试守**（存活变异 A4）。§13.2 把版本定义成原文的 `content_fingerprint`（`card_out.py:37`）；乐观锁挡不挡得住静默覆盖，取决于它的碰撞面。但 `test_card_optimistic_lock.py:85` 那条**自指**：断言 `out_card(...)["revision"] == card_revision(a)`，两边同一个函数、同一份实现，函数内部怎么变都过得去（`b` 也经同一个函数，`!=` 那半也照样真）。把 `card_out.py:37` 改成 `content_fingerprint(...)[:8]`（256 位掉到 32 位，约 6.5 万张卡就有生日碰撞 → 旧 revision 偶然相等 → 静默覆盖放行），**A4 不红**；全仓 tests/ 里也没有第二处拿真值比过 `card_revision`（`test_s6_content_fingerprint_has_one_implementation` 只证明 `content_fingerprint` 定义在 `fingerprint.py`，不证明 `card_revision` 用了它的全量）。**复现**：同上 → `A4 … 实得=green MISS`。**建议修法**：给 `card_revision` 加一条 `assert card_revision(raw) == content_fingerprint(raw)`（引 `core.fingerprint` 的真值），把「必须全量」钉住。
 
 14. **未定位区渲染门 `hasUnlocated` 只测了两端**（存活变异 B2）。`UnlocatedList.jsx:39-44` 的门同时数 behaviors、attitudes、overlay 三种叶子（少一类就整块不渲染）。`UnlocatedList.test.jsx` 只有「全空」（`unlocated: {}`，行 21）和「三类都有」（行 11-18）两个夹具，中间态没测。把门改成只认 behaviors（`return (u.behaviors?.length || 0) > 0`），**B2 不红**：没有夹具是「只有 overlay 或只有态度、没有做法」。**影响**：这种卡（做法都挪走了、只剩一条没定阶段的「语气」值）整块未定位区会消失，残留条目在 UI 里够不着 —— 违反 §1「没有证据的条目不进 prompt、也不丢」（数据还在，但用户挪不动，等于丢）。`CharCardUnlocated.test.jsx:41` 的夹具也带 behaviors、`e2e/arc-phase-unlocated.spec.js` 的夹具三类齐全，都盖不到。**复现**：同上 → `B2 … 实得=green MISS`。**建议修法**：`UnlocatedList.test.jsx` 加一条夹具 `unlocated: { behaviors: [], overlay: { speaking_style: { tone: ['冷'] } }, attitudes: [] }`，断言 `.card-unlocated` 仍在、条目数为 1。
+
+**补充 12–14 的处置（2026-10-07）**：三条都只加用例，实现一行没改。审计脚本改了三处：A4 的靶子改指新用例（原靶子自指，正是补充 13）；加 A2b（A2 的另一个调用点：角色管理）与 B5（A2 的另一侧：成功也不关）。
+
+| 发现 | 加的用例 | 打红的变异 |
+|---|---|---|
+| 12 | `CharCardUnlocated.test.jsx`：「编辑保存成功：弹窗关闭」「编辑保存失败（409）：错误抛回弹窗，弹窗不关」（假弹窗记下 `onSave` 的结局）；`TextPanelEditSave.test.jsx`：「保存失败（409）：弹窗不关，报错上屏，用户改的内容还在」「保存成功：弹窗关闭」（真 `EditCardModal`） | A2、A2b、B5 |
+| 13 | `test_card_optimistic_lock.py::test_card_revision_is_the_full_fingerprint_of_the_stored_text`：拿 `card_revision` 之外的真值比（`content_fingerprint(raw)` 与位宽 64） | A4 |
+| 14 | `UnlocatedList.test.jsx`：三类条目各只剩一类（做法 / 字段值 / 关系态度）时整块仍渲染、条目数为 1（`it.each` 三例） | B2 |
+
+沙箱重跑（基线 `77b68fe`，一次性 PG 16 @55432）：审计脚本 `结论：15/15 条符合预期`，7 个目标文件还原后 sha256 逐字节一致；`test_card_optimistic_lock.py` 9 passed；前端全量 92 文件 479 passed（原 472，+7）；CI lint（`eslint.ci.config.js --quiet`）对改动的三个文件 0 error。§13.4 原写「9 条」，当时实为 8 条，加上补充 13 这一条后是 9 条。

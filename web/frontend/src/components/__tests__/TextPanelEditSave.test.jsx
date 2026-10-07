@@ -76,7 +76,41 @@ beforeEach(() => {
   mockState.updateCard.mockClear()
 })
 
+async function openEdit(container) {
+  fireEvent.click([...container.querySelectorAll('.creation-tab')].find((b) => b.textContent === '角色管理'))
+  await waitFor(() => expect(container.querySelector('.creation-char-menu-btn')).toBeInTheDocument())
+  fireEvent.click(container.querySelector('.creation-char-menu-btn'))
+  fireEvent.click([...container.querySelectorAll('.creation-char-dropdown button')].find((b) => b.textContent === '编辑'))
+  await waitFor(() => expect(document.querySelector('.edit-card-modal')).toBeInTheDocument())
+}
+
+const saveButton = () => [...document.querySelectorAll('.edit-card-modal button')].find((b) => b.textContent === '保存')
+
 describe('角色管理：编辑保存', () => {
+  // spec §13.3（补充 12）：这里用真的 EditCardModal —— 409 时弹窗内报错、弹窗不关、用户改的
+  // 内容还在；成功才关。两侧都测。
+  it('保存失败（409）：弹窗不关，报错上屏，用户改的内容还在', async () => {
+    mockState.updateCard.mockRejectedValueOnce(new Error('这张卡已在别处更新，请刷新后再改'))
+    const { container } = render(<TextPanel />)
+    await openEdit(container)
+    const traits = document.querySelector('.edit-card-modal textarea.modal-textarea')
+    fireEvent.change(traits, { target: { value: '我刚改的一行' } })
+    fireEvent.click(saveButton())
+
+    await waitFor(() => expect(document.querySelector('.edit-card-modal .error-box')).toBeInTheDocument())
+    expect(document.querySelector('.edit-card-modal .error-box').textContent).toContain('这张卡已在别处更新，请刷新后再改')
+    expect(document.querySelector('.edit-card-modal textarea.modal-textarea').value).toBe('我刚改的一行')
+    expect(mockState.updateCard).toHaveBeenCalledTimes(1)
+  })
+
+  it('保存成功：弹窗关闭', async () => {
+    const { container } = render(<TextPanel />)
+    await openEdit(container)
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(mockState.updateCard).toHaveBeenCalled())
+    await waitFor(() => expect(document.querySelector('.edit-card-modal')).toBeNull())
+  })
+
   it('保存走 store.updateCard(卡 id, 卡内容, revision)，不自己发请求', async () => {
     const { container } = render(<TextPanel />)
     fireEvent.click([...container.querySelectorAll('.creation-tab')].find((b) => b.textContent === '角色管理'))
