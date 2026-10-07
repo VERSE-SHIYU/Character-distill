@@ -357,3 +357,55 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
 | 14 | `UnlocatedList.test.jsx`：三类条目各只剩一类（做法 / 字段值 / 关系态度）时整块仍渲染、条目数为 1（`it.each` 三例） | B2 |
 
 沙箱重跑（基线 `77b68fe`，一次性 PG 16 @55432）：审计脚本 `结论：15/15 条符合预期`，7 个目标文件还原后 sha256 逐字节一致；`test_card_optimistic_lock.py` 9 passed；前端全量 92 文件 479 passed（原 472，+7）；CI lint（`eslint.ci.config.js --quiet`）对改动的三个文件 0 error。§13.4 原写「9 条」，当时实为 8 条，加上补充 13 这一条后是 9 条。
+
+---
+
+审计第三轮（独立审计员，分支 HEAD `40e9c75`，一次性 PG 16 @55432）。
+
+**本轮亲手重跑（原始输出摘要）**：
+- 一次性脚本 `arc_phase_unlocated_mutations.py`：`结论：61/61 条全红`；
+- 常设驱动 `arc_phase_anchoring_mutations.py`（42 条）、`card_draft_mutations.py`（38 条）：两份都是 `全部符合预期`，重写后的 `*_red_lines.json` 与已提交版本逐字节一致；
+- 元锁 + 锚点锁 40 passed；
+- 审计脚本 `arc_phase_unlocated_audit_mutations.py`：`15/15 条符合预期`；
+- 受影响后端 311 passed / 1 failed（§2.5 那条 main 原有的不稳定用例，单跑 3 次红红绿）；
+- 前端全量 92 文件 479 passed；
+- Playwright 三个 spec 10 passed，截图已重出；
+- 每次跑完 `git status` 都干净。
+
+**自补变异**：放宽 4 条 + 过严 3 条，都不在 §7 和审计脚本的对账表里。脚本是 `docs/specs/artifacts/arc_phase_unlocated_audit3_mutations.py`，与前两份同样处置：一次性产物，不登记进元锁。结果：R1、S2、S3 红；**R2、R3、R4、S1 存活**，就是下面 15–18 四条。
+
+四条的共同点：**实现本身是对的，缺的是钉住它的用例**。根因也是同一类：同一条规则有两个调用点，或者一个参数有两种取值，测试只覆盖了其中一侧。
+
+15. **未定位区 overlay 拒收经历类路径，这一侧没有测试守**（存活变异 R2）
+    - **分类**：实现没有偏离 spec，测试缺口。
+    - **现状**：`check_overlay` 有两个调用点（`core/schema.py` 阶段 overlay 与 `:205` 未定位区），同一个「叶子须为 `layers` 类登记路径」分支只在阶段一侧被测（`test_n3`，用的是未登记路径）。
+    - **复现**：把 `:205` 的 `layers=("state",)` 改成 `("state", "experience")`，结果 248 passed。
+    - **后果**：经历类条目（如 `key_memories`）能经 PATCH 进入未定位区，带来两个问题。
+      - `move_unlocated` 拒绝挪动非 state 路径，于是这一条卡在未定位区里出不来。
+      - `card_quotes._overlay_paths` 只给未定位区派生 state 路径，于是这一条也不进引文核对。
+    - **建议修法**：在 `test_arc_phase_unlocated.py` 加一条：`_loose_card(overlay={"key_memories": ["x"]})` 必须抛出「未登记」。
+
+16. **交换退回的态度，原阶段号没有测试守**（存活变异 R3）
+    - **分类**：测试缺口。
+    - **现状**：`core/unlocated.py:74` 把被换下的态度退回未定位区时，带上 `"phase": phase`。§3.4 规定 `phase` 是挪回时预选用的「原来标的阶段」，被换下的态度原本就在阶段 k，所以写 k 是对的。但 `test_m6`（`test_arc_phase_unlocated_move.py:81`）只断言了态度文字。
+    - **复现**：改成 `"phase": 0`，测试照绿。
+    - **后果**：用户把态度挪回去时，下拉框默认值退成最后阶段。
+    - **建议修法**：`test_m6` 的断言加上被退回那条的 `phase == 1`。
+
+17. **态度预选阶段的上界没有测试守**（存活变异 R4）
+    - **分类**：测试缺口。另附一个文案问题，要不要处理请 Shiyu 定。
+    - **现状**：`UnlocatedList.jsx:63` 写的是 `a.phase >= 1 && a.phase <= last ? a.phase : last`。卡在编辑弹窗里删过阶段以后，`a.phase` 可能大于 n。`UnlocatedList.test.jsx` 的态度夹具 `phase: 1` 永远落在范围内。
+    - **复现**：去掉 `<= last` 这半句，vitest 照绿。
+    - **后果**：Select 的值不在选项里，触发器显示空白。用户直接点「挪入」，会发出 `phase > n`。后端抛 `ValueError`，返回 400「这一条已经不在未定位区，请刷新后重试」。这句话是错的，条目其实还在，问题是阶段号越界。
+    - **建议修法**：
+      - 补用例：态度 `phase: 5`、卡只有 2 个阶段，断言预选为「阶段 2」。
+      - 文案（可选）：§3.6 规定所有 `ValueError` 共用一句 400 文案。如果要区分，可以把越界单独报成「阶段已变化，请重新选择」。
+
+18. **单阶段卡的未定位区渲染，没有测试守**（存活变异 S1，过严方向）
+    - **分类**：测试缺口。
+    - **现状**：后端 `test_u6` 已证明，单阶段卡上没有证据的状态类条目会进未定位区。但前端三个用例文件（`UnlocatedList`、`CharCardUnlocated`，以及 e2e）的夹具全是两个阶段。
+    - **复现**：把 `UnlocatedList.jsx:50` 的 `!last` 改成 `last < 2`（单阶段卡不显示未定位区），vitest 照绿。
+    - **后果**：违反 §1「不丢」。条目还在库里，但界面上够不着、挪不动。
+    - **建议修法**：`UnlocatedList.test.jsx` 加一条单阶段夹具，断言 `.card-unlocated` 在、下拉只有「阶段 1」一个选项。
+
+**结论**：15–18 补完用例，并让 audit3 脚本 7/7 全红之后，本 spec 的审计才算闭合。在那之前不建议开 PR。
