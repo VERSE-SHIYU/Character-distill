@@ -1,4 +1,4 @@
-"""变异预跑（spec `arc-behavior-inject.md` §7 对账表 M1–M21）。
+"""变异预跑（spec `arc-behavior-inject.md` §7 对账表 M1–M21 + 目标检查 G-*）。
 
 逐条把改后代码改坏一处（放宽、过严两个方向），对应测试必须红；跑完逐字节还原。
 
@@ -35,6 +35,7 @@ CHAT = ROOT / "core" / "chat_engine.py"
 TARGETS = (VIEW, CTX, CHAT)
 
 T = "tests/test_arc_behavior_inject.py"
+GOAL = "tests/test_arc_behavior_inject_goal.py"
 
 
 def _t(name: str) -> str:
@@ -113,6 +114,20 @@ MUTANTS = [
     ("M21 过严 没有做法也出提醒标题", _t("test_r4_due_but_no_behaviors_no_reminder"),
      [("repl", CHAT, [("        if not reinject_due(prior) or not self.card.situation_behaviors:",
                        "        if not reinject_due(prior):")])], "RED"),
+    # ── 目标检查（独立预言，四张公版样本卡）：关键变异再打一遍 ──
+    ("G-M1 放宽 阶段 k 的做法不进投影", GOAL,
+     [("repl", VIEW, [(_OWN, "    own = []\n")])], "RED"),
+    ("G-M2 放宽 所有阶段的做法都进投影", GOAL,
+     [("repl", VIEW, [(_OWN, "    own = [b for p in card.character_arc.phases for b in p.behaviors]\n")])], "RED"),
+    ("G-M8 放宽 不渲染做法块", GOAL,
+     [("repl", CTX, [(_SECTIONS, "")])], "RED"),
+    ("G-M12 放宽 从不重注入", GOAL,
+     [("repl", CHAT, [(_DUE, "    return False\n")])], "RED"),
+    ("G-M13 过严 每轮都重注入", GOAL,
+     [("repl", CHAT, [(_DUE, "    return prior_user_turns > 0\n")])], "RED"),
+    ("G-M17 泄漏 非流式把带提醒的消息写进历史", GOAL,
+     [("repl", CHAT, [(_HIST_CHAT, _HIST_CHAT.replace(
+         '"content": user_message})\n\n        # ── 沉默', '"content": llm_messages[-1]["content"]})\n\n        # ── 沉默'))])], "RED"),
 ]
 
 
@@ -120,11 +135,12 @@ def main() -> int:
     baseline = {p: p.read_bytes() for p in TARGETS}
 
     print("== 先验基线 ==")
-    summary, _, _, _ = framework._run(T)
-    print(f"  {T}  {summary}")
-    cause = lock_coverage.baseline_verdict(summary)
-    if cause:
-        return lock_coverage.refuse_on_baseline({T: cause})
+    for lock in (T, GOAL):
+        summary, _, _, _ = framework._run(lock)
+        print(f"  {lock}  {summary}")
+        cause = lock_coverage.baseline_verdict(summary)
+        if cause:
+            return lock_coverage.refuse_on_baseline({lock: cause})
 
     problems: list[str] = []
     for label, target, edits, expect in MUTANTS:
