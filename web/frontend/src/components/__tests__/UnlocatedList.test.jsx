@@ -24,15 +24,17 @@ describe('UnlocatedList 挪动交互', () => {
 
   it('默认阶段：态度用原来标的阶段，其余用最后阶段', () => {
     render(<UnlocatedList arc={arc} onMove={vi.fn()} />)
-    const values = screen.getAllByRole('combobox').map((s) => s.value)
-    expect(values).toEqual(['2', '2', '2', '1'])
+    // 全站 Select（Radix）：触发器显示所选项的 label
+    const shown = screen.getAllByRole('combobox').map((s) => s.textContent)
+    expect(shown).toEqual(['阶段 2 · 晚', '阶段 2 · 晚', '阶段 2 · 晚', '阶段 1 · 早'])
   })
 
   it('选阶段 → 点挪入 → onMove(分区, 序号, 阶段, 路径)', async () => {
     const onMove = vi.fn().mockResolvedValue()
     render(<UnlocatedList arc={arc} onMove={onMove} />)
-    const selects = screen.getAllByRole('combobox')
-    fireEvent.change(selects[2], { target: { value: '1' } })
+    // 打开下拉走键盘 Enter（同 common/__tests__/Select.test.jsx），再点选项
+    fireEvent.keyDown(screen.getAllByRole('combobox')[2], { key: 'Enter' })
+    fireEvent.click(screen.getByRole('option', { name: '阶段 1 · 早' }))
     fireEvent.click(screen.getAllByRole('button', { name: '挪入' })[2])
     await waitFor(() => expect(onMove).toHaveBeenCalled())
     expect(onMove.mock.calls).toEqual([['overlay', 1, 1, 'speaking_style.tone']])

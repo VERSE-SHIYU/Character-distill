@@ -2,34 +2,36 @@
 // 卡主把一条挪进某个阶段，就算给了依据（spec arc-phase-unlocated §6）。
 //
 // 规则全在后端（core/unlocated.py：列表追加 / 单值交换 / 态度去占位），这里只渲染、收集
-// 「挪到第几阶段」，交给 `onMove(section, index, phase, path)`。阶段选择用原生 <select>
-// （键盘、读屏、定位都现成，不重造）。默认选中：态度用它原来标的阶段，其余用最后阶段。
+// 「挪到第几阶段」，交给 `onMove(section, index, phase, path)`。
+// **不另写样式**：条目外观用「情境→行为」那套（card-behavior-*、pill），下拉用全站的
+// `common/Select`（Radix，键盘与读屏现成），按钮用 btn-secondary btn-sm，按钮行用
+// memory-edit-actions，提示用 settings-hint。默认选中：态度用它原来标的阶段，其余用最后阶段。
 import { useState } from 'react'
+import Select from './Select'
 import { overlayLeaves, overlayLabel } from './ArcList'
 
 function MoveControl({ phases, initial, label, onMove }) {
-  const [phase, setPhase] = useState(initial)
+  const [phase, setPhase] = useState(String(initial))
   const [busy, setBusy] = useState(false)
   const run = async () => {
     setBusy(true)
-    try { await onMove(phase) } finally { setBusy(false) }
+    try { await onMove(Number(phase)) } finally { setBusy(false) }
   }
   return (
-    <span className="card-unlocated-move">
-      <select
-        aria-label={`把「${label}」挪到哪个阶段`}
+    <div className="memory-edit-actions">
+      <Select
+        size="sm"
+        ariaLabel={`把「${label}」挪到哪个阶段`}
         value={phase}
-        onChange={(e) => setPhase(Number(e.target.value))}
+        options={phases.map((p, i) => ({
+          value: String(i + 1), label: `阶段 ${i + 1}${p.label ? ` · ${p.label}` : ''}` }))}
+        onChange={setPhase}
         disabled={busy}
-      >
-        {phases.map((p, i) => (
-          <option key={i} value={i + 1}>{`阶段 ${i + 1}${p.label ? ` · ${p.label}` : ''}`}</option>
-        ))}
-      </select>
+      />
       <button type="button" className="btn-secondary btn-sm" onClick={run} disabled={busy}>
         挪入
       </button>
-    </span>
+    </div>
   )
 }
 
@@ -62,14 +64,14 @@ export default function UnlocatedList({ arc, onMove }) {
   ]
   return (
     <div className="card-unlocated">
-      <p className="card-unlocated-hint">
+      <p className="settings-hint">
         这些条目在原文里找不到可靠的时期，聊天时不会用上；确认属于哪个阶段后可以挪进去。
       </p>
-      <ul className="card-unlocated-list">
+      <ul className="card-behavior-list">
         {rows.map((r) => (
-          <li key={r.key} className="card-unlocated-item">
-            <span className="card-unlocated-kind pill">{r.kind}</span>
-            <span className="card-unlocated-text">{r.text}</span>
+          <li key={r.key} className="card-behavior-item">
+            <span className="card-behavior-situation pill">{r.kind}</span>
+            <span className="card-behavior-text">{r.text}</span>
             <MoveControl phases={phases} initial={r.initial} label={r.text} onMove={r.move} />
           </li>
         ))}

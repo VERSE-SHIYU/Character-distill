@@ -1,6 +1,6 @@
 // @ts-check
 // spec arc-phase-unlocated §6 前端触发链的自动验收。全程 page.route 模拟（无真实后端、无凭据）。
-// 触发链：选阶段（原生 select）→ 点「挪入」→ store.moveUnlocated POST /unlocated/move
+// 触发链：选阶段（全站 Select 下拉）→ 点「挪入」→ store.moveUnlocated POST /unlocated/move
 //        → 写回接口返回的卡 → 弧线列表与未定位区都从新卡重算。
 // 断言：
 //   1) 未定位区列出三类条目；弧线阶段 overlay 按同形（嵌套）展示
@@ -79,7 +79,8 @@ test('未定位区列出三类条目；阶段 overlay 按嵌套展示', async ({
 test('单值交换：挪入阶段 1 后两边都变，请求体正确', async ({ page }) => {
   const body = JSON.stringify({ ok: true, card: { id: 'c1', card_json: JSON.stringify(card('新值', ['原值'])) } })
   const sent = await setup(page, { status: 200, contentType: 'application/json', body })
-  await toneRow(page).locator('select').selectOption('1')
+  await toneRow(page).getByRole('combobox').click()
+  await page.getByRole('option', { name: '阶段 1 · 穷酸要面子' }).click()
   await toneRow(page).getByRole('button', { name: '挪入' }).click()
   await expect(page.locator('.card-arc-overlay').nth(0)).toContainText('新值')
   await expect(toneRow(page)).toContainText('原值')
