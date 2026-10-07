@@ -52,8 +52,6 @@ def _clamp_delta(old: int, new: int | None, up_max: int, down_max: int) -> int:
 
 # Per-turn delta limits — enforced by _clamp_delta so the prompt-level
 # "不超过 ±8" rule is backed by code-level hard caps.
-AFFINITY_DELTA_UP = 5
-AFFINITY_DELTA_DOWN = -8
 TRUST_DELTA_UP = 5
 TRUST_DELTA_DOWN = -8
 GUARD_DELTA_UP = 8
@@ -346,8 +344,8 @@ class AffinityService:
     def apply_evaluation(self, data: dict, old_stage: str, psyche: Any) -> int:
         """把解析结果回写11个情感字段，返回importance。纯状态计算，无IO。
 
-        LLM 返回的数值经过 delta clamp（旧值 ± 上限强制执行 prompt 声明的单轮变化约束），
-        LLM 自觉遵守规则再好不过，不遵守时由代码兜底。
+        好感：模型只报事件、档位、档内整数，变多少由规则表定（core/affinity_rules.py）。
+        信任、防御：模型给数值，经 delta clamp（旧值 ± 上限）兜底。
         """
         import json as _json
         # Snapshot old values before applying LLM output

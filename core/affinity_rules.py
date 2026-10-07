@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 CLOSE_FROM = 73        # 亲近档下界：只此一处，`affinity_service.AFFINITY_STAGES` 引用它
 MET_REQUIRED = 3       # 跨进亲近档前要累计的 `met_condition` 次数
 LARGE_NEEDS_STREAK = 2  # 正向大档要求此前连续几轮非负
+LEGACY_UP_MAX = 5      # 用默认亲近条件的卡，单轮最多涨这么多（沿用改造前的上限，设计稿 Q4）
 
 TIERS: dict[str, tuple[int, int]] = {"small": (1, 2), "medium": (3, 5), "large": (6, 8)}
 POSITIVE = frozenset({"met_condition", "friendly", "repair"})
@@ -100,6 +101,8 @@ def apply_event(affinity: int, state: RelationState, psyche, *, event, tier, del
         pre = affinity if pre is None else pre
         new = affinity - _magnitude(tier, delta)
 
+    if not getattr(psyche, "warming_conditions", None):  # 卡上没有亲近条件：保留改造前的单轮上限
+        new = min(new, affinity + LEGACY_UP_MAX)
     if affinity < CLOSE_FROM and met < MET_REQUIRED:   # 没挣够次数，不能跨进亲近档
         new = min(new, CLOSE_FROM - 1)
     new = max(0, min(100, new))
