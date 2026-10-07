@@ -34,6 +34,19 @@ _BOUNDARY_NOTICE = (
 )
 
 
+def behavior_lines(behaviors) -> str:
+    """「- 情境 → 做法」一行一条 —— 卡片核心层与每轮重注入共用的**唯一**写法。"""
+    return "\n".join(f"- {b.situation} → {b.behavior}" for b in behaviors)
+
+
+# 卡片核心层「## 行为模式」之后的块：(标题, 从投影卡取正文)。正文为空 → 整块不出现。
+# **加一类人设块只在这里加一行**（③ 的「## 想要什么」接在「遇事的做法」之后），
+# 渲染、空块跳过、位置都由 `_build_core_sections` 统一处理，不另写。
+_CORE_SECTIONS: tuple[tuple[str, Callable[[Any], str]], ...] = (
+    ("遇事的做法", lambda c: behavior_lines(c.situation_behaviors)),
+)
+
+
 def _truncate(text: str, max_tokens: int) -> str:
     """按 token 估算截断文本。"""
     limit = int(max_tokens / 0.8)
@@ -360,6 +373,7 @@ class ContextEngine:
             f"价值观：{values}\n"
             f"内在矛盾：{tensions}\n"
         )
+        core += self._build_core_sections()
 
         # 语言风格
         catch = "、".join(c.speaking_style.catchphrases)
@@ -375,6 +389,15 @@ class ContextEngine:
 
         core += self._build_phase_block()
         return core
+
+    def _build_core_sections(self) -> str:
+        """按 `_CORE_SECTIONS` 顺序渲染「## 标题 + 正文」；正文为空的块整块不出现。"""
+        out = ""
+        for title, body_of in _CORE_SECTIONS:
+            body = body_of(self.card)
+            if body:
+                out += f"\n## {title}\n{body}\n"
+        return out
 
     def _build_phase_block(self) -> str:
         """「## 此刻的你」：k/n、阶段 1..k 的 label 与 state（k=n 附变化轴）。

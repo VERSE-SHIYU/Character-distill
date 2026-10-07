@@ -1,0 +1,94 @@
+== 先验基线 ==
+  tests/test_arc_behavior_inject.py  32 passed in 2.96s
+
+### M1  放宽 阶段 k 的做法不进投影   实得=RED   OK
+    E       AssertionError: assert ['全程情境'] == ['早期情境', '全程情境']
+    E         At index 0 diff: '全程情境' != '早期情境'
+
+### M2  放宽 所有阶段的做法都进投影   实得=RED   OK
+    E           AssertionError: 阶段 1 的投影带上了别的阶段的做法
+    E           assert '后期情境' not in ['早期情境', '后期情境', '全程情境']
+
+### M3  放宽 按经历类取阶段 1..k   实得=RED   OK
+    E           AssertionError: 阶段 2 的投影带上了别的阶段的做法
+    E           assert '早期情境' not in ['早期情境', '后期情境', '全程情境']
+
+### M4  放宽 未定位区的做法进投影   实得=RED   OK
+    E           AssertionError: assert '未定位情境' not in ['早期情境', '全程情境', '未定位情境']
+    tests/test_arc_behavior_inject.py:73: AssertionError
+
+### M5  过严 全程做法被丢   实得=RED   OK
+    E       AssertionError: assert ['早期情境'] == ['早期情境', '全程情境']
+    E         Right contains one more item: '全程情境'
+
+### M6  顺序 全程在前（违反 B3）   实得=RED   OK
+    E       AssertionError: assert ['全程情境', '早期情境'] == ['早期情境', '全程情境']
+    E         At index 0 diff: '全程情境' != '早期情境'
+
+### M7  原卡被改（不拷贝、就地并入）   实得=RED   OK
+    E       AssertionError: assert ['早期情境', '全程情境'] == ['全程情境']
+    E         At index 0 diff: '早期情境' != '全程情境'
+
+### M8  放宽 不渲染做法块   实得=RED   OK
+    E       AssertionError: assert '\n## 遇事的做法\n- 早期情境 → 早期做法\n- 全程情境 → 全程做法\n' in '你现在是「甲」。从这一刻起，你就是这个人，不是AI，不是助手。\n\n## 核心身份\n身份：\n背景：\n\n## 行为模式\n性格：多疑\n价值观：\n内在矛盾：\n\n## 语言风格\n语气：\u3000句式：\u3000用词：...刻的你\n你现在处在阶段 1/2。\n- 阶段 1·冷：起初\n你只知道到此刻为止发生过的事。之后会发生什么，你一概不知：别人提起你没经历过的事、没见过的人、还没发生的变故，你会困惑、追问或否认，绝不
+    tests/test_arc_behavior_inject.py:101: AssertionError
+
+### M9  过严 没有做法也出空标题   实得=RED   OK
+    E       AssertionError: assert '遇事的做法' not in '你现在是「甲」。从这一...也不预言自己的将来。\n'
+    E         '遇事的做法' is contained here:
+
+### M10 位置 做法块挪到语言风格之后   实得=RED   OK
+    E       AssertionError: assert 105 < 76
+    E        +  where 105 = <built-in method index of str object at 0x3285cb30>('## 遇事的做法')
+
+### M11 写法 两处各写一份格式（重注入改用别的写法）   实得=RED   OK
+    E       AssertionError: assert '现在\n\n[时间]\n...- 全程情境：全程做法\n' == '现在\n\n[时间]\n...全程情境 → 全程做法\n'
+    E           现在
+
+### M12 放宽 从不重注入   实得=RED   OK
+    E       AssertionError: assert '现在\n\n[时间]' == '现在\n\n[时间]\n...全程情境 → 全程做法\n'
+    E           现在
+
+### M13 过严 每轮都重注入   实得=RED   OK
+    E       AssertionError: assert '现在\n\n[时间]\n...全程情境 → 全程做法\n' == '现在\n\n[时间]'
+    E           现在
+
+### M14 过严 间隔改成 2   实得=RED   OK
+    E       assert True is False
+    E        +  where True = reinject_due(2)
+
+### M15 计数 把角色消息也算成回合   实得=RED   OK
+    E       AssertionError: assert False
+    E        +  where False = <built-in method endswith of str object at 0x7f73fe9d4300>('\n\n【提醒：你遇事的做法】\n- 早期情境 → 早期做法\n- 全程情境 → 全程做法\n')
+
+### M16 顺序 提醒排在时间感知之前   实得=RED   OK
+    E       AssertionError: assert '现在\n\n【提醒：你遇...程做法\n\n\n[时间]' == '现在\n\n[时间]\n...全程情境 → 全程做法\n'
+    E           现在
+
+### M17 泄漏 非流式把带提醒的消息写进历史   实得=RED   OK
+    E       AssertionError: 重注入写进了对话记录
+    E       assert '现在\n\n[时间]\n...全程情境 → 全程做法\n' == '现在'
+
+### M18 泄漏 流式把带提醒的消息写进历史   实得=RED   OK
+    E       AssertionError: 重注入写进了对话记录
+    E       assert '现在\n\n[时间]\n...全程情境 → 全程做法\n' == '现在'
+   [坐标] 变异后的红行号 → 变异前的行号：['core/arc_view.py:177', 'core/arc_view.py:223', 'tests/test_arc_behavior_inject.py:67'] → ['tests/test_arc_behavior_inject.py:67']
+
+### M19 无阶段卡 去掉 k>=1 守卫   实得=RED   OK
+    E       IndexError: list index out of range
+    FAILED tests/test_arc_behavior_inject.py::test_p3_card_without_arc_keeps_only_lifelong
+
+### M20 接入点 只渲染表里第一项   实得=RED   OK
+    E       ValueError: substring not found
+    FAILED tests/test_arc_behavior_inject.py::test_c6_sections_table_is_the_only_entry
+
+### M21 过严 没有做法也出提醒标题   实得=RED   OK
+    E       AssertionError: assert '现在\n\n[时间]\n...醒：你遇事的做法】\n\n' == '现在\n\n[时间]'
+    E           现在
+
+== 还原核对（sha256 逐字节）==
+  core/arc_view.py  True
+  core/context_engine.py  True
+  core/chat_engine.py  True
+
+结论：21/21 条全红

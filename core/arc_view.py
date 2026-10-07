@@ -165,11 +165,17 @@ def _project_relationships(
 
 
 def _project_custom(proj: ProjectedCard, card: CharacterCard, k: int, n: int) -> None:
-    """专门投影（各自函数）：弧线截断、关系口径、情境做法原样。就地改 `proj`。
+    """专门投影（各自函数）：弧线截断、关系口径、情境做法。就地改 `proj`。
 
     阶段表一律只留 1..k 的 label / state（k=n 也一样）：各阶段的 overlay 已经按登记表并进
     顶层字段，留在阶段里就是同一份内容的第二个来源，k=n 时还会带着前几个阶段的状态（R2）。
+
+    情境做法是状态类：投影卡的 `situation_behaviors` = **阶段 k 的做法在前 + 全程做法在后**
+    （同 B3 的顺序契约）；其他阶段的做法、未定位区的做法不进投影。阶段下的做法随阶段表一起
+    被丢掉，这里是它们唯一的出口。
     """
+    own = [b.model_copy(deep=True) for b in card.character_arc.phases[k - 1].behaviors] if k >= 1 else []
+    proj.situation_behaviors = own + list(proj.situation_behaviors)
     proj.character_arc.phases = [
         ArcPhase(label=p.label, state=p.state) for p in proj.character_arc.phases[:k]
     ]
