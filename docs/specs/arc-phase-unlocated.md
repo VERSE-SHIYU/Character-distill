@@ -439,3 +439,44 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
 理由：三轮审计和独立审计都是对整个分支做的；事后再拆成 4 段，每段合并后的中间状态都没有被测过；§13 乐观锁和补充 9–19 也不在当初 4 段的划分里。
 
 §4 的分段表保留，仍可当阅读顺序用。合并门仍然是分支 CI。
+
+---
+
+审计第四轮（独立复核，分支 HEAD `a469358f`，基线 main `c97116b0`；一次性 PG 16 @55435）。
+
+**本轮亲手重跑（原始结尾行）**
+
+| 项 | 原始结尾行 | 结论 |
+|---|---|---|
+| `arc_phase_unlocated_mutations.py` | `结论：61/61 条全红`（19 个靶子还原后 sha256 逐一 True） | 与 spec 一致 |
+| `arc_phase_unlocated_audit_mutations.py` | `结论：15/15 条符合预期`（7 个靶子 sha256 True） | 一致 |
+| `arc_phase_unlocated_audit3_mutations.py` | 十条 `实得=RED`（**须先设 `PYTHONUTF8=1`**，否则见补充 20） | 10/10，但有保留 |
+| 后端受影响 15 文件（真 PG 16 @55435、`REQUIRE_PG_TESTS=1`） | `433 passed, 28 warnings in 162.10s` | 无失败 |
+| 前端全量 vitest | `Test Files 92 passed` / `Tests 481 passed` | 一致 |
+| `eslint . -c eslint.ci.config.js --quiet` | 退出 0（0 error） | 一致 |
+| Playwright 三 spec | `10 passed (43.3s)` | 一致 |
+| 坐标 | HEAD `a469358f`、树 `e01e6c77…`、补丁 sha256 `7f8b5312…` | 一致 |
+| 补丁在 `c97116b0` 上 | `git apply --check` 退出 0 | 一致 |
+
+（后端 spec 记「431 passed、1 skipped」；本轮 15 文件实测 `433 passed`、0 skipped —— §2.5 那条不稳定用例本轮为绿，故比 spec 多过一条、少 skip 一条。）
+
+**自补变异**：放宽 2 条 + 过严 2 条，脚本 `docs/specs/artifacts/arc_phase_unlocated_audit4_mutations.py`（与 audit3 / audit 同处置：一次性产物、不登记进元锁；不同处：子进程显式 `encoding="utf-8"`、跑前验基线、还原 `newline=""`）。4 条全部 RED，**无存活** —— 本次改动面（补充 17 的 `UnknownPhase` 分类与 400 文案拆分、补充 17/18 的前端预选与渲染门）在本机没有留下未钉住的性质。
+
+- T1 放宽 路由先接宽 `except`（子类分支不可达，越界退回通用文案）→ RED
+- T2 放宽 序号错也抛 `UnknownPhase`（分类放宽到非越界错）→ RED
+- T3 过严 序号上界收紧一格（列表最后一条挪不动）→ RED
+- T4 过严 渲染门要求两条以上（只剩一类条目的卡整块不渲染）→ RED
+
+**发现（1 条）**
+
+20. **audit3 证据脚本在中文 Windows 上跑不完，且跑完把树弄脏**（**分类**：既非「实现偏离 spec」也非「spec 设计错」，属**交付物缺陷** —— 证据脚本的跨平台健壮性。之所以仍报：它是本次改动的 8 个文件之一，本分支把补充 17 的三个变异 R5/R6/S4 加进这份脚本，且 review 文档执行步 1 要求裸跑它；在中文 Windows（本机默认 locale）上那一步直接崩。）
+    - **位置**：`docs/specs/artifacts/arc_phase_unlocated_audit3_mutations.py:50-56`（`run()`）、`:65,68`（还原）。
+    - **现状**：
+      - `run()` 两处 `subprocess.run(..., capture_output=True, text=True)` **未传 `encoding`** → 父进程按 locale（本机 GBK）解码子进程的 UTF-8 中文输出 → 读线程 `UnicodeDecodeError` → `r.stdout` / `r.stderr` 变 `None` → `:55` 的 `(r.stdout + r.stderr)` 抛 `TypeError`。崩在 R4（第一个前端变异），**R5/R6/S4 根本没跑到**。
+      - 还原 `p.write_text(src, encoding="utf-8")` **未传 `newline=""`** → Windows 把 LF 翻成 CRLF → 跑完 `git status` 三个文件（`core/schema.py`、`core/unlocated.py`、`UnlocatedList.jsx`）显脏；`git diff --ignore-cr-at-eol` 为空（内容其实一致），但与「每次跑完 `git status` 只剩本次的改动」矛盾。
+      - **无基线门**（同目录的 `audit_mutations.py` / `mutations.py` 都有）—— 基线本就红时会把「本来就红」读成「变异打红了」。
+    - **复现**：仓库根目录 `python docs/specs/artifacts/arc_phase_unlocated_audit3_mutations.py`（不设 `PYTHONUTF8`）→ R4 处 `TypeError: unsupported operand type(s) for +: 'NoneType' and 'NoneType'`；随后 `git status` 三文件脏。加 `PYTHONUTF8=1` 后十条全 `RED`，`git status` 干净。
+    - **影响**：中文 Windows 上，本分支为补充 17 新增的 R5/R6/S4 无法由提交的脚本产出证据；审计员照 review 文档裸跑会直接崩。
+    - **建议修法**：`run()` 两处 `subprocess.run` 加 `encoding="utf-8", errors="replace"`；`:65,68` 的 `write_text` 加 `newline=""`（与 `audit_mutations.py` 同处置；可选补基线门）。修后裸跑应打印十条 `实得=RED` 且 `git status` 干净。
+
+**次要记录（非发现）**：`tests/test_arc_phase_unlocated.py` 的 `test_n4c_…` 前有 3 个空行（PEP8 要 2）、其后 `def _full_card()` 前只有 1 个空行（要 2）。CI 无 Python lint 门（只有前端 eslint），不影响任何检查。
