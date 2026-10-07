@@ -1,6 +1,6 @@
 # spec：② 「情境→做法」注入
 
-基线 `proto/arc-phase-unlocated` HEAD `40e9c75b`（= ①补完 B 最终版；main 仍是 `c97116b0`）· 参考实现 `docs/specs/artifacts/arc-behavior-inject-proto.patch`（sha256 `d98d721e599de31faa3c9c87eb2808c8d94af7d03b3bc37a4773d49169ad844f`，在 `40e9c75b` 上 `git apply --check` 通过）
+基线 `proto/arc-phase-unlocated` HEAD `40e9c75b`（= ①补完 B 最终版；main 仍是 `c97116b0`）· 参考实现 `docs/specs/artifacts/arc-behavior-inject-proto.patch`（sha256 `9f3ecc394cccb3e6f6caff9a95809aa7a3a26a088682869e99d4c088c850d84c`，在 `40e9c75b` 上 `git apply --check` 通过）
 决策来源：总计划「② 情境→做法注入」一节（调研 v1.3 + 10-06 两项补充决定）；重注入间隔 Shiyu 2026-10-07 定「每 4 轮」。
 
 **一个 PR。等 ①补完 B 的 4 个 PR 全部合进 main 后再开工**（本补丁依赖 B 的 `UnlocatedItems` 与 `_project_custom` 现状）。纯后端，不改前端、不改蒸馏、不改存卡结构。
@@ -20,11 +20,16 @@
 
 **目标：开聊时选了阶段 k，模型每轮都看得到「阶段 k + 全程」的遇事做法；别的阶段、未定位区的做法看不到；长对话里每 4 轮再提醒一次，提醒不进对话记录。**
 
-| 检查 | 用例 |
+`tests/test_arc_behavior_inject_goal.py`：四张公版样本卡（`docs/specs/arc-behaviors-draft-samples/`，共 12 个「卡 × 阶段」），每个阶段 k 用**真实 `ChatEngine`**（`arc_phase=k`）连聊 5 句，桩 LLM 记下真正发出去的 system prompt 与 messages。**预言独立于被测代码**：期望 / 禁止的做法直接从样本 JSON 算，不调 `project_card`、`behavior_lines`。
+
+| 检查 | 断言 |
 |---|---|
-| 选阶段 1 的 system prompt 有阶段 1 与全程的做法、没有阶段 2 与未定位的 | `test_c1`、`test_c4`、`test_c5` |
-| 第 5、9、13… 次回复前，当前用户消息末尾带做法表；其余轮不带 | `test_r1`–`test_r3`、`test_r7` |
-| 提醒不写进 `history`，下一轮的历史里也没有 | `test_r7`、`test_r8`（流式、非流式各一） |
+| G1 | 每一轮的 system prompt 含阶段 k 与全程的每一条做法；别的阶段独有的、未定位区的做法在 system prompt 与 messages 里都不出现 |
+| G2 | 第 1–4 句的最后一条消息不带提醒；第 5 句带，且提醒里有阶段 k 与全程的每一条做法 |
+| G3 | 引擎历史里的用户消息逐字等于原文 |
+| G0 | 夹具自检：确有「别的阶段独有」的做法，否则 G1 空转 |
+
+基线（`40e9c75b`，无 ②）上跑：`11 failed, 1 passed`（只有 G0 绿）；改后 `12 passed`。
 
 ---
 
@@ -33,10 +38,21 @@
 - `core/arc_view.py:167-180` `_project_custom`：`:174` 阶段表重建为 `ArcPhase(label=p.label, state=p.state)`，**阶段下的做法被丢掉**；投影卡的 `situation_behaviors` 只剩顶层（全程）做法。`:179` 投影清空未定位区。
 - `core/arc_view.py` `project_card` docstring：**B3 顺序契约**——状态类列表「阶段 k 特有在前 + 全程在后」。做法是状态类（B spec §3.2）。
 - `core/card_layers.py:77` `"situation_behaviors": FieldSpec("custom", "list", "情境→行为")`：custom 层，通用投影不碰，由 `_project_custom` 处理；锁 S2（`tests/test_arc_phase_fields_locks.py`）的 custom 白名单已含它。
-- `core/context_engine.py:341` `_build_card_core`：`:358` 「## 行为模式」、`:368` 「## 语言风格」。**全仓没有任何 prompt 读 `situation_behaviors`**（`grep situation_behaviors core/` 只命中 schema、card_layers、card_draft 等存卡侧）。
-- 一对一、agent、群聊、主动消息都经 `ContextEngine.build_ex`：`chat_engine._compose_context`（`:322`）；群聊 `group_session.py:156/323/333`；重逢主动消息 `chat_engine.py:1477` 前用 `self._ctx_engine.build`。开场白、苏醒台词、市场 @ 回复是独立短 prompt，不经 card_core（总计划 10-06 在 `c97116b0` 核过）。
+- `core/context_engine.py:341` `_build_card_core`：`:358` 「## 行为模式」、`:368` 「## 语言风格」。`:285` `build_ex` 第一步就调它（固定区，`budget -= count_tokens(card_core)`，不裁剪）。
+- **全量扫描：没有任何 prompt 读做法**。`git grep -n "situation_behaviors" 40e9c75b -- '*.py' ':!tests'`，去掉 card_draft / schema / card_layers 后的原始输出：
+  ```
+  core/card_quotes.py:42/50/79      （摘录核对）
+  core/distiller.py:244/301/302/336 （蒸馏模板）
+  docs/specs/artifacts/…            （历史脚本）
+  ```
+  `git grep -n "\.behaviors\b" 40e9c75b -- 'core/*.py' 'web/*.py'`（去掉 card_draft / schema）只命中 `card_layers.py:83`（登记）与 `card_quotes.py:81`（摘录核对）。
+- **所有 prompt 构建点**（`git grep -n "_build_card_core\|build_ex(\|\.build(\|_compose_context\|_compose_system_prompt"`）：一对一 `chat_engine.py:415/463` → `_compose_system_prompt` → `_compose_context:322` → `build_ex`；agent 退化 `:368`；重逢主动消息 `:1470` `self._ctx_engine.build`；群聊 `group_session.py:156/323/333` `_compose_context`。开场白、苏醒台词是 `core/opening.py` 的 `build_opening_prompt:27` / `build_awakening_prompt:63`（自拼，只取 `personality_traits[:3]` 等，不经 card_core）；市场 @ 回复 `market.py:840` 投影后自拼，文件里没有 `ContextEngine` / `build_ex`。
+- **一对一的角色回复只有两条路**：`web/routers/chat.py:339` `asyncio.to_thread(engine.chat, …)`、`:528` `engine.chat_stream(…)`；全仓 `engine.chat(` / `.chat_stream(` 的其余命中都是 `llm.` 层或群聊（`group_session.py:168/330/354` 直接 `llm.achat`）。
+- agent 路径：`_run_agent_phase` 成功与退化两支都 `return …, llm_messages`（`chat_engine.py:368-369`、`:407`），最终那次调用用的就是附过块的 `llm_messages`。
 - 时间感知块：`chat_engine.py:420-426`（`chat`）与 `:468-474`（`chat_stream`）**同一段代码写了两遍**，附在当前用户消息末尾、不进 system prompt；`:428` / `:476` 之后才把原始用户消息写进 `self.history`。`scripts/run_agent_eval.py` 又抄了第三份。
-- `self.history` 恢复：`web/routers/chat.py:216` 从库**全量**重建（`_rebuild_history_from_db` 只留 user / char）；`history.py:321`、`distill.py:1549` 会先放一条开场白（assistant）。→ 按「用户回合数」计数在恢复后仍准，按 `len(history)//2` 不准。
+- `self.history` 恢复：`web/routers/chat.py:216` 从库**全量**重建（`storage/postgres_store.py:1770` `get_messages` 无 LIMIT，`ORDER BY id ASC`；`_rebuild_history_from_db` 只留 user / char）；`history.py:321`、`distill.py:1549` 会先放一条开场白（assistant）。→ 按「用户回合数」计数在恢复后仍准，按 `len(history)//2` 不准。
+  例外：`hidden=True` 的消息（`chat.py:364`、`:507` `if not hidden:` 才落库）只进内存历史，恢复会话后不算回合 → 之后的提醒提前或推后几轮。不影响正确性，记录在 §10。
+- 预算：`context_engine.py:47-53` `MODEL_BUDGET_MAP` 里 `deepseek-flash` / `deepseek-v4-pro` 为 32000（生产默认 `config.example.yaml:18` `model: deepseek-flash`），`_compute_budgets:62` 历史占 40%。
 - 环境：测试库 PG 16 `charsim / ci_test_password / charsim_test` @55432（`docker-compose.test.yml`）。沙箱无 docker，用 apt 装的 PG 16 起同配置。
 
 ---
@@ -46,6 +62,8 @@
 ### 3.1 投影（`_project_custom`）
 
 `proj.situation_behaviors = 阶段 k 的做法（深拷贝）+ 全程做法`；k=0（无弧线卡）只有全程。其他阶段、未定位区不进。原卡不改。
+
+总计划 ② 一节有两行看上去不一致：「必须和①一致：只用当前阶段**及之前**成立的做法」与「放什么：顶层 + 当前阶段 k 的做法；其他阶段不放」。按后者实现，理由是代码事实：做法是**状态类**（B spec §3.2 表第一行），①补完 A 的规则是「状态类只取阶段 k」；一条做法在阶段 1 和 2 都成立时，B 的位置规则（§3.1 d）会把它同时挂在两个阶段，所以选阶段 2 照样能看到。前一行的「及之前」只是「不含之后」的意思，与此不冲突。
 
 ### 3.2 卡片核心层（`context_engine.py`）
 
@@ -65,9 +83,9 @@
 
 | 设计 | 出处 |
 |---|---|
-| 整表放进 system prompt 固定前缀，不检索、不加挑选指令 | **文献**：MDRP（Findings of ACL 2026）全部条目进 prompt、提升集中在挑对条目与守边界；反向证据：同文 DeepSeek-Chat「挑对条目」最低、只测单轮（调研 v1.3，Shiyu 10-06 定） |
+| 整表放进 system prompt 固定前缀，不检索、不加挑选指令 | **文献**：MDRP（Findings of ACL 2026）全部条目进 prompt、提升集中在挑对条目与守边界；反向证据：同文 DeepSeek-Chat「挑对条目」最低、只测单轮（据调研 v1.3，**本轮未复读原文**；Shiyu 10-06 定） |
 | 只放阶段 k + 全程 | 与①一致（状态类只取阶段 k）+ CDT（ACL 2026）未验证的不注入 → 未定位区不放 |
-| 临时用户消息重注入、放消息末尾、不进对话记录 | **文献**：2609.24532（2026-09 预印本，未经同行评审）——重注入以 user 角色临时消息投递、只对下一次回复有效、不入记录；静态重注入降漂移 35%，按偏离检测再注入不比固定间隔好（p=.769）；作者推荐静态全人设重注入为低复杂度基线。ContextEcho（2026 预印本）：放用户消息优于系统提示 |
+| 临时用户消息重注入、放消息末尾、不进对话记录 | **文献**：2609.24532（2026-09 预印本，未经同行评审）——重注入以 user 角色临时消息投递、只对下一次回复有效、不入记录；静态重注入降漂移 35%，按偏离检测再注入不比固定间隔好（p=.769）；作者推荐静态全人设重注入为低复杂度基线。ContextEcho（2026 预印本）：放用户消息优于系统提示 —— **据调研 v1.3，本轮未复读原文** |
 | 间隔 4 轮 | **文献**：2609.24532 静态方案在第 2/4/6 个检查点（每检查点 = 4 个回合 = 2 次角色回复）后注入，即每 4 次角色回复一次；更频繁方案（每 2 次）描述上略好但未做检验。Shiyu 10-07 选 4 |
 | 时间感知在前、提醒在后 | **工程原则**（提醒贴着模型要回复的位置；论文未比较块内顺序） |
 | 只数用户回合 | **代码事实**（§2：历史开头有开场白、可能有主动消息） |
@@ -85,12 +103,13 @@
 | `core/chat_engine.py` | `REINJECT_EVERY`、`reinject_due`、`_attach_turn_blocks`、`_build_behavior_reminder`；`chat` / `chat_stream` 去掉重复段 |
 | `scripts/run_agent_eval.py` | 改调 `_attach_turn_blocks`（第三份拷贝） |
 | `tests/test_arc_behavior_inject.py` | 新增 32 条（P 6、C 6、R 20 含参数化） |
+| `tests/test_arc_behavior_inject_goal.py` | 目标检查 12 条（§1） |
 | `docs/specs/artifacts/arc_behavior_inject_mutations.py` | 一次性变异脚本（不进元锁） |
 | `docs/specs/artifacts/runlogs/arc-behavior-inject-mutations.txt` | 沙箱预跑原始输出 |
 
 ---
 
-## §5 对账表（发出前已在沙箱预跑：`结论：21/21 条全红`，3 个目标文件还原后 sha256 逐字节一致）
+## §5 对账表（发出前已在沙箱预跑：`结论：27/27 条全红`，3 个目标文件还原后 sha256 逐字节一致；其中 G-M1/M2/M8/M12/M13/M17 是关键变异在目标检查上再打一遍）
 
 | 行为变化（含连带效果） | 守它的测试 | 让它变红的变异 | 改后能触发的具体状态 |
 |---|---|---|---|
@@ -110,16 +129,17 @@
 | 提醒用所选阶段的做法 | R6 | M1 | 选阶段 2 的存档，提醒里是阶段 2 的做法 |
 | 卡没有做法时不注入 | R4 | M21 | 没做法的卡第 5 句无提醒标题 |
 | 提醒不进对话记录（非流式 / 流式） | R7、R8 | M17、M18 | 第 5 句后刷新会话，库里与 `history` 里那句用户消息是原文 |
+| **目标**：四张样本卡逐阶段，真实引擎发出的 prompt 有该有的、没有不该有的；第 5 句才提醒；记录是原文 | G1–G3（G0 自检） | G-M1、G-M2、G-M8、G-M12、G-M13、G-M17 | 任意样本卡选任意阶段连聊 5 句 |
 
 ---
 
 ## §6 测试（固定写法）
 
 - 本地只跑受影响的：`tests/test_arc_behavior_inject.py` + 下面选集；PG 用 docker 测试库（§2）。不改前端，不跑 `npm test`。
-- 变异：`python docs/specs/artifacts/arc_behavior_inject_mutations.py`，必须 `21/21 条全红`。
+- 变异：`python docs/specs/artifacts/arc_behavior_inject_mutations.py`，必须 `27/27 条全红`。
 - 合并门是分支 CI；合并只做 `gh pr create` → `gh pr merge --merge`，PR 标题与描述用英文。
 
-沙箱预跑（`40e9c75b` + 补丁）：受影响选集 76 个文件（`grep -l` 命中 `chat_engine|context_engine|arc_view|group_session|ChatEngine|ContextEngine|project_card|run_agent_eval|text_manager|routers.(chat|history|distill|group)`）**1448 passed, 1 skipped**；新文件 32 passed；锁 `test_arc_phase_fields_locks.py` 全绿。
+沙箱预跑（`40e9c75b` + 补丁）：受影响选集 76 个文件（`grep -l` 命中 `chat_engine|context_engine|arc_view|group_session|ChatEngine|ContextEngine|project_card|run_agent_eval|text_manager|routers.(chat|history|distill|group)`）**1448 passed, 1 skipped**（未含目标检查文件）；`test_arc_behavior_inject.py` 32 passed；`test_arc_behavior_inject_goal.py` 12 passed；锁 `test_arc_phase_fields_locks.py` 全绿。
 
 ---
 
@@ -159,6 +179,7 @@
 - 不做：群聊重注入；按偏离检测再注入（论文：不比固定间隔好）；重注入完整人设（10-06 定只重注入做法表）。
 - 风险 1：做法表单独重注入的效果无直接证据（见 §3.4 偏差）。验收并进演示卡重蒸：同卡同阶段「只有①」与「①+②」对照原文，专看自私、虚伪类角色是否被洗白。
 - 风险 2：每 4 轮那一轮的用户消息多 55–264 token，不进历史、不影响缓存前缀（附在最后一条）。
+- 已知小偏差：`hidden` 消息不落库，恢复会话后计数少算这些回合，提醒的轮次会错开（§2）。不修：不影响正确性，修它要给会话加计数列。
 
 ## 自检表
 
@@ -168,7 +189,8 @@
 | 与自身规则冲突 | 无：做法写法、注入判据、渲染入口各一处；时间感知三份拷贝收为一处 |
 | 对照调研结论 | 整表进前缀、不检索、不加挑选指令、只放阶段 k + 全程、未定位不放、临时用户消息重注入 —— 与 v1.3 + 10-06 决定一致 |
 | 每条边界两侧都测 | 放宽 / 过严成对：M1/M5、M2/M3/M4 vs M5、M12/M13、M8/M9、M21 |
-| 变异预跑无存活 | 21/21 |
-| 目标检查独立于被测代码 | C1、R2 断言字面量，不调 `behavior_lines` |
+| 变异预跑无存活 | 27/27 |
+| 目标检查独立于被测代码 | 目标文件的预言只读样本 JSON，不调 `project_card` / `behavior_lines`；C1、R2 断言字面量 |
+| 判断清单（返工经验 7b） | §2 每条都附了读过的行或扫描命令；没复读原文的文献标「本轮未复读原文」 |
 
 ## 补充（执行与审计发现写这里）
