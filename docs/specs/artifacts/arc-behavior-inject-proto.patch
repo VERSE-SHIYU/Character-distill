@@ -1,0 +1,708 @@
+diff --git a/core/arc_view.py b/core/arc_view.py
+index 593048c4..86ab7ced 100644
+--- a/core/arc_view.py
++++ b/core/arc_view.py
+@@ -165,11 +165,17 @@ def _project_relationships(
+ 
+ 
+ def _project_custom(proj: ProjectedCard, card: CharacterCard, k: int, n: int) -> None:
+-    """专门投影（各自函数）：弧线截断、关系口径、情境做法原样。就地改 `proj`。
++    """专门投影（各自函数）：弧线截断、关系口径、情境做法。就地改 `proj`。
+ 
+     阶段表一律只留 1..k 的 label / state（k=n 也一样）：各阶段的 overlay 已经按登记表并进
+     顶层字段，留在阶段里就是同一份内容的第二个来源，k=n 时还会带着前几个阶段的状态（R2）。
++
++    情境做法是状态类：投影卡的 `situation_behaviors` = **阶段 k 的做法在前 + 全程做法在后**
++    （同 B3 的顺序契约）；其他阶段的做法、未定位区的做法不进投影。阶段下的做法随阶段表一起
++    被丢掉，这里是它们唯一的出口。
+     """
++    own = [b.model_copy(deep=True) for b in card.character_arc.phases[k - 1].behaviors] if k >= 1 else []
++    proj.situation_behaviors = own + list(proj.situation_behaviors)
+     proj.character_arc.phases = [
+         ArcPhase(label=p.label, state=p.state) for p in proj.character_arc.phases[:k]
+     ]
+diff --git a/core/chat_engine.py b/core/chat_engine.py
+index aa272de1..c4ee1a8a 100644
+--- a/core/chat_engine.py
++++ b/core/chat_engine.py
+@@ -16,7 +16,7 @@ from typing import Any
+ from adapters.llm_adapter import LLMAdapter
+ from core.arc_view import project_card
+ from core.clock import UserClock, describe_time_period
+-from core.context_engine import ContextEngine
++from core.context_engine import ContextEngine, behavior_lines
+ from core.rag import RAGEngine
+ from core.schema import CharacterCard, SourceTrace
+ from core.tokens import count_tokens
+@@ -42,6 +42,20 @@ _CANARY_BLOCK = (
+ ).format(TOKEN=_CANARY_TOKEN)
+ 
+ 
++# 做法表重注入的间隔（轮）：2609.24532（2026 预印本）的静态方案 —— 每 4 次角色回复后
++# 把人设作为临时用户消息重注入一次，作者推荐为低复杂度基线；按偏离检测再注入不比它好
++#（p=.769）。Shiyu 2026-10-07 定 4。
++REINJECT_EVERY = 4
++
++
++def reinject_due(prior_user_turns: int, every: int = REINJECT_EVERY) -> bool:
++    """这一轮要不要重注入做法表：此前已有 ``every`` 的正整数倍个用户回合时注入。
++
++    即第 5、9、13… 次回复之前（论文：第 4、8、12 次回复之后）。判据只此一处。
++    """
++    return prior_user_turns > 0 and prior_user_turns % every == 0
++
++
+ def _scan_canary(text: str, where: str) -> None:
+     """Log if the canary token leaked into a model reply (detection only)."""
+     if text and _CANARY_TOKEN in text:
+@@ -417,13 +431,7 @@ class ChatEngine:
+         # 构造 messages 数组：历史（截断）+ 当前句
+         llm_messages = self._build_llm_messages(self.history, user_message)
+ 
+-        # 时间感知块附着在当前用户消息末尾，而非 system prompt 中
+-        time_block = self._build_time_awareness_block()
+-        if time_block and llm_messages and llm_messages[-1]["role"] == "user":
+-            llm_messages[-1] = {
+-                **llm_messages[-1],
+-                "content": llm_messages[-1]["content"] + time_block,
+-            }
++        self._attach_turn_blocks(llm_messages)
+ 
+         self.history.append({"role": "user", "content": user_message})
+ 
+@@ -465,13 +473,7 @@ class ChatEngine:
+         # 构造 messages 数组：历史（截断）+ 当前句
+         llm_messages = self._build_llm_messages(self.history, user_message)
+ 
+-        # 时间感知块附着在当前用户消息末尾，而非 system prompt 中
+-        time_block = self._build_time_awareness_block()
+-        if time_block and llm_messages and llm_messages[-1]["role"] == "user":
+-            llm_messages[-1] = {
+-                **llm_messages[-1],
+-                "content": llm_messages[-1]["content"] + time_block,
+-            }
++        self._attach_turn_blocks(llm_messages)
+ 
+         self.history.append({"role": "user", "content": user_message})
+ 
+@@ -509,6 +511,30 @@ class ChatEngine:
+         _scan_canary(full_reply, "chat_stream()")
+         self.history.append({"role": "assistant", "content": full_reply})
+ 
++    def _attach_turn_blocks(self, llm_messages: list[dict[str, Any]]) -> None:
++        """把只给这一轮看的块附在当前用户消息末尾（不进 system prompt、不写进历史）。
++
++        顺序：时间感知块 → 做法表重注入（到期才有）。chat 与 chat_stream 共用这一处；
++        agent 路径拿的是同一个 ``llm_messages``，自然带上。须在当前用户消息写进
++        ``self.history`` **之前**调用：重注入按此前的用户回合数判定。
++        """
++        if not llm_messages or llm_messages[-1]["role"] != "user":
++            return
++        extra = self._build_time_awareness_block() + self._build_behavior_reminder()
++        if extra:
++            llm_messages[-1] = {**llm_messages[-1], "content": llm_messages[-1]["content"] + extra}
++
++    def _build_behavior_reminder(self) -> str:
++        """到期（`reinject_due`）且投影卡有做法时，返回做法表提醒块；否则空串。
++
++        内容与卡片核心层「## 遇事的做法」同源（投影卡的 ``situation_behaviors``、同一个
++        ``behavior_lines``）：只有当前阶段与全程的做法，不加挑选或「不要重复」之类的指令。
++        """
++        prior = sum(1 for m in self.history if m.get("role") == "user")
++        if not reinject_due(prior) or not self.card.situation_behaviors:
++            return ""
++        return "\n\n【提醒：你遇事的做法】\n" + behavior_lines(self.card.situation_behaviors) + "\n"
++
+     def _build_llm_messages(
+         self, history: list[dict[str, Any]], current_user_message: str,
+     ) -> list[dict[str, Any]]:
+diff --git a/core/context_engine.py b/core/context_engine.py
+index 6f11f9e4..b5498b84 100644
+--- a/core/context_engine.py
++++ b/core/context_engine.py
+@@ -34,6 +34,19 @@ _BOUNDARY_NOTICE = (
+ )
+ 
+ 
++def behavior_lines(behaviors) -> str:
++    """「- 情境 → 做法」一行一条 —— 卡片核心层与每轮重注入共用的**唯一**写法。"""
++    return "\n".join(f"- {b.situation} → {b.behavior}" for b in behaviors)
++
++
++# 卡片核心层「## 行为模式」之后的块：(标题, 从投影卡取正文)。正文为空 → 整块不出现。
++# **加一类人设块只在这里加一行**（③ 的「## 想要什么」接在「遇事的做法」之后），
++# 渲染、空块跳过、位置都由 `_build_core_sections` 统一处理，不另写。
++_CORE_SECTIONS: tuple[tuple[str, Callable[[Any], str]], ...] = (
++    ("遇事的做法", lambda c: behavior_lines(c.situation_behaviors)),
++)
++
++
+ def _truncate(text: str, max_tokens: int) -> str:
+     """按 token 估算截断文本。"""
+     limit = int(max_tokens / 0.8)
+@@ -360,6 +373,7 @@ class ContextEngine:
+             f"价值观：{values}\n"
+             f"内在矛盾：{tensions}\n"
+         )
++        core += self._build_core_sections()
+ 
+         # 语言风格
+         catch = "、".join(c.speaking_style.catchphrases)
+@@ -376,6 +390,15 @@ class ContextEngine:
+         core += self._build_phase_block()
+         return core
+ 
++    def _build_core_sections(self) -> str:
++        """按 `_CORE_SECTIONS` 顺序渲染「## 标题 + 正文」；正文为空的块整块不出现。"""
++        out = ""
++        for title, body_of in _CORE_SECTIONS:
++            body = body_of(self.card)
++            if body:
++                out += f"\n## {title}\n{body}\n"
++        return out
++
+     def _build_phase_block(self) -> str:
+         """「## 此刻的你」：k/n、阶段 1..k 的 label 与 state（k=n 附变化轴）。
+ 
+diff --git a/docs/specs/artifacts/arc_behavior_inject_mutations.py b/docs/specs/artifacts/arc_behavior_inject_mutations.py
+new file mode 100644
+index 00000000..d1496b27
+--- /dev/null
++++ b/docs/specs/artifacts/arc_behavior_inject_mutations.py
+@@ -0,0 +1,159 @@
++"""变异预跑（spec `arc-behavior-inject.md` §7 对账表 M1–M21）。
++
++逐条把改后代码改坏一处（放宽、过严两个方向），对应测试必须红；跑完逐字节还原。
++
++用法：在仓库根目录
++    .venv/Scripts/python.exe docs/specs/artifacts/arc_behavior_inject_mutations.py
++
++执行框架与判档复用 `tests/perf/mutation_framework.py` 与 `tests/lock_coverage.py`（同
++`arc_phase_unlocated_mutations.py`）。一次性对账，**不**登记进覆盖闭合元锁。
++
++退出码：0 = 全部红；1 = 有存活；2 = 基线红（拒跑）。
++"""
++from __future__ import annotations
++
++import hashlib
++import pathlib
++import sys
++
++for _s in (sys.stdout, sys.stderr):
++    try:
++        _s.reconfigure(encoding="utf-8", errors="replace")
++    except (AttributeError, OSError):
++        pass
++
++ROOT = pathlib.Path(__file__).resolve().parents[3]
++sys.path.insert(0, str(ROOT / "tests" / "perf"))
++sys.path.insert(0, str(ROOT / "tests"))
++
++import lock_coverage  # noqa: E402
++import mutation_framework as framework  # noqa: E402
++
++VIEW = ROOT / "core" / "arc_view.py"
++CTX = ROOT / "core" / "context_engine.py"
++CHAT = ROOT / "core" / "chat_engine.py"
++TARGETS = (VIEW, CTX, CHAT)
++
++T = "tests/test_arc_behavior_inject.py"
++
++
++def _t(name: str) -> str:
++    return f"{T}::{name}"
++
++
++_OWN = ("    own = [b.model_copy(deep=True) for b in card.character_arc.phases[k - 1].behaviors]"
++        " if k >= 1 else []\n")
++_MERGE = "    proj.situation_behaviors = own + list(proj.situation_behaviors)\n"
++_SECTIONS = '    ("遇事的做法", lambda c: behavior_lines(c.situation_behaviors)),\n'
++_DUE = "    return prior_user_turns > 0 and prior_user_turns % every == 0\n"
++_COUNT = '        prior = sum(1 for m in self.history if m.get("role") == "user")\n'
++_EXTRA = "        extra = self._build_time_awareness_block() + self._build_behavior_reminder()\n"
++_HIST_CHAT = ('        self._attach_turn_blocks(llm_messages)\n\n'
++              '        self.history.append({"role": "user", "content": user_message})\n\n'
++              '        # ── 沉默闸门 ──\n'
++              '        silence_reply = self._should_stay_silent(user_message)\n'
++              '        if silence_reply:\n'
++              '            self.history.append({"role": "assistant", "content": silence_reply})\n'
++              '            self._post_turn(user_message, silence_reply)\n'
++              '            return silence_reply\n')
++_HIST_STREAM = _HIST_CHAT.replace("            return silence_reply\n",
++                                  "            yield silence_reply\n")
++
++# (编号, 靶子测试, [(动作, 文件, 载荷)], 期望)
++MUTANTS = [
++    # ── 投影 ──
++    ("M1  放宽 阶段 k 的做法不进投影", _t("test_p1_phase_k_behaviors_first_then_lifelong"),
++     [("repl", VIEW, [(_OWN, "    own = []\n")])], "RED"),
++    ("M2  放宽 所有阶段的做法都进投影", _t("test_p4_unlocated_and_other_phases_never_projected"),
++     [("repl", VIEW, [(_OWN, "    own = [b for p in card.character_arc.phases for b in p.behaviors]\n")])], "RED"),
++    ("M3  放宽 按经历类取阶段 1..k", _t("test_p4_unlocated_and_other_phases_never_projected"),
++     [("repl", VIEW, [(_OWN, "    own = [b for p in card.character_arc.phases[:k] for b in p.behaviors]\n")])], "RED"),
++    ("M4  放宽 未定位区的做法进投影", _t("test_p4_unlocated_and_other_phases_never_projected"),
++     [("repl", VIEW, [(_MERGE, "    proj.situation_behaviors = own + list(proj.situation_behaviors)"
++                               " + list(card.character_arc.unlocated.behaviors)\n")])], "RED"),
++    ("M5  过严 全程做法被丢", _t("test_p1_phase_k_behaviors_first_then_lifelong"),
++     [("repl", VIEW, [(_MERGE, "    proj.situation_behaviors = own\n")])], "RED"),
++    ("M6  顺序 全程在前（违反 B3）", _t("test_p1_phase_k_behaviors_first_then_lifelong"),
++     [("repl", VIEW, [(_MERGE, "    proj.situation_behaviors = list(proj.situation_behaviors) + own\n")])], "RED"),
++    ("M7  原卡被改（不拷贝、就地并入）", _t("test_p5_original_card_untouched"),
++     [("repl", VIEW, [(_MERGE, _MERGE + "    card.situation_behaviors[:0] = own\n")])], "RED"),
++    # ── 卡片核心层 ──
++    ("M8  放宽 不渲染做法块", _t("test_c1_section_lists_phase_and_lifelong_in_order"),
++     [("repl", CTX, [(_SECTIONS, "")])], "RED"),
++    ("M9  过严 没有做法也出空标题", _t("test_c3_no_behaviors_no_section"),
++     [("repl", CTX, [("            if body:\n                out += ", "            if True:\n                out += ")])], "RED"),
++    ("M10 位置 做法块挪到语言风格之后", _t("test_c2_section_sits_between_behavior_mode_and_speaking_style"),
++     [("repl", CTX, [("        core += self._build_core_sections()\n", ""),
++                     ("        core += self._build_phase_block()\n",
++                      "        core += self._build_core_sections()\n        core += self._build_phase_block()\n")])], "RED"),
++    ("M11 写法 两处各写一份格式（重注入改用别的写法）", _t("test_r2_due_turn_appends_time_then_reminder"),
++     [("repl", CHAT, [("behavior_lines(self.card.situation_behaviors)",
++                       '"\\n".join(f"- {b.situation}：{b.behavior}" for b in self.card.situation_behaviors)')])], "RED"),
++    # ── 重注入 ──
++    ("M12 放宽 从不重注入", _t("test_r2_due_turn_appends_time_then_reminder"),
++     [("repl", CHAT, [(_DUE, "    return False\n")])], "RED"),
++    ("M13 过严 每轮都重注入", _t("test_r3_not_due_turn_only_time"),
++     [("repl", CHAT, [(_DUE, "    return prior_user_turns > 0\n")])], "RED"),
++    ("M14 过严 间隔改成 2", _t("test_r1_reinject_due_boundaries"),
++     [("repl", CHAT, [("REINJECT_EVERY = 4\n", "REINJECT_EVERY = 2\n")])], "RED"),
++    ("M15 计数 把角色消息也算成回合", _t("test_r5_greeting_and_assistant_turns_do_not_count"),
++     [("repl", CHAT, [(_COUNT, "        prior = len(self.history) // 2\n")])], "RED"),
++    ("M16 顺序 提醒排在时间感知之前", _t("test_r2_due_turn_appends_time_then_reminder"),
++     [("repl", CHAT, [(_EXTRA, "        extra = self._build_behavior_reminder() + self._build_time_awareness_block()\n")])], "RED"),
++    ("M17 泄漏 非流式把带提醒的消息写进历史", _t("test_r7_chat_paths_send_reminder_but_history_keeps_raw_message"),
++     [("repl", CHAT, [(_HIST_CHAT, _HIST_CHAT.replace(
++         '"content": user_message})\n\n        # ── 沉默', '"content": llm_messages[-1]["content"]})\n\n        # ── 沉默'))])], "RED"),
++    ("M18 泄漏 流式把带提醒的消息写进历史", _t("test_r7_chat_paths_send_reminder_but_history_keeps_raw_message"),
++     [("repl", CHAT, [(_HIST_STREAM, _HIST_STREAM.replace(
++         '"content": user_message})\n\n        # ── 沉默', '"content": llm_messages[-1]["content"]})\n\n        # ── 沉默'))])], "RED"),
++    ("M19 无阶段卡 去掉 k>=1 守卫", _t("test_p3_card_without_arc_keeps_only_lifelong"),
++     [("repl", VIEW, [(_OWN, "    own = [b.model_copy(deep=True) for b in card.character_arc.phases[k - 1].behaviors]\n")])], "RED"),
++    ("M20 接入点 只渲染表里第一项", _t("test_c6_sections_table_is_the_only_entry"),
++     [("repl", CTX, [("        for title, body_of in _CORE_SECTIONS:", "        for title, body_of in _CORE_SECTIONS[:1]:")])], "RED"),
++    ("M21 过严 没有做法也出提醒标题", _t("test_r4_due_but_no_behaviors_no_reminder"),
++     [("repl", CHAT, [("        if not reinject_due(prior) or not self.card.situation_behaviors:",
++                       "        if not reinject_due(prior):")])], "RED"),
++]
++
++
++def main() -> int:
++    baseline = {p: p.read_bytes() for p in TARGETS}
++
++    print("== 先验基线 ==")
++    summary, _, _, _ = framework._run(T)
++    print(f"  {T}  {summary}")
++    cause = lock_coverage.baseline_verdict(summary)
++    if cause:
++        return lock_coverage.refuse_on_baseline({T: cause})
++
++    problems: list[str] = []
++    for label, target, edits, expect in MUTANTS:
++        try:
++            framework._apply(edits)
++            summary, keep, _, _ = framework._run(target)
++            outcome = lock_coverage.outcome(summary)
++        finally:
++            framework._restore(baseline)
++        ok = outcome == expect
++        if not ok:
++            problems.append(f"{label}：实得 {outcome}（期望 {expect}）")
++        print(f"\n### {label}   实得={outcome}   {'OK' if ok else 'MISS'}")
++        for k in keep[:2]:
++            print("   ", k)
++
++    print("\n== 还原核对（sha256 逐字节）==")
++    for p in TARGETS:
++        same = hashlib.sha256(p.read_bytes()).digest() == hashlib.sha256(baseline[p]).digest()
++        if not same:
++            problems.append(f"{p.relative_to(ROOT)} 还原后 sha256 不符")
++        print(f"  {p.relative_to(ROOT)}  {same}")
++
++    n_red = len(MUTANTS) - len(problems)
++    print(f"\n结论：{n_red}/{len(MUTANTS)} 条全红" if not problems else "有问题")
++    for p in problems:
++        print("  -", p)
++    return 1 if problems else 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/docs/specs/artifacts/runlogs/arc-behavior-inject-mutations.txt b/docs/specs/artifacts/runlogs/arc-behavior-inject-mutations.txt
+new file mode 100644
+index 00000000..108b7078
+--- /dev/null
++++ b/docs/specs/artifacts/runlogs/arc-behavior-inject-mutations.txt
+@@ -0,0 +1,94 @@
++== 先验基线 ==
++  tests/test_arc_behavior_inject.py  32 passed in 2.96s
++
++### M1  放宽 阶段 k 的做法不进投影   实得=RED   OK
++    E       AssertionError: assert ['全程情境'] == ['早期情境', '全程情境']
++    E         At index 0 diff: '全程情境' != '早期情境'
++
++### M2  放宽 所有阶段的做法都进投影   实得=RED   OK
++    E           AssertionError: 阶段 1 的投影带上了别的阶段的做法
++    E           assert '后期情境' not in ['早期情境', '后期情境', '全程情境']
++
++### M3  放宽 按经历类取阶段 1..k   实得=RED   OK
++    E           AssertionError: 阶段 2 的投影带上了别的阶段的做法
++    E           assert '早期情境' not in ['早期情境', '后期情境', '全程情境']
++
++### M4  放宽 未定位区的做法进投影   实得=RED   OK
++    E           AssertionError: assert '未定位情境' not in ['早期情境', '全程情境', '未定位情境']
++    tests/test_arc_behavior_inject.py:73: AssertionError
++
++### M5  过严 全程做法被丢   实得=RED   OK
++    E       AssertionError: assert ['早期情境'] == ['早期情境', '全程情境']
++    E         Right contains one more item: '全程情境'
++
++### M6  顺序 全程在前（违反 B3）   实得=RED   OK
++    E       AssertionError: assert ['全程情境', '早期情境'] == ['早期情境', '全程情境']
++    E         At index 0 diff: '全程情境' != '早期情境'
++
++### M7  原卡被改（不拷贝、就地并入）   实得=RED   OK
++    E       AssertionError: assert ['早期情境', '全程情境'] == ['全程情境']
++    E         At index 0 diff: '早期情境' != '全程情境'
++
++### M8  放宽 不渲染做法块   实得=RED   OK
++    E       AssertionError: assert '\n## 遇事的做法\n- 早期情境 → 早期做法\n- 全程情境 → 全程做法\n' in '你现在是「甲」。从这一刻起，你就是这个人，不是AI，不是助手。\n\n## 核心身份\n身份：\n背景：\n\n## 行为模式\n性格：多疑\n价值观：\n内在矛盾：\n\n## 语言风格\n语气：\u3000句式：\u3000用词：...刻的你\n你现在处在阶段 1/2。\n- 阶段 1·冷：起初\n你只知道到此刻为止发生过的事。之后会发生什么，你一概不知：别人提起你没经历过的事、没见过的人、还没发生的变故，你会困惑、追问或否认，绝不
++    tests/test_arc_behavior_inject.py:101: AssertionError
++
++### M9  过严 没有做法也出空标题   实得=RED   OK
++    E       AssertionError: assert '遇事的做法' not in '你现在是「甲」。从这一...也不预言自己的将来。\n'
++    E         '遇事的做法' is contained here:
++
++### M10 位置 做法块挪到语言风格之后   实得=RED   OK
++    E       AssertionError: assert 105 < 76
++    E        +  where 105 = <built-in method index of str object at 0x3285cb30>('## 遇事的做法')
++
++### M11 写法 两处各写一份格式（重注入改用别的写法）   实得=RED   OK
++    E       AssertionError: assert '现在\n\n[时间]\n...- 全程情境：全程做法\n' == '现在\n\n[时间]\n...全程情境 → 全程做法\n'
++    E           现在
++
++### M12 放宽 从不重注入   实得=RED   OK
++    E       AssertionError: assert '现在\n\n[时间]' == '现在\n\n[时间]\n...全程情境 → 全程做法\n'
++    E           现在
++
++### M13 过严 每轮都重注入   实得=RED   OK
++    E       AssertionError: assert '现在\n\n[时间]\n...全程情境 → 全程做法\n' == '现在\n\n[时间]'
++    E           现在
++
++### M14 过严 间隔改成 2   实得=RED   OK
++    E       assert True is False
++    E        +  where True = reinject_due(2)
++
++### M15 计数 把角色消息也算成回合   实得=RED   OK
++    E       AssertionError: assert False
++    E        +  where False = <built-in method endswith of str object at 0x7f73fe9d4300>('\n\n【提醒：你遇事的做法】\n- 早期情境 → 早期做法\n- 全程情境 → 全程做法\n')
++
++### M16 顺序 提醒排在时间感知之前   实得=RED   OK
++    E       AssertionError: assert '现在\n\n【提醒：你遇...程做法\n\n\n[时间]' == '现在\n\n[时间]\n...全程情境 → 全程做法\n'
++    E           现在
++
++### M17 泄漏 非流式把带提醒的消息写进历史   实得=RED   OK
++    E       AssertionError: 重注入写进了对话记录
++    E       assert '现在\n\n[时间]\n...全程情境 → 全程做法\n' == '现在'
++
++### M18 泄漏 流式把带提醒的消息写进历史   实得=RED   OK
++    E       AssertionError: 重注入写进了对话记录
++    E       assert '现在\n\n[时间]\n...全程情境 → 全程做法\n' == '现在'
++   [坐标] 变异后的红行号 → 变异前的行号：['core/arc_view.py:177', 'core/arc_view.py:223', 'tests/test_arc_behavior_inject.py:67'] → ['tests/test_arc_behavior_inject.py:67']
++
++### M19 无阶段卡 去掉 k>=1 守卫   实得=RED   OK
++    E       IndexError: list index out of range
++    FAILED tests/test_arc_behavior_inject.py::test_p3_card_without_arc_keeps_only_lifelong
++
++### M20 接入点 只渲染表里第一项   实得=RED   OK
++    E       ValueError: substring not found
++    FAILED tests/test_arc_behavior_inject.py::test_c6_sections_table_is_the_only_entry
++
++### M21 过严 没有做法也出提醒标题   实得=RED   OK
++    E       AssertionError: assert '现在\n\n[时间]\n...醒：你遇事的做法】\n\n' == '现在\n\n[时间]'
++    E           现在
++
++== 还原核对（sha256 逐字节）==
++  core/arc_view.py  True
++  core/context_engine.py  True
++  core/chat_engine.py  True
++
++结论：21/21 条全红
+diff --git a/scripts/run_agent_eval.py b/scripts/run_agent_eval.py
+index 5c90ddb9..cfdf95da 100644
+--- a/scripts/run_agent_eval.py
++++ b/scripts/run_agent_eval.py
+@@ -393,13 +393,8 @@ async def _run_agent(
+ 
+         llm_messages = engine._build_llm_messages(engine.history, msg)
+ 
+-        # time_block（engine.chat 中的逻辑）
+-        time_block = engine._build_time_awareness_block()
+-        if time_block and llm_messages and llm_messages[-1]["role"] == "user":
+-            llm_messages[-1] = {
+-                **llm_messages[-1],
+-                "content": llm_messages[-1]["content"] + time_block,
+-            }
++        # 只给这一轮看的块（时间感知 + 到期的做法表重注入），与 engine.chat 同一处
++        engine._attach_turn_blocks(llm_messages)
+ 
+         # Step 2: AgentLoop 决策
+         toolkit = AgentToolkit(engine._ctx_engine, current_mood=engine._mood)
+diff --git a/tests/test_arc_behavior_inject.py b/tests/test_arc_behavior_inject.py
+new file mode 100644
+index 00000000..4a906cf4
+--- /dev/null
++++ b/tests/test_arc_behavior_inject.py
+@@ -0,0 +1,251 @@
++# -*- coding: utf-8 -*-
++"""② 「情境→做法」注入（spec docs/specs/arc-behavior-inject.md）。
++
++P 组：投影 —— 投影卡的 `situation_behaviors` = 阶段 k 的做法在前 + 全程做法在后。
++C 组：卡片核心层 —— 「## 遇事的做法」位置、内容、空块不出现。
++R 组：重注入 —— 每 4 个用户回合，把做法表作为临时块附在当前用户消息末尾。
++"""
++
++from __future__ import annotations
++
++import os
++import sys
++
++import pytest
++
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
++
++from core import context_engine as ce_mod
++from core.arc_view import project_card
++from core.chat_engine import REINJECT_EVERY, ChatEngine, reinject_due
++from core.context_engine import ContextEngine
++from core.schema import CharacterCard
++
++
++def _b(s: str, b: str) -> dict:
++    return {"situation": s, "behavior": b, "source_quote": ""}
++
++
++def _card(**kw) -> CharacterCard:
++    """两阶段卡：全程做法 T；阶段 1 做法 A；阶段 2 做法 B；未定位做法 U。"""
++    data = {
++        "name": "甲",
++        "personality_traits": ["多疑"],
++        "situation_behaviors": [_b("全程情境", "全程做法")],
++        "character_arc": {
++            "axis": "从冷到热", "source_fingerprint": "FP",
++            "phases": [
++                {"label": "冷", "state": "起初", "start": 0,
++                 "behaviors": [_b("早期情境", "早期做法")]},
++                {"label": "热", "state": "后来", "start": 10,
++                 "behaviors": [_b("后期情境", "后期做法")]},
++            ],
++            "unlocated": {"behaviors": [_b("未定位情境", "未定位做法")]},
++        },
++    }
++    data.update(kw)
++    return CharacterCard.model_validate(data)
++
++
++def _situations(card) -> list[str]:
++    return [b.situation for b in card.situation_behaviors]
++
++
++# ── P 投影 ────────────────────────────────────────────────────────────────────
++
++def test_p1_phase_k_behaviors_first_then_lifelong():
++    assert _situations(project_card(_card(), 1)[0]) == ["早期情境", "全程情境"]
++    assert _situations(project_card(_card(), 2)[0]) == ["后期情境", "全程情境"]
++
++
++def test_p2_no_phase_arg_projects_to_last_phase():
++    assert _situations(project_card(_card(), None)[0]) == ["后期情境", "全程情境"]
++
++
++def test_p3_card_without_arc_keeps_only_lifelong():
++    card = _card(character_arc={})
++    assert _situations(project_card(card, None)[0]) == ["全程情境"]
++
++
++def test_p4_unlocated_and_other_phases_never_projected():
++    for k in (1, 2):
++        sits = _situations(project_card(_card(), k)[0])
++        assert "未定位情境" not in sits
++        other = "后期情境" if k == 1 else "早期情境"
++        assert other not in sits, f"阶段 {k} 的投影带上了别的阶段的做法"
++
++
++def test_p5_original_card_untouched():
++    card = _card()
++    project_card(card, 1)
++    assert _situations(card) == ["全程情境"]
++    assert [[b.situation for b in p.behaviors] for p in card.character_arc.phases] == [
++        ["早期情境"], ["后期情境"]]
++
++
++def test_p6_phase_without_behaviors_keeps_lifelong():
++    card = _card()
++    card.character_arc.phases[0].behaviors = []
++    assert _situations(project_card(card, 1)[0]) == ["全程情境"]
++
++
++# ── C 卡片核心层 ──────────────────────────────────────────────────────────────
++
++def _core(card, k):
++    proj, view = project_card(card, k)
++    return ContextEngine(card=proj, rag=None, storage=None, arc_view=view)._build_card_core()
++
++
++def test_c1_section_lists_phase_and_lifelong_in_order():
++    core = _core(_card(), 1)
++    assert "\n## 遇事的做法\n- 早期情境 → 早期做法\n- 全程情境 → 全程做法\n" in core
++
++
++def test_c2_section_sits_between_behavior_mode_and_speaking_style():
++    core = _core(_card(), 1)
++    assert core.index("## 行为模式") < core.index("## 遇事的做法") < core.index("## 语言风格")
++
++
++def test_c3_no_behaviors_no_section():
++    card = _card(situation_behaviors=[])
++    card.character_arc.phases[0].behaviors = []
++    assert "遇事的做法" not in _core(card, 1)
++
++
++def test_c4_other_phase_and_unlocated_absent_from_prompt():
++    core = _core(_card(), 1)
++    assert "后期做法" not in core and "未定位做法" not in core
++
++
++def test_c5_section_reaches_full_system_prompt():
++    """build_ex 的产物（一对一、群聊、agent 都经它）带上这一块。"""
++    proj, view = project_card(_card(), 2)
++    prompt = ContextEngine(card=proj, rag=None, storage=None, arc_view=view).build_ex(
++        "你好", include_dynamic=False).prompt
++    assert "- 后期情境 → 后期做法" in prompt
++
++
++def test_c6_sections_table_is_the_only_entry(monkeypatch):
++    """③ 只在 `_CORE_SECTIONS` 加一行就能接入：追加一项即在「遇事的做法」后出现。"""
++    monkeypatch.setattr(ce_mod, "_CORE_SECTIONS",
++                        ce_mod._CORE_SECTIONS + (("想要什么", lambda c: "- 想要X"),))
++    core = _core(_card(), 1)
++    assert core.index("## 遇事的做法") < core.index("## 想要什么\n- 想要X") < core.index("## 语言风格")
++
++
++# ── R 重注入 ──────────────────────────────────────────────────────────────────
++
++@pytest.mark.parametrize("prior,due", [(0, False), (1, False), (2, False), (3, False),
++                                       (4, True), (5, False), (6, False), (7, False),
++                                       (8, True), (12, True)])
++def test_r1_reinject_due_boundaries(prior, due):
++    assert reinject_due(prior) is due
++
++
++def test_r1b_interval_is_four():
++    assert REINJECT_EVERY == 4
++
++
++class _CaptureLLM:
++    model = "stub"
++
++    def __init__(self):
++        self.last_usage = {"prompt_tokens": 1, "completion_tokens": 1}
++        self.sent: list[list[dict]] = []
++
++    def preflight(self):
++        return None
++
++    def chat(self, system_prompt, messages, **_kw):
++        self.sent.append([dict(m) for m in messages])
++        return "回复"
++
++    def chat_stream(self, system_prompt, messages, **_kw):
++        self.sent.append([dict(m) for m in messages])
++        yield "回复"
++
++
++def _engine(card=None, arc_phase=1, llm=None):
++    eng = ChatEngine(llm=llm or _CaptureLLM(), rag=None, card=card or _card(), card_id="c",
++                     storage=None, session_id="", is_new_session=False, arc_phase=arc_phase)
++    eng._build_time_awareness_block = lambda: "\n\n[时间]"
++    return eng
++
++
++def _history(user_turns: int, greeting: bool = True) -> list[dict]:
++    h = [{"role": "assistant", "content": "开场白"}] if greeting else []
++    for i in range(user_turns):
++        h += [{"role": "user", "content": f"问{i}"}, {"role": "assistant", "content": f"答{i}"}]
++    return h
++
++
++_REMINDER = "\n\n【提醒：你遇事的做法】\n- 早期情境 → 早期做法\n- 全程情境 → 全程做法\n"
++
++
++def _attached(eng, user_turns):
++    eng.history = _history(user_turns)
++    msgs = eng._build_llm_messages(eng.history, "现在")
++    eng._attach_turn_blocks(msgs)
++    return msgs[-1]["content"]
++
++
++def test_r2_due_turn_appends_time_then_reminder():
++    assert _attached(_engine(), 4) == "现在\n\n[时间]" + _REMINDER
++
++
++def test_r3_not_due_turn_only_time():
++    assert _attached(_engine(), 3) == "现在\n\n[时间]"
++    assert _attached(_engine(), 5) == "现在\n\n[时间]"
++
++
++def test_r4_due_but_no_behaviors_no_reminder():
++    card = _card(situation_behaviors=[])
++    card.character_arc.phases[0].behaviors = []
++    assert _attached(_engine(card), 4) == "现在\n\n[时间]"
++
++
++def test_r5_greeting_and_assistant_turns_do_not_count():
++    """只数用户回合：开场白、主动消息都是角色说的，不算一轮。"""
++    eng = _engine()
++    eng.history = _history(4) + [{"role": "assistant", "content": "主动消息"}]
++    msgs = eng._build_llm_messages(eng.history, "现在")
++    eng._attach_turn_blocks(msgs)
++    assert msgs[-1]["content"].endswith(_REMINDER)
++
++
++def test_r6_reminder_uses_selected_phase():
++    content = _attached(_engine(arc_phase=2), 4)
++    assert "- 后期情境 → 后期做法" in content and "早期做法" not in content
++
++
++@pytest.mark.parametrize("stream", [False, True])
++def test_r7_chat_paths_send_reminder_but_history_keeps_raw_message(stream, monkeypatch):
++    llm = _CaptureLLM()
++    eng = _engine(llm=llm)
++    monkeypatch.setattr(eng, "_post_turn", lambda *a, **k: None)
++    eng.history = _history(4)
++    if stream:
++        list(eng.chat_stream("现在"))
++    else:
++        eng.chat("现在")
++    assert llm.sent[-1][-1]["content"] == "现在\n\n[时间]" + _REMINDER, "这一轮没带上重注入"
++    users = [m["content"] for m in eng.history if m["role"] == "user"]
++    assert users[-1] == "现在", "重注入写进了对话记录"
++    assert all("提醒：你遇事的做法" not in m["content"] for m in eng.history)
++
++
++@pytest.mark.parametrize("stream", [False, True])
++def test_r8_following_turn_does_not_repeat(stream, monkeypatch):
++    llm = _CaptureLLM()
++    eng = _engine(llm=llm)
++    monkeypatch.setattr(eng, "_post_turn", lambda *a, **k: None)
++    eng.history = _history(4)
++    for msg in ("第五问", "第六问"):
++        if stream:
++            list(eng.chat_stream(msg))
++        else:
++            eng.chat(msg)
++    assert "提醒：你遇事的做法" in llm.sent[0][-1]["content"]
++    assert "提醒：你遇事的做法" not in llm.sent[1][-1]["content"]
++    assert all("提醒：你遇事的做法" not in m["content"] for m in llm.sent[1][:-1]), (
++        "上一轮的重注入留在了历史里")
