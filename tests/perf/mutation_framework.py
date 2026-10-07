@@ -213,18 +213,30 @@ def vitest(*files: str, cwd: pathlib.Path = ROOT / "web" / "frontend"):
     return run
 
 
-def run_oneoff(items, *, targets, gates, root=ROOT) -> int:
+def _gates(items) -> list:
+    """基线门要跑的靶子 = 变异表里出现过的全部靶子：字符串靶子取文件（去掉 `::用例`），
+    可调用靶子（如 `vitest(...)`）按对象去重；保持首次出现的顺序。"""
+    out: list = []
+    for _label, target, _edits, _expect in items:
+        gate = target if callable(target) else target.split("::")[0]
+        if gate not in out:
+            out.append(gate)
+    return out
+
+
+def run_oneoff(items, *, targets, root=ROOT) -> int:
     """一次性变异脚本（`docs/specs/artifacts/*_mutations.py`）的唯一跑法：基线门 → 逐条
     `_trial` → 还原核对 → 结论。不写产物、不进覆盖闭合（那是 `run_matrix` 的事）。
 
     `items`：`(label, target, edits, expect)`，`target` 同 `_trial`；`expect` 为 `"RED"` 或
-    `lock_coverage.GREEN`。`gates`：基线门要跑的靶子（字符串或 `vitest(...)`），全绿才跑矩阵。
+    `lock_coverage.GREEN`。**基线门由 `items` 推导**（`_gates`）：每个被用到的靶子文件、每个
+    前端靶子都先跑一遍，全绿才跑矩阵 —— 不另列一份清单，靶子加了就自动进门，漏不掉。
     退出码：0 = 全部符合预期；1 = 有不符；基线门拒跑时为 `lock_coverage.refuse_on_baseline`
     的退出码（基线红 / 跑不起来分开）。
     """
     print("== 先验基线 ==")
     bad: dict[str, str] = {}
-    for gate in gates:
+    for gate in _gates(items):
         if callable(gate):
             got = gate()[0]
             name = "前端用例"

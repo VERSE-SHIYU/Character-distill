@@ -292,7 +292,7 @@ SEGMENTS = {
 def main() -> int:
     seg = sys.argv[1] if len(sys.argv) > 1 else None
     mutants = [m for m in MUTANTS if seg is None or m[0].startswith(SEGMENTS[seg])]
-    return framework.run_oneoff(mutants, targets=TARGETS, gates=[*(lock for lock in (UNL, GOAL, MV) if (ROOT / lock).exists()), _run_js])
+    return framework.run_oneoff(mutants, targets=TARGETS)
 
 
 if __name__ == "__main__":

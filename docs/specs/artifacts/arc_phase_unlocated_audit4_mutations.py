@@ -59,7 +59,7 @@ TARGETS = tuple(sorted({ROOT / rel for _l, rel, _o, _n, _k in M}))
 
 
 def main() -> int:
-    return framework.run_oneoff(MUTANTS, targets=TARGETS, gates=(MV, _run_js))
+    return framework.run_oneoff(MUTANTS, targets=TARGETS)
 
 
 if __name__ == "__main__":

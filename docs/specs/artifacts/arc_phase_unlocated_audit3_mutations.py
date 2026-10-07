@@ -86,7 +86,7 @@ MUTANTS = [
 
 def main() -> int:
     mutants = MUTANTS
-    return framework.run_oneoff(mutants, targets=TARGETS, gates=(UNL, MV, _run_js))
+    return framework.run_oneoff(mutants, targets=TARGETS)
 
 
 if __name__ == "__main__":
