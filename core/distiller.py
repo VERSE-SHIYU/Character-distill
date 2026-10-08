@@ -258,9 +258,9 @@ _FORMAT_DIM_M = (
     '   - grudge_inertia：受到负面对待后多久消化，大度/一般/记仇（低宜人性或高神经质偏记仇）。\n'
     '   - triggers（1-3 条）：碰了会让 ta 情绪激烈下降的具体雷点，从原文冲突场景提取。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
     '   - soft_spots（1-3 条）：戳中会让 ta 心软/好感上升的点，从原文提取。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
-    '   - 关系做法三档（对亲近的人 / 对平常的人 / 起冲突时）：各一句具体做法，按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
+    '   - 关系做法三档 relational_modes（close 对亲近的人 / normal 对平常的人 / conflict 起冲突时）：各一句具体做法，按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
     '   - warming_conditions（亲近条件，1-3 条）：对方要做到什么，此人才肯更近一步。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
-    '   - agreeableness_facets（宜人性三分面：同情 / 谦恭 / 信任）：每条给「高/中/低」、一句概括性的行为、一段原文摘录（quote）。' + _STABLE_FIELD_RULE + '只写概括性的行为，不写具体剧情事件。'
+    '   - agreeableness_facets（宜人性三分面：同情 / 谦恭 / 信任）：每条给「高/中/低」、一句概括性的行为、一段逐字照抄的原文摘录（quote，10-40 字）。' + _STABLE_FIELD_RULE + '只写概括性的行为，不写具体剧情事件。'
 )
 _FORMAT_OUTPUT_RULES = (
     '## 输出要求\n'
