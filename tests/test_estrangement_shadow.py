@@ -8,9 +8,14 @@ from unittest.mock import MagicMock
 from core.evaluation_pipeline import EvalResult
 from core.schema import PsycheProfile
 from affinity_verdict import verdict
-from core.affinity_service import AffinityService, calc_stage
+from core.affinity_service import AffinityService, TurnSignal, calc_stage
 from core.chat_engine import ChatEngine
 from core.schema import CharacterCard, PsycheProfile
+
+
+def _trigger_turn() -> dict:
+    """一轮「触到雷点」的评估输出（生效事件是 trigger）。"""
+    return {"affinity_event": "trigger", "affinity_tier": "medium", "affinity_delta": 4}
 
 
 def _make_engine() -> ChatEngine:
@@ -48,9 +53,6 @@ def _run_eval(engine: ChatEngine, data_override: dict | None = None) -> None:
         "importance": 5,
         "in_character": 80,
         "assertion_confidence": 50,
-        "trigger_hit": False,
-        "in_story_conflict": False,
-        "repair_signal": "",
     }
     if data_override:
         override = dict(data_override)
@@ -62,33 +64,17 @@ def _run_eval(engine: ChatEngine, data_override: dict | None = None) -> None:
 
 
 # ─────────────────────────────────────────────
-# EvalResult 向后兼容
+# EvalResult：旧的影子字段已删
 # ─────────────────────────────────────────────
 
 
-class TestEvalResultCompat:
-    """EvalResult 新字段默认值兼容旧构造。"""
+class TestEvalResultNoOldFields:
+    """三个平行字段已删除，EvalResult 上不再有它们。"""
 
-    def test_default_trigger_hit_is_false(self):
+    def test_old_parallel_fields_are_gone(self):
         result = EvalResult()
-        assert result.trigger_hit is False
-
-    def test_default_in_story_conflict_is_false(self):
-        result = EvalResult()
-        assert result.in_story_conflict is False
-
-    def test_default_repair_signal_is_empty(self):
-        result = EvalResult()
-        assert result.repair_signal == ""
-
-    def test_old_construction_still_works(self):
-        """只传旧字段，新字段取默认值。"""
-        result = EvalResult(importance=7, in_character=90, applied=True)
-        assert result.importance == 7
-        assert result.in_character == 90
-        assert result.applied is True
-        assert result.trigger_hit is False
-        assert result.repair_signal == ""
+        for field in ("trigger_hit", "in_story_conflict", "repair_signal"):
+            assert not hasattr(result, field), f"EvalResult 不该再有 {field}"
 
 
 # ─────────────────────────────────────────────
@@ -102,30 +88,24 @@ class TestDeltaRing:
     def test_max_8_entries(self):
         svc = AffinityService()
         for i in range(10):
-            svc._record_delta_ring(
-                affinity_delta=-i, trust_delta=0, guard_delta=0,
-                trigger_hit=False, in_story_conflict=False, repair_signal="",
-            )
+            svc._record_delta_ring(TurnSignal.of(
+                affinity_delta=-i, trust_delta=0, guard_delta=0, event=""))
         assert len(svc.get_estrangement_window()) == 8
 
     def test_fifo_eviction(self):
         svc = AffinityService()
         for i in range(10):
-            svc._record_delta_ring(
-                affinity_delta=i, trust_delta=0, guard_delta=0,
-                trigger_hit=False, in_story_conflict=False, repair_signal="",
-            )
+            svc._record_delta_ring(TurnSignal.of(
+                affinity_delta=i, trust_delta=0, guard_delta=0, event=""))
         window = svc.get_estrangement_window()
         # First 2 entries (0,1) evicted, remaining are 2..9
-        assert window[0]["affinity_delta"] == 2
-        assert window[-1]["affinity_delta"] == 9
+        assert window[0].affinity_delta == 2
+        assert window[-1].affinity_delta == 9
 
     def test_clear_on_load(self):
         svc = AffinityService()
-        svc._record_delta_ring(
-            affinity_delta=-3, trust_delta=0, guard_delta=0,
-            trigger_hit=False, in_story_conflict=False, repair_signal="",
-        )
+        svc._record_delta_ring(TurnSignal.of(
+            affinity_delta=-3, trust_delta=0, guard_delta=0, event=""))
         assert len(svc.get_estrangement_window()) == 1
         svc.load({"affinity": 50, "trust": 30, "mood": "平静", "guard": 70, "reason": ""})
         assert len(svc.get_estrangement_window()) == 0
@@ -136,15 +116,14 @@ class TestDeltaRing:
 
     def test_negative_delta_in_window(self):
         svc = AffinityService()
-        svc._record_delta_ring(
+        svc._record_delta_ring(TurnSignal.of(
             affinity_delta=-5, trust_delta=-3, guard_delta=2,
-            trigger_hit=True, in_story_conflict=False, repair_signal="apology",
-        )
+            event="repair", repair_kind="apology"))
         entries = svc.get_estrangement_window()
         assert len(entries) == 1
-        assert entries[0]["affinity_delta"] == -5
-        assert entries[0]["trigger_hit"] is True
-        assert entries[0]["repair_signal"] == "apology"
+        assert entries[0].affinity_delta == -5
+        assert entries[0].is_trigger is False
+        assert entries[0].repair_kind == "apology"
 
 
 # ─────────────────────────────────────────────
@@ -174,42 +153,30 @@ class TestShadowJudgment:
         assert "neg_sum=" in captured
 
     def test_trigger_condition(self, capsys):
-        """雷点命中条件：trigger_hits≥2 且角色有 triggers 定义。"""
+        """雷点命中条件：两轮生效的 trigger 事件 ≥2 且角色有 triggers 定义。"""
         engine = _make_engine()  # has psyche__triggers=["被无视", "被欺骗"]
         _set_stage(engine, "亲近", 80)
 
-        # 2 trigger hits, 0 negative delta so cumulative won't fire
         for _ in range(2):
-            _run_eval(engine, {
-                "affinity": engine._affinity,
-                "trigger_hit": True,
-                "in_story_conflict": False,
-            })
+            _run_eval(engine, _trigger_turn())
 
         engine._shadow_estrangement_check()
         captured = capsys.readouterr().out
         assert "would_enter=active" in captured
-        assert "trigger" in captured
         assert "trigger_hits=2" in captured
-        assert "in_story=0" in captured
+        assert "trigger(2hits)" in captured
 
     def test_story_conflict_excluded_from_trigger_count(self, capsys):
-        """剧情冲突标记不计入 trigger_hits 计数。"""
+        """剧情冲突按 neutral 报 → 不计入 trigger_hits。"""
         engine = _make_engine()
         _set_stage(engine, "亲近", 80)
 
-        # 2 triggers but 1 is in_story → only 1 real trigger → not enough
-        for i in range(2):
-            _run_eval(engine, {
-                "affinity": engine._affinity,
-                "trigger_hit": True,
-                "in_story_conflict": bool(i == 0),  # first one is story
-            })
+        for _ in range(2):
+            _run_eval(engine, {"affinity_event": "neutral"})
 
         engine._shadow_estrangement_check()
         captured = capsys.readouterr().out
-        assert "would_enter=none" in captured or "would_enter=brewing" in captured
-        assert "trigger_hits=1" in captured
+        assert "trigger_hits=0" in captured
 
     def test_sharp_drop_condition(self, capsys):
         """急降条件：单轮 clamp 到 -8 且 guard≥75。"""
@@ -256,17 +223,16 @@ class TestShadowJudgment:
         assert "would_enter=none" in captured
 
 
-class TestShadowRepairSignal:
-    """修复信号在日志中体现。"""
+class TestShadowRepairKind:
+    """修复细分在日志中体现，且只在真有修复时记。"""
 
-    def test_repair_signal_logged(self, capsys):
+    def test_repair_kind_logged(self, capsys):
         engine = _make_engine()
         _set_stage(engine, "亲近", 80)
 
-        _run_eval(engine, {
-            "affinity": engine._affinity,
-            "repair_signal": "apology",
-        })
+        _run_eval(engine, {"affinity": engine._affinity - 4})          # 先冒犯
+        _run_eval(engine, {"affinity_event": "repair", "affinity_tier": "small",
+                           "affinity_delta": 2, "repair_kind": "apology"})
 
         engine._shadow_estrangement_check()
         captured = capsys.readouterr().out
@@ -283,34 +249,62 @@ class TestApplyEvaluationRecordsRing:
             **verdict(-5), "trust": 30, "mood": "平静", "guard": 70,
             "inner_voice": "嗯", "mood_emoji": "😊", "importance": 5,
             "in_character": 80, "assertion_confidence": 50,
-            "trigger_hit": True, "in_story_conflict": False, "repair_signal": "",
         }
         svc.apply_evaluation(data, "朋友", PsycheProfile())
         window = svc.get_estrangement_window()
         assert len(window) == 1
-        assert window[0]["affinity_delta"] == -5  # 55 - 60
-        assert window[0]["trigger_hit"] is True
+        assert window[0].affinity_delta == -5  # 55 - 60
+        assert window[0].event == "offended"
 
-    def test_missing_keys_tolerated(self):
-        """评估 JSON 缺 trigger_hit/in_story_conflict/repair_signal → 不报错。"""
+    def test_missing_repair_kind_tolerated(self):
+        """评估 JSON 缺 repair_kind → 记 ""，不报错。"""
         svc = AffinityService()
         svc.affinity = 50
         data = {
-            "affinity": 50, "trust": 30, "mood": "平静", "guard": 70,
+            "affinity_event": "neutral", "trust": 30, "mood": "平静", "guard": 70,
             "inner_voice": "嗯", "mood_emoji": "😊", "importance": 5,
             "in_character": 80, "assertion_confidence": 50,
-            # Intentionally missing trigger_hit, in_story_conflict, repair_signal
+            # 故意没有 repair_kind
         }
         svc.apply_evaluation(data, "陌生", PsycheProfile())  # must not raise
         window = svc.get_estrangement_window()
         assert len(window) == 1
-        assert window[0]["trigger_hit"] is False
-        assert window[0]["in_story_conflict"] is False
-        assert window[0]["repair_signal"] == ""
+        assert window[0].event == "neutral"
+        assert window[0].repair_kind == ""
+
+
+class TestRingEventFromEffectiveVerdict:
+    """缓冲记生效事件：不合法的一轮记 ""，合法的一轮记事件名。"""
+
+    def test_unknown_event_records_empty_event(self):
+        svc = AffinityService()
+        svc.apply_evaluation({"affinity_event": "bogus"}, "陌生", PsycheProfile())
+        assert svc.get_estrangement_window()[-1].event == ""
+
+    def test_valid_trigger_event_is_recorded(self):
+        svc = AffinityService()
+        svc.apply_evaluation(_trigger_turn(), "陌生", PsycheProfile())
+        assert svc.get_estrangement_window()[-1].event == "trigger"
+
+
+class TestTurnSignal:
+    """TurnSignal 里的两条判断：repair_kind 只跟 repair；is_trigger 只认 trigger。"""
+
+    def test_repair_kind_kept_only_for_repair(self):
+        assert TurnSignal.of(affinity_delta=0, trust_delta=0, guard_delta=0,
+                             event="repair", repair_kind="apology").repair_kind == "apology"
+        assert TurnSignal.of(affinity_delta=0, trust_delta=0, guard_delta=0,
+                             event="friendly", repair_kind="apology").repair_kind == ""
+
+    def test_is_trigger_only_for_trigger(self):
+        assert TurnSignal.of(affinity_delta=0, trust_delta=0, guard_delta=0,
+                             event="trigger").is_trigger is True
+        assert TurnSignal.of(affinity_delta=0, trust_delta=0, guard_delta=0,
+                             event="offended").is_trigger is False
 
 
 class TestShadowNoPsycheTriggers:
-    """角色没有 triggers 定义时，trigger_hits 不触发条件 2。"""
+    """角色没有 triggers 定义时，触雷轮数再多也不触发条件 2。"""
 
     def test_no_triggers_no_trigger_condition(self, capsys):
         card = CharacterCard(name="无雷角色", identity="温和", psyche=PsycheProfile())
@@ -324,13 +318,10 @@ class TestShadowNoPsycheTriggers:
         _set_stage(engine, "亲近", 80)
 
         for _ in range(2):
-            _run_eval(engine, {
-                "affinity": engine._affinity,
-                "trigger_hit": True,
-                "in_story_conflict": False,
-            })
+            _run_eval(engine, _trigger_turn())
 
         engine._shadow_estrangement_check()
         captured = capsys.readouterr().out
-        # trigger_hits=2 but has_triggers=False → condition not met
-        assert "would_enter=none" in captured
+        # trigger_hits=2 但角色没定义 triggers → 条件 2 不成立
+        assert "trigger_hits=2" in captured
+        assert "trigger(2hits)" not in captured
