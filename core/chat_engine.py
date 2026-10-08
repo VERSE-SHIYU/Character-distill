@@ -190,7 +190,6 @@ class ChatEngine:
                 self._trust = max(0, min(100, init_data.get("trust", 30)))
                 self._mood = init_data.get("mood", "平静")
                 self._guard = max(0, min(100, init_data.get("guard", 70)))
-                self._affinity_reason = init_data.get("reason", "")
                 self._inner_voice = init_data.get("inner_voice", "")
                 self._mood_emoji = init_data.get("mood_emoji", "😊")
                 self._stage, self._stage_emoji = calc_stage(self._affinity)
@@ -277,13 +276,6 @@ class ChatEngine:
     @_guard.setter
     def _guard(self, v: int) -> None:
         self._affinity_service.guard = v
-
-    @property
-    def _affinity_reason(self) -> str:
-        return self._affinity_service.affinity_reason
-    @_affinity_reason.setter
-    def _affinity_reason(self, v: str) -> None:
-        self._affinity_service.affinity_reason = v
 
     @property
     def _inner_voice(self) -> str:
@@ -608,7 +600,6 @@ class ChatEngine:
         """将 user_catchwords 持久化到 DB（通过单一保存点）。"""
         if not self._storage or not self._session_id:
             return
-        self._affinity_service.pack_reason()      # 口头禅变了：reason 由服务自己重新打包
         self._save_affinity_state()
 
     def _try_record_usage(self, action: str, *, llm: LLMAdapter, usage: dict | None = None) -> None:
@@ -659,7 +650,6 @@ class ChatEngine:
                 self._trust = max(0, min(100, init.get("trust", 30)))
                 self._mood = init.get("mood", "平静")
                 self._guard = max(0, min(100, init.get("guard", 70)))
-                self._affinity_reason = init.get("reason", "")
                 self._inner_voice = init.get("inner_voice", "")
                 self._mood_emoji = init.get("mood_emoji", "😊")
                 self._stage, self._stage_emoji = calc_stage(self._affinity)
@@ -1178,7 +1168,6 @@ class ChatEngine:
                 "affinity": 15, "trust": 10, "mood": "警觉", "guard": 85,
                 "inner_voice": "谁？不认识。先看看什么情况。",
                 "mood_emoji": "🫥",
-                "reason": f"{card.name} 对陌生人保持高度警惕",
             }
 
         # 遍历角色卡人际关系列表
@@ -1205,13 +1194,11 @@ class ChatEngine:
                         "affinity": 68, "trust": 48, "mood": "紧张", "guard": 62,
                         "inner_voice": f"又见到{target}了...心里说不上来什么感觉，明明那么熟悉，却好像隔了什么。",
                         "mood_emoji": "😔",
-                        "reason": f"{card.name} 与 {target}（{rel.relation}）关系复杂，心存芥蒂",
                     }
                 return {
                     "affinity": 82, "trust": 72, "mood": "开心", "guard": 25,
                     "inner_voice": f"{target}来了，看到{target}心情就会好起来。",
                     "mood_emoji": "😊",
-                    "reason": f"{card.name} 视 {target} 为{rel.relation}",
                 }
 
             # 对立关系（IOS₁₁ 1级，Bogardus 7级）
@@ -1221,7 +1208,6 @@ class ChatEngine:
                     "affinity": 10, "trust": 5, "mood": "敌意", "guard": 95,
                     "inner_voice": f"{target}...看到这个名字就来气。",
                     "mood_emoji": "😤",
-                    "reason": f"{card.name} 视 {target} 为{rel.relation}，充满敌意",
                 }
 
             # 普通相识（IOS₁₁ 5-6级，Bogardus 3-4级）
@@ -1231,7 +1217,6 @@ class ChatEngine:
                     "affinity": 50, "trust": 35, "mood": "平静", "guard": 58,
                     "inner_voice": f"是{target}啊，还行吧，不算陌生也不算多熟。",
                     "mood_emoji": "🙂",
-                    "reason": f"{card.name} 认识 {target}（{rel.relation}），关系普通",
                 }
 
             # 兜底
@@ -1239,7 +1224,6 @@ class ChatEngine:
                 "affinity": 40, "trust": 28, "mood": "平静", "guard": 60,
                 "inner_voice": f"嗯，{target}来了，好好相处吧。",
                 "mood_emoji": "🙂",
-                "reason": f"{card.name} 与 {target} 是{rel.relation}",
             }
 
         # 未匹配关系 → 按 user_role 语义微调
@@ -1249,7 +1233,6 @@ class ChatEngine:
                 "affinity": 38, "trust": 15, "mood": "平静", "guard": 68,
                 "inner_voice": f"又一个{user}...客气点就好，保持距离。",
                 "mood_emoji": "🙂",
-                "reason": f"{card.name} 对{user}保持友好但有所保留",
             }
 
         # 完全陌生人（IOS₁₁ 1-2级，Bogardus 6-7级）
@@ -1257,7 +1240,6 @@ class ChatEngine:
             "affinity": 15, "trust": 10, "mood": "警觉", "guard": 85,
             "inner_voice": "谁？不认识。先看看什么情况。",
             "mood_emoji": "🫥",
-            "reason": f"{card.name} 不认识{user}，态度谨慎",
         }
 
     def get_affinity(self) -> dict[str, Any]:

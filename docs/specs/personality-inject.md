@@ -99,7 +99,7 @@ main 上绿的 10 条，逐条说明：夹具自检 1 条；负对照 2 条；G9
 | R14 | 三档取哪一档：上一轮生效的事件是 `offended` / `trigger` → 冲突档（优先）；好感 ≥73 → 亲近档；其余平常档 | 设计稿 §4 |
 | R15 | 人格块：卡上三档做法**三句都非空**才用对应那一句取代通用语气；分面非空才用分面行为取代写死的宜人性文案。否则保持现在的文案 | 设计稿 §4，Q2 |
 | R16 | 输入不合法（未知事件；非 `neutral` 时档位或整数不合法）：本轮好感和规则状态都不变，记 warning。「上一轮事件」因此也不更新，冲突档会延续到下一次合法评估 | 设计稿 §5 |
-| R17 | 规则状态五项（上一轮事件、`met_condition` 次数、连续非负轮数、冒犯前的值、是否到过亲近档）写进 `reason` 的 JSON（F8），`load` 时读回；旧存档没有这份状态、或键的类型不对，就取默认值。**「到过亲近档」的置位时机**：回合开始时好感 ≥73 即记为到过亲近档（含起点就在亲近档）；跨进亲近档的那一轮，落库值在下一轮开头补记。单聊、群聊走同一处。**`reason` 的 JSON 只有一个打包处**（`AffinityService.pack_reason`），评估之后、口头禅更新之后都调它 | 设计稿 §5；F8–F11；第二轮审计 B1 |
+| R17 | 规则状态五项（上一轮事件、`met_condition` 次数、连续非负轮数、冒犯前的值、是否到过亲近档）写进 `reason` 的 JSON（F8），`load` 时读回；旧存档没有这份状态、或键的类型不对，就取默认值。**「到过亲近档」的置位时机**：回合开始时好感 ≥73 即记为到过亲近档（含起点就在亲近档）；跨进亲近档的那一轮，落库值在下一轮开头补记。单聊、群聊走同一处。**`reason` 是 `AffinityService` 的只读属性**，由当前状态现算 —— 没有可赋值的字段，就没有「漏打包」；原始 JSON → 状态的解码只在 `AffinityService.parse_reason` 一处 | 设计稿 §5；F8–F11；第二轮审计 B1；第三轮复核 P2 |
 
 | R18 | 用默认亲近条件的卡（投影后卡上没有亲近条件），单轮最多涨 5；下跌由档位上限管，最多 8。按投影后的卡判断，所以只在某个阶段有亲近条件的卡，这条上限会随所选阶段变 | 设计稿 Q4「这类卡单轮变化不超过现有的 +5 / −8」 |
 
@@ -114,7 +114,7 @@ Q16（记仇不由代码调档，只进评估 prompt）在设计稿里标着「�
 | `core/affinity_rules.py`（新） | 规则表：一轮事件 → 新好感、新状态。常量、默认亲近条件、规则状态及其与 dict 的互转。纯函数 | 不认识 prompt、落库、引擎 |
 | `core/affinity_protocol.py`（新） | 评估协议：四个字段名、给模型看的事件与档位说明、提示词片段的生成、从回答里取字段 | 不算数值；档位区间和事件名从规则表的常量生成，不手写第二份 |
 | `core/schema.py` | 数据模型自己回答「三档填全了吗」「这一档是哪句」「分面行为有哪些」 | — |
-| `core/affinity_service.py` | 持有状态、拼评估 prompt、调规则表、把状态写进 / 读出 `reason`（打包只在 `pack_reason` 一处） | 不含任何好感数值规则，不含字段名字面量 |
+| `core/affinity_service.py` | 持有状态、拼评估 prompt、调规则表、由状态**现算** `reason`（只读属性）、从 `reason` 解码回状态（解码只在 `parse_reason` 一处） | 不含任何好感数值规则，不含字段名字面量 |
 | `core/chat_engine.py` | 人格块里取一句、列几行 | 不判断填没填全，不决定哪一档 |
 | `core/evaluation_pipeline.py` | 把这张卡的画像传给 `apply_evaluation`（`:80`） | — |
 | `core/card_layers.py` | 登记 5 条：`psyche.warming_conditions`（state / list）、`psyche.relational_modes.close|normal|conflict`（state / scalar）、`psyche.agreeableness_facets`（stable / list） | — |
@@ -177,7 +177,7 @@ grep -lE "REGISTRY|_leaves|card_layers|card_draft|card_quotes" tests/*.py
 | `tests/test_affinity_rules.py` | 58 | 规则表 R2–R18，纯函数；登记表的 5 条 |
 | `tests/test_affinity_protocol.py` | 3 | 提示词里的事件名、档位区间来自规则表；字段名读写一致 |
 | `tests/test_evaluation_pipeline.py` 里新增的一条 | 1 | 群聊：真实走「评估 → `update_group_affinity` 的参数 → 按 5 列 `load`」，规则状态还在 |
-| `tests/test_catchwords.py` 里新增的两条 | 2 | 口头禅更新后重新打包，规则状态还在；结构锁：`reason` 的 JSON 只有一个打包处 |
+| `tests/test_catchwords.py`（改写的两条 + 新增的一条） | 3 | 改口头禅后不调任何打包函数，`reason` 里就有新口头禅与规则状态；`reason` 不可赋值（赋值抛 `AttributeError`）；`parse_reason` 五种输入的形状（合法 dict / 纯文本 / 非 dict JSON / 空串 / None） |
 
 **调用点 × 可观测输出：**
 
@@ -187,7 +187,7 @@ grep -lE "REGISTRY|_leaves|card_layers|card_draft|card_quotes" tests/*.py
 | 群聊 | 同一个 `ChatEngine`（U1） | 同一个 `apply_evaluation`（F4） | 同上 | G8[group]、`test_group_row_carries_the_rule_state_and_restores_it` |
 | 重新生成、撤回 | 没有单独的评估入口：改好感的只有 `apply_evaluation` 一处（U1） | 同上 | 同上 | 同上 |
 
-**对账表（在本分支的实现上跑：46 条全红，放宽 23、过严 23。脚本 `docs/specs/artifacts/personality_inject_mutations.py`，用仓库的 `tests/perf/mutation_framework.py` 的 `run_oneoff` 跑，带基线门和按字节还原；原始输出在同目录的 `personality-inject-mutations.txt`）：**
+**对账表（在本分支的实现上跑：48 条全红，放宽 24、过严 24。脚本 `docs/specs/artifacts/personality_inject_mutations.py`，用仓库的 `tests/perf/mutation_framework.py` 的 `run_oneoff` 跑，带基线门和按字节还原；原始输出在同目录的 `personality-inject-mutations.txt`）：**
 
 | 规则 | 变异 | 打红的检查 |
 |---|---|---|
@@ -199,12 +199,12 @@ grep -lE "REGISTRY|_leaves|card_layers|card_draft|card_quotes" tests/*.py
 | R7 | 每次冒犯都重记冒犯前的值 | 规则单测 |
 | R8 | 修复不设上限 / 修复不加分 | G4 |
 | R9 | 冒犯前的值永不清空 | 规则单测 |
-| R10、R11 | 门槛改 2 / 改 4 / 永远不开 / 只拦 `met_condition`；忽略「到过亲近档」（G4 打红） / 起点就在亲近档的不算到过（#16，G4 打红） / 所有关系都当作到过亲近档（G3 打红） | G3、G4、规则单测 |
+| R10、R11 | 门槛改 2 / 改 4 / 永远不开 / 只拦 `met_condition`；忽略「到过亲近档」（G4 打红） / 起点就在亲近档的不算到过（#16，G4 打红） / 所有关系都当作到过亲近档（G3 打红） / 起点正好 73 不算到过（`>=`→`>`，规则单测打红） | G3、G4、规则单测 |
 | R12 | 代码按记仇让小档道歉不算数 | G10 |
 | R14 | 冲突档不触发 / 不退出 / 闲聊也触发 / 亲近档优先 | G2、G4 |
 | R15 | 有三档仍用通用语气 / 有分面仍用写死文案 / 三档没填全也用 | G1、G9 |
 | R16 | 未知事件不拒绝 | 规则单测 |
-| R17 | 不落库 / 恢复时不读 / 恢复时不读「到过亲近档」（G8 打红） | G8 |
+| R17 | 不落库 / 恢复时不读 / 恢复时不读「到过亲近档」（G8 打红） / 纯文本 `reason` 不再落到 `inner_voice`（`test_catchwords.py` 打红） | G8、`test_catchwords.py` |
 | R18 | 默认条件卡不设上限 / 所有卡都套上限 | G11、G6 |
 | F12 | 「性格特征」仍填 `values` | G10 |
 | 协议 | 读回答时读回旧字段 / 评估 prompt 不带亲近条件 | G2、G7 |
@@ -226,8 +226,8 @@ grep -lE "REGISTRY|_leaves|card_layers|card_draft|card_quotes" tests/*.py
 | 事实带坐标和读过的行 | S0 的 F1–F14；U1、U2 已查清 |
 | 全量扫描 | 没做全量：§4 写明了样本范围和范围之外怎么处理 |
 | 一个 PR 一件事 | 段 1；段 2、段 3 另出 |
-| 流程按风险配 | 没有结构锁；变异只打规则表 |
-| 变异 | 46 / 46，放宽 23、过严 23，脚本和原始输出都在 `artifacts/`，走仓库的变异驱动 |
+| 流程按风险配 | 没有正则结构锁：`reason` 不可赋值由语言保证（B1）；变异只打规则表 |
+| 变异 | 48 / 48，放宽 24、过严 24，脚本和原始输出都在 `artifacts/`，走仓库的变异驱动 |
 | 一条规则只写一处 | 档位区间、事件名、字段名、默认亲近条件、73、单轮 +5 各只定义一处（§3） |
 | 往已有路径上加东西的机制表、规模 | §4 |
 | 出处对照（设计稿 → 本文件） | §8 末尾，逐条对过 |
@@ -279,7 +279,7 @@ grep -lE "REGISTRY|_leaves|card_layers|card_draft|card_quotes" tests/*.py
 | 审计项 | 属于 | 根因 | 处理 |
 |---|---|---|---|
 | B1 反思触发后规则状态丢失 | 实现偏离 R17 | `reason` 的 JSON 有两个写入处（服务、引擎的口头禅保存），新键只加了一处 | 打包收拢成 `AffinityService.pack_reason` 一处，引擎改为调用它；加结构锁、G8 的口头禅用例、服务层用例 |
-| B2 起点 ≥73 的关系掉出亲近档后永远修不回去 | spec 本身的冲突（R8 对 R10） | R10 写成了「任何事件」，没想到修复是回到已有的位置 | **Shiyu 定为 b**：门槛只管第一次进亲近档，已到过亲近档（含起点就在亲近档）的关系不再受门槛限制。理由：这符合门槛本意（只拦「第一次挣到亲近档」）；只放开 `repair` 会出现「道歉比做到亲近条件更管用」的倒挂。副作用：在旧代码下就已经 ≥73 的存档，加载后也视为到过；曾经到过、现在已掉到 73 以下的旧存档无从得知，仍受门槛。R10 改写、G4 加一条、规则单测改写 |
+| B2 起点 ≥73 的关系掉出亲近档后永远修不回去 | spec 本身的冲突（R8 对 R10） | R10 写成了「任何事件」，没想到修复是回到已有的位置 | **Shiyu 定为 b**：门槛只管第一次进亲近档，已到过亲近档（含起点就在亲近档）的关系不再受门槛限制。理由：这符合门槛本意（只拦「第一次挣到亲近档」）；只放开 `repair` 会出现「道歉比做到亲近条件更管用」的倒挂。副作用：在旧代码下就已经 ≥73 的存档，加载后的第一轮开头（回合开始好感 ≥73）即补记为到过；曾经到过、现在已掉到 73 以下的旧存档无从得知，仍受门槛。R10 改写、G4 加一条、规则单测改写 |
 | T1 `test_affinity_clamp.py` 声称测 R18 实际没测 | 测试漏洞 | 新状态下大档先被 R6 降成中档，中档上限本来就是 5 | 先让大档生效再断言；变异「关掉 R18」现在能打红它 |
 | T2 修复的大档按中档算没测到 | 测试漏洞 | 用例里冒犯只扣 5，中档和大档结果一样 | 加一条冒犯前的值离得远的用例 |
 | T3 `trigger` 单独发生时记不记冒犯前的值没测 | 测试漏洞 | 用例里 `trigger` 只出现在 `offended` 之后 | 加一条 |
@@ -292,6 +292,16 @@ grep -lE "REGISTRY|_leaves|card_layers|card_draft|card_quotes" tests/*.py
 | S1 评估 prompt 里 `trigger` / `repair` 事件和原有的 `trigger_hit` / `repair_signal` 是两套平行判定 | spec 没覆盖 | 后两个字段只供疏远检测的影子日志用（`core/chat_engine.py` 的 `_shadow_estrangement_check`），本段没动它们 | **未处理，等 Shiyu 定**。建议：好感只认事件；`trigger_hit` 改由代码从事件派生，提示词里删掉它的判定段；`repair_signal` 留作 `repair` 的细分；「剧情内冲突」写明不算冒犯。这会动疏远检测的输入，另开一步做 |
 | delta 环里的键 `affinity_delta` 与协议字段同名、含义不同 | 结构，低 | 历史命名 | 未改：改任何一边都要动已有数据或设计稿定的字段名。记在这里 |
 | `test_relationship_batch_splits_and_merges` 在审计方本地不稳定 | 与本分支无关 | 断言并发批次的完成顺序 | 未处理，不在本段范围；我这边全量时它是绿的 |
+
+**2026-10-08 收尾 b 与第三轮独立复核（`8766ef65`）：**
+
+| # | 发现 | 根因 | 处理 / 现状 |
+|---|---|---|---|
+| P4 | 变异 #16（起点就在亲近档的不算到过）在 `0ea62920` 上仍存活 | `reached_close` 在 `apply_event` 里置位两次（`:146` 回合前、`:158` 回合后），同一条规则写了两处 | `8766ef65` 已删掉回合后那一处，置位只在 `:146`；本轮新变异「起点正好 73 不算到过」（`>=`→`>`）在规则单测上打红 |
+| P2 | 上表 B1 行把根因记成「`reason` 的 JSON 有两个写入处」，认定不准 | 真正的问题是「派生值被缓存」：`affinity_reason` 是可赋值字段，内容完全由别的字段算出，每改一项状态都得记着重新打包；正则结构锁只是在守这份缓存，拦不全 | 改为「派生值不存、读时现算」：`affinity_reason` 改成 `AffinityService` 的只读属性，由当前状态现算；删 `pack_reason`、引擎的 `_affinity_reason` 转发与开局两处赋值、`_compute_initial_affinity` 里的 `reason` 键；解码收拢到 `parse_reason` 一处。结构锁删除，换成「赋值抛 `AttributeError`」。**本条取代上表 B1 行的处理** |
+| P1 | R10 门槛边界（好感正好 73）没有两侧用例 | 复核实跑发现：把 `affinity_rules.py:146` 的 `>=` 改成 `>` 后变异存活 | 已补：`test_r10_reaching_close_is_recorded` 里回合开始 73 → `reached_close is True`；72 → `False` |
+| P5 | 随 P2 一并解决 | — | 现算属性 + 唯一解码把 P5 一并覆盖，不再单列 |
+| P6 | 不在本次范围 | — | 不动 |
 
 **出处对照（设计稿 v6 → 本文件）：**
 

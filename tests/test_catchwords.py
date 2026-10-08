@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from core.chat_engine import ChatEngine
 from core.schema import PsycheProfile
 from core.affinity_service import AffinityService
@@ -268,37 +270,38 @@ class TestAffinityCompat:
         parsed = json.loads(svc.affinity_reason)
         assert parsed.get("user_catchwords") == ["好的"]
 
-    def test_pack_reason_keeps_rule_state_when_catchwords_change(self):
-        """口头禅更新会重新打包 reason：规则状态必须跟着走（曾在这里被抹掉）。"""
+    def test_catchwords_change_shows_up_without_packing(self):
+        """只改口头禅、不调任何打包函数，affinity_reason 里就有新口头禅和规则状态（现算属性）。"""
         from core.affinity_rules import RelationState
         svc = AffinityService()
         svc.relation = RelationState("offended", 2, 0, 58)
         svc.user_catchwords = ["绝了"]
-        svc.pack_reason()
-        restored = AffinityService()
-        restored.load(svc.get())
-        assert restored.relation == svc.relation and restored.user_catchwords == ["绝了"]
+        parsed = AffinityService.parse_reason(svc.affinity_reason)
+        assert parsed["user_catchwords"] == ["绝了"]
+        assert parsed["relation"] == svc.relation.to_dict()
 
-    def test_reason_json_is_packed_in_one_place_only(self):
-        """结构锁：除了 AffinityService.pack_reason，没有别处把 JSON 拼进 affinity_reason。"""
-        import pathlib
-        import re
-        root = pathlib.Path(__file__).resolve().parent.parent
-        writers = [
-            f"{path.relative_to(root).as_posix()}:{n}"
-            for sub in ("core", "web") for path in (root / sub).rglob("*.py")
-            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-            if re.search(r"affinity_reason\s*=.*dumps", line)
-        ]
-        assert writers == [w for w in writers if w.startswith("core/affinity_service.py")] and len(writers) == 1, writers
+    def test_affinity_reason_is_read_only(self):
+        """没有可赋值的 reason 字段：赋值抛 AttributeError（B1 由语言保证，不靠正则结构锁）。"""
+        svc = AffinityService()
+        with pytest.raises(AttributeError):
+            svc.affinity_reason = '{"x": 1}'
+
+    def test_parse_reason_shape_matrix(self):
+        """解码只在 parse_reason 一处：合法 dict / 纯文本 / 非 dict JSON / 空串 / None。"""
+        assert AffinityService.parse_reason('{"inner_voice": "v"}') == {"inner_voice": "v"}
+        assert AffinityService.parse_reason("纯文本旧数据") is None
+        assert AffinityService.parse_reason("[1]") is None
+        assert AffinityService.parse_reason("") is None
+        assert AffinityService.parse_reason(None) is None
 
     def test_plain_text_reason_compat(self):
-        """旧格式纯文本 reason（非 JSON）→ user_catchwords 默认空列表。"""
+        """旧格式纯文本 reason（非 JSON）→ 整段落进 inner_voice，口头禅默认空列表。"""
         svc = AffinityService()
         svc.load({
             "affinity": 50, "trust": 30, "mood": "平静", "guard": 70,
             "reason": "纯文本旧数据，没有 JSON 扩展字段",
         })
+        assert svc.inner_voice == "纯文本旧数据，没有 JSON 扩展字段"
         assert svc.user_catchwords == []
 
 

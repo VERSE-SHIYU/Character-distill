@@ -1,4 +1,4 @@
-"""spec `personality-inject.md` §5 对账表的变异，外加两轮独立审计里存活过的那几条。一次性产物。
+"""spec `personality-inject.md` §5 对账表的变异，外加两轮独立审计里存活过的那几条、以及 2026-10-08 收尾的两条。一次性产物。
 
 执行框架与判档不在本文件里：改文件、跑 pytest、按字节还原、基线门都用
 `tests/perf/mutation_framework.py` 的 `run_oneoff`（与 `arc_phase_unlocated_*_mutations.py` 同一处置）。
@@ -121,7 +121,7 @@ MUTANTS = [
     _m("过严 R17 规则状态不落库", GOAL, SERVICE, _PACKED, '            "relation": {},'),
     _m("过严 R17 口头禅保存时不带规则状态（审计 B1）", CATCH, SERVICE, _PACKED, '            "relation": {},'),
     _m("放宽 R17 恢复时不读规则状态", GOAL, SERVICE,
-       '        self.relation = RelationState.from_dict(_stored.get("relation") if isinstance(_stored, dict) else None)',
+       '        self.relation = RelationState.from_dict(_parsed.get("relation") if _parsed else None)',
        '        self.relation = RelationState()'),
     _m("过严 R17 脏的事件值让恢复崩掉（审计 I1）", UNIT, RULES,
        '        is_event = lambda v: isinstance(v, str) and v in EVENTS', '        is_event = lambda v: v in EVENTS'),
@@ -134,6 +134,12 @@ MUTANTS = [
     _m("过严 协议 评估 prompt 不带亲近条件", GOAL, PROTOCOL,
        '    conditions = "".join(f"  {i}. {c}\\n" for i, c in enumerate(warming_conditions(psyche)))',
        '    conditions = ""'),
+    # 2026-10-08 收尾（复核 P1、`reason` 改现算）：两条新变异。
+    _m("过严 R10 起点正好 73 不算到过", UNIT, RULES,
+       '        reached_close=state.reached_close or affinity >= CLOSE_FROM,',
+       '        reached_close=state.reached_close or affinity > CLOSE_FROM,'),
+    _m("放宽 纯文本 reason 不再落到 inner_voice", CATCH, SERVICE,
+       '                self.inner_voice = _reason_raw', '                self.inner_voice = ""'),
 ]
 
 if __name__ == "__main__":

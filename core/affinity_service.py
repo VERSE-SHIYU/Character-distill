@@ -70,7 +70,6 @@ class AffinityService:
         self.trust: int = 30
         self.mood: str = "平静"
         self.guard: int = 70
-        self.affinity_reason: str = ""
         self.inner_voice: str = ""
         self.mood_emoji: str = "😊"
         self.prev_stage: str = ""
@@ -123,9 +122,11 @@ class AffinityService:
         self.trust = data.get("trust", 30)
         self.mood = data.get("mood", "平静")
         self.guard = data.get("guard", 70)
-        self.affinity_reason = data.get("reason", "")
 
-        # 新格式：11 字段在顶层；旧格式：从 reason 内嵌 JSON 解析
+        # reason 原文解码只此一处：新格式 11 字段在顶层；旧格式从 reason 内嵌 JSON 取
+        _reason_raw = data.get("reason", "") or ""
+        _parsed = self.parse_reason(_reason_raw)
+
         if "inner_voice" in data:
             self.inner_voice = data["inner_voice"]
             self.mood_emoji = data.get("mood_emoji", "😊")
@@ -135,24 +136,41 @@ class AffinityService:
             if not self.stage:
                 self.stage, self.stage_emoji = calc_stage(self.affinity)
         else:
-            _reason = self.affinity_reason or ""
-            _parsed: dict | None = None
-            try:
-                _parsed = json.loads(_reason)
+            if _parsed is None:
+                self.inner_voice = _reason_raw          # 旧格式纯文本：整段落进内心独白
+                self.mood_emoji = "😊"
+            else:
                 self.inner_voice = _parsed.get("inner_voice", "")
                 self.mood_emoji = _parsed.get("mood_emoji", "😊")
-            except (json.JSONDecodeError, TypeError):
-                self.inner_voice = _reason
-                self.mood_emoji = "😊"
-            self.user_catchwords = _parsed.get("user_catchwords", []) if isinstance(_parsed, dict) else []
+            self.user_catchwords = _parsed.get("user_catchwords", []) if _parsed else []
             self.stage, self.stage_emoji = calc_stage(self.affinity)
         # 规则状态与 inner_voice 走同一个通道：reason 里的 JSON（单聊新旧格式、群聊都带 reason）
-        try:
-            _stored = json.loads(self.affinity_reason or "")
-        except (json.JSONDecodeError, TypeError):
-            _stored = None
-        self.relation = RelationState.from_dict(_stored.get("relation") if isinstance(_stored, dict) else None)
+        self.relation = RelationState.from_dict(_parsed.get("relation") if _parsed else None)
         self.prev_stage = self.stage
+
+    @staticmethod
+    def parse_reason(raw: Any) -> dict[str, Any] | None:
+        """`reason` 原文 → dict。解码只此一处。空值、非 JSON、解析结果不是 dict 都返回 None。"""
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    @property
+    def affinity_reason(self) -> str:
+        """随存档走的扩展状态，由当前状态现算（不是存的字段）：改了任何一项，读到的就是新的。"""
+        return json.dumps({
+            "inner_voice": self.inner_voice,
+            "mood_emoji": self.mood_emoji,
+            "mood_word": self.mood,
+            "stage": self.stage,
+            "stage_emoji": self.stage_emoji,
+            "user_catchwords": self.user_catchwords,
+            "relation": self.relation.to_dict(),
+        }, ensure_ascii=False)
 
     def get(self) -> dict[str, Any]:
         """返回 get_affinity 所需的字段结构。"""
@@ -313,33 +331,15 @@ class AffinityService:
           ① reason 可解析为含 inner_voice 的 JSON
           ② 数值非硬编码默认（50/30/平静/70）
         """
-        raw_reason = data.get("reason", "") or ""
-        try:
-            p = json.loads(raw_reason)
-            if isinstance(p, dict) and p.get("inner_voice"):
-                return True
-        except (json.JSONDecodeError, TypeError):
-            pass
+        p = AffinityService.parse_reason(data.get("reason"))
+        if p and p.get("inner_voice"):
+            return True
         return not (
             data.get("affinity") == 50
             and data.get("trust") == 30
             and data.get("mood") == "平静"
             and data.get("guard") == 70
         )
-
-    def pack_reason(self) -> None:
-        """把要随存档走的扩展状态写进 `affinity_reason`。**唯一的写入处**：单聊存整份状态、
-        群聊只存 5 个标量列，两边都带着 reason，所以内心独白、口头禅、规则状态都从这里出去。
-        改了其中任何一项（评估之后、口头禅更新之后）都调它，不要在别处另拼一份。"""
-        self.affinity_reason = json.dumps({
-            "inner_voice": self.inner_voice,
-            "mood_emoji": self.mood_emoji,
-            "mood_word": self.mood,
-            "stage": self.stage,
-            "stage_emoji": self.stage_emoji,
-            "user_catchwords": self.user_catchwords,
-            "relation": self.relation.to_dict(),
-        }, ensure_ascii=False)
 
     def apply_evaluation(self, data: dict, old_stage: str, psyche: Any) -> int:
         """把解析结果回写11个情感字段，返回importance。纯状态计算，无IO。
@@ -381,7 +381,6 @@ class AffinityService:
             repair_signal=str(data.get("repair_signal", "") or ""),
         )
 
-        self.pack_reason()
         return importance
 
 
