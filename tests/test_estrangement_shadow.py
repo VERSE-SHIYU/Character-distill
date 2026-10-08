@@ -6,6 +6,8 @@ import re
 from unittest.mock import MagicMock
 
 from core.evaluation_pipeline import EvalResult
+from core.schema import PsycheProfile
+from affinity_verdict import verdict
 from core.affinity_service import AffinityService, calc_stage
 from core.chat_engine import ChatEngine
 from core.schema import CharacterCard, PsycheProfile
@@ -37,7 +39,7 @@ def _set_stage(engine: ChatEngine, stage: str, affinity: int) -> None:
 def _run_eval(engine: ChatEngine, data_override: dict | None = None) -> None:
     """Run a fake evaluation turn, filling ring buffer."""
     data = {
-        "affinity": engine._affinity,
+        **verdict(0),
         "trust": engine._trust,
         "mood": "平静",
         "guard": engine._guard,
@@ -51,9 +53,12 @@ def _run_eval(engine: ChatEngine, data_override: dict | None = None) -> None:
         "repair_signal": "",
     }
     if data_override:
-        data.update(data_override)
+        override = dict(data_override)
+        if "affinity" in override:      # 用例写的是「好感变成多少」，翻成评估协议里的事件
+            data.update(verdict(override.pop("affinity") - engine._affinity))
+        data.update(override)
     old_stage = engine._stage
-    engine._affinity_service.apply_evaluation(data, old_stage)
+    engine._affinity_service.apply_evaluation(data, old_stage, engine.card.psyche)
 
 
 # ─────────────────────────────────────────────
@@ -275,12 +280,12 @@ class TestApplyEvaluationRecordsRing:
         svc = AffinityService()
         svc.affinity = 60
         data = {
-            "affinity": 55, "trust": 30, "mood": "平静", "guard": 70,
+            **verdict(-5), "trust": 30, "mood": "平静", "guard": 70,
             "inner_voice": "嗯", "mood_emoji": "😊", "importance": 5,
             "in_character": 80, "assertion_confidence": 50,
             "trigger_hit": True, "in_story_conflict": False, "repair_signal": "",
         }
-        svc.apply_evaluation(data, "朋友")
+        svc.apply_evaluation(data, "朋友", PsycheProfile())
         window = svc.get_estrangement_window()
         assert len(window) == 1
         assert window[0]["affinity_delta"] == -5  # 55 - 60
@@ -296,7 +301,7 @@ class TestApplyEvaluationRecordsRing:
             "in_character": 80, "assertion_confidence": 50,
             # Intentionally missing trigger_hit, in_story_conflict, repair_signal
         }
-        svc.apply_evaluation(data, "陌生")  # must not raise
+        svc.apply_evaluation(data, "陌生", PsycheProfile())  # must not raise
         window = svc.get_estrangement_window()
         assert len(window) == 1
         assert window[0]["trigger_hit"] is False

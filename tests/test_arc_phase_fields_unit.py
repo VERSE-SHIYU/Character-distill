@@ -53,7 +53,7 @@ def test_registry_equals_leaf_set():
     from core.card_layers import REGISTRY
 
     assert set(REGISTRY) == set(_leaves(CharacterCard))
-    assert len(REGISTRY) == 40
+    assert len(REGISTRY) == 45
 
 
 def test_registry_every_entry_has_layer_and_kind():

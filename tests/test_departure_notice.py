@@ -242,11 +242,9 @@ class TestBuildEvaluationPrompt:
 
     def _make_card(self):
         from types import SimpleNamespace
-        psy = SimpleNamespace(
-            affinity_baseline=50, volatility="适中", grudge_inertia="一般",
-            triggers=[], soft_spots=[],
-        )
-        return SimpleNamespace(name="Test", values=[], inner_tensions=[], psyche=psy)
+        from core.schema import PsycheProfile
+        # 用真的画像模型：评估 prompt 读它的字段，手写的替身会跟 schema 走散
+        return SimpleNamespace(name="Test", values=[], inner_tensions=[], psyche=PsycheProfile())
 
     def test_without_departure_notice_unchanged(self):
         """Default (no departure_notice) produces identical prompt."""

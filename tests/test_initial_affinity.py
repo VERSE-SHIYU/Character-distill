@@ -239,7 +239,6 @@ def test_affinity_service_roundtrip():
     svc.stage = "亲近"
     svc.stage_emoji = "🥰"
     svc.user_catchwords = ["好吧", "随便你"]
-    svc.affinity_reason = '{"legacy":"compat"}'
 
     # 2. 序列化 → 反序列化
     raw = svc.to_persist()
@@ -260,7 +259,15 @@ def test_affinity_service_roundtrip():
     assert svc2.stage == "亲近"
     assert svc2.stage_emoji == "🥰"
     assert svc2.user_catchwords == ["好吧", "随便你"]
-    assert svc2.affinity_reason == '{"legacy":"compat"}'
+
+    # reason 是现算属性：解析出来的 dict 与各字段一致
+    parsed_reason = AffinityService.parse_reason(svc2.affinity_reason)
+    assert parsed_reason["inner_voice"] == "这家伙今天有点不一样……"
+    assert parsed_reason["mood_emoji"] == "🫣"
+    assert parsed_reason["mood_word"] == "心软"
+    assert parsed_reason["stage"] == "亲近"
+    assert parsed_reason["user_catchwords"] == ["好吧", "随便你"]
+    assert parsed_reason["relation"] == svc2.relation.to_dict()
 
 
 def test_affinity_service_roundtrip_empty_stage():

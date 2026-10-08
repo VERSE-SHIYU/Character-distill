@@ -8,25 +8,23 @@ from typing import Any
 
 import pytest
 
-from core.affinity_service import AffinityService, calc_stage, AFFINITY_DELTA_UP, TRUST_DELTA_UP, GUARD_DELTA_DOWN
+from affinity_verdict import verdict
+from core.affinity_service import AffinityService, calc_stage, TRUST_DELTA_UP, GUARD_DELTA_DOWN
+from core.schema import PsycheProfile
+
+# 本文件里评估模型的回复都报「好感 +5」；断言用同一个数
+AFFINITY_STEP = 5
+_VERDICT_JSON = json.dumps(verdict(AFFINITY_STEP))[1:-1]      # 嵌进手写 JSON 回复里的那几项
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext, EvalResult
 
 
 # ── 辅助 fake 对象 ─────────────────────────────────────────────
 
-class FakePsyche:
-    affinity_baseline = 50
-    volatility = "适中"
-    grudge_inertia = "一般"
-    triggers: list[str] = []
-    soft_spots: list[str] = []
-
-
 class FakeCard:
     name = "测试角色"
     values: list[str] = ["真诚", "直率"]
     inner_tensions: list[str] = ["独立 vs 依赖"]
-    psyche = FakePsyche()
+    psyche = PsycheProfile()
 
 
 class FakeLLM:
@@ -40,7 +38,7 @@ class FakeLLM:
         if self.raise_on_call:
             raise RuntimeError("LLM call failed (fake)")
         if self.reply is None:
-            return '{"affinity":65,"trust":45,"mood":"开心","guard":35,"inner_voice":"不错","mood_emoji":"😊","importance":7,"time_event":null}'
+            return '{' + _VERDICT_JSON + ',' '"trust":45,"mood":"开心","guard":35,"inner_voice":"不错","mood_emoji":"😊","importance":7,"time_event":null}'
         return self.reply
 
 
@@ -138,14 +136,27 @@ class TestParseEvaluationReply:
         svc = AffinityService()
         svc.affinity = 50
         svc.trust = 30
-        importance = svc.apply_evaluation({"affinity": 75}, "陌生")
+        importance = svc.apply_evaluation(verdict(AFFINITY_STEP), "陌生", PsycheProfile())
         assert importance == 5  # importance 缺省默认为 5
-        assert svc.affinity == 50 + AFFINITY_DELTA_UP  # clamped, not raw 75
+        assert svc.affinity == 50 + AFFINITY_STEP
         assert svc.trust == 30  # 未提供，保持原值
 
 
 class TestEvaluationPipeline:
     """EvaluationPipeline 三层隔离回归。"""
+
+    def test_group_row_carries_the_rule_state_and_restores_it(self, monkeypatch):
+        """群聊只落 5 个标量列：规则状态随 reason 一起存，换一个服务对象按这 5 列读回来还在。"""
+        import asyncio
+        monkeypatch.setattr("core.scheduling.submit_to_main_loop", lambda coro, timeout=600: asyncio.run(coro))
+        storage, svc = FakeStorage(), AffinityService()
+        result = EvaluationPipeline().run(_build_context(affinity_service=svc, storage=storage, group_id="g1"))
+
+        assert result.applied is True and svc.relation.met_count == 1
+        row = {k: storage.captured[k] for k in ("affinity", "trust", "mood", "guard", "reason")}
+        restored = AffinityService()
+        restored.load(row)
+        assert restored.affinity == svc.affinity and restored.relation == svc.relation
 
     def test_full_success(self, monkeypatch):
         monkeypatch.setattr("core.scheduling.submit_to_main_loop", lambda coro, timeout=600: (coro.close(), None))
@@ -163,11 +174,11 @@ class TestEvaluationPipeline:
 
         assert result.applied is True
         assert result.importance == 7
-        assert result.affinity == 50 + AFFINITY_DELTA_UP
+        assert result.affinity == 50 + AFFINITY_STEP
         assert result.in_character == 80  # default when LLM doesn't provide it
         assert result.ooc_reason == ""
         assert result.assertion_confidence == 50  # default when LLM doesn't provide it
-        assert svc.affinity == 50 + AFFINITY_DELTA_UP
+        assert svc.affinity == 50 + AFFINITY_STEP
         assert svc.trust == 30 + TRUST_DELTA_UP
         assert svc.mood == "开心"
         assert svc.guard == 70 + GUARD_DELTA_DOWN
@@ -178,7 +189,7 @@ class TestEvaluationPipeline:
         """in_character 字段从 LLM data → EvalResult → ChatEngine 正确传播。"""
         monkeypatch.setattr("core.scheduling.submit_to_main_loop", lambda coro, timeout=600: (coro.close(), None))
         llm_reply = (
-            '{"affinity":55,"trust":40,"mood":"平静","guard":50,'
+            '{' + _VERDICT_JSON + ',' '"trust":40,"mood":"平静","guard":50,'
             '"inner_voice":"还行","mood_emoji":"😐","importance":6,'
             '"time_event":null,'
             '"in_character":35,"ooc_reason":"对方施压后立刻妥协，不符合性格"}'
@@ -193,14 +204,14 @@ class TestEvaluationPipeline:
         assert result.in_character == 35
         assert result.ooc_reason == "对方施压后立刻妥协，不符合性格"
         # in_character 不影响好感数值（仅 clamp 约束生效）
-        assert svc.affinity == 50 + AFFINITY_DELTA_UP
+        assert svc.affinity == 50 + AFFINITY_STEP
         assert svc.trust == 30 + TRUST_DELTA_UP
 
     def test_assertion_confidence_propagated(self, monkeypatch):
         """assertion_confidence 字段从 LLM data → EvalResult 正确传播，且与 in_character 正交。"""
         monkeypatch.setattr("core.scheduling.submit_to_main_loop", lambda coro, timeout=600: (coro.close(), None))
         llm_reply = (
-            '{"affinity":60,"trust":35,"mood":"平静","guard":55,'
+            '{' + _VERDICT_JSON + ',' '"trust":35,"mood":"平静","guard":55,'
             '"inner_voice":"嗯","mood_emoji":"😐","importance":4,'
             '"time_event":null,"in_character":85,"ooc_reason":"",'
             '"assertion_confidence":30}'
@@ -215,7 +226,7 @@ class TestEvaluationPipeline:
         assert result.assertion_confidence == 30  # 低可信
         assert result.in_character == 85           # 高 in_character，正交
         # assertion_confidence 不影响好感数值（仅 clamp 约束生效）
-        assert svc.affinity == 50 + AFFINITY_DELTA_UP
+        assert svc.affinity == 50 + AFFINITY_STEP
         assert svc.trust == 30 + TRUST_DELTA_UP
 
     def test_core_layer_failure_returns_applied_false(self):
@@ -247,7 +258,7 @@ class TestEvaluationPipeline:
         """守门员：时间事件存库爆炸 → CORE 状态仍然落定。"""
         monkeypatch.setattr("core.scheduling.submit_to_main_loop", lambda coro, timeout=600: (coro.close(), None))
         llm_reply = (
-            '{"affinity":72,"trust":55,"mood":"开心","guard":28,'
+            '{' + _VERDICT_JSON + ',' '"trust":55,"mood":"开心","guard":28,'
             '"inner_voice":"不错","mood_emoji":"😊","importance":8,'
             '"time_event":{"event":"明天有面试","when_text":"明天","due_at":"2026-06-26T10:00"}}'
         )
@@ -268,8 +279,8 @@ class TestEvaluationPipeline:
         # CORE 已落定（但受 clamp 约束，非 LLM 原始值）
         assert result.applied is True
         assert result.importance == 8
-        assert result.affinity == 40 + AFFINITY_DELTA_UP
-        assert svc.affinity == 40 + AFFINITY_DELTA_UP
+        assert result.affinity == 40 + AFFINITY_STEP
+        assert svc.affinity == 40 + AFFINITY_STEP
         assert svc.trust == 30 + TRUST_DELTA_UP
         assert svc.mood == "开心"
         assert svc.guard == 70 + GUARD_DELTA_DOWN
@@ -297,7 +308,7 @@ class TestEvaluationPipeline:
 
         assert result.applied is True
         assert result.importance == 7
-        assert svc.affinity == 50 + AFFINITY_DELTA_UP
+        assert svc.affinity == 50 + AFFINITY_STEP
         # 存储虽然炸了，但 storage.captured 不会被设置（因为 raise_on_update）
         assert storage.captured is None
 
