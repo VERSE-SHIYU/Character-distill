@@ -300,8 +300,9 @@ grep -lE "REGISTRY|_leaves|card_layers|card_draft|card_quotes" tests/*.py
 | P4 | 变异 #16（起点就在亲近档的不算到过）在 `0ea62920` 上仍存活 | `reached_close` 在 `apply_event` 里置位两次（`:146` 回合前、`:158` 回合后），同一条规则写了两处 | `8766ef65` 已删掉回合后那一处，置位只在 `:146`；本轮新变异「起点正好 73 不算到过」（`>=`→`>`）在规则单测上打红 |
 | P2 | 上表 B1 行把根因记成「`reason` 的 JSON 有两个写入处」，认定不准 | 真正的问题是「派生值被缓存」：`affinity_reason` 是可赋值字段，内容完全由别的字段算出，每改一项状态都得记着重新打包；正则结构锁只是在守这份缓存，拦不全 | 改为「派生值不存、读时现算」：`affinity_reason` 改成 `AffinityService` 的只读属性，由当前状态现算；删 `pack_reason`、引擎的 `_affinity_reason` 转发与开局两处赋值、`_compute_initial_affinity` 里的 `reason` 键；解码收拢到 `parse_reason` 一处。结构锁删除，换成「赋值抛 `AttributeError`」。**本条取代上表 B1 行的处理** |
 | P1 | R10 门槛边界（好感正好 73）没有两侧用例 | 复核实跑发现：把 `affinity_rules.py:146` 的 `>=` 改成 `>` 后变异存活 | 已补：`test_r10_reaching_close_is_recorded` 里回合开始 73 → `reached_close is True`；72 → `False` |
-| P5 | 随 P2 一并解决 | — | 现算属性 + 唯一解码把 P5 一并覆盖，不再单列 |
-| P6 | 不在本次范围 | — | 不动 |
+| P5 | §7「流程按风险配」写「没有结构锁」，在 `8766ef65` 上已不成立（B1 那次加了正则结构锁） | 文档没跟上代码：加了锁，§7 那句没同步改 | P2 删掉正则锁后，§7 改为「没有正则结构锁：`reason` 不可赋值由语言保证」，与代码一致 |
+| P6 | delta 环里的键 `affinity_delta` 与评估协议字段同名不同义 | 历史命名 | §8 第二轮审计表已记；本段不改（改任一边都要动已有数据或设计稿定的字段名） |
+| 行为变化 | 旧代码里 `reason` 若是非 dict 的 JSON（如 `"[1]"`），`load` 会抛 `AttributeError`（`except` 只接 `JSONDecodeError`/`TypeError`） | 解码后没检查结果是不是 dict，`.get` 在 list 上直接抛 | 现在 `parse_reason` 对非 dict 结果返回 `None`，按纯文本落到 `inner_voice`；`test_parse_reason_shape_matrix` 覆盖 |
 
 **出处对照（设计稿 v6 → 本文件）：**
 
