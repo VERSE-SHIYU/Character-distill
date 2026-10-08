@@ -34,16 +34,22 @@ _BOUNDARY_NOTICE = (
 )
 
 
+def bullet_lines(items) -> str:
+    """一条一行「- 内容」—— 人设与上下文里列表的**唯一**写法。"""
+    return "\n".join(f"- {x}" for x in items)
+
+
 def behavior_lines(behaviors) -> str:
     """「- 情境 → 做法」一行一条 —— 卡片核心层与每轮重注入共用的**唯一**写法。"""
-    return "\n".join(f"- {b.situation} → {b.behavior}" for b in behaviors)
+    return bullet_lines(f"{b.situation} → {b.behavior}" for b in behaviors)
 
 
 # 卡片核心层「## 行为模式」之后的块：(标题, 从投影卡取正文)。正文为空 → 整块不出现。
-# **加一类人设块只在这里加一行**（③ 的「## 想要什么」接在「遇事的做法」之后），
-# 渲染、空块跳过、位置都由 `_build_core_sections` 统一处理，不另写。
+# **加一类人设块只在这里加一行**；渲染、空块跳过、位置都由 `_build_core_sections`
+# 统一处理，不另写。
 _CORE_SECTIONS: tuple[tuple[str, Callable[[Any], str]], ...] = (
     ("遇事的做法", lambda c: behavior_lines(c.situation_behaviors)),
+    ("想要什么", lambda c: bullet_lines(c.motives)),
 )
 
 
@@ -429,16 +435,13 @@ class ContextEngine:
         parts = []
 
         if c.key_memories:
-            memories = "\n".join(f"- {m}" for m in c.key_memories)
-            parts.append(f"【关键记忆】\n{memories}")
+            parts.append(f"【关键记忆】\n{bullet_lines(c.key_memories)}")
 
         if c.relationships:
-            relations = "\n".join(
-                # 态度可能留空（一条态度都没定位、挂在最后阶段的关系，§3.3）：空就不带冒号
-                f"- {r.target}（{r.relation}）" + (f"：{r.attitude}" if r.attitude else "")
-                for r in c.relationships
-            )
-            parts.append(f"【人际关系】\n{relations}")
+            # 态度可能留空（一条态度都没定位、挂在最后阶段的关系，§3.3）：空就不带冒号
+            parts.append(f"【人际关系】\n" + bullet_lines(
+                f"{r.target}（{r.relation}）" + (f"：{r.attitude}" if r.attitude else "")
+                for r in c.relationships))
 
         if c.emotional_patterns:
             emo = "；".join(c.emotional_patterns)

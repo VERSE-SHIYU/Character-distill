@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from core import context_engine as ce_mod
 from core.arc_view import project_card
 from core.chat_engine import REINJECT_EVERY, ChatEngine, reinject_due
-from core.context_engine import ContextEngine
+from core.context_engine import ContextEngine, bullet_lines
 from core.schema import CharacterCard
 
 
@@ -131,6 +131,46 @@ def test_c6_sections_table_is_the_only_entry(monkeypatch):
                         ce_mod._CORE_SECTIONS + (("想要什么", lambda c: "- 想要X"),))
     core = _core(_card(), 1)
     assert core.index("## 遇事的做法") < core.index("## 想要什么\n- 想要X") < core.index("## 语言风格")
+
+
+# ── U ③ 「## 想要什么」+ 列表写法唯一出处 ─────────────────────────────────────
+
+def _motive_card() -> CharacterCard:
+    """两阶段卡：全程动机；阶段 1/2 各有专属动机；未定位动机；一条全程做法（供重注入）。"""
+    return CharacterCard.model_validate({
+        "name": "甲",
+        "motives": ["全程动机"],
+        "situation_behaviors": [_b("情境", "做法")],
+        "character_arc": {
+            "axis": "从冷到热",
+            "phases": [
+                {"label": "冷", "state": "起初", "overlay": {"motives": ["早期动机"]}},
+                {"label": "热", "state": "后来", "overlay": {"motives": ["后期动机"]}},
+            ],
+            "unlocated": {"overlay": {"motives": ["未定位动机"]}},
+        },
+    })
+
+
+def test_u1_motives_of_selected_phase_in_card_core():
+    core = _core(_motive_card(), 1)
+    assert "\n## 想要什么\n- 早期动机\n- 全程动机\n" in core
+    assert "后期动机" not in core and "未定位动机" not in core
+
+
+def test_u1_no_motives_no_section():
+    assert "想要什么" not in _core(_card(), 1)
+
+
+def test_u2_reinjection_carries_no_motives():
+    content = _attached(_engine(card=_motive_card()), 4)
+    assert "提醒：你遇事的做法" in content
+    assert "早期动机" not in content and "全程动机" not in content
+
+
+def test_u3_bullet_lines_is_the_only_list_writer():
+    assert bullet_lines(["a", "b"]) == "- a\n- b"
+    assert bullet_lines([]) == ""
 
 
 # ── R 重注入 ──────────────────────────────────────────────────────────────────
