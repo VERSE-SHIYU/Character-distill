@@ -32,7 +32,7 @@ RELATIONSHIP_RULES = (
     "2. note 是喂给聊天模型的固定立场：一句话讲清我和ta是什么关系、我怎么看ta。\n"
     "3. 只写态度变了的阶段：第一条写在两人开始有交集的那个阶段；之后态度没变的阶段不写；"
     "从头到尾一个态度就只写一条。\n"
-    "4. 没有阶段时 phase 填 0。\n"
+    "4. phase 填阶段序号（整数 1..n）；没有阶段时填 0。\n"
     "5. quote 是该阶段里的原文摘录（10-40字，逐字照抄）。\n"
     "6. attitudes 里每一条都写 note：那一阶段的口径（同第 2 条）。\n"
     "7. 顶层的 attitude / note 写两人最初的关系，不写后来的变化。"
@@ -58,7 +58,11 @@ def _batch_prompt(prefix: str, name: str, batch: list[str], phases: list[str], *
 
     `exact=True` 时多一句「逐字照抄名单里的写法」（补跑那次用）。
     """
-    stage = "、".join(p for p in phases if p) or "（无阶段）"
+    # 阶段按序号列（「1. 名称；2. 名称」）：`card_draft` 把 `attitudes[].phase` 当 1-based 下标用
+    # （`by_phase[p-1]`），序号必须落在 `phases` 里的**位置**上，不能只数非空项 —— 空阶段让位后
+    # 序号仍要保留它占的位置。
+    named = [(i, p) for i, p in enumerate(phases, 1) if p]
+    stage = "；".join(f"{i}. {p}" for i, p in named) or "（无阶段）"
     people = "、".join(batch)
     exact_line = f"{_EXACT_TARGET_NOTE}\n" if exact else ""
     system = (

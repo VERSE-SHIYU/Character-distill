@@ -910,6 +910,33 @@ def test_r2b_rules_pin_first_contact_and_per_phase_note():
     assert "每一条都写 note" in RELATIONSHIP_RULES
 
 
+# ── 关系分批：阶段序号口径（R2c，spec 外缺陷）──────────────────────────────
+
+def test_rel_batch_prompt_numbers_phases_by_position():
+    """R2c：阶段在提示词里按序号列（「1. 名称；2. 名称」），序号 = phases 里的位置。
+
+    `card_draft` 把 `attitudes[].phase` 当 1-based 下标用（`by_phase[p-1]`）。提示词不给序号，
+    模型只能拿阶段名去填，落进 int 字段就整卡校验失败（「强撑体面」被当 phase 的事故）。
+    """
+    from core.relationship_batch import _batch_prompt
+
+    system, _ = _batch_prompt("前缀", "甲", ["乙"], ["初识", "决裂"])
+    assert "1. 初识；2. 决裂" in system
+
+    # 序号落在 phases 的位置上：空阶段让位，后面的序号仍保留它占的位置
+    system, _ = _batch_prompt("前缀", "甲", ["乙"], ["初识", "", "决裂"])
+    assert "1. 初识；3. 决裂" in system
+
+
+def test_rel_batch_prompt_without_phases_marks_none_and_rule_says_zero():
+    """R2c：没有阶段时提示词写「（无阶段）」，口径写明 phase 填 0。"""
+    from core.relationship_batch import RELATIONSHIP_RULES, _batch_prompt
+
+    system, _ = _batch_prompt("前缀", "甲", ["乙"], [])
+    assert "（无阶段）" in system
+    assert "没有阶段时填 0" in RELATIONSHIP_RULES
+
+
 # ── 审计待办 R3 / R4（Claude 修）─────────────────────────────────────────
 
 def test_r3_out_card_ignores_fields_the_criterion_does_not_read():
