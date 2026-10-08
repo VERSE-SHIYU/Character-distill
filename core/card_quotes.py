@@ -30,11 +30,16 @@ _UNLOCATED_ATT = "character_arc.unlocated.attitudes"   # 未定位态度（与�
 _VERIFIED_TOP: tuple[str, ...] = (
     "personality_traits[]",
     "values[]",
+    "motives[]",
     "key_memories[]",
     "inner_tensions[]",
     "emotional_patterns[]",
     "decision_style",
     "psyche.soft_spots[]",
+    "psyche.warming_conditions[]",
+    "psyche.relational_modes.close",
+    "psyche.relational_modes.normal",
+    "psyche.relational_modes.conflict",
     "cognitive.speech_style",
     "speaking_style.sentence_pattern",
     "relationships[].attitude",
@@ -48,6 +53,7 @@ _VERIFIED_TOP: tuple[str, ...] = (
 _VERBATIM_TOP: tuple[str, ...] = (
     "speaking_style.catchphrases[]",
     "situation_behaviors[].source_quote",
+    "psyche.agreeableness_facets[].quote",
 )
 
 

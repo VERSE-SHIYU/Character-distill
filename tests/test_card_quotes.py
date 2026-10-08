@@ -220,3 +220,44 @@ def test_a_simplified_catchphrase_of_a_traditional_source_is_kept():
 
     assert retracted == []
     assert new.speaking_style.catchphrases == [TRAD_QUOTE_SIMPLIFIED]
+
+
+# ── 清单覆盖（personality-distill §6.1 T4）──────────────────────────────────
+
+def test_t4_new_fields_are_verified_and_overlay_variants_are_derived():
+    """T4：新字段（动机 / 亲近条件 / 三档关系做法）进了引文核对清单，且登记表派生出的
+    阶段 overlay 与未定位区 overlay 两份路径都在（不重抄一份清单）。
+
+    挡住：新字段漏进清单（编造引文留在卡上）；以及只列顶层路径、忘了派生 overlay 那份
+    （阶段里那条编造的动机照样留在卡上）。
+    """
+    from core.card_quotes import VERIFIED_FIELDS
+
+    verified = set(VERIFIED_FIELDS)
+    assert {
+        "motives[]",
+        "psyche.warming_conditions[]",
+        "psyche.relational_modes.close",
+        "psyche.relational_modes.normal",
+        "psyche.relational_modes.conflict",
+        # 登记表派生的 overlay 两份形态（阶段 / 未定位区；未定位区一律列表）
+        "character_arc.phases[].overlay.motives[]",
+        "character_arc.unlocated.overlay.motives[]",
+        "character_arc.phases[].overlay.psyche.warming_conditions[]",
+        "character_arc.unlocated.overlay.psyche.warming_conditions[]",
+        "character_arc.phases[].overlay.psyche.relational_modes.close",
+        "character_arc.unlocated.overlay.psyche.relational_modes.close[]",
+    } <= verified
+
+
+def test_t4_facet_quote_is_verbatim_but_behavior_is_not():
+    """T4：宜人性分面的 `quote` 声明「是原文」（对不上就清空），`behavior` 不声明 ——
+    概括行为本就不是原文，清掉它等于丢内容。
+
+    挡住：把 `behavior` 也加成 `VERBATIM`（则概括行为照原文核对，一律被清空）。
+    """
+    from core.card_quotes import VERBATIM_FIELDS
+
+    verbatim = set(VERBATIM_FIELDS)
+    assert "psyche.agreeableness_facets[].quote" in verbatim
+    assert not any("agreeableness_facets[].behavior" in p for p in verbatim)

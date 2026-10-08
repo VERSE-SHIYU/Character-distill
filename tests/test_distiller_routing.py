@@ -838,6 +838,7 @@ _SAMPLE_FIELD_VALUES = {
     "background": "背景摘要",
     "personality_traits": [_timed("特质（原文证据）")],
     "values": [_timed("价值观")],
+    "motives": [_timed("动机")],
     "inner_tensions": [_timed("内在矛盾")],
     "emotional_patterns": [_timed("情感模式")],
     "decision_style": [_timed("谨慎型")],

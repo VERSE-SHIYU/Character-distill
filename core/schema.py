@@ -299,6 +299,7 @@ class CharacterCard(BaseModel):
     personality_traits: list[str] = []  # 3-5个，每个带原文依据
     speaking_style: SpeakingStyle = SpeakingStyle(tone="", sentence_pattern="", catchphrases=[], vocabulary_level="", taboo_words=[])
     values: list[str] = []            # 2-4个核心价值观
+    motives: list[str] = []           # 动机：想要什么、为此不惜做到哪一步（按阶段）
     key_memories: list[str] = []      # 3-5个关键经历
     relationships: list[Relationship] = []
     inner_tensions: list[str] = []    # 1-3个内在矛盾
@@ -322,7 +323,7 @@ class CharacterCard(BaseModel):
 # CharacterCard.model_fields，两两无交集」。组序即提示词片段顺序，别随意调。
 FORMAT_GROUPS: dict[str, tuple[str, ...]] = {
     "G1": ("name", "identity", "background"),
-    "G2": ("personality_traits", "values", "inner_tensions",
+    "G2": ("personality_traits", "values", "motives", "inner_tensions",
            "emotional_patterns", "decision_style"),
     "G3": ("speaking_style", "first_message", "cognitive"),
     # relationships 从 G4 拆出来单独成组：关系条数随登场人数增长（宝玉这种主角几十

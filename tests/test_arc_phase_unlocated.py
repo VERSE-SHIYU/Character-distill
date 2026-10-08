@@ -248,6 +248,28 @@ def test_u9_experience_rehung_to_several_landings_hangs_only_the_earliest():
         ["旧事"], None, None]
 
 
+def test_t3_motives_quote_lands_elsewhere_is_rehung_by_category():
+    """T3（personality-distill §6.1）：动机是状态类 —— 摘录落在所标阶段之外就按位置改挂到
+    落点（不是去掉、不是退回原标注）；标注正确的那条不被动。
+
+    同放一条标对的（摘录确在阶段 2）作正控：没有它就分不清「按落点改挂」与「整批重挂」。
+    """
+    card = _card(motives=[_timed("错标阶段三", _occ(3, _Q1)),        # 摘录在阶段 1
+                          _timed("标对阶段二", _occ(2, _Q2))])
+    assert ([get_path(p.overlay, "motives") for p in card.character_arc.phases],
+            card.motives, card.character_arc.unlocated.overlay) == (
+        [["错标阶段三"], ["标对阶段二"], None], [], {})
+
+
+def test_t3_motives_without_evidence_goes_to_unlocated_overlay_out_of_prompt():
+    """T3：一段摘录都定不了位的动机进未定位区 overlay，且不进投影（投影卡的未定位区恒空）。"""
+    card = _card(motives=[_timed("无凭无据", _occ(1, _NOWHERE))])
+    proj = project_card(card, 1)[0]
+    assert (card.character_arc.unlocated.overlay, card.motives,
+            proj.character_arc.unlocated.overlay, "无凭无据" in proj.model_dump_json()) == (
+        {"motives": ["无凭无据"]}, [], {}, False)
+
+
 def test_u8_monitor_counts_every_category(caplog):
     """rehung / unlocated / to_last 汇总做法、字段、记忆、关系四类。"""
     with caplog.at_level(logging.INFO, logger="core.card_draft"):

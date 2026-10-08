@@ -142,6 +142,30 @@ def test_u8_schema_sent_to_the_model_is_the_draft():
     assert g6["properties"]["situation_behaviors"]["items"]["$ref"].endswith("/DraftBehavior")
 
 
+def test_t2_motives_is_drafttimed_in_g2():
+    """T2（personality-distill §6.1）：状态类草稿元素是 `DraftTimed`（一条取值 + 阶段摘录），
+    所以 G2 的 `motives` 数组元素是 `DraftTimed`。
+
+    挡住：`motives` 漏登记（则不是 `DraftTimed`，模型没处给它标阶段）。
+    """
+    g2 = draft_schema("G2")
+    assert g2["properties"]["motives"]["items"]["$ref"].endswith("/DraftTimed")
+
+
+def test_t2_facets_stay_objects_in_g4():
+    """T2：宜人性分面是稳定类，草稿元素仍是对象（`AgreeablenessFacet`，带 facet/level/
+    behavior/quote）；亲近条件才是状态类（`DraftTimed`）。
+
+    挡住：把分面误登记成 state（则被派生成 `list[DraftTimed]`，模型没处写 facet/level/quote）。
+    """
+    g4 = draft_schema("G4")
+    ref = g4["properties"]["psyche"]["$ref"].rsplit("/", 1)[-1]
+    props = g4["$defs"][ref]["properties"]
+    assert (props["warming_conditions"]["items"]["$ref"].endswith("/DraftTimed"),
+            props["agreeableness_facets"]["items"]["$ref"].endswith("/AgreeablenessFacet")) == (
+        True, True)
+
+
 def test_u9_stored_card_has_no_phase_tags_and_round_trips():
     dump = card_from_draft(KONG_DRAFT, _SRC).model_dump()
     rows = dump["situation_behaviors"] + [b for p in dump["character_arc"]["phases"] for b in p["behaviors"]]
