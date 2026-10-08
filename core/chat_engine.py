@@ -799,21 +799,17 @@ class ChatEngine:
         if not window:
             return
 
-        neg_rounds = sum(1 for e in window if e["affinity_delta"] < 0)
-        neg_sum = sum(e["affinity_delta"] for e in window if e["affinity_delta"] < 0)
+        neg_rounds = sum(1 for e in window if e.affinity_delta < 0)
+        neg_sum = sum(e.affinity_delta for e in window if e.affinity_delta < 0)
         neg_sum_abs = abs(neg_sum)
 
-        # 条件 2：雷点命中（排除剧情内冲突）
-        raw_trigger_hits = sum(1 for e in window if e["trigger_hit"])
-        in_story = sum(1 for e in window if e["in_story_conflict"])
-        trigger_hits = raw_trigger_hits - in_story  # 剧情冲突不计入
-        if trigger_hits < 0:
-            trigger_hits = 0
+        # 条件 2：雷点命中（剧情内冲突按 neutral 报，不算事件，自然不计入）
+        trigger_hits = sum(1 for e in window if e.is_trigger)
 
         # 条件 3：急降（单轮掉到了规则表允许的最大幅度）
-        sharp_drop = any(e["affinity_delta"] <= -MAX_DROP for e in window)
+        sharp_drop = any(e.affinity_delta <= -MAX_DROP for e in window)
 
-        # 条件 2：雷点命中（排除剧情内冲突），仅当角色有 triggers 定义
+        # 条件 2：雷点命中，仅当角色有 triggers 定义
         psyche = getattr(self.card, "psyche", None)
         has_triggers = bool(getattr(psyche, "triggers", None) if psyche else False)
         has_trigger_hits = trigger_hits >= 2
@@ -849,13 +845,13 @@ class ChatEngine:
             reason = ""
 
         # 修复信号
-        repair_signals = [e["repair_signal"] for e in window if e["repair_signal"]]
+        repair_signals = [e.repair_kind for e in window if e.repair_kind]
         repair_summary = ",".join(repair_signals[-3:]) if repair_signals else "none"
 
         print(
             f"[estrangement-shadow] session={self._session_id} "
             f"would_enter={would_enter} reason={reason} "
-            f"trigger_hits={trigger_hits} in_story={in_story} "
+            f"trigger_hits={trigger_hits} "
             f"neg_rounds={neg_rounds} neg_sum={neg_sum_abs} "
             f"guard={self._guard} repair={repair_summary}"
         )

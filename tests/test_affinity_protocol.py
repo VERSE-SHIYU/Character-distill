@@ -34,3 +34,22 @@ def test_json_fields_and_reader_use_the_same_names():
     assert protocol.read_verdict(json.loads(json.dumps(reply))) == {
         "event": "met_condition", "tier": "medium", "delta": 4, "met_index": 0}
     assert protocol.read_verdict({}) == {"event": None, "tier": None, "delta": None, "met_index": None}
+
+
+def test_repair_kind_json_field_and_reader_agree():
+    """JSON 段列出 repair_kind 的取值；读它时不认识的值 / None / 缺键都算「没填」。"""
+    fields = protocol.render_json_fields()
+    assert f'"{protocol.FIELD_REPAIR_KIND}"' in fields
+    for kind in protocol.REPAIR_KIND_HELP:
+        assert kind in fields
+    assert protocol.read_repair_kind({protocol.FIELD_REPAIR_KIND: "apology"}) == "apology"
+    assert protocol.read_repair_kind({protocol.FIELD_REPAIR_KIND: "hug"}) == ""
+    assert protocol.read_repair_kind({protocol.FIELD_REPAIR_KIND: None}) == ""
+    assert protocol.read_repair_kind({}) == ""
+
+
+def test_in_story_rule_rendered_once_and_kept_out_of_event_help():
+    """「剧情内不算」只在规则段出现一次，不拆进各个事件的说明。"""
+    text = protocol.render_rules(PsycheProfile())
+    assert text.count("剧情内演戏的冲突") == 1
+    assert not any("剧情" in v for v in protocol.EVENT_HELP.values())

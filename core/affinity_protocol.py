@@ -10,6 +10,21 @@ from core.affinity_rules import EVENTS, TIERS, warming_conditions
 
 FIELD_EVENT, FIELD_TIER, FIELD_DELTA, FIELD_INDEX = (
     "affinity_event", "affinity_tier", "affinity_delta", "met_condition_index")
+FIELD_REPAIR_KIND = "repair_kind"
+
+# 修复细分 → 给评估模型看的说明。只在事件是 repair 时有意义（附属字段）。
+REPAIR_KIND_HELP: dict[str, str] = {
+    "apology": "道歉",
+    "explanation": "解释原因",
+    "action": "用行动补偿",
+    "soft_spot": "戳中你的软肋",
+}
+
+# 「剧情内演戏的冲突不算冒犯 / 触雷」只此一份，由 render_rules 渲染一次。
+_IN_STORY_RULE = (
+    "剧情内演戏的冲突（小说式旁白、剧情动作包裹的争吵）"
+    "不算 offended / trigger，按 neutral"
+)
 
 # 事件类别 → 给评估模型看的说明。键必须正好是规则表的 EVENTS（有单测守）。
 EVENT_HELP: dict[str, str] = {
@@ -36,6 +51,7 @@ def render_rules(psyche) -> str:
     return (
         f"好感事件判定规则（用于 {FIELD_EVENT} / {FIELD_TIER} / {FIELD_DELTA}）：\n"
         f"- 只判断对方这一轮做了哪类事，不要自己给好感数值：\n  {events}\n"
+        f"- {_IN_STORY_RULE}\n"
         f"- 亲近条件（met_condition 时在 {FIELD_INDEX} 填满足的是第几条，从 0 数）：\n{conditions}"
         f"- 必须先选档，再在该档内给整数：{tiers}\n"
         "- 不要太快接受道歉：一句好话不该带来大幅回升\n\n"
@@ -49,6 +65,8 @@ def render_json_fields() -> str:
         f'  "{FIELD_TIER}": "{"|".join(TIERS)}",\n'
         f'  "{FIELD_DELTA}": 该档区间内的整数,\n'
         f'  "{FIELD_INDEX}": 整数或null,\n'
+        f'  "{FIELD_REPAIR_KIND}": "{"|".join(REPAIR_KIND_HELP)}" 或 null,'
+        f'  // 仅事件为 repair 时填，否则 null\n'
     )
 
 
@@ -56,3 +74,9 @@ def read_verdict(data: dict) -> dict:
     """从评估模型的 JSON 里取出规则表要的四样（`apply_event` 的关键字参数）。"""
     return {"event": data.get(FIELD_EVENT), "tier": data.get(FIELD_TIER),
             "delta": data.get(FIELD_DELTA), "met_index": data.get(FIELD_INDEX)}
+
+
+def read_repair_kind(data: dict) -> str:
+    """取修复细分。不认识的值、None、缺键都返回 ""（模型输出是信任边界）。"""
+    kind = data.get(FIELD_REPAIR_KIND)
+    return kind if isinstance(kind, str) and kind in REPAIR_KIND_HELP else ""
