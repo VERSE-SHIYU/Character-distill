@@ -197,6 +197,8 @@ _TIMED_TPL = '{"value": "描述（原文出处）", "occurrences": [{"phase": 1,
 _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ("G1", 'A. 基本信息：名字、身份、背景（背景只写故事开始前就成立的出身与处境，不写故事里的遭遇）'),
     ("G2", 'B. 核心性格（3-5个）：每个特质 + 原文中的具体场景作为证据。' + _PHASE_DESCRIPTION_RULE),
+    ("G2", 'P. 动机：此人想要什么、为此不惜做到哪一步（不写手段 —— 手段在维度 O「情境→做法」里）；'
+           '负面动机（贪、算计、报复）照原文如实写，不美化。' + _PHASE_DESCRIPTION_RULE),
     ("G3", 'C. 说话风格：语气、句式、口癖（直接从原文对话提取）。语气/句式/口癖按阶段给，'
            + _PHASE_DESCRIPTION_RULE +
            '用词水平是稳定项，' + _STABLE_FIELD_RULE +
@@ -255,7 +257,10 @@ _FORMAT_DIM_M = (
     '   - volatility：情绪波动幅度，平稳/适中/剧烈（高神经质偏剧烈）。\n'
     '   - grudge_inertia：受到负面对待后多久消化，大度/一般/记仇（低宜人性或高神经质偏记仇）。\n'
     '   - triggers（1-3 条）：碰了会让 ta 情绪激烈下降的具体雷点，从原文冲突场景提取。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
-    '   - soft_spots（1-3 条）：戳中会让 ta 心软/好感上升的点，从原文提取。按阶段给：' + _PHASE_DESCRIPTION_RULE
+    '   - soft_spots（1-3 条）：戳中会让 ta 心软/好感上升的点，从原文提取。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
+    '   - 关系做法三档 relational_modes（close 对亲近的人 / normal 对平常的人 / conflict 起冲突时）：各一句具体做法，按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
+    '   - warming_conditions（亲近条件，1-3 条）：对方要做到什么，此人才肯更近一步。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
+    '   - agreeableness_facets（宜人性三分面：同情 / 谦恭 / 信任）：每条给「高/中/低」、一句概括性的行为、一段逐字照抄的原文摘录（quote，10-40 字）。' + _STABLE_FIELD_RULE + '只写概括性的行为，不写具体剧情事件。'
 )
 _FORMAT_OUTPUT_RULES = (
     '## 输出要求\n'
@@ -276,6 +281,7 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
         '  }'
     ),
     ("values", '  "values": [' + _TIMED_TPL + ', ...]'),
+    ("motives", '  "motives": [' + _TIMED_TPL + ', ...]'),
     ("key_memories",
         '  "key_memories": [\n'
         '    {"memory": "关键经历（原文出处）", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]}\n'
@@ -314,7 +320,16 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
         '    "volatility": "适中",\n'
         '    "grudge_inertia": "一般",\n'
         '    "triggers": [' + _TIMED_TPL + ', ...],\n'
-        '    "soft_spots": [' + _TIMED_TPL + ', ...]\n'
+        '    "soft_spots": [' + _TIMED_TPL + ', ...],\n'
+        '    "warming_conditions": [' + _TIMED_TPL + ', ...],\n'
+        '    "relational_modes": {\n'
+        '      "close": [' + _TIMED_TPL + '],\n'
+        '      "normal": [' + _TIMED_TPL + '],\n'
+        '      "conflict": [' + _TIMED_TPL + ']\n'
+        '    },\n'
+        '    "agreeableness_facets": [\n'
+        '      {"facet": "同情/谦恭/信任", "level": "高/中/低", "behavior": "一句概括性的行为", "quote": "原文摘录"}\n'
+        '    ]\n'
         '  }'
     ),
     ("cognitive",
@@ -328,7 +343,7 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
 )
 _FORMAT_IMPORTANCE_HEADING = '重要：'
 _FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
-    ("G4", '- psyche 是必需嵌套对象，triggers 和 soft_spots 放在 psyche 内部，不在顶层'),
+    ("G4", '- psyche 是必需嵌套对象，triggers / soft_spots / warming_conditions / relational_modes / agreeableness_facets 都放在 psyche 内部，不在顶层'),
     (None, '- 数组字段的元素形态按模板来：模板里写成【一句字符串】的，就输出一句字符串，不要改成对象'),
     (None, '- 写成 [{"value": …, "occurrences": […"phase"/"quote"…]}] 的字段，元素是【对象】；occurrences 的 phase 用维度 L 的阶段编号（1 起），全阶段都成立时把每个阶段都标上'),
     ("G5", '- relationships 只出【名单】：每个元素是【对象】，只含 target（对方的标准名）；relation/attitude/note/attitudes 由后续步骤生成，不要在这里写'),

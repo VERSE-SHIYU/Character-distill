@@ -53,7 +53,7 @@ def test_registry_equals_leaf_set():
     from core.card_layers import REGISTRY
 
     assert set(REGISTRY) == set(_leaves(CharacterCard))
-    assert len(REGISTRY) == 45
+    assert len(REGISTRY) == 46
 
 
 def test_registry_every_entry_has_layer_and_kind():
@@ -63,6 +63,22 @@ def test_registry_every_entry_has_layer_and_kind():
     for path, spec in REGISTRY.items():
         assert spec.layer in LAYERS, path
         assert spec.kind in KINDS, path
+
+
+def test_motives_registered_and_five_factor_layers():
+    """T1（personality-distill §6.1）：`motives` 登记为 state/list/「动机」；大五里只留
+    `agreeableness` 在 stable，其余四项改 none（只影响是否进 prompt，值照旧投影）。
+
+    挡住：新增字段漏登记（则它不是 state/list，投影与草稿形态都不对），以及把 O/C/E/N
+    顺手一起改成 none 时连 `agreeableness` 也改掉（人格线要靠它作为稳定项）。
+    """
+    from core.card_layers import FieldSpec, REGISTRY
+
+    assert REGISTRY["motives"] == FieldSpec("state", "list", "动机")
+    assert REGISTRY["psyche.agreeableness"].layer == "stable"
+    for path in ("psyche.openness", "psyche.conscientiousness",
+                 "psyche.extraversion", "psyche.neuroticism"):
+        assert REGISTRY[path].layer == "none", path
 
 
 # ── U2/U3/U4/U5/U6 投影规则 ───────────────────────────────────────────────

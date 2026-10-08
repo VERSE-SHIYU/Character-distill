@@ -236,6 +236,16 @@
         "tests/test_card_draft.py",
         "assert g6[\"properties\"][\"situation_behaviors\"][\"items\"][\"$ref\"].endswith(\"/DraftBehavior\")",
         0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert g2[\"properties\"][\"motives\"][\"items\"][\"$ref\"].endswith(\"/DraftTimed\")",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert (props[\"warming_conditions\"][\"items\"][\"$ref\"].endswith(\"/DraftTimed\"), props[\"agreeableness_facets\"][\"i",
+        0
       ]
     ],
     "M18  旧卡字符串阶段被当成 label 而不是 state": [
