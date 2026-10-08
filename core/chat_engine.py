@@ -16,7 +16,7 @@ from typing import Any
 from adapters.llm_adapter import LLMAdapter
 from core.arc_view import project_card
 from core.clock import UserClock, describe_time_period
-from core.context_engine import ContextEngine, behavior_lines
+from core.context_engine import ContextEngine, behavior_lines, bullet_lines
 from core.rag import RAGEngine
 from core.schema import CharacterCard, SourceTrace
 from core.tokens import count_tokens
@@ -1069,7 +1069,7 @@ class ChatEngine:
         top = matched[:3]
         return (
             "\n\n【你和提及之人的关系（你的视角，固定立场）】\n"
-            + "\n".join(f"- {ln}" for ln in top)
+            + bullet_lines(top)
             + "\n被提到这个人时，别给通用的得体回应——以【你这个人】会有的方式反应：忠于你的性格和你对ta的立场。你是暴烈的就当场发作，是阴沉的就话里带刺，是胆小的就赔笑回避，是高傲的就冷淡不屑，是温柔的就替ta说话。长出只属于你的那句话，而不是一个谁都能说的礼貌回应。但别改口、别把熟人说成陌生人、别说出你不该知道的对方心思（你只知道自己怎么看对方）。\n"
         )
 
