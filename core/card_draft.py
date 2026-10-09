@@ -15,9 +15,9 @@
 """
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, create_model
 
 from core import phase_anchoring
 from core.card_layers import REGISTRY, get_path, set_path
@@ -37,9 +37,31 @@ from core.schema import (
 logger = logging.getLogger(__name__)
 
 
+def _phase_number(value: Any) -> int:
+    """阶段号：能转成整数的照转（``"2"`` → 2）；转不成、或小数非整，打一条 warning 写明原值，按 0。
+
+    0 是「无阶段」哨兵：有阶段的卡里由规则 0（`_valid_number_rows`）当不合法撤回。这样模型写坏的
+    阶段号只连累那一条，不再让 pydantic 在整卡校验处把整张卡炸掉。**只此一处**，调用点不写兜底。
+    """
+    if not isinstance(value, bool):                       # bool 是 int 子类，但阶段号写布尔是坏值
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            pass
+        else:
+            if not isinstance(value, float) or value.is_integer():
+                return n
+    logger.warning("[card_draft] 阶段编号不是整数，按 0 处理：%r", value)
+    return 0
+
+
+# 阶段号的类型只在这里定义：`DraftOccurrence.phase` 与 `DraftAttitude.phase` 共用。
+PhaseNumber = Annotated[int, BeforeValidator(_phase_number)]
+
+
 class DraftOccurrence(BaseModel):
     """一次出现：这个做法/记忆在某个阶段里做过，附一段该阶段里的原文摘录（10-40 字，逐字照抄）。"""
-    phase: int
+    phase: PhaseNumber
     quote: str = ""
 
 
@@ -70,7 +92,7 @@ class DraftAttitude(BaseModel):
 
     `note` 是这一阶段的单向口径（喂给聊天模型的固定立场），随阶段变；空则回落关系顶层 note。
     """
-    phase: int
+    phase: PhaseNumber
     attitude: str = ""
     note: str = ""
     quote: str = ""

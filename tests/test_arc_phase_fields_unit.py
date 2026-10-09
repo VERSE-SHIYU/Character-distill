@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import logging
 import typing
 
 import pytest
@@ -908,6 +909,184 @@ def test_r2b_rules_pin_first_contact_and_per_phase_note():
 
     assert "开始有交集的那个阶段" in RELATIONSHIP_RULES
     assert "每一条都写 note" in RELATIONSHIP_RULES
+
+
+# ── 关系分批：阶段序号口径（R2c，spec 外缺陷）──────────────────────────────
+
+def test_rel_batch_prompt_numbers_phases_by_position():
+    """R2c：阶段在提示词里按序号列（「1. 名称；2. 名称」），序号 = phases 里的位置。
+
+    `card_draft` 把 `attitudes[].phase` 当 1-based 下标用（`by_phase[p-1]`）。提示词不给序号，
+    模型只能拿阶段名去填，落进 int 字段就整卡校验失败（「强撑体面」被当 phase 的事故）。
+    """
+    from core.relationship_batch import _batch_prompt
+
+    system, _ = _batch_prompt("前缀", "甲", ["乙"], ["初识", "决裂"])
+    assert "1. 初识；2. 决裂" in system
+
+    # 序号落在 phases 的位置上：空阶段让位，后面的序号仍保留它占的位置
+    system, _ = _batch_prompt("前缀", "甲", ["乙"], ["初识", "", "决裂"])
+    assert "1. 初识；3. 决裂" in system
+
+
+def test_rel_batch_prompt_without_phases_marks_none_and_rule_says_zero():
+    """R2c：没有阶段时提示词写「（无阶段）」，口径写明 phase 填 0。"""
+    from core.relationship_batch import RELATIONSHIP_RULES, _batch_prompt
+
+    system, _ = _batch_prompt("前缀", "甲", ["乙"], [])
+    assert "（无阶段）" in system
+    assert "没有阶段时填 0" in RELATIONSHIP_RULES
+
+
+def test_rel_batch_rule4_pins_one_based_range():
+    """R2c：规则第 4 条写明阶段号是「整数 1..n」—— 口径被改成 0 起要能分辨（MG4）。"""
+    from core.relationship_batch import RELATIONSHIP_RULES
+
+    assert "整数 1..n" in RELATIONSHIP_RULES
+
+
+# ── 关系分批：阶段号的类型只在一处（补充，审计后）──────────────────────────
+
+_PHASE_SRC = "开头甲甲甲。中间乙乙乙。"
+_BAD_PHASE = "强撑体面"
+
+
+def _phase_draft(**extra):
+    """两个阶段的草稿骨架；各用例按需补 situation_behaviors / relationships。"""
+    draft = {
+        "name": "甲",
+        "character_arc": {"phases": [
+            {"label": "一", "state": "s1", "anchor": ""},
+            {"label": "二", "state": "s2", "anchor": "中间乙乙乙"}]},
+    }
+    draft.update(extra)
+    return draft
+
+
+def test_phase_number_type_is_shared_by_occurrence_and_attitude():
+    """R2c：`DraftOccurrence.phase` 与 `DraftAttitude.phase` 用同一个阶段号类型（兜底只此一处，MC3）。"""
+    from core.card_draft import DraftAttitude, DraftOccurrence
+
+    occ = DraftOccurrence.model_fields["phase"].annotation
+    att = DraftAttitude.model_fields["phase"].annotation
+    assert occ is att, f"阶段号类型没共用：{occ} vs {att}"
+
+
+def test_draft_schema_phase_stays_integer():
+    """R2c：发给模型的结构里 phase 仍是 integer（输入规范化不改 schema，MC4）。"""
+    from core.card_draft import draft_schema
+
+    defs = draft_schema()["$defs"]
+    for name in ("DraftOccurrence", "DraftAttitude"):
+        assert defs[name]["properties"]["phase"]["type"] == "integer", name
+
+
+def test_bad_phase_number_on_occurrence_retracts_row_not_whole_card(caplog):
+    """R2c：做法 occurrence 的 phase 落非数字 → 整卡不抛错、那条撤回、同卡其他条目不受影响。
+
+    改动前 `DraftOccurrence(phase="强撑体面")` 抛 ValidationError，整张卡在 95% 处失败。
+    """
+    from core.card_draft import card_from_draft
+
+    data = _phase_draft(situation_behaviors=[
+        {"situation": "好", "behavior": "b",
+         "occurrences": [{"phase": _BAD_PHASE, "quote": "开头甲甲甲"}]},
+        {"situation": "另", "behavior": "c",
+         "occurrences": [{"phase": 1, "quote": "开头甲甲甲"}]}])
+    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
+        card = card_from_draft(data, _PHASE_SRC)
+    assert [b.situation for b in card.character_arc.phases[0].behaviors] == ["另"], \
+        "同卡另一条没照常落到阶段 1"
+    assert all(b.situation != "好" for p in card.character_arc.phases for b in p.behaviors)
+    assert all(b.situation != "好" for b in card.situation_behaviors)
+    assert sum(_BAD_PHASE in r.getMessage() for r in caplog.records) == 1, "没写明原值的 warning"
+    assert sum("阶段编号不合法" in r.getMessage() for r in caplog.records) == 1, "坏值没落到规则 0"
+
+
+def test_bad_phase_number_on_attitude_retracts_row_not_whole_card(caplog):
+    """R2c：关系 attitude 的 phase 落非数字 → 整卡不抛错、该态度进未定位区、有 warning。"""
+    from core.card_draft import card_from_draft
+
+    data = _phase_draft(relationships=[{
+        "target": "乙", "relation": "旧识", "attitude": "全书态度",
+        "attitudes": [{"phase": _BAD_PHASE, "attitude": "阶段态度", "note": "口径",
+                       "quote": "开头甲甲甲"}]}])
+    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
+        card = card_from_draft(data, _PHASE_SRC)
+    assert card.relationships[0].target == "乙", "关系本身不该消失"
+    loose = card.character_arc.unlocated.attitudes
+    assert any(a.attitude == "阶段态度" for a in loose), "坏阶段的态度没进未定位区"
+    assert sum(_BAD_PHASE in r.getMessage() for r in caplog.records) == 1
+
+
+def test_phase_number_accepts_string_and_int_like_before():
+    """R2c：`phase` 写 "2" 与写 2 转出同一张卡（共用类型不改 pydantic 原有的可转值行为）。"""
+    from core.card_draft import card_from_draft
+
+    def _mk(phase_occ, phase_att):
+        return _phase_draft(
+            situation_behaviors=[{"situation": "讨酒", "behavior": "排出九文大钱",
+                                  "occurrences": [{"phase": phase_occ, "quote": "中间乙乙乙"}]}],
+            relationships=[{"target": "乙", "relation": "旧识", "attitude": "全书态度",
+                            "attitudes": [{"phase": phase_att, "attitude": "阶段态度",
+                                           "note": "口径", "quote": "开头甲甲甲"}]}])
+
+    as_str = card_from_draft(_mk("2", "1"), _PHASE_SRC).model_dump()
+    as_int = card_from_draft(_mk(2, 1), _PHASE_SRC).model_dump()
+    assert as_str == as_int
+
+
+def _bad_value_draft(phase):
+    """一条坏阶段号的 occurrence + 一条正常落阶段 1 的，用来验「只撤回那一条」。"""
+    return _phase_draft(situation_behaviors=[
+        {"situation": "好", "behavior": "b",
+         "occurrences": [{"phase": phase, "quote": "开头甲甲甲"}]},
+        {"situation": "另", "behavior": "c",
+         "occurrences": [{"phase": 1, "quote": "开头甲甲甲"}]}])
+
+
+def test_phase_number_bool_is_bad_value_retracts(caplog):
+    """R2c：`phase=True` 是坏值（bool 是 int 子类，但阶段号写布尔无意义）→ 按 0 → 规则 0 撤回。
+
+    判据：整卡不抛错；warning 含原值 `True` 与「阶段编号不合法」各一条；该条不进任何阶段。
+    改动前这条会静默变成 1（`int(True)`），落到阶段 1。
+    """
+    from core.card_draft import card_from_draft
+
+    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
+        card = card_from_draft(_bad_value_draft(True), _PHASE_SRC)
+    assert [b.situation for b in card.character_arc.phases[0].behaviors] == ["另"], \
+        "同卡另一条没照常落到阶段 1"
+    assert all(b.situation != "好" for p in card.character_arc.phases for b in p.behaviors)
+    assert all(b.situation != "好" for b in card.situation_behaviors)
+    assert sum("True" in r.getMessage() for r in caplog.records) == 1, "没写明原值的 warning"
+    assert sum("阶段编号不合法" in r.getMessage() for r in caplog.records) == 1, "坏值没落到规则 0"
+
+
+def test_phase_number_fraction_is_bad_value_retracts(caplog):
+    """R2c：`phase=2.5` 小数非整，是坏值 → 按 0 → 规则 0 撤回（改动前会被 `int()` 截成 2）。"""
+    from core.card_draft import card_from_draft
+
+    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
+        card = card_from_draft(_bad_value_draft(2.5), _PHASE_SRC)
+    assert [b.situation for b in card.character_arc.phases[0].behaviors] == ["另"]
+    assert all(b.situation != "好" for p in card.character_arc.phases for b in p.behaviors)
+    assert all(b.situation != "好" for b in card.situation_behaviors)
+    assert sum("2.5" in r.getMessage() for r in caplog.records) == 1, "没写明原值的 warning"
+    assert sum("阶段编号不合法" in r.getMessage() for r in caplog.records) == 1, "坏值没落到规则 0"
+
+
+def test_phase_number_integral_float_lands_like_int():
+    """R2c：`phase=2.0` 是整数值，视同 2（只有小数非整才算坏值），与 `phase=2` 转出同一张卡。"""
+    from core.card_draft import card_from_draft
+
+    def _mk(phase):
+        return _phase_draft(situation_behaviors=[
+            {"situation": "讨酒", "behavior": "排出九文大钱",
+             "occurrences": [{"phase": phase, "quote": "中间乙乙乙"}]}])
+
+    assert card_from_draft(_mk(2.0), _PHASE_SRC).model_dump() == \
+        card_from_draft(_mk(2), _PHASE_SRC).model_dump()
 
 
 # ── 审计待办 R3 / R4（Claude 修）─────────────────────────────────────────
