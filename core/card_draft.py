@@ -17,7 +17,14 @@
 import logging
 from typing import Annotated, Any
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, create_model
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    create_model,
+    model_validator,
+)
 
 from core import phase_anchoring
 from core.card_layers import REGISTRY, get_path, set_path
@@ -55,13 +62,37 @@ def _phase_number(value: Any) -> int:
     return 0
 
 
-# 阶段号的类型只在这里定义：`DraftOccurrence.phase` 与 `DraftAttitude.phase` 共用。
+# 阶段号的类型只在这里定义；字段本身与「缺省、发给模型的形态」收在 `PhaseTagged` 一处。
 PhaseNumber = Annotated[int, BeforeValidator(_phase_number)]
 
 
-class DraftOccurrence(BaseModel):
+def _phase_stays_required(schema: dict, cls) -> None:
+    """发给模型的结构不因默认值而变：phase 仍列在 required、不带 default。"""
+    schema.get("properties", {}).get("phase", {}).pop("default", None)
+    required = schema.setdefault("required", [])
+    if "phase" not in required:
+        required.insert(0, "phase")
+
+
+class PhaseTagged(BaseModel):
+    """带阶段号的草稿条目：阶段号的全部规则只在这一处（类型、缺省、发给模型的形态）。
+
+    缺 `phase` 键按 0 处理，交给规则 0（`_valid_number_rows`）撤回那一条；`phase` 仍列在
+    发给模型的结构里、仍是必填，模型看到的契约不变。
+    """
+    model_config = ConfigDict(json_schema_extra=_phase_stays_required)
+    phase: PhaseNumber = 0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_missing_phase(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "phase" not in data:
+            logger.warning("[card_draft] 缺阶段编号，按 0 处理：%r", data)
+        return data
+
+
+class DraftOccurrence(PhaseTagged):
     """一次出现：这个做法/记忆在某个阶段里做过，附一段该阶段里的原文摘录（10-40 字，逐字照抄）。"""
-    phase: PhaseNumber
     quote: str = ""
 
 
@@ -87,12 +118,11 @@ class DraftMemory(BaseModel):
     occurrences: list[DraftOccurrence] = []
 
 
-class DraftAttitude(BaseModel):
+class DraftAttitude(PhaseTagged):
     """本角色在某阶段对某人的态度；quote 是这段态度成立的原文摘录。
 
     `note` 是这一阶段的单向口径（喂给聊天模型的固定立场），随阶段变；空则回落关系顶层 note。
     """
-    phase: PhaseNumber
     attitude: str = ""
     note: str = ""
     quote: str = ""
