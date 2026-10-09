@@ -1036,6 +1036,59 @@ def test_phase_number_accepts_string_and_int_like_before():
     assert as_str == as_int
 
 
+def _bad_value_draft(phase):
+    """一条坏阶段号的 occurrence + 一条正常落阶段 1 的，用来验「只撤回那一条」。"""
+    return _phase_draft(situation_behaviors=[
+        {"situation": "好", "behavior": "b",
+         "occurrences": [{"phase": phase, "quote": "开头甲甲甲"}]},
+        {"situation": "另", "behavior": "c",
+         "occurrences": [{"phase": 1, "quote": "开头甲甲甲"}]}])
+
+
+def test_phase_number_bool_is_bad_value_retracts(caplog):
+    """R2c：`phase=True` 是坏值（bool 是 int 子类，但阶段号写布尔无意义）→ 按 0 → 规则 0 撤回。
+
+    判据：整卡不抛错；warning 含原值 `True` 与「阶段编号不合法」各一条；该条不进任何阶段。
+    改动前这条会静默变成 1（`int(True)`），落到阶段 1。
+    """
+    from core.card_draft import card_from_draft
+
+    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
+        card = card_from_draft(_bad_value_draft(True), _PHASE_SRC)
+    assert [b.situation for b in card.character_arc.phases[0].behaviors] == ["另"], \
+        "同卡另一条没照常落到阶段 1"
+    assert all(b.situation != "好" for p in card.character_arc.phases for b in p.behaviors)
+    assert all(b.situation != "好" for b in card.situation_behaviors)
+    assert sum("True" in r.getMessage() for r in caplog.records) == 1, "没写明原值的 warning"
+    assert sum("阶段编号不合法" in r.getMessage() for r in caplog.records) == 1, "坏值没落到规则 0"
+
+
+def test_phase_number_fraction_is_bad_value_retracts(caplog):
+    """R2c：`phase=2.5` 小数非整，是坏值 → 按 0 → 规则 0 撤回（改动前会被 `int()` 截成 2）。"""
+    from core.card_draft import card_from_draft
+
+    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
+        card = card_from_draft(_bad_value_draft(2.5), _PHASE_SRC)
+    assert [b.situation for b in card.character_arc.phases[0].behaviors] == ["另"]
+    assert all(b.situation != "好" for p in card.character_arc.phases for b in p.behaviors)
+    assert all(b.situation != "好" for b in card.situation_behaviors)
+    assert sum("2.5" in r.getMessage() for r in caplog.records) == 1, "没写明原值的 warning"
+    assert sum("阶段编号不合法" in r.getMessage() for r in caplog.records) == 1, "坏值没落到规则 0"
+
+
+def test_phase_number_integral_float_lands_like_int():
+    """R2c：`phase=2.0` 是整数值，视同 2（只有小数非整才算坏值），与 `phase=2` 转出同一张卡。"""
+    from core.card_draft import card_from_draft
+
+    def _mk(phase):
+        return _phase_draft(situation_behaviors=[
+            {"situation": "讨酒", "behavior": "排出九文大钱",
+             "occurrences": [{"phase": phase, "quote": "中间乙乙乙"}]}])
+
+    assert card_from_draft(_mk(2.0), _PHASE_SRC).model_dump() == \
+        card_from_draft(_mk(2), _PHASE_SRC).model_dump()
+
+
 # ── 审计待办 R3 / R4（Claude 修）─────────────────────────────────────────
 
 def test_r3_out_card_ignores_fields_the_criterion_does_not_read():

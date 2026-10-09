@@ -33,6 +33,8 @@ NO_PHASE = f"{UNIT}::test_rel_batch_prompt_without_phases_marks_none_and_rule_sa
 RULE4 = f"{UNIT}::test_rel_batch_rule4_pins_one_based_range"
 BAD_OCC = f"{UNIT}::test_bad_phase_number_on_occurrence_retracts_row_not_whole_card"
 SCHEMA = f"{UNIT}::test_draft_schema_phase_stays_integer"
+BOOL_BAD = f"{UNIT}::test_phase_number_bool_is_bad_value_retracts"
+FRAC_BAD = f"{UNIT}::test_phase_number_fraction_is_bad_value_retracts"
 
 _ENUM = "    named = [(i, p) for i, p in enumerate(phases, 1) if p]"
 _JOIN = '    stage = "；".join(f"{i}. {p}" for i, p in named) or "（无阶段）"'
@@ -65,6 +67,12 @@ MUTANTS = [
        '    phase: PhaseNumber\n    quote: str = ""', '    phase: int\n    quote: str = ""'),
     _m("MC4 draft_schema 里 phase 变 string", SCHEMA, DRAFT,
        '    phase: PhaseNumber\n    attitude: str = ""', '    phase: str\n    attitude: str = ""'),
+    # 二次审计（补充）：布尔 / 非整数小数两条坏值方向，之前没有判别器（删各自的判断测试仍全绿）。
+    _m("MB1 去掉布尔判断（True 被当成整数 1）", BOOL_BAD, DRAFT,
+       "    if not isinstance(value, bool):", "    if True:  # 变异：布尔当整数"),
+    _m("MB2 去掉 is_integer 判断（2.5 被截成 2）", FRAC_BAD, DRAFT,
+       "            if not isinstance(value, float) or value.is_integer():",
+       "            if True:  # 变异：小数截断"),
 ]
 
 if __name__ == "__main__":

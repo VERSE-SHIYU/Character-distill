@@ -67,6 +67,22 @@
 | MC3 只 `DraftAttitude` 用共用类型、`DraftOccurrence` 没用 | 同上 |
 | MC4 `draft_schema` 里 `phase` 变 string | `…::test_draft_schema_phase_stays_integer` |
 
+#### 对账表（二次审计追加）
+
+`b6e91f4` 审计：8 个变异里 `MC` 组有两个方向**没打红** —— 删掉 `_phase_number` 的 `isinstance(value, bool)` 判断、
+或删掉 `value.is_integer()` 判断，测试仍全绿。即布尔与非整数小数没有判别器钉住。补两条：
+
+| 变异 | 应红 |
+|---|---|
+| MB1 `_phase_number` 去掉布尔判断（`True` 被当成整数 1） | `…::test_phase_number_bool_is_bad_value_retracts` |
+| MB2 `_phase_number` 去掉 `is_integer()` 判断（`2.5` 被截成 2） | `…::test_phase_number_fraction_is_bad_value_retracts` |
+
+### 已知、不处理
+
+**缺 `phase` 键**时整卡仍失败：`DraftOccurrence.phase` / `DraftAttitude.phase` 是必填，pydantic 抛
+`ValidationError`，`BeforeValidator` 不会跑。真跑未出现这种情况；要处理它得改发给模型的结构（给默认值）
+或另开第二处校验，代价大于收益（返工经验第 1、25 条）。**只记不修。**
+
 ### 测试（`tests/test_arc_phase_fields_unit.py` 追加）
 
 `phase="强撑体面"` 时整卡不抛错、该条撤回、有 warning、同卡其他条目不受影响（做法 occurrence 与
