@@ -120,3 +120,15 @@ def test_v9_template_paths_come_from_the_registry():
     assert len(calls) >= 17, f"模板里的 _timed_tpl 调用只有 {len(calls)} 处"
     bad = [p for p in calls if p not in REGISTRY or REGISTRY[p].layer not in ("state", "experience")]
     assert not bad, f"这些路径不是登记表里按阶段给的路径：{bad}"
+
+
+def test_v10_dimension_c_tells_catchphrases_to_be_the_line_itself():
+    """维度说明里的口癖口径与模板一致：口癖单列为「取值就是原话本身」，不再与语气/句式共用描述写法。"""
+    assert "口癖按阶段给，取值就是原话本身" in _FULL, "维度 C 没把口癖单列成原话写法"
+    assert "语气/句式/口癖按阶段给" not in _FULL, "维度 C 还把口癖和语气/句式放在同一描述写法下"
+
+
+@pytest.mark.parametrize("name", list(_PROMPTS))
+def test_v11_evidence_rule_keeps_the_paraphrase_fallback(name):
+    """找不到原话时退回场景转述（不加引号）——没有这条，模型会为凑引号编原话。"""
+    assert "找不到原话就写一句场景转述，不加引号" in _PROMPTS[name], f"[{name}] 依据规则丢了「场景转述」的退路"
