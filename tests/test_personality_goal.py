@@ -410,6 +410,12 @@ def test_g11_default_condition_card_rises_at_most_five_per_turn():
 
 
 def test_g12_phase_limited_mode_and_condition_apply_only_in_that_phase():
+    """语义 2026-10-09 改为「沿用最近一次」，见 docs/specs/state-inertia.md。
+
+    三档 close：阶段 2 有全程（顶层）close，按规则 3「k 上有证据的优先」，阶段 1 专属的 close
+    不进阶段 2。亲近条件（状态类列表）：阶段 2 没有自己那格，沿用阶段 1 → 阶段 2 的评估
+    prompt 里也看得到它。
+    """
     name = "孔乙己"                               # 样本卡有两个阶段
     only_phase_1 = (1, {"relational_modes": {"close": "只在第一阶段：把最后一颗豆也让给对方"},
                         "warming_conditions": ["只在第一阶段：对方请他喝了一碗酒"]})
@@ -422,7 +428,7 @@ def test_g12_phase_limited_mode_and_condition_apply_only_in_that_phase():
     assert line in seen[1][0] and _modes(name)["close"] not in seen[1][0], "选了第一阶段，却没用这个阶段的亲近档做法"
     assert cond in seen[1][1], "选了第一阶段，评估 prompt 里没有这个阶段的亲近条件"
     assert line not in seen[2][0] and _modes(name)["close"] in seen[2][0], "第二阶段用到了第一阶段才有的做法"
-    assert cond not in seen[2][1], "第二阶段的评估 prompt 里出现了第一阶段才有的亲近条件"
+    assert cond in seen[2][1], "第二阶段没有自己的亲近条件，应沿用第一阶段的那条"
 
 
 def test_g8_rule_state_survives_the_catchword_save():

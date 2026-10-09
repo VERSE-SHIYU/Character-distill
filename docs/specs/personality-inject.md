@@ -42,7 +42,7 @@
 
 **原先标「未核实」的两处，实现时已查清：**
 - U1 评估有没有旁路：没有。`_post_turn` 的 4 个调用点都在 `core/chat_engine.py`（`:443、:465、:485、:583`，普通回复与沉默回复、流式与非流式），都经 `_evaluate_affinity` → `self._pipeline.run(ctx)`；`apply_evaluation` 的生产调用点只有 `core/evaluation_pipeline.py:80`（`grep -rn "apply_evaluation(" core web`）。群聊用的是同一个 `ChatEngine`。
-- U2 三层路径的阶段限时值：成立。投影对登记表里的路径是通用的（`core/arc_view.py:205–` `get_path(phases[k - 1].overlay, path)` / `set_path(proj, path, …)`），目标检查 G12 用 `psyche.relational_modes.close` 和 `psyche.warming_conditions` 各钉了一例。
+- U2 三层路径的阶段限时值：成立。投影对登记表里的路径是通用的（`core/arc_view.py:205–` `get_path(phases[k - 1].overlay, path)` / `set_path(proj, path, …)`），目标检查 G12 用 `psyche.relational_modes.close` 和 `psyche.warming_conditions` 各钉了一例。（2026-10-09：状态类的「只看阶段 k」语义已被 `docs/specs/state-inertia.md` 取代 —— 阶段 k 没值时沿用 1..k 里最近一次。）
 
 ## 1. 目标检查（先跑它）
 
@@ -73,7 +73,7 @@ main 上绿的 10 条，逐条说明：夹具自检 1 条；负对照 2 条；G9
 | G9 | 卡上没有新字段、或三档没填全、或没有分面时，人格块仍是现在的文案。**段 1 上线后所有旧卡走的都是这条路** |
 | G10 | 评估 prompt：「性格特征」「价值观」各归各位；不再有与新规则矛盾的旧句子；带记仇程度和「不要太快接受道歉」；代码不读记仇和波动 |
 | G11 | 用默认亲近条件的卡：门槛同为 3 次；单轮最多涨 5 |
-| G12 | 三档做法、亲近条件只在某个阶段成立时：选了那个阶段才用，别的阶段用全程的 |
+| G12 | 三档做法、亲近条件只在某个阶段成立时：选了那个阶段才用，别的阶段用全程的。**状态类投影语义 2026-10-09 已被 `state-inertia.md` 取代**（阶段 k 没值就沿用 1..k 最近一次） |
 
 它验不了的：评估模型判得准不准、模型说出来的话软不软、跨角色谁快谁慢。这三样留给③全部合并后的演示卡重蒸验收，由人读。
 

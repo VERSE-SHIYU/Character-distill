@@ -18,7 +18,7 @@ v2：对照 Shiyu 的 spec 标准逐条补齐（路径机制表、规模表、�
 
 | 编号 | 决策 | 来源 |
 |---|---|---|
-| DA1 | 经历类取 1..k；状态类只取阶段 k（全程成立的 + 阶段 k 特有的）；稳定类全书一份 | Shiyu |
+| DA1 | 经历类取 1..k；状态类只取阶段 k（全程成立的 + 阶段 k 特有的）；稳定类全书一份（2026-10-09 已被 state-inertia.md 取代） | Shiyu |
 | DA2 | 字段类别登记表覆盖 `CharacterCard` 全部 37 个叶子字段（附录 B）；结构锁「登记表 = 叶子全集」默认拒绝 | Shiyu 选 A |
 | DA4 | 按类别分发：状态类挂到每个成立阶段；经历类只挂到最早阶段（修 C14） | 本 spec |
 | DA5 | 关系口径 `note` 随阶段（`PhaseAttitude` 加 `note`），取 ≤k 最新一条 | 修 C8 |
@@ -30,7 +30,7 @@ v2：对照 Shiyu 的 spec 标准逐条补齐（路径机制表、规模表、�
 | DA12 | 按路径读写嵌套字段用 **pydash 8.1.0**（MIT，仅依赖 typing-extensions；沙箱实测对 pydantic 模型读写通过；dpath 实测失败） | Shiyu 拍板 |
 | DA13 | 阶段特有内容存 `ArcPhase.overlay: dict[登记路径, list[str] \| str]`，校验器保证键与类型 | Shiyu 拍板 |
 | DA14 | ①的 `ArcPhase.memories`、`dialogue_examples` 并入 overlay，加载时转换一次；`behaviors` 留给② | Shiyu 拍板 |
-| DA15 | `dialogue_examples` 归状态类（只取阶段 k） | Shiyu 拍板 |
+| DA15 | `dialogue_examples` 归状态类（只取阶段 k）（2026-10-09 已被 state-inertia.md 取代） | Shiyu 拍板 |
 | DA16 | 卡片页 / 市场详情 / 群聊顶部只展示「全程成立的」（与编辑一致），各阶段特有内容在弧线列表里逐阶段展示 | Shiyu 拍板 |
 | DA17 | **关系单独成步、按人分批生成，所有蒸馏入口都适用**：主调用只出关系对象名单 `relationship_targets`；之后按批（B=10 人，§2.3 推导）用**该入口主调用的同一前缀**再调用，命中缓存 | Shiyu 拍板（唯一能达成「不截断、不丢人」的选项） |
 
@@ -123,8 +123,8 @@ C27. 线上模型是 `deepseek-flash`（`adapters/llm_adapter.py:717` `_FALLBACK
 | 类别 | 投影规则 | 路径 |
 |---|---|---|
 | 稳定 | 原样 | `name`、`identity`、`background`、`speaking_style.vocabulary_level`、`speaking_style.taboo_words`、`cognitive.education_level`、`cognitive.vocabulary_level`、`psyche.openness/conscientiousness/extraversion/agreeableness/neuroticism/affinity_baseline/volatility/grudge_inertia`（数值归③再议） |
-| 状态（列表） | 阶段 k 特有在前 + 顶层（B3 顺序契约：读者按 `[:3]`/`[:2]` 取前几条时，阶段 k 的条目不被全程条目挤掉） | `personality_traits`、`values`、`inner_tensions`、`emotional_patterns`、`speaking_style.catchphrases`、`psyche.triggers`、`psyche.soft_spots`、`dialogue_examples`（DA15） |
-| 状态（单值） | 阶段 k 有值用之，否则顶层 | `decision_style`、`speaking_style.tone`、`speaking_style.sentence_pattern`、`cognitive.speech_style` |
+| 状态（列表） | 阶段 k 特有在前 + 顶层（B3 顺序契约：读者按 `[:3]`/`[:2]` 取前几条时，阶段 k 的条目不被全程条目挤掉）（2026-10-09 已被 state-inertia.md 取代） | `personality_traits`、`values`、`inner_tensions`、`emotional_patterns`、`speaking_style.catchphrases`、`psyche.triggers`、`psyche.soft_spots`、`dialogue_examples`（DA15） |
+| 状态（单值） | 阶段 k 有值用之，否则顶层（2026-10-09 已被 state-inertia.md 取代） | `decision_style`、`speaking_style.tone`、`speaking_style.sentence_pattern`、`cognitive.speech_style` |
 | 经历（列表） | 顶层 + 1..k | `key_memories` |
 | 经历（单值） | 顶层 + 1..k 用「；」连接 | `cognitive.knowledge_scope` |
 | 专门投影 | 各自函数 | `character_arc.axis`、`character_arc.phases`、`relationships`（DA5）、`first_message`、`situation_behaviors`（②接入） |
