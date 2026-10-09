@@ -27,7 +27,7 @@ from adapters.llm_adapter import (
     llm_error_payload,
     user_facing_error,
 )
-from core.card_quotes import retract_unverified
+from core.card_quotes import VERBATIM_FIELDS, retract_unverified
 from core.arc_view import phase_header, phase_of
 from core.llm_json import extract_json
 from core.card_relationships import dedupe_relationship_targets
@@ -173,7 +173,7 @@ _FORMAT_PRESTEP = (
     '## 前置步骤\n'
     '先通读全文，枚举出与本角色有直接言行往来（同场对话或互动）的有名字角色；同一人有多个称呼的归为一组。后续维度 F 覆盖这里枚举出的角色。'
 )
-_FORMAT_DIMS_HEADING = '## 分析维度（每个维度必须给出原文证据）'
+_FORMAT_DIMS_HEADING = '## 分析维度（每条结论都要以原文为依据）'
 # 「某做法/记忆在哪些阶段成立、每阶段各附一段原文摘录」的写法只定义一次：维度 E（关键记忆）
 # 与维度 O（情境→行为）都引用它，别的维度要提摘录时用另一种措辞（别复制这句，锁 S9 数它）。
 _PHASE_EXCERPT_RULE = (
@@ -181,26 +181,48 @@ _PHASE_EXCERPT_RULE = (
     '[{"phase": 1, "quote": "…"}]；只填原文里确实这样过的阶段；'
     '没有阶段时只写一条，phase 填 0。'
 )
+# 依据的写法只定义一次：描述类取值统一「结论（依据）」，依据优先原话、否则写不加引号的场景转述。
+_EVIDENCE_RULE = (
+    '描述类取值写成「结论（依据）」：依据优先用原文里的原话，写成「原话」，引号里逐字照抄；'
+    '找不到原话就写一句场景转述，不加引号。依据里只写原话或场景，不写章节号，也不写注明来源位置的标签。'
+)
+_EVIDENCE_EXAMPLE = '（「原话」）'
+# 状态类字段的取值示例：描述类写「结论（「原话」）」，原话类（`card_quotes.VERBATIM_FIELDS`）只写原话本身。
+_DESC_VALUE = '结论' + _EVIDENCE_EXAMPLE
+_VERBATIM_VALUE = '原文里的原话，逐字照抄'
 # 状态类字段（性格、价值观、说话方式、雷点软肋…）的写法：描述随阶段变，故一条描述附它在
 # 哪些阶段成立的摘录。只定义一次：各处引用它，别复制这句（锁 S4 数它）。
 _PHASE_DESCRIPTION_RULE = (
-    '取值按阶段给，写成 {"value": "描述（含原文出处）", "occurrences": '
+    '取值按阶段给，写成 {"value": "' + _DESC_VALUE + '", "occurrences": '
     '[{"phase": 1, "quote": "该阶段原文摘录"}]} —— 一条取值只写一次，'
     '标出它确实成立的阶段；从头到尾都成立时标全部阶段。'
 )
-# 稳定类字段（出身、身份、用词层次、禁忌词…）的写法：不随阶段变，只写一次。
-_STABLE_FIELD_RULE = (
-    '这类字段全程不变：只写一次，不按阶段拆，出处写在括号里。'
+# 原话类字段（口癖…）的写法：整个值就是原文本身，不加描述、括号与引号。只定义一次（锁 S4 数它）。
+_PHASE_VERBATIM_RULE = (
+    '取值就是原话本身：写成 {"value": "' + _VERBATIM_VALUE + '", "occurrences": '
+    '[{"phase": 1, "quote": "该阶段原文摘录"}]}，value 里不加描述、括号和引号；'
+    '一条取值只写一次，标出它确实成立的阶段。'
 )
-# 状态类字段在 JSON 模板里的取值形态（`_PHASE_DESCRIPTION_RULE` 的模板版）。
-_TIMED_TPL = '{"value": "描述（原文出处）", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]}'
+# 稳定类字段（出身、身份、用词层次、禁忌词…）的写法：不随阶段变，只写一次，不附依据。
+_STABLE_FIELD_RULE = (
+    '这类字段全程不变：只写一次，不按阶段拆，只写取值本身，不附依据。'
+)
+
+
+# 按阶段字段在 JSON 模板里的取值形态：路径在逐字清单里用原话模板，其余用描述模板。
+def _timed_tpl(path: str) -> str:
+    value = _VERBATIM_VALUE if f"{path}[]" in VERBATIM_FIELDS else _DESC_VALUE
+    return '{"value": "' + value + '", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]}'
+
+
 _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ("G1", 'A. 基本信息：名字、身份、背景（背景只写故事开始前就成立的出身与处境，不写故事里的遭遇）'),
     ("G2", 'B. 核心性格（3-5个）：每个特质 + 原文中的具体场景作为证据。' + _PHASE_DESCRIPTION_RULE),
     ("G2", 'P. 动机：此人想要什么、为此不惜做到哪一步（不写手段 —— 手段在维度 O「情境→做法」里）；'
            '负面动机（贪、算计、报复）照原文如实写，不美化。' + _PHASE_DESCRIPTION_RULE),
-    ("G3", 'C. 说话风格：语气、句式、口癖（直接从原文对话提取）。语气/句式/口癖按阶段给，'
+    ("G3", 'C. 说话风格：语气、句式、口癖（直接从原文对话提取）。语气/句式按阶段给，'
            + _PHASE_DESCRIPTION_RULE +
+           '口癖按阶段给，' + _PHASE_VERBATIM_RULE +
            '用词水平是稳定项，' + _STABLE_FIELD_RULE +
            '禁忌用词（taboo_words）：根据角色性格，推断他绝对不会说出口的话或词'
            '（如违背人设的示弱话、不符其语言习惯的词）。从原文和人设推断，确实没有才留空。'),
@@ -237,7 +259,7 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ),
     ("G3",
         'N. 认知/语言画像：基于原文中角色的实际话语和行为，判断以下四项：\n'
-        '   - education_level（文化程度）：文盲/识字不多/普通/受过良好教育/学者。从句式复杂度、用词丰富度、会不会用成语典故判断。原文证据：引一句原文中角色说的话作为判断依据。稳定项，' + _STABLE_FIELD_RULE + '\n'
+        '   - education_level（文化程度）：文盲/识字不多/普通/受过良好教育/学者。从句式复杂度、用词丰富度、会不会用成语典故判断。依据原文中角色说的话判断。稳定项，' + _STABLE_FIELD_RULE + '\n'
         '   - knowledge_scope（知识边界）：这个角色的时代/阶层/见识决定他知道什么、不知道什么。如"古代农妇，不懂现代科技与时事", 或"现代都市白领，对古代文学不了解"。从角色身份、背景、行为推断。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
         '   - speech_style（说话腔调）：用词雅俗、长短句风格、会不会用成语/专业词、口头禅、方言口音感。从原文对话提取最典型的说话特征。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
         '   - vocabulary_level（用词层次）：粗白（市井/底层）/日常（普通人）/文雅（读书人/官员）/书面（学者/文人）。从原文用词直接判断。稳定项，' + _STABLE_FIELD_RULE
@@ -264,27 +286,29 @@ _FORMAT_DIM_M = (
 )
 _FORMAT_OUTPUT_RULES = (
     '## 输出要求\n'
-    '严格按以下 JSON 格式输出，不要输出任何其他内容（不要 markdown 代码块标记）。把结论和关键依据（含出处）浓缩进一句话，出处用括号附句尾。严禁输出 {trait:..., description:...} 这种嵌套对象。'
+    '严格按以下 JSON 格式输出，不要输出任何其他内容（不要 markdown 代码块标记）。每条取值浓缩成一句话。'
+    + _EVIDENCE_RULE +
+    '严禁输出 {trait:..., description:...} 这种嵌套对象。'
 )
 _FORMAT_TEMPLATE_INTRO = 'JSON 模板（所有字段必须包含）：'
 _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("name", '  "name": "角色名"'),
     ("identity", '  "identity": "一句话身份"'),
-    ("personality_traits", '  "personality_traits": [' + _TIMED_TPL + ', ...]'),
+    ("personality_traits", '  "personality_traits": [' + _timed_tpl("personality_traits") + ', ...]'),
     ("speaking_style",
         '  "speaking_style": {\n'
-        '    "tone": [' + _TIMED_TPL + '],\n'
-        '    "sentence_pattern": [' + _TIMED_TPL + '],\n'
-        '    "catchphrases": [' + _TIMED_TPL + '],\n'
+        '    "tone": [' + _timed_tpl("speaking_style.tone") + '],\n'
+        '    "sentence_pattern": [' + _timed_tpl("speaking_style.sentence_pattern") + '],\n'
+        '    "catchphrases": [' + _timed_tpl("speaking_style.catchphrases") + '],\n'
         '    "vocabulary_level": "文雅/日常/粗白",\n'
         '    "taboo_words": ["禁忌词1", "禁忌词2"]\n'
         '  }'
     ),
-    ("values", '  "values": [' + _TIMED_TPL + ', ...]'),
-    ("motives", '  "motives": [' + _TIMED_TPL + ', ...]'),
+    ("values", '  "values": [' + _timed_tpl("values") + ', ...]'),
+    ("motives", '  "motives": [' + _timed_tpl("motives") + ', ...]'),
     ("key_memories",
         '  "key_memories": [\n'
-        '    {"memory": "关键经历（原文出处）", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]}\n'
+        '    {"memory": "关键经历' + _EVIDENCE_EXAMPLE + '", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]}\n'
         '  ]'
     ),
     ("relationships",
@@ -292,11 +316,11 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
         '    {"target": "对方名"}\n'
         '  ]'
     ),
-    ("inner_tensions", '  "inner_tensions": [' + _TIMED_TPL + ', ...]'),
+    ("inner_tensions", '  "inner_tensions": [' + _timed_tpl("inner_tensions") + ', ...]'),
     ("background", '  "background": "背景摘要"'),
     ("first_message", '  "first_message": "角色开场白"'),
-    ("emotional_patterns", '  "emotional_patterns": [' + _TIMED_TPL + ', ...]'),
-    ("decision_style", '  "decision_style": [' + _TIMED_TPL + ']'),
+    ("emotional_patterns", '  "emotional_patterns": [' + _timed_tpl("emotional_patterns") + ', ...]'),
+    ("decision_style", '  "decision_style": [' + _timed_tpl("decision_style") + ']'),
     ("character_arc",
         '  "character_arc": {\n'
         '    "axis": "从…到…",\n'
@@ -319,13 +343,13 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
         '    "affinity_baseline": 50,\n'
         '    "volatility": "适中",\n'
         '    "grudge_inertia": "一般",\n'
-        '    "triggers": [' + _TIMED_TPL + ', ...],\n'
-        '    "soft_spots": [' + _TIMED_TPL + ', ...],\n'
-        '    "warming_conditions": [' + _TIMED_TPL + ', ...],\n'
+        '    "triggers": [' + _timed_tpl("psyche.triggers") + ', ...],\n'
+        '    "soft_spots": [' + _timed_tpl("psyche.soft_spots") + ', ...],\n'
+        '    "warming_conditions": [' + _timed_tpl("psyche.warming_conditions") + ', ...],\n'
         '    "relational_modes": {\n'
-        '      "close": [' + _TIMED_TPL + '],\n'
-        '      "normal": [' + _TIMED_TPL + '],\n'
-        '      "conflict": [' + _TIMED_TPL + ']\n'
+        '      "close": [' + _timed_tpl("psyche.relational_modes.close") + '],\n'
+        '      "normal": [' + _timed_tpl("psyche.relational_modes.normal") + '],\n'
+        '      "conflict": [' + _timed_tpl("psyche.relational_modes.conflict") + ']\n'
         '    },\n'
         '    "agreeableness_facets": [\n'
         '      {"facet": "同情/谦恭/信任", "level": "高/中/低", "behavior": "一句概括性的行为", "quote": "原文摘录"}\n'
@@ -335,8 +359,8 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("cognitive",
         '  "cognitive": {\n'
         '    "education_level": "文盲/识字不多/普通/受过良好教育/学者",\n'
-        '    "knowledge_scope": [' + _TIMED_TPL + '],\n'
-        '    "speech_style": [' + _TIMED_TPL + '],\n'
+        '    "knowledge_scope": [' + _timed_tpl("cognitive.knowledge_scope") + '],\n'
+        '    "speech_style": [' + _timed_tpl("cognitive.speech_style") + '],\n'
         '    "vocabulary_level": "粗白/日常/文雅/书面"\n'
         '  }'
     ),
