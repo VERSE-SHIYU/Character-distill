@@ -4,8 +4,9 @@
 类别决定投影规则（`core.arc_view.project_card` 按本表通用执行）：
 
 - ``stable``      稳定：原样，不随阶段变。
-- ``state``       状态：阶段 k 那个人的样子。列表 = 顶层 + 阶段 k；单值 = 阶段 k 有值用之，
-                  否则回落顶层。
+- ``state``       状态：阶段 k（或沿用最近一次）那个人的样子。阶段 k 那格没值时沿用 1..k 里
+                  最近一个有值的阶段；列表 = 沿用来的那一格 + 顶层；单值 = 阶段 k 有值用之，
+                  其次顶层，都没有才沿用早期阶段（2026-10-09，见 docs/specs/state-inertia.md）。
 - ``experience``  经历：顶层 + 阶段 1..k。列表拼接；单值用「；」连接。
 - ``custom``      专门投影：各自函数（弧线 / 关系 / 开场白 / 情境→行为）。
 - ``none``        不进 prompt。
@@ -64,7 +65,7 @@ REGISTRY: dict[str, FieldSpec] = {
     "psyche.soft_spots": FieldSpec("state", "list", "软肋"),
     "psyche.warming_conditions": FieldSpec("state", "list", "亲近条件"),
     "dialogue_examples": FieldSpec("state", "list", "对话示例"),
-    # ── 状态（单值：阶段 k 有值用之，否则顶层）─────────────────────────
+    # ── 状态（单值：阶段 k 有值用之，其次顶层，都无才沿用最近一次）─────────
     "decision_style": FieldSpec("state", "scalar", "决策风格"),
     "speaking_style.tone": FieldSpec("state", "scalar", "语气"),
     "speaking_style.sentence_pattern": FieldSpec("state", "scalar", "句式"),

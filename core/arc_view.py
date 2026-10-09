@@ -136,6 +136,18 @@ def card_outline(card: CharacterCard, layers: tuple[str, ...] = ("state", "exper
     return lifelong, per_phase
 
 
+def inherited(values: list, k: int):
+    """沿用最近一次：阶段 1..k 里最近一个有值的那一格；都没有 → None。永远不看 k 之后。
+
+    状态「一直成立，直到被改变」—— 阶段 k 自己那格没有值，就是这一格还没被改写，沿用 1..k 里
+    最近的一次（`core/arc_view.py` 的状态类投影与关系口径共用这一份，不留第二处写法）。
+    """
+    for v in reversed(values[:max(k, 0)]):
+        if v:
+            return v
+    return None
+
+
 def _project_relationships(
     rels: list[Relationship], k: int,
 ) -> list[Relationship]:
@@ -159,7 +171,7 @@ def _project_relationships(
         r2 = r.model_copy(deep=True)
         r2.phase_attitudes = [pa.model_copy() for pa in upto]
         r2.attitude = upto[-1].attitude
-        r2.note = next((pa.note for pa in reversed(upto) if pa.note), "")
+        r2.note = inherited([pa.note for pa in upto], len(upto)) or ""
         out.append(r2)
     return out
 
@@ -192,7 +204,7 @@ def project_card(card: CharacterCard, arc_phase: int | None) -> tuple[ProjectedC
     除弧线 / 关系 / 开场白这些专门投影（`_project_custom`）外，全按 `REGISTRY` 通用执行 ——
     不写字段名分支（S2）。
 
-    **列表顺序是读者依赖的契约（B3）**：状态类列表 = **阶段 k 特有在前 + 全程在后**。
+    **列表顺序是读者依赖的契约（B3）**：状态类列表 = **阶段 k（或沿用最近一次）在前 + 全程在后**。
     读者按 N 取前几条（`[:3]` / `[:2]`）时，阶段 k 才成立的人设排在最前，不会被顶层的
     全程条目挤掉（顶层条目 ≥N 时尤其）。经历类列表仍是顶层在前 + 1..k（读者整体使用，
     不取前 N）。
@@ -203,13 +215,16 @@ def project_card(card: CharacterCard, arc_phase: int | None) -> tuple[ProjectedC
     proj = ProjectedCard(**card.model_dump())
 
     for path, spec in REGISTRY.items():
-        kth = get_path(phases[k - 1].overlay, path) if k >= 1 else None
         if spec.layer == "state":
+            per_phase = [get_path(p.overlay, path) for p in phases]
+            own = per_phase[k - 1] if k >= 1 else None
             if spec.kind == "list":
                 base = list(get_path(proj, path) or [])
-                set_path(proj, path, list(kth or []) + base)
-            elif kth:
-                set_path(proj, path, kth)
+                set_path(proj, path, list(inherited(per_phase, k) or []) + base)
+            elif own or not get_path(proj, path):
+                kth = inherited(per_phase, k)
+                if kth:
+                    set_path(proj, path, kth)
         elif spec.layer == "experience":
             if spec.kind == "list":
                 base = list(get_path(proj, path) or [])
