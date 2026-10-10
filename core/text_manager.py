@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from adapters.llm_adapter import LLMAdapter
+from core import examples_pending
 from core.character_roster import aliases_for, cached_characters, resolve_characters
 from core.chat_engine import ChatEngine
 from core.chat_preprocessor import ChatPreprocessor
@@ -486,12 +487,14 @@ class TextManager:
             verdict = await self._guard_card(card)
             card_id = uuid.uuid4().hex[:12]
             try:
-                await self._storage.save_card(
+                saved = await self._storage.save_card(
                     card_id, text_id, card.name, card.model_dump_json(), user_id
                 )
             except Exception as exc:
                 print(f"[TextManager] Save card failed: {exc}")
                 raise
+            await examples_pending.mark_after_distill(
+                self._storage, saved.get("id") or card_id, user_id, card, character_name)
 
             if verdict.error:
                 await self._flag_review(

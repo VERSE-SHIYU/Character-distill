@@ -169,8 +169,8 @@ def test_out_of_range_duplicate_undecided_and_off_enum_picks_are_dropped_not_rai
     assert out3 == ["凤姐：你老说哪里话。\n刘姥姥：我们乡下人，哪里懂这些。"]
 
 
-def test_no_candidates_at_all_is_a_task_failure_and_the_model_is_not_called():
-    """原文里没有这个角色的对话句 → 没得挑，直接失败（不花一次调用）。
+def test_no_candidates_at_all_raises_and_the_model_is_not_called():
+    """原文里没有这个角色的对话句 → 没得挑，直接抛（不花一次调用）；要不要因此作废整张卡由调用方定。
 
     提示里要点出「认的引号是哪些」：失败最常见的原因是版本用了别的引号（本轮不支持 ASCII
     引号），看不出这一点就只能猜。
