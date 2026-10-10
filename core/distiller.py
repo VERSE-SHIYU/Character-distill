@@ -56,7 +56,7 @@ from core.roster_aggregate import (
     usable_alias,
 )
 from core.card_draft import CardDraft, card_from_draft, draft_schema
-from core.card_layers import REGISTRY, get_path
+from core.card_layers import REGISTRY
 from core.relationship_batch import (
     REL_BATCH_SIZE,
     RelationshipBatchError,
@@ -648,15 +648,6 @@ def _other_people(
         for c in roster
         if c.get("name") and c.get("name") != name and c.get("name") not in aliases
     ]
-
-
-def has_dialogue_examples(card: CharacterCard) -> bool:
-    """卡上有没有对话示例：顶层或任一阶段下有一组就算有（有起点的卡，示例归在阶段下）。
-
-    「蒸馏完成但没配上示例」要告诉用户，这句话由各通道渲染；有没有，只在这里判。
-    """
-    return bool(card.dialogue_examples) or any(
-        get_path(p.overlay, "dialogue_examples") for p in card.character_arc.phases)
 
 
 def _roster_hint(others: Sequence[dict]) -> str:
@@ -2004,8 +1995,8 @@ class Distiller:
 
         **对话示例这一步保底**：挑不出来或调用模型出错，卡照常返回、只是没有示例，原因
         进日志 —— 不让最后一个后置字段把已经付费蒸好的整张卡作废（标签、苏醒台词本来
-        就是这样）。保底只此一处，三条通道因此口径相同；通道用 `has_dialogue_examples`
-        判有没有配上，自己渲染提示。去重与核对引文出错仍然抛。
+        就是这样）。保底只此一处，三条通道因此口径相同；通道用
+        `CharacterCard.has_dialogue_examples` 判有没有配上，自己渲染提示。去重与核对引文出错仍然抛。
 
         去重放在核对之前：先丢掉重复条目，引文撤回日志就只涉及留下来的那些条目，不会为一条
         随后被丢的重复关系报一次撤回。

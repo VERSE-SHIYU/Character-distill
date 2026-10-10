@@ -52,7 +52,7 @@
 | 规则 | 写在哪 | 谁用 |
 |---|---|---|
 | 对话示例配不上，要不要作废整张卡 | `Distiller.finalize_card` 里调 `attach_dialogue_examples` 的那一处 | 三条通道都经它，口径因此相同 |
-| 卡上有没有对话示例 | `core/distiller.py` 新增 `has_dialogue_examples(card)`：顶层或任一阶段下有一组就算有；读阶段用 `get_path` | 完成文案；下一段的界面提示和重跑入口 |
+| 卡上有没有对话示例 | `core/schema.py` 的 `CharacterCard.has_dialogue_examples()`：顶层或任一阶段下有一组就算有；读阶段用 `get_path`。放在卡自己身上，与 `CharacterArc.has_positions()` 同样的放法 | 完成文案；下一段的界面提示和重跑入口 |
 | 完成时对用户说什么 | `web/routers/distill.py` 新增 `_done_message(card)` 和两句文案常量 | bg 终态的 `message`、SSE 完成帧的 `message` |
 | 照实抛、带原因的那一步 | `attach_dialogue_examples`，不改 | `finalize_card`；下一段「只重跑这一步」的入口要把原因告诉用户，直接调它 |
 
@@ -88,7 +88,7 @@ bg 终态的 `message`（`:607`）和 SSE 完成帧新增的 `message` 字段都
 
 ### 4.6 注释
 
-代码里所有描述旧行为的注释和说明改成与新行为一致，只描述现状，不写「原先……现在……」。用 `预检`、`fail-open`、`补充 1-第` 三个词搜 `core/distiller.py`、`core/text_manager.py`、`web/routers/distill.py`，改完后这三个词在这三个文件里应搜不到。
+代码里所有描述旧行为的注释和说明改成与新行为一致，只描述现状，不写「原先……现在……」。用 `预检`、`fail-open`、`补充 1-第` 三个词搜 `core/distiller.py`、`core/text_manager.py`、`web/routers/distill.py`，改完后这三个词在这三个文件里应搜不到。测试文件里描述旧行为的说明同样要改（见 §13）。
 
 ## 5. 取代前置 spec
 
@@ -143,3 +143,12 @@ bg 终态的 `message`（`:607`）和 SSE 完成帧新增的 `message` 字段都
 ## 12. 范围规矩
 
 本段改动面内新发现的问题直接修；会撞车或需要 Shiyu 拍板的才停下报告；不自行记账。本段不做界面提示、重跑入口、候选上限、「挑中的那句是不是本人说的」的核对（U12），发现它们的问题只记在报告里。
+
+## 13. 补充（2026-10-10，独立复核之前作者自查）
+
+对照返工经验第 6、25 条重看了一遍本段，改两处，都不改行为：
+
+1. **「卡上有没有对话示例」放错了模块。** 原先写成 `core/distiller.py` 里的一个函数，路由为了问卡上有没有示例要去 import 蒸馏器。根因：它是卡的性质，不是蒸馏的步骤。本仓同类判定的放法是挂在数据模型上（`CharacterArc.has_positions()`，`core/schema.py:267`，被 `core/distiller.py:1977`、`core/arc_view.py:73`、`core/text_manager.py:624` 直接调用）。改成 `CharacterCard.has_dialogue_examples()`，路由不再为此多 import。下一段的重跑入口和界面提示也从这里取。目标检查 F10 跟着改成调卡上的方法。
+2. **§4.6 只点了三个源码文件，漏了测试文件。** `tests/test_distiller_dialogue_pick.py`、`tests/test_identify_failure_channels.py`、`tests/test_distill_task_api.py` 里有 6 处说明还在讲「预检」「挑不出即任务失败」，已改成只描述现状，断言不动。执行方在报告里指出了这一点。
+
+另记一条观察，本段不处理：后置字段（标签、苏醒台词、对话示例）失败都不影响出卡，但三个字段各有各的写法，分别在路由的 `try`、`_generate_awakening`、`finalize_card` 里。它们发生的时机不同（存卡前、存卡后单独补），统一成一套是另一件事，不在本段范围。

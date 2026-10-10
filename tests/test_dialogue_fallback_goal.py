@@ -202,8 +202,6 @@ def test_f9_only_the_dialogue_step_is_forgiven(monkeypatch):
 
 
 def test_f10_examples_filed_under_a_phase_count_as_having_examples():
-    from core.distiller import has_dialogue_examples   # main 上还没有：只让本条红，不拖累整个文件
-
     top = CharacterCard(name="角色", dialogue_examples=[EXAMPLE])
     under_phase = CharacterCard.model_validate({
         "name": "角色",
@@ -211,6 +209,6 @@ def test_f10_examples_filed_under_a_phase_count_as_having_examples():
                                      {"label": "晚", "state": "晚年",
                                       "overlay": {"dialogue_examples": [EXAMPLE]}}]}})
 
-    assert has_dialogue_examples(top)
-    assert has_dialogue_examples(under_phase)
-    assert not has_dialogue_examples(CharacterCard(name="角色"))
+    assert top.has_dialogue_examples()
+    assert under_phase.has_dialogue_examples()
+    assert not CharacterCard(name="角色").has_dialogue_examples()

@@ -119,8 +119,8 @@ def _clean_tasks():
         D._user_slots.clear()
 
 
-# 正文默认带角色的对话引号句：落卡前要按编号从原文挑对话示例（WP17），挑不出即任务
-# 失败 —— 用「角色说的话」这种无引号正文，几条通道用例会全部红在「找不到对话句」上。
+# 正文默认带角色的对话引号句：落卡前要按编号从原文挑对话示例（WP17）。用「角色说的话」
+# 这种无引号正文，卡照常落但没有示例，核对示例的几条通道用例会红在断言上。
 _BODY = "路人道：“先前的话。”\n角色道：“我说一句话。”"
 
 
@@ -172,7 +172,7 @@ def _run_bg(store, user_id, text_id, distiller, monkeypatch, body=_BODY):
 
     直接调 `_run_distill_task`（改动就在它里面），不经 HTTP：本文件不考路由与槽位，
     那两条各自的用例在 test_distill_task_api.py。`body` 是交给蒸馏的正文（默认带对话
-    引号；预检那条用例要一段挑不出对话句的）。
+    引号；保底出卡的目标检查要一段挑不出对话句的）。
     """
     task_id = f"dt_{uuid.uuid4().hex}"
     _run_async(store.create_distill_task(

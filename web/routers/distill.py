@@ -25,7 +25,7 @@ from adapters.llm_adapter import LLMAdapter, user_facing_error
 from core.arc_view import project_card, valid_phase
 from core.card_out import CARD_CONFLICT, card_revision, out_card
 from core.character_roster import aliases_for, resolve_characters, target_character_name
-from core.distiller import DistillError, Distiller, has_dialogue_examples, text_fingerprint
+from core.distiller import DistillError, Distiller, text_fingerprint
 from core.embeddings import EMBEDDING_KEY_REQUIRED
 from core.unlocated import UnknownPhase, move_unlocated
 from core.export import export_tavern_json
@@ -317,9 +317,9 @@ def _done_message(card: CharacterCard) -> str:
     """蒸馏完成时给用户的那句话 —— bg 任务与 SSE 共用，文案只此一处。
 
     挑不出对话示例不再让整张卡失败（spec dialogue-fallback）；但不能悄悄少一项，
-    故完成文案里点明。有没有示例由 `has_dialogue_examples` 判，这里只渲染。
+    故完成文案里点明。有没有示例由 `CharacterCard.has_dialogue_examples` 判，这里只渲染。
     """
-    return DONE_MESSAGE if has_dialogue_examples(card) else DONE_WITHOUT_EXAMPLES_MESSAGE
+    return DONE_MESSAGE if card.has_dialogue_examples() else DONE_WITHOUT_EXAMPLES_MESSAGE
 
 
 def _generate_awakening(llm, card: CharacterCard, storage=None) -> str:
