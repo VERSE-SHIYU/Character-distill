@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from core.distiller import DistillError, Distiller
-from core.quotes import Candidate, verbatim_in
+from core.quotes import PICK_SLOTS, Candidate, verbatim_in
 from core.schema import CharacterCard
 
 # 刘姥姥四条候选（1..4），每条上一句都是凤姐的话：四组都能成对，好验「最多 3 组」。
@@ -80,16 +80,18 @@ def test_the_examples_are_copied_from_the_source_not_taken_from_the_model():
 
 
 def test_the_schema_is_fixed_slots_not_an_unbounded_array():
-    """工具 Schema：挑选结果是 MAX_EXAMPLES 个固定槽位（`pick{i}` integer 0..N + `speaker{i}`
+    """工具 Schema：挑选结果是 `PICK_SLOTS` 个固定槽位（`pick{i}` integer 0..N + `speaker{i}`
     enum），不是变长数组 —— 数组长度 strict 拦不住，无界输出会在候选多时把回复撑爆（宝玉
     1672 条候选那次就是 `finish_reason=length` 截断）。
 
-    `speaker{i}` 的 enum 是名单里其他人物的标准名再加「无法判断」，别名不进 enum（同一人
-    两个选项）；`pick{i}` 的 `maximum` 是候选数，`minimum` 是 0（该格不挑）。
+    `speaker{i}` 的 enum 是 `SpeakerOptions.enum`：名单里其他人物的标准名 + 本角色标准名 +
+    「名单外的人」+「无法判断」（顺序如此）。别名不进 enum（同一人两个选项），本角色标准名
+    进 enum 是为了让模型如实标出「上一句是本人说的」，选到即丢；`pick{i}` 的 `maximum` 是
+    候选数，`minimum` 是 0（该格不挑）。
 
-    变异：改回 `picks` 数组 → `properties` 不是六个槽位字段、结构断言红；enum 改回含本角色
-    或别名 → enum 断言红；去掉 `maximum` → 越界靠服务端拦不住（非 strict 供应商下由
-    `valid_picks` 兜第二层）。
+    变异：改回 `picks` 数组 → `properties` 不是固定槽位字段、结构断言红；enum 改回只有
+    「其他人 + 无法判断」（漏了本人／名单外的人）→ enum 断言红；去掉 `maximum` → 越界靠
+    服务端拦不住（非 strict 供应商下由 `valid_picks` 兜第二层）。
     """
     llm, out = _pick()
 
@@ -98,15 +100,18 @@ def test_the_schema_is_fixed_slots_not_an_unbounded_array():
     params = f["parameters"]
     assert params["type"] == "object"
     assert params["additionalProperties"] is False, "strict 模式要求显式关闭额外字段"
-    # 三个格子、每格一个整数字段 + 一个 enum 字段，数量由 MAX_EXAMPLES 生成。
+    # PICK_SLOTS 个格子、每格一个整数字段 + 一个 enum 字段，数量由 PICK_SLOTS 生成。
+    assert PICK_SLOTS == 6
     assert list(params["properties"]) == [
-        "pick1", "speaker1", "pick2", "speaker2", "pick3", "speaker3"]
+        "pick1", "speaker1", "pick2", "speaker2", "pick3", "speaker3",
+        "pick4", "speaker4", "pick5", "speaker5", "pick6", "speaker6"]
     assert params["required"] == list(params["properties"]), "strict 要求属性全部必填"
-    for i in (1, 2, 3):
+    for i in range(1, PICK_SLOTS + 1):
         assert params["properties"][f"pick{i}"] == {
             "type": "integer", "minimum": 0, "maximum": 4}
         assert params["properties"][f"speaker{i}"]["type"] == "string"
-        assert params["properties"][f"speaker{i}"]["enum"] == ["凤姐", "无法判断"]
+        assert params["properties"][f"speaker{i}"]["enum"] == [
+            "凤姐", "刘姥姥", "名单外的人", "无法判断"]
     # 名单（标准名 + 别名）真的发给了模型：原文写「凤丫头」时它得能对到「凤姐」。
     assert "凤姐" in llm.seen["system"] and "凤丫头" in llm.seen["system"]
     # 提示词点明了格子名与「不足填 0」，否则模型不知道往哪填、也不知道空位怎么处理。
@@ -232,10 +237,12 @@ def test_the_previous_speaker_is_the_models_choice_not_a_name_found_in_the_lead(
     assert out == ["凤姐：你尝尝这个。\n刘姥姥：姑娘说得是。"]
 
 
-def test_the_subject_and_its_aliases_are_kept_out_of_the_enum():
-    """名单里本角色那一行（标准名与别名）不进 enum：否则模型可能选出「自己接自己」。
+def test_the_subjects_alias_is_out_of_the_enum_and_a_subject_pick_is_dropped():
+    """本角色的**别名**不进 enum（同一人两个选项）；标准名进 enum 是为了让模型如实标出
+    「上一句是本人说的」，但选到本人的格子被丢弃 —— 卡里不出现「自己接自己」。
 
-    变异：enum 不排除本角色/别名 → 名单里「刘姥姥／姥姥」会各自成为一个选项，断言红。
+    变异：别名也进 enum → 名单里「刘姥姥／姥姥」会各成一个选项，enum 断言红；`accepts`
+    接受本人 → 产出里出现「刘姥姥：…」自接自答，第一条断言红。
     """
     llm = _PickLLM({"pick1": 1, "speaker1": "凤姐"})
     source = ('凤姐忙和刘姥姥摆手道：“你老快别这样说。”\n'
@@ -248,7 +255,7 @@ def test_the_subject_and_its_aliases_are_kept_out_of_the_enum():
 
     assert out.dialogue_examples == ["凤姐：你老快别这样说。\n刘姥姥：姑娘说得是。"]
     props = llm.seen["function"]["parameters"]["properties"]
-    assert props["speaker1"]["enum"] == ["凤姐", "无法判断"]
+    assert props["speaker1"]["enum"] == ["凤姐", "刘姥姥", "名单外的人", "无法判断"]
 
 
 def test_attach_passes_the_failure_through_instead_of_saving_an_empty_field():

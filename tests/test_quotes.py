@@ -13,7 +13,10 @@ from __future__ import annotations
 from core.quotes import (
     CITATION_MIN_CHARS,
     MAX_EXAMPLES,
+    OUTSIDER,
+    PICK_SLOTS,
     UNDECIDED,
+    SpeakerOptions,
     build_example,
     extract_candidates,
     normalize,
@@ -229,40 +232,47 @@ def test_one_changed_char_is_not_verbatim_and_empty_quotes_find_nothing():
 # ── 挑选结果的校验与拼装（WP17 补充 1：模型回编号 + 上一句说话人，文字由代码复制）──
 
 def test_zero_out_of_range_duplicate_and_undecided_slots_are_dropped():
-    """编号 0（该格不挑）/ 越界 / 重复 / 非整数 / 说话人不在 enum / 判不准 / 缺字段 —— 一律丢，
-    顺序即槽位顺序。
+    """编号 0（该格不挑）/ 越界 / 重复 / 非整数 / 说话人不合格 / 缺字段 —— 一律丢，顺序即槽位顺序。
 
-    槽位数固定为 `MAX_EXAMPLES`，所以「最多几组」是结构保证的，这里不再有「超过就截断」的
-    分支。变异：`by_n[n]` 直接索引 → 越界抛 KeyError（调用方分不清是挑选失败还是代码错误）、
-    不丢 0 → 拿 0 号索引取到错的那句、接受「无法判断」→ 拼出没有对方名的组 —— 各红一条。
+    合格 = 说话人被 `SpeakerOptions.accepts` 接受，即名单里的其他人。本人、名单外的人、
+    「无法判断」、不在选项里的名字都不合格 —— 这些是模型如实作答的出口，不是可成的组。
+    槽位是 `PICK_SLOTS` 个（比 `MAX_EXAMPLES` 多一倍），凑满 `MAX_EXAMPLES` 组即停。
+    变异：`by_n[n]` 直接索引 → 越界抛 KeyError（调用方分不清是挑选失败还是代码错误）、
+    不丢 0 → 拿 0 号索引取到错的那句、接受本人/名单外的人/「无法判断」→ 拼出没有对方名的组
+    或自己接自己 —— 各红一条。
     """
-    enum = ["凤姐", "薛宝钗", UNDECIDED]
+    options = SpeakerOptions(others=("凤姐", "薛宝钗"), subject="刘姥姥")
 
     assert valid_picks(
         {"pick1": 2, "speaker1": "凤姐", "pick2": 1, "speaker2": "薛宝钗",
-         "pick3": 3, "speaker3": "凤姐"}, 5, enum,
+         "pick3": 3, "speaker3": "凤姐"}, 5, options,
     ) == [(2, "凤姐"), (1, "薛宝钗"), (3, "凤姐")]
     assert valid_picks(
         {"pick1": 0, "speaker1": "凤姐",        # 0 = 这格不挑
          "pick2": 8, "speaker2": "凤姐",        # 越界
-         "pick3": 1, "speaker3": "凤姐"}, 5, enum,
+         "pick3": 1, "speaker3": "凤姐"}, 5, options,
     ) == [(1, "凤姐")]
     assert valid_picks(
         {"pick1": 1, "speaker1": "凤姐",
          "pick2": 1, "speaker2": "薛宝钗",      # 重复编号，只留第一格
-         "pick3": "3", "speaker3": "凤姐"}, 5, enum,   # 非整数
+         "pick3": "3", "speaker3": "凤姐"}, 5, options,   # 非整数
     ) == [(1, "凤姐")]
     assert valid_picks(
         {"pick1": 1, "speaker1": "凤姐",
          "pick2": 2, "speaker2": UNDECIDED,     # 判不准
-         "pick3": 3, "speaker3": "袭人"}, 5, enum,     # 不在 enum
+         "pick3": 3, "speaker3": "袭人"}, 5, options,     # 不在选项
     ) == [(1, "凤姐")]
-    assert valid_picks({"pick1": 4}, 5, enum) == [], "缺说话人，成不了组"
-    assert valid_picks(None, 5, enum) == []
-    assert valid_picks(2, 5, enum) == [], "不是对象（非 strict 供应商可能编造）"
-    assert valid_picks([{"n": 1, "prev_speaker": "凤姐"}], 5, enum) == [], \
+    assert valid_picks(
+        {"pick1": 1, "speaker1": "刘姥姥",      # 本人：在 enum 里，但不合格
+         "pick2": 2, "speaker2": OUTSIDER}, 5, options,   # 名单外的人：同上
+    ) == []
+    assert valid_picks({"pick1": 4}, 5, options) == [], "缺说话人，成不了组"
+    assert valid_picks(None, 5, options) == []
+    assert valid_picks(2, 5, options) == [], "不是对象（非 strict 供应商可能编造）"
+    assert valid_picks([{"n": 1, "prev_speaker": "凤姐"}], 5, options) == [], \
         "旧的变长数组形状不再接受（长度 strict 拦不住，改成了固定槽位）"
     assert MAX_EXAMPLES == 3
+    assert PICK_SLOTS == 6
     assert UNDECIDED == "无法判断"
 
 
