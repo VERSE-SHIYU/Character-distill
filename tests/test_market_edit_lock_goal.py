@@ -15,6 +15,7 @@ L2 带的是当前版本号 → 成功，卡更新，多一条版本记录
 L3 不带版本号（恢复版本 / 更新发布）→ 照旧成功（main 上就绿：回归守卫）
 L4 广场卡详情页读卡的两个接口都带 revision，等于这张卡当前内容的版本号
 L5 核对之后、写入之前卡又被改了 → 存储层不写、不落版本记录
+L6 同一种情况经路由走 → 409，不是「成功但什么都没写」
 """
 from __future__ import annotations
 
@@ -163,4 +164,22 @@ async def test_l5_the_store_writes_nothing_when_the_card_changed_after_the_check
         "", "", "编辑更新", read)
 
     assert out is None
+    assert await _state(store, owner, cid) == ({**_CARD, "identity": "夹在中间的写入"}, 0)
+
+
+async def test_l6_a_write_landing_between_check_and_save_is_a_conflict(store, owner, monkeypatch):
+    cid = await _published(store, owner)
+    read = store.get_card_owned
+
+    async def _read_then_someone_writes(card_id, user_id):
+        row = await read(card_id, user_id)
+        await store.update_card(card_id, {**_CARD, "identity": "夹在中间的写入"}, expected=row["card_json"])
+        return row
+
+    monkeypatch.setattr(store, "get_card_owned", _read_then_someone_writes)
+    r = await _save(store, owner, cid, "依据旧内容的写入")
+    monkeypatch.undo()
+
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == CONFLICT
     assert await _state(store, owner, cid) == ({**_CARD, "identity": "夹在中间的写入"}, 0)

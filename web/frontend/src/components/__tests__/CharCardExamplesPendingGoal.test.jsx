@@ -10,10 +10,13 @@
  * C1 打开一张「待补」的卡 → 编辑页自己弹出，里面有「重新找一次」
  * C2 不是「待补」的卡（含没有这个字段的旧卡）→ 不弹
  * C3 关掉弹窗 → 告诉服务端「关掉了」（一次，带这张卡的卡号）；标记清掉后不再弹
+ * C3b 不是「待补」的卡：自己点「编辑」再关掉 → 不告诉服务端
  * C4 在弹出的编辑页里保存 → 按这张卡打开时的卡号和版本号提交，不再另报「关掉了」
  * C5 点「重新找一次」→ 用这张卡的卡号和版本号去找
  * C6 只读账号（游客）→ 不弹
  * C7 编辑页开着时页面换到另一张卡 → 编辑页关掉，不会把这张卡的内容写到那张卡上
+ * C7b 手机单栏布局下同样
+ * C8 编辑页开着时这张卡在别处变了（版本号变了）→ 保存按打开时的版本号提交
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, waitFor, fireEvent, screen } from '@testing-library/react'
@@ -179,5 +182,57 @@ describe('角色页：新蒸馏的卡缺对话示例', () => {
 
     expect(modal()).toBeNull()
     expect(updateSpy).not.toHaveBeenCalled()
+  })
+
+  it('C3b 不是「待补」的卡：自己点「编辑」再关掉 → 不告诉服务端', async () => {
+    box.card = card()
+    render(<CharCard />)
+    fireEvent.click(await screen.findByRole('button', { name: /编辑/ }))
+    await waitFor(() => expect(modal()).toBeInTheDocument())
+
+    fireEvent.click(inModal('取消'))
+
+    await waitFor(() => expect(modal()).toBeNull())
+    expect(dismissSpy).not.toHaveBeenCalled()
+  })
+
+  it('C7b 手机单栏布局下，编辑页开着时换到另一张卡 → 编辑页关掉', async () => {
+    const { innerWidth, matchMedia } = window
+    window.innerWidth = 400
+    window.matchMedia = (query) => ({
+      matches: true, media: query,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, onchange: null,
+      dispatchEvent: () => false,
+    })
+    try {
+      box.card = card()
+      const { rerender } = render(<CharCard />)
+      fireEvent.click(await screen.findByRole('button', { name: /编辑/ }))
+      await waitFor(() => expect(modal()).toBeInTheDocument())
+
+      box.card = card({ id: 'c2', name: '角色乙', revision: 'r9', card_json: JSON.stringify({ name: '角色乙' }) })
+      rerender(<CharCard />)
+
+      expect(modal()).toBeNull()
+    } finally {
+      window.innerWidth = innerWidth
+      window.matchMedia = matchMedia
+    }
+  })
+
+  it('C8 编辑页开着时这张卡在别处变了 → 保存按打开时的版本号提交', async () => {
+    box.card = card()
+    const { rerender } = render(<CharCard />)
+    fireEvent.click(await screen.findByRole('button', { name: /编辑/ }))
+    await waitFor(() => expect(modal()).toBeInTheDocument())
+
+    box.card = card({ revision: 'r2', card_json: JSON.stringify({ name: '角色甲', identity: '别处改过的身份' }) })
+    rerender(<CharCard />)
+    fireEvent.click(inModal('保存'))
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1))
+    const [cardId, saved, revision] = updateSpy.mock.calls[0]
+    expect([cardId, revision, saved.identity]).toEqual(['c1', 'r1', '甲的身份'])
   })
 })

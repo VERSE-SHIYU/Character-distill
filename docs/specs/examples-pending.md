@@ -34,10 +34,10 @@
 
 | 文件 | 条目 | 在 `3e61cd6` 上 |
 |---|---|---|
-| `tests/test_examples_pending_goal.py` | P1–P17，加 P3b、P4b、P11b，共 20 条 | 19 红 1 绿（绿：P17 聊天那条，回归守卫） |
-| `tests/test_market_edit_lock_goal.py` | L1–L5 | 3 红 2 绿（红：L1、L4、L5） |
-| `web/frontend/src/components/__tests__/ExamplesPendingModalGoal.test.jsx` | M1–M9、M6b | 10 红 |
-| `web/frontend/src/components/__tests__/CharCardExamplesPendingGoal.test.jsx` | C1–C7 | 5 红 2 绿（绿：C2、C6） |
+| `tests/test_examples_pending_goal.py` | P1–P17，加 P1b、P3b、P4b、P4c、P4d、P11b，共 23 条 | 22 红 1 绿（绿：P17 聊天那条，回归守卫） |
+| `tests/test_market_edit_lock_goal.py` | L1–L6 | 4 红 2 绿（红：L1、L4、L5、L6） |
+| `web/frontend/src/components/__tests__/ExamplesPendingModalGoal.test.jsx` | M1–M9、M6b、M7b | 11 红 |
+| `web/frontend/src/components/__tests__/CharCardExamplesPendingGoal.test.jsx` | C1–C8，加 C3b、C7b | 7 红 3 绿（绿：C2、C3b、C6） |
 | `web/frontend/src/store/examplesPending.test.js` | 7 条 | 6 红 1 绿（绿：「挪动」那条） |
 | `web/frontend/src/components/__tests__/MarketCardDetailEditLock.test.jsx` | K1 | 1 红 |
 
@@ -228,9 +228,10 @@
 | 行为 | 守它的测试 | 让它变红的变异 |
 |---|---|---|
 | 没配上示例的卡落库后是「待补」，三条通道都是 | P1、P3b、P4 | 三条通道任一条不调 `mark_after_distill` |
+| 落卡时记下的是蒸馏时的角色名 | P1b | `mark_after_distill` 记成 `card.name` |
 | 配上了就不是；重蒸配上了会清掉 | P2、P3 | `mark_after_distill` 只在没有示例时才写 |
-| 重新找用的是蒸馏时的角色名，不是卡上的名字 | P11b | `refind` 改用 `card.name`；`mark_after_distill` 记成 `card.name` |
-| 记不上不让落卡失败、不让任务失败 | P4b | 去掉 `nonfatal`；后台任务那处去掉 `nonfatal_sync` 并让投递抛错 |
+| 重新找用的是蒸馏时的角色名，不是卡上的名字 | P11b | `refind` 改用 `card.name` |
+| 记不上不让落卡失败、不让任务失败 | P4b、P4c（写库出错）、P4d（投递没成） | 去掉 `mark_after_distill` 里的 `nonfatal`（P4c 红）；后台任务那处去掉 `nonfatal_sync`（P4d 红） |
 | 保存清掉「待补」 | P5 | PATCH 不调 `settle` |
 | 关掉清掉「待补」，卡不动 | P6 | dismiss 不调 `settle` |
 | 重新找：找到了贴上、原文照抄 | P7、P11 | `refind` 不调 `attach_dialogue_examples`；路由不写回 |
@@ -243,9 +244,9 @@
 | 「待补」不在卡的内容里 | P16、`TestPgCardExamplesPending` | 把标记写进 `card_json` |
 | 复制卡不带走；`save_card` / `update_card` 不碰 | `TestPgCardExamplesPending` | `save_card` 或 `update_card` 的 SQL 里写这一列 |
 | 待补的卡打开就弹；别的卡不弹；游客不弹 | C1、C2、C6 | 去掉那个 effect；去掉 `canWrite` |
-| 关掉 → 告诉服务端一次；之后不弹 | C3、store「关掉」两条 | 关闭时不调 dismiss；本地不先清 |
-| 保存用打开时的卡号和版本号 | C4、M7、`CharCardUnlocated` 的「编辑保存调 store.updateCard…」 | 宿主改回取此刻的 `card`；表单底子改回取此刻的 `data` |
-| 换卡时编辑页关掉 | C7 | 去掉 `CardDetail` 的 `key` |
+| 关掉 → 告诉服务端一次；之后不弹；不是待补的卡关掉不告诉 | C3、C3b、store「关掉」两条 | 关闭时不调 dismiss；不看是不是待补一律调；本地不先清 |
+| 保存、重新找用的都是打开时的卡号和版本号 | C4、C8、M7、M7b | 角色页改回取此刻的 `card`（C8 红）；表单底子改回取此刻的 `data`（M7 红）；重新找带此刻的版本号（M7b 红） |
+| 换卡时编辑页关掉（宽屏、手机两处） | C7、C7b | 去掉对应那一处 `CardDetail` 的 `key` |
 | 有入口才有按钮 | M1、C1 | 不看 `onRefindExamples` 一律显示 |
 | 找到的示例看得到、保存不清掉（顶层 / 阶段下） | M2、M3 | 重新找成功后不换表单；去掉阶段示例的只读显示 |
 | 没找到说明白；出错可再点 | M4、M5 | 出错也当成找过了 |
@@ -255,10 +256,10 @@
 | 广场卡：旧版本保存报冲突，不跑预审 | L1 | 去掉路由里的核对；把核对挪到预审之后 |
 | 广场卡：当前版本、不带版本号照旧 | L2、L3 | 把 `revision` 改成必填 |
 | 两个读卡接口都带版本号 | L4 | 任一接口不加 |
-| 存储层比较后写入 | L5 | 去掉 `AND card_json = $6` |
+| 存储层比较后写入；没写到时路由报冲突 | L5、L6 | 去掉 `AND card_json = $6`；路由不看返回值 |
 | 广场页编辑保存带版本号 | K1 | 请求体不带 `revision` |
 
-这张表作者没有跑过变异，对应关系由复核方验。
+这张表在 10-10 的审计里逐行跑过一遍（§14）。
 
 ## 9. 上线步骤
 
@@ -311,3 +312,30 @@ Shiyu 21:29 要求把当时标着「未核实」的两条核实掉。核实的�
 - 蒸馏时的角色名只有各通道知道，所以「落卡后记」从 `TextManager.save_distilled_card` 里挪到三条通道各自落卡之后（§4.3 的表）。
 - 目标检查相应改了：P1–P4 改成走真实的三条通道，新增 P3b（SSE）和 P11b（名字不一致）。
 - 名单缓存那一条核实后不需要改设计（§3 第 8 条）。
+
+## 14. 补充（审计，2026-10-10，对象 `d2086b2c`）
+
+审计方：Claude（本 spec 的作者，沙箱）。分支上的代码与交付的原型逐文件相同，所以这是自查，不是独立复核。
+
+**结论：功能符合五条目标；改后合并。** 查出的都是测试没守住的地方和一处重复的拦截，没有查出行为上的错。
+
+做了什么：目标检查在分支上全绿；沿真实路径核对了进角色页的每一条路（角色列表、蒸馏完成后自动选中、任务条、苏醒台词的提示、蒸馏工作台）拿到的卡都来自 `/cards/by-text`，都带「待补」这一列；§8 对账表逐行做变异，另补了十几条。
+
+**活下来的变异（实现是对的，测试没守住），已各补一条目标检查**
+
+| 变异 | 为什么活下来 | 补的检查 |
+|---|---|---|
+| 落卡时记成卡上的名字 | 测试里卡名和角色名恰好相同 | P1b |
+| 去掉 `mark_after_distill` 里的 `nonfatal` | 后台任务外面还有一层，SSE 和 `/run` 没有写库出错的用例 | P4c |
+| 后台任务去掉外层 `nonfatal_sync` | 里面那层先吞了；投递没成这种情况没有用例 | P4d |
+| 广场保存：存储层没写到时路由仍报成功 | L5 只测了存储层，L1 只测了路由里的核对 | L6 |
+| 不是待补的卡关掉编辑页也去告诉服务端 | 没有这条反向断言 | C3b |
+| 角色页保存改回取此刻的卡 | 测试里此刻的版本号和打开时的恰好相同 | C8 |
+| 去掉手机单栏那一处 `CardDetail` 的 `key` | 只测了宽屏那一处 | C7b |
+| 重新找带的是此刻的版本号 | 同上，两者恰好相同 | M7b |
+
+**一处重复的拦截，已删**：`EditCardSession` 里「找过之后不再把 `onRefindExamples` 传给表单」。还能不能再找由宿主说了算（它看的是服务端的「待补」），这里再判一次是同一条规则写了两处。
+
+**等价的两处，不补测试**：文本页保存用编辑页交回的卡号和版本号，与用它自己记的那份结果相同（它打开时就把卡记成了快照）；改成用交回的只是为了三个宿主写法一致。
+
+**新增一条已知的后果**：角色页开着某张卡的编辑页时，同一本书里另一个角色蒸馏完成，页面会自动切到新卡（现有行为），编辑页随之关掉，没保存的修改丢失。改动前这种情况下编辑页留着、保存会写错卡；现在不会写错，但会丢修改。本段不改自动切卡。

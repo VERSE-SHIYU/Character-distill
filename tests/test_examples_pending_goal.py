@@ -17,11 +17,14 @@
 
 落卡时记「待补」（三条产卡通道都走真实的落库）
 P1  后台任务：没配上示例的卡落库 → 待补，记下的是蒸馏时用的角色名
+P1b 后台任务：模型把卡名写成了别的样子 → 记下的仍是蒸馏时用的角色名，不是卡上的名字
 P2  后台任务：配上示例的卡 → 不待补
 P3  同一角色重新蒸馏后配上了 → 上一次留下的待补清掉
 P3b SSE 那条通道同样记
 P4  `/run` 那条通道同样记
-P4b 记「待补」这一步出错 → 卡照常落库、任务照常完成（不影响卡片的建立）
+P4b 后台任务：记「待补」时写库出错 → 卡照常落库、任务照常完成（不影响卡片的建立）
+P4c `/run`：记「待补」时写库出错 → 照常返回卡
+P4d 后台任务：这一步连投递都没成（主 loop 超时）→ 卡照常落库、任务照常完成
 三个出口都清掉
 P5  保存（PATCH）→ 不待补
 P6  关掉（dismiss）→ 不待补，卡的内容和版本号都没变
@@ -107,6 +110,23 @@ class _FlakyPickLLM(_CountingLLM):
         return super().select_by_schema(system_prompt, messages, function, max_tokens)
 
 
+class _RenamingLLM(_CountingLLM):
+    """格式化时把名字写成别的样子（卡上的 name 是模型写的，代码不校正）。"""
+
+    def chat_stream_long(self, system, messages, max_tokens=None, **kw):
+        gen = super().chat_stream_long(system, messages, max_tokens=max_tokens, **kw)
+        try:
+            while True:
+                piece = next(gen)
+                if isinstance(piece, str) and piece.startswith("{") and '"name"' in piece:
+                    data = json.loads(piece)
+                    data["name"] = "角色（主角）"
+                    piece = json.dumps(data, ensure_ascii=False)
+                yield piece
+        except StopIteration as stop:
+            return stop.value
+
+
 def _distiller(llm=None) -> Distiller:
     d = Distiller(llm=llm or _CountingLLM(), config_path=None)
     d._longctx_threshold = 0
@@ -189,6 +209,17 @@ def test_p1_bg_a_card_saved_without_examples_is_marked_pending(store, user_id, m
     assert [r["examples_pending_for"] for r in rows] == ["角色"]
 
 
+def test_p1b_bg_records_the_name_used_for_distilling_not_the_name_on_the_card(
+        store, user_id, monkeypatch):
+    body = _no_quote_body() + LOCATABLE
+    tid = _seed_text(store, user_id, body)
+
+    task, rows = _bg(store, user_id, monkeypatch, tid, body, llm=_RenamingLLM())
+
+    assert task["status"] == "done", task
+    assert [(r["name"], r["examples_pending_for"]) for r in rows] == [("角色（主角）", "角色")]
+
+
 def test_p2_bg_a_card_saved_with_examples_is_not_pending(store, user_id, monkeypatch):
     body = _BODY + LOCATABLE
     tid = _seed_text(store, user_id, body)
@@ -242,6 +273,37 @@ def test_p4b_a_failure_to_mark_pending_does_not_fail_the_save(store, user_id, mo
         raise RuntimeError("db hiccup")
 
     monkeypatch.setattr(store, "set_card_examples_pending", _boom)
+
+    task, rows = _bg(store, user_id, monkeypatch, tid, body)
+
+    assert task["status"] == "done", task
+    assert [json.loads(r["card_json"])["name"] for r in rows] == ["角色"]
+
+
+def test_p4c_the_run_channel_survives_a_failed_mark(store, user_id, monkeypatch):
+    tid = _seed_text(store, user_id, _no_quote_body() + LOCATABLE)
+    d = _distiller()
+    client = _build_client(store, user_id, monkeypatch, distiller=d, tm=_tm(store, d))
+
+    async def _boom(card_id, uid, character):
+        raise RuntimeError("db hiccup")
+
+    monkeypatch.setattr(store, "set_card_examples_pending", _boom)
+
+    r = client.post("/api/distill/run", json={"text_id": tid, "character_name": "角色"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "角色"
+
+
+def test_p4d_bg_survives_when_the_mark_cannot_even_be_dispatched(store, user_id, monkeypatch):
+    body = _no_quote_body() + LOCATABLE
+    tid = _seed_text(store, user_id, body)
+
+    def _boom(*a, **kw):
+        raise TimeoutError("main loop busy")
+
+    monkeypatch.setattr("core.examples_pending.mark_after_distill", _boom)
 
     task, rows = _bg(store, user_id, monkeypatch, tid, body)
 

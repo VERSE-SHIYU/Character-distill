@@ -21,6 +21,7 @@
  * 保存交回去的是打开时那张卡、那一版
  * M7 弹窗开着时宿主那边换了卡号、版本号和内容 → 保存交回去的卡号、版本号、未编辑的内容
  *    都是打开时的
+ * M7b 同样的情况下点「重新找一次」→ 带去的也是打开时的卡号和版本号
  * 没结束时关不掉
  * M8 保存没结束时点「取消」或点遮罩 → 不关；保存失败后错误提示在
  * M9 重新找没结束时点「取消」→ 不关
@@ -194,6 +195,19 @@ describe('保存交回去的是打开时那张卡、那一版', () => {
     expect([saved.name, saved.identity, saved.background, saved.awakening_message])
       .toEqual(['甲', '用户改的身份', '甲的背景', '甲醒了'])
     expect(screen.getByText(/编辑角色卡 — 甲/)).toBeInTheDocument()
+  })
+})
+
+describe('重新找带去的也是打开时那张卡、那一版', () => {
+  it('M7b 弹窗开着时宿主那边版本号变了 → 重新找带的是打开时的', async () => {
+    const refind = vi.fn(() => new Promise(() => {}))
+    const props = { isOpen: true, onSave: async () => {}, onClose: () => {}, onRefindExamples: refind }
+    const { rerender } = render(<EditCardModal {...props} cardId="c1" revision="r1" data={flat([])} />)
+    rerender(<EditCardModal {...props} cardId="c1" revision="r2" data={flat([])} />)
+
+    fireEvent.click(screen.getByText(REFIND))
+
+    await waitFor(() => expect(refind).toHaveBeenCalledWith({ cardId: 'c1', revision: 'r1' }))
   })
 })
 

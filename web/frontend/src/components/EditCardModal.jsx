@@ -83,8 +83,9 @@ export default function EditCardModal({ isOpen, ...props }) {
 }
 
 // 一次打开。「重新找一次」成功后卡变了：换一份新表单（`round` 变 → 重新挂载），按找过之后的
-// 这张卡、这一版重新取初值；找的结果（`refound`）留在这一层，新表单接着显示。
-function EditCardSession({ onRefindExamples, ...props }) {
+// 这张卡、这一版重新取初值；找的结果（`refound`）留在这一层，新表单接着显示。还能不能再找
+// 不在这里判：宿主传不传 `onRefindExamples` 说了算（它看的是服务端的「待补」）。
+function EditCardSession(props) {
   const [round, setRound] = useState(0)
   const [refound, setRefound] = useState(null)   // null 还没找过 / true 找到了 / false 没找到
   return (
@@ -92,7 +93,6 @@ function EditCardSession({ onRefindExamples, ...props }) {
       key={round}
       {...props}
       refound={refound}
-      onRefindExamples={refound === null ? onRefindExamples : undefined}
       onRefound={(found) => { setRefound(Boolean(found)); setRound((n) => n + 1) }}
     />
   )
