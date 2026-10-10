@@ -34,8 +34,11 @@ from core.card_relationships import dedupe_relationship_targets
 from core.chat_preprocessor import ChatPreprocessor
 from core.quotes import (
     MAX_EXAMPLES,
+    OUTSIDER,
+    PICK_SLOTS,
     UNDECIDED,
     Candidate,
+    SpeakerOptions,
     build_example,
     extract_candidates,
     normalized_starts,
@@ -1866,30 +1869,33 @@ class Distiller:
         （对话示例 3 组只命中 1 组，都是在中间吞掉了另一个说话人的台词）。故这里换成
         「代码抽取带编号的候选 → 模型只回编号 → 代码按编号取原文」，逐字由构造保证。
 
-        上一句的说话人同理由模型读整段片段后从名单 enum 里选（每格一个 `speaker{i}`）——
-        按引导语里的人名取名会把宾语当主语（问题①：「送入刘姥姥口中，因笑道」是凤姐说的），
-        代码只负责校验与拼装。
+        上一句的说话人同理由模型读整段片段后选（每格一个 `speaker{i}`）—— 按引导语里的人名
+        取名会把宾语当主语（问题①：「送入刘姥姥口中，因笑道」是凤姐说的），代码只负责校验
+        与拼装。可选值见 `SpeakerOptions`：名单里的其他人，外加本人／「名单外的人」／「无法
+        判断」三个如实作答的出口（选到后三者的格子被丢弃）。
 
-        挑选结果**不是变长数组而是 MAX_EXAMPLES 个固定槽位**：宝玉验收实测候选多到 1672 条，
+        挑选结果**不是变长数组而是 `PICK_SLOTS` 个固定槽位**：宝玉验收实测候选多到 1672 条，
         提示词让它「挑出所有合格的」→ 输出无界 → 4096 截断报错。数组长度 strict 的 Schema
-        拦不住（不支持 `maxItems`，约束 6），故把「最多几组」做成结构：格子数固定，挑不满的
-        填 0。
+        拦不住（不支持 `maxItems`，约束 6），故把「最多几组」做成结构：字段数固定，挑不满的
+        填 0。格子数是 `MAX_EXAMPLES` 的两倍（见 `core/quotes.py::PICK_SLOTS`）：模型如实标出
+        「上一句是本人／名单外的人」的格子会被丢弃，只给 `MAX_EXAMPLES` 格时这些格子会把名额
+        占光（实测赵太爷 3 格全丢、0 组）；`valid_picks` 按格顺序取前 `MAX_EXAMPLES` 组合格的。
 
         候选由调用方从 `dialogue_candidates` 取（本方法不再自己抽取，两处判据因此同源）；
         `others` 是 `_other_people` 算出的名单里**除本人外**的人物（`[{"name", "aliases"}]`）：
-        标准名做 enum 的可选项，标准名加别名写进提示词，好让模型把原文里的别称（「凤丫头」）
-        对回标准名。
+        标准名做 `SpeakerOptions` 里合格的可选项（本人与本人的别名都不进），标准名加别名写进
+        提示词，好让模型把原文里的别称（「凤丫头」）对回标准名。
 
         挑选结果一组都成不了对，抛 `DistillError` —— 与其他后置步骤同口径：任务是失败，
         不是落一张没有对话示例的卡。
         """
-        enum = [*(dict.fromkeys(o.get("name") for o in others if o.get("name"))),
-                UNDECIDED]
-        properties = pick_slot_properties(len(candidates), enum)
-        # 槽位数固定为 MAX_EXAMPLES（见 `pick_slot_properties`）：strict 的 Schema 不支持
+        options = SpeakerOptions(
+            tuple(dict.fromkeys(o.get("name") for o in others if o.get("name"))), name)
+        properties = pick_slot_properties(len(candidates), options)
+        # 槽位数固定为 PICK_SLOTS（见 `pick_slot_properties`）：strict 的 Schema 不支持
         # array 的 maxItems（约束 6），挑选结果无界正是宝玉那次 4096 截断的根因。
-        slot_names = "、".join(pick_slot(i)[0] for i in range(1, MAX_EXAMPLES + 1))
-        speaker_names = "、".join(pick_slot(i)[1] for i in range(1, MAX_EXAMPLES + 1))
+        slot_names = "、".join(pick_slot(i)[0] for i in range(1, PICK_SLOTS + 1))
+        speaker_names = "、".join(pick_slot(i)[1] for i in range(1, PICK_SLOTS + 1))
         function = {
             "name": "pick_dialogue_examples",
             "description": f"按编号挑选最能体现「{name}」说话风格的对话示例",
@@ -1907,12 +1913,15 @@ class Distiller:
             f"（名字常是宾语，如「送入{name}口中，因笑道」）。\n"
             f"人物名单（标准名（别名））：{_roster_hint(others)}\n"
             f"请只挑同时满足以下三条的候选，按想要的顺序把编号填进 {slot_names}"
-            f"（最多 {MAX_EXAMPLES} 组；不足 {MAX_EXAMPLES} 组时，多出的格子编号填 0）：\n"
+            f"（共 {PICK_SLOTS} 格，代码按顺序取前 {MAX_EXAMPLES} 组合格的；"
+            f"没有合适的候选时，多出的格子编号填 0）：\n"
             f"① 读片段确认本句确实是「{name}」说的；\n"
             f"② 上一句是另一个人说的；\n"
             f"③ 两句是同一场景里的一问一答。\n"
-            f"每格对应的上一句说话人填进 {speaker_names}：从名单里取标准名；判不准就填"
-            f"「{UNDECIDED}」（那一格会被丢弃）。",
+            f"每格对应的上一句说话人填进 {speaker_names}：上一句的说话人可能不在名单里。"
+            f"是名单里的人，填他的标准名；是「{name}」本人说的，填「{name}」；是名单以外的人"
+            f"说的，填「{OUTSIDER}」；判不准填「{UNDECIDED}」。后三种那一格会被丢弃，这是正常结果，请如实填，不要为了凑数"
+            f"从名单里挑一个最像的。",
             [{"role": "user", "content": render_candidates(candidates)}],
             function,
         )
@@ -1921,7 +1930,7 @@ class Distiller:
         by_n = {c.n: c for c in candidates}
         examples = [
             (build_example(by_n[n], name, speaker), by_n[n].start)
-            for n, speaker in valid_picks(args, len(candidates), enum)
+            for n, speaker in valid_picks(args, len(candidates), options)
         ]
         if not examples:
             raise DistillError(

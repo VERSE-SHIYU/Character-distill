@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import NamedTuple, Sequence
 
 import opencc
@@ -138,7 +139,14 @@ def quoted_spans(text: str) -> list[tuple[int, int, str]]:
 # 匹配会把引语中的引语（`「他说『好』」`）当成另一句对话，于是后面每一句的「上一句」都
 # 错位。三种都没有（如纯 ASCII 直引号）时不猜：抽不出候选（约束 12，本轮不支持）。
 _QUOTE_PAIRS = (("“", "”"), ("「", "」"), ("『", "』"))
-_LEAD_BREAK = re.compile(r"[。！？\n]")       # 引导语只取紧贴引号的那一句
+_SENTENCE_END = "。！？"
+_LEAD_BREAK = re.compile(f"[{_SENTENCE_END}\n]")   # 引导语只取紧贴引号的那一句
+_NARRATION_SENTENCE = re.compile(f"[{_SENTENCE_END}]")
+_UNFINISHED = ("：", "，", ":", ",")              # 引导语以这些收尾 = 话还没说完
+# 台词在引号里以标点收尾（“可恶！”）；叙述里带引号的词不以标点收尾（“庭训”“退一步想”）。
+_SPOKEN_END = frozenset("。！？…—，～、；：’』」,.!?~-")
+# 两句之间的叙述超过这么多句，就不是一问一答（中间隔了别的事）。
+MAX_NARRATION_BETWEEN = 2
 
 
 def _quote_re(text: str) -> "re.Pattern[str] | None":
@@ -175,52 +183,101 @@ class Candidate(NamedTuple):
     start: int = 0
 
 
+def is_spoken(inner: str) -> bool:
+    """引号里的这段是不是一句台词：以标点收尾的是，否则是叙述里带引号的词。"""
+    tail = inner.rstrip()
+    return bool(tail) and tail[-1] in _SPOKEN_END
+
+
+def _pairable(text: str, prev: "re.Match[str]", cur: "re.Match[str]") -> bool:
+    """`prev` 能不能当 `cur` 的「上一句」：它得是台词，且两句之间的叙述不超过
+    `MAX_NARRATION_BETWEEN` 句。"""
+    between = text[prev.end():cur.start()]
+    return (is_spoken(prev.group(1))
+            and len(_NARRATION_SENTENCE.findall(between)) <= MAX_NARRATION_BETWEEN)
+
+
+def _same_width(s: str) -> str:
+    """全角字母数字与半角当同一个字（名单写「小D」、正文写「小Ｄ」）。只用于比名字。"""
+    return unicodedata.normalize("NFKC", s)
+
+
+def _names_any(spans: Sequence[str], wanted: Sequence[str]) -> bool:
+    folded = [_same_width(s) for s in spans]
+    return any(name in span for name in wanted for span in folded)
+
+
 def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
-    """抽出引导语里出现 `names` 中任一人名的对话句，按出场顺序编号（1 起）。
+    """抽出署名里出现 `names` 中任一人名、且能与上一句成对的台词，按出场顺序编号（1 起）。
 
-    引导语取引号前**最后一个句读之后**的那一截，不取整段叙述：一段叙述里可能先提了
-    别人（「贾母听了，也笑了。宝玉道：“……”」），整段看会把人错记成贾母。
+    一个引号成为候选，要同时满足三条 —— 每条规则都写在它自己的函数里，此处不重复：
 
-    引导语含人名即收 —— 含两个人名的引导语（约 15%：「凤姐忙和刘姥姥摆手道：」，说话
-    的是凤姐）会因此多收一条错归属的候选。名字还常是宾语（「送入刘姥姥口中，因笑道」
-    是凤姐说的），所以**归属对不对不靠这段子串判定**：模型读 `context` 整段确认后再挑。
+    1. 本句是台词（`is_spoken`）：引号内以标点收尾；叙述里带引号的词（“退一步想”）不算。
+    2. 与紧邻的前一个引号能成对（`_pairable`）：前一个是台词，且两句之间的叙述不超过
+       `MAX_NARRATION_BETWEEN` 句。全文第一句没有上一句、成不了对，不编号也不进候选。
+    3. 署名里出现本角色的名字或别名：署名取引号前的引导语（`_lead_before`）与引号后那半句
+       （`_tail_after`）两处，名字两侧都按 `_same_width` 折成全角半角同一字形再比。
 
-    无引导语的裸引号（约 14%）归不到人，不进候选。全文第一句没有上一句、成不了对，也
-    不进候选。每项带上上一句与原文片段 —— 对话示例要成对呈现，模型得看见对方那句与它
-    前后的叙述，才判得出这一问一答算不算「体现角色说话风格的交互」。
+    引导语/署名里的人名常是宾语（「送入刘姥姥口中，因笑道」是凤姐说的），所以**归属对不对
+    不靠这段子串判定**：模型读 `context` 整段确认后再挑（见 `render_candidates`）。片段起点
+    仍由 `_lead_before` 给出（上一句之前最多 `_CONTEXT_BACK` 字），终点到本句署名那半句为止
+    （`_tail_after`）—— 模型得看见引号后的署名才判得出是谁说的。
     """
-    wanted = [n for n in names if n]
+    wanted = [_same_width(n) for n in names if n]
     quote_re = _quote_re(text)
     if quote_re is None:
         return []
     quotes = list(quote_re.finditer(text))
     out: list[Candidate] = []
     for i, m in enumerate(quotes[1:], start=1):        # 第一句没有上一句
-        lead, _ = _lead_before(text, quotes, i, m.start())
-        if not any(name in lead for name in wanted):
-            continue
         prev = quotes[i - 1]
+        if not is_spoken(m.group(1)) or not _pairable(text, prev, m):
+            continue
+        lead, _ = _lead_before(text, quotes, i, m.start())
+        tail, end = _tail_after(text, quotes, i)
+        if not _names_any((lead, tail), wanted):
+            continue
         prev_lead, prev_start = _lead_before(text, quotes, i - 1, prev.start())
-        # 片段从上一句开头往前 60 字、与再上一句结尾里较后处起，到本句收尾引号止。
         start = max(prev_start - _CONTEXT_BACK,
                     quotes[i - 2].end() if i >= 2 else 0)
         out.append(Candidate(n=len(out) + 1, lead=lead, line=m.group(1),
                              prev_lead=prev_lead, prev_line=prev.group(1),
-                             context=text[start:m.end()], start=m.start()))
+                             context=text[start:end], start=m.start()))
     return out
 
 
 def _lead_before(text: str, quotes: list, i: int, start: int) -> tuple[str, int]:
     """第 i 个引号之前、离它最近的那截引导语，以及它在原文里的起点。
 
+    引导语到上一个句读为止。换行也算断点，除非换行前那半句还没说完（以「：」「，」收尾，
+    如「闰土又对我说：⏎“……”」）—— 那是引导语和引号分在了两行。
+
     起点返回的是**切掉前后空白之前**的位置：片段按下限截取时用它算「往前 60 字」。
     """
     gap_start = quotes[i - 1].end() if i else 0
     head = text[gap_start:start]
-    cut = gap_start
-    for mb in _LEAD_BREAK.finditer(head):
-        cut = gap_start + mb.end()
-    return head[cut - gap_start:].strip(), cut
+    body = head.rstrip()
+    if not body.endswith(_UNFINISHED):
+        body = head                      # 引导语已经说完：尾部的换行照常算断点
+    cut = 0
+    for mb in _LEAD_BREAK.finditer(body):
+        cut = mb.end()
+    return body[cut:].strip(), gap_start + cut
+
+
+def _tail_after(text: str, quotes: list, i: int) -> tuple[str, int]:
+    """第 i 个引号之后的那半句署名（“……”四叔说。），以及片段该截到哪。
+
+    只认在下一个引号之前被句读或换行收住的半句；直接接着下一个引号的（“……”孔乙己答道，
+    “……”）是下一句的引导语，不算这一句的署名。片段带上这半句：句读算在内，换行不算。
+    """
+    m = quotes[i]
+    nxt = quotes[i + 1].start() if i + 1 < len(quotes) else len(text)
+    closed = _LEAD_BREAK.search(text, m.end(), nxt)
+    if closed is None:
+        return "", m.end()
+    end = closed.start() if closed.group() == "\n" else closed.end()
+    return text[m.end():closed.start()], end
 
 
 def render_candidates(candidates: Sequence[Candidate]) -> str:
@@ -239,57 +296,83 @@ def render_candidates(candidates: Sequence[Candidate]) -> str:
 
 # 一组示例两行（对方一句、角色一句），3 组够看出说话风格；再多只是把卡片撑长。
 # 上限只能靠**字段数固定**来保证：strict 的 Schema 不支持 array 的 maxItems（约束 6），
-# 服务端拦不住数组长度，所以挑选结果不是「变长的数组」而是 MAX_EXAMPLES 个固定槽位。
+# 服务端拦不住数组长度，所以挑选结果不是「变长的数组」而是 PICK_SLOTS 个固定槽位。
 MAX_EXAMPLES = 3
+# 格子比要的示例多一倍：模型如实标出「上一句是本人 / 名单外的人」的格子会被丢弃，
+# 只给 MAX_EXAMPLES 格时这些格子会把名额占光（实测赵太爷 3 格全丢、0 组）。
+PICK_SLOTS = 2 * MAX_EXAMPLES
 
-# 上一句说话人判不准时的取值：模型选它、以及代码把它当不合格丢掉，用的是同一个字面量。
+# 上一句说话人不是名单里其他人时的取值：模型选它们、代码把它们当不合格丢掉，用同一批字面量。
 UNDECIDED = "无法判断"
+OUTSIDER = "名单外的人"
+
+
+class SpeakerOptions(NamedTuple):
+    """「上一句是谁说的」的选项，以及其中哪些算合格。
+
+    schema 的 enum（`pick_slot_properties`）与校验（`valid_picks`）共用这一份：两边各拿一份
+    名单的话，迟早出现「模型能选、代码不认」或反过来。合格的只有名单里的其他人；本人、
+    名单外的人、无法判断是给模型如实作答的出口 —— 选项里没有正确答案时，它会从名单里
+    硬挑一个，甚至返回非法 JSON。
+    """
+
+    others: tuple[str, ...]
+    subject: str
+
+    @property
+    def enum(self) -> list[str]:
+        return [*self.others, self.subject, OUTSIDER, UNDECIDED]
+
+    def accepts(self, speaker: object) -> bool:
+        return speaker in self.others
 
 
 def pick_slot(i: int) -> tuple[str, str]:
     """第 i 个挑选槽位的两个字段名（编号 / 上一句说话人）。
 
-    槽位的数量与命名只由 `MAX_EXAMPLES` 生成：strict 的 schema 与 `valid_picks` 的校验共用
+    槽位的数量只由 `PICK_SLOTS` 生成：strict 的 schema 与 `valid_picks` 的校验共用
     这套名字 —— 两边一旦错开，就成了「服务端填 A 格、代码读 B 格」，而取到的仍是原文里的
     句子，验收看不出来。
     """
     return f"pick{i}", f"speaker{i}"
 
 
-def pick_slot_properties(total: int, enum: Sequence[str]) -> dict[str, dict]:
-    """strict schema 里挑选槽位的 properties：MAX_EXAMPLES 个「编号 + 说话人」字段。
+def pick_slot_properties(total: int, options: SpeakerOptions) -> dict[str, dict]:
+    """strict schema 里挑选槽位的 properties：`PICK_SLOTS` 个「编号 + 说话人」字段。
 
-    限量靠字段数固定（见 `MAX_EXAMPLES`）；编号 `0` 表示这一格不挑（`valid_picks` 丢掉）。
+    限量靠字段数固定（见 `PICK_SLOTS`）；编号 `0` 表示这一格不挑（`valid_picks` 丢掉）。
     说话人（对方名）与编号同在一个槽位，配对由结构保证：模型读片段后从 `enum` 里选。
     """
     props: dict[str, dict] = {}
-    for i in range(1, MAX_EXAMPLES + 1):
+    for i in range(1, PICK_SLOTS + 1):
         n_key, speaker_key = pick_slot(i)
         props[n_key] = {"type": "integer", "minimum": 0, "maximum": total}
-        props[speaker_key] = {"type": "string", "enum": list(enum)}
+        props[speaker_key] = {"type": "string", "enum": options.enum}
     return props
 
 
-def valid_picks(raw, total: int, enum: Sequence[str]) -> list[tuple[int, str]]:
+def valid_picks(raw, total: int, options: SpeakerOptions) -> list[tuple[int, str]]:
     """留下 `raw` 里合法的挑选项，返回 `(编号, 上一句说话人)`，顺序即槽位顺序。
 
-    合格 = 编号是整数、在 1..total 内、未重复，且说话人在 `enum` 里又并非 `UNDECIDED`；
-    编号 `0`（该格不挑）、缺字段、类型不对、越界、重复、判不准 —— 一律丢。非 strict 供应商
-    可能给不合法 JSON 或编造参数（约束 6），越界编号直接索引会抛 KeyError —— 调用方分不清
-    是挑选失败（预期内，该报任务失败）还是代码错误。故这里只挑出能用的，一个都没有时返回
-    空列表，由调用方判「没有可用的挑选结果」。
+    合格 = 编号是整数、在 1..total 内、未重复，且说话人被 `options.accepts` 接受（名单里的
+    其他人；本人、名单外的人、无法判断都不合格）。编号 `0`（该格不挑）、缺字段、类型不对、
+    越界、重复、判不准 —— 一律丢。非 strict 供应商可能给不合法 JSON 或编造参数（约束 6），
+    越界编号直接索引会抛 KeyError —— 调用方分不清是挑选失败（预期内，该报任务失败）还是
+    代码错误。故这里只挑出能用的，一个都没有时返回空列表，由调用方判「没有可用的挑选结果」。
+    槽位多于要的组数（`PICK_SLOTS > MAX_EXAMPLES`）：凑满 `MAX_EXAMPLES` 组即停。
     """
     if not isinstance(raw, dict):
         return []
-    allowed = set(enum) - {UNDECIDED}
     out: list[tuple[int, str]] = []
     seen: set[int] = set()
-    for i in range(1, MAX_EXAMPLES + 1):
+    for i in range(1, PICK_SLOTS + 1):
+        if len(out) == MAX_EXAMPLES:
+            break
         n_key, speaker_key = pick_slot(i)
         n, speaker = raw.get(n_key), raw.get(speaker_key)
         if isinstance(n, bool) or not isinstance(n, int):
             continue
-        if not 1 <= n <= total or n in seen or speaker not in allowed:
+        if not 1 <= n <= total or n in seen or not options.accepts(speaker):
             continue
         seen.add(n)
         out.append((n, speaker))
@@ -299,7 +382,7 @@ def valid_picks(raw, total: int, enum: Sequence[str]) -> list[tuple[int, str]]:
 def build_example(candidate: Candidate, name: str, prev_speaker: str) -> str:
     """一组示例：`对方名：上一句` + `角色名：本句` —— 两行都是候选里的原文，一字不改。
 
-    对方的称呼是模型读片段后从名单 enum 里选的（`prev_speaker`），代码只负责拼装；判不准
-    的那些在 `valid_picks` 就丢掉了，这里拿到的必是名单里的标准名。
+    对方的称呼是模型读片段后从名单里选的（`prev_speaker`），代码只负责拼装；不合格的
+    （本人／名单外的人／无法判断）在 `valid_picks` 就丢掉了，这里拿到的必是名单里的标准名。
     """
     return f"{prev_speaker}：{candidate.prev_line}\n{name}：{candidate.line}"
