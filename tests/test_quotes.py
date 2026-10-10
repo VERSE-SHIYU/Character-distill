@@ -10,12 +10,18 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from core.quotes import (
     CITATION_MIN_CHARS,
     MAX_EXAMPLES,
+    OUTSIDER,
+    PICK_SLOTS,
     UNDECIDED,
+    SpeakerOptions,
     build_example,
     extract_candidates,
+    is_spoken,
     normalize,
     quoted_spans,
     render_candidates,
@@ -66,6 +72,57 @@ def test_the_very_first_quote_is_not_a_candidate():
     text = "刘姥姥笑道：“姑娘说得是。”\n凤姐道：“你老慢慢说。”\n"
 
     assert extract_candidates(text, ["刘姥姥"]) == []
+
+
+@pytest.mark.parametrize("inner, spoken", [
+    ("可恶！", True), ("然而……。", True), ("我真傻，真的，", True), ("你还不配……", True),
+    ("既然如此．．．", True),            # 公版《水浒传》：全角点当省略号
+    ("What?", True), ("好的~", True),
+    ("退一步想", False), ("庭训", False), ("阿Ｑ", False), ("第3", False),
+    ("", False), ("  ", False),
+])
+def test_a_quote_is_a_spoken_line_unless_it_ends_in_a_word_character(inner, spoken):
+    """台词以标点或符号收尾；叙述里带引号的词以字、字母、数字收尾。不靠标点清单。
+
+    变异：改回只认列出来的几种标点 → 没列到的（「．」）判成不是台词；恒真 → 后六条红。
+    """
+    assert is_spoken(inner) is spoken
+
+
+def test_a_signature_closed_by_a_newline_still_counts():
+    """引号后的署名没有句读、以换行收住（“……”刘姥姥笑道⏎）也算署名；片段截到换行之前。
+
+    变异：`_tail_after` 不认换行收尾 → 这句找不到候选。
+    """
+    text = "凤姐道：“你老请坐。”\n“姑娘说得是。”刘姥姥笑道\n"
+
+    cands = extract_candidates(text, ["刘姥姥"])
+
+    assert [c.line for c in cands] == ["姑娘说得是。"]
+    assert cands[0].context.endswith("”刘姥姥笑道")
+
+
+def test_a_finished_line_before_the_quote_is_not_its_lead():
+    """上一行已经收住（标题这类不带句读的一行），换行就是断点：那一行里的名字不是引导语。
+
+    变异：`_lead_before` 不再把换行当断点 → 标题里的「刘姥姥」成了引导语，多出一条候选。
+    """
+    text = "凤姐道：“你老请坐。”\n刘姥姥进大观园\n“这园子真大。”\n"
+
+    assert extract_candidates(text, ["刘姥姥"]) == []
+
+
+@pytest.mark.parametrize("end", ["：", "，", ":", ","])
+def test_a_lead_left_unfinished_before_a_newline_still_leads_its_quote(end):
+    """引导语以冒号或逗号收尾 = 话没说完，后面的换行不是断点；全角半角都算。
+
+    变异：收尾不过 `_same_width` 就比 → 全角的两条找不到候选；从 `_UNFINISHED` 里去掉一种 →
+    那一种的全角半角两条都找不到。
+    """
+    text = f"凤姐道：“你老请坐。”\n刘姥姥笑道{end}\n“姑娘说得是。”\n"
+
+    assert [(c.lead, c.line) for c in extract_candidates(text, ["刘姥姥"])] == [
+        (f"刘姥姥笑道{end}", "姑娘说得是。")]
 
 
 def test_a_candidate_carries_the_source_fragment_ending_at_its_own_line():
@@ -229,40 +286,47 @@ def test_one_changed_char_is_not_verbatim_and_empty_quotes_find_nothing():
 # ── 挑选结果的校验与拼装（WP17 补充 1：模型回编号 + 上一句说话人，文字由代码复制）──
 
 def test_zero_out_of_range_duplicate_and_undecided_slots_are_dropped():
-    """编号 0（该格不挑）/ 越界 / 重复 / 非整数 / 说话人不在 enum / 判不准 / 缺字段 —— 一律丢，
-    顺序即槽位顺序。
+    """编号 0（该格不挑）/ 越界 / 重复 / 非整数 / 说话人不合格 / 缺字段 —— 一律丢，顺序即槽位顺序。
 
-    槽位数固定为 `MAX_EXAMPLES`，所以「最多几组」是结构保证的，这里不再有「超过就截断」的
-    分支。变异：`by_n[n]` 直接索引 → 越界抛 KeyError（调用方分不清是挑选失败还是代码错误）、
-    不丢 0 → 拿 0 号索引取到错的那句、接受「无法判断」→ 拼出没有对方名的组 —— 各红一条。
+    合格 = 说话人被 `SpeakerOptions.accepts` 接受，即名单里的其他人。本人、名单外的人、
+    「无法判断」、不在选项里的名字都不合格 —— 这些是模型如实作答的出口，不是可成的组。
+    槽位是 `PICK_SLOTS` 个（比 `MAX_EXAMPLES` 多一倍），凑满 `MAX_EXAMPLES` 组即停。
+    变异：`by_n[n]` 直接索引 → 越界抛 KeyError（调用方分不清是挑选失败还是代码错误）、
+    不丢 0 → 拿 0 号索引取到错的那句、接受本人/名单外的人/「无法判断」→ 拼出没有对方名的组
+    或自己接自己 —— 各红一条。
     """
-    enum = ["凤姐", "薛宝钗", UNDECIDED]
+    options = SpeakerOptions(others=("凤姐", "薛宝钗"), subject="刘姥姥")
 
     assert valid_picks(
         {"pick1": 2, "speaker1": "凤姐", "pick2": 1, "speaker2": "薛宝钗",
-         "pick3": 3, "speaker3": "凤姐"}, 5, enum,
+         "pick3": 3, "speaker3": "凤姐"}, 5, options,
     ) == [(2, "凤姐"), (1, "薛宝钗"), (3, "凤姐")]
     assert valid_picks(
         {"pick1": 0, "speaker1": "凤姐",        # 0 = 这格不挑
          "pick2": 8, "speaker2": "凤姐",        # 越界
-         "pick3": 1, "speaker3": "凤姐"}, 5, enum,
+         "pick3": 1, "speaker3": "凤姐"}, 5, options,
     ) == [(1, "凤姐")]
     assert valid_picks(
         {"pick1": 1, "speaker1": "凤姐",
          "pick2": 1, "speaker2": "薛宝钗",      # 重复编号，只留第一格
-         "pick3": "3", "speaker3": "凤姐"}, 5, enum,   # 非整数
+         "pick3": "3", "speaker3": "凤姐"}, 5, options,   # 非整数
     ) == [(1, "凤姐")]
     assert valid_picks(
         {"pick1": 1, "speaker1": "凤姐",
          "pick2": 2, "speaker2": UNDECIDED,     # 判不准
-         "pick3": 3, "speaker3": "袭人"}, 5, enum,     # 不在 enum
+         "pick3": 3, "speaker3": "袭人"}, 5, options,     # 不在选项
     ) == [(1, "凤姐")]
-    assert valid_picks({"pick1": 4}, 5, enum) == [], "缺说话人，成不了组"
-    assert valid_picks(None, 5, enum) == []
-    assert valid_picks(2, 5, enum) == [], "不是对象（非 strict 供应商可能编造）"
-    assert valid_picks([{"n": 1, "prev_speaker": "凤姐"}], 5, enum) == [], \
+    assert valid_picks(
+        {"pick1": 1, "speaker1": "刘姥姥",      # 本人：在 enum 里，但不合格
+         "pick2": 2, "speaker2": OUTSIDER}, 5, options,   # 名单外的人：同上
+    ) == []
+    assert valid_picks({"pick1": 4}, 5, options) == [], "缺说话人，成不了组"
+    assert valid_picks(None, 5, options) == []
+    assert valid_picks(2, 5, options) == [], "不是对象（非 strict 供应商可能编造）"
+    assert valid_picks([{"n": 1, "prev_speaker": "凤姐"}], 5, options) == [], \
         "旧的变长数组形状不再接受（长度 strict 拦不住，改成了固定槽位）"
     assert MAX_EXAMPLES == 3
+    assert PICK_SLOTS == 6
     assert UNDECIDED == "无法判断"
 
 

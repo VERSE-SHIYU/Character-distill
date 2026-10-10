@@ -319,3 +319,5 @@
 
 **官方依据（2026-09-28 核对）**：strict 模式要求对象属性**全部必填**、每个对象（含嵌套）设
 `additionalProperties: false`；`integer` 支持 `minimum`/`maximum`；array 不支持 `minItems`/`maxItems`。
+
+> **取代（2026-10-10）**：本文件的「补充 1-第 2 步」抽取规则、enum 不含本角色、补充 2 的「`MAX_EXAMPLES` 个固定槽位」三处，已由 `docs/specs/dialogue-pairing.md`（§5）取代。
