@@ -98,9 +98,10 @@ vi.mock('../../store/db', () => ({
 vi.mock('../RoleSetupModal', () => ({ default: () => null }))
 // 编辑弹窗只留「保存」这一个出口：看 CardDetail 把它接到 store.updateCard 时带没带 revision，
 // 以及 onSave 的结局（成功 / 把错误抛回弹窗）—— 真弹窗靠这个结局决定报错还是收工。
+// 真弹窗保存时交回两样：卡的内容，和它打开时那张卡的卡号与版本号（docs/specs/examples-pending.md）。
 vi.mock('../EditCardModal', () => ({
-  default: ({ isOpen, onSave }) => (isOpen
-    ? <button onClick={() => onSave({ name: '改' }).then(() => saveOutcome('resolved'), (e) => saveOutcome(e.message))}>假保存</button>
+  default: ({ isOpen, onSave, cardId, revision }) => (isOpen
+    ? <button onClick={() => onSave({ name: '改' }, { cardId, revision }).then(() => saveOutcome('resolved'), (e) => saveOutcome(e.message))}>假保存</button>
     : null),
 }))
 vi.mock('../common/ImageCropModal', () => ({ default: () => null }))

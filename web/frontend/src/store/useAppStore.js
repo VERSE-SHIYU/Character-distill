@@ -1788,16 +1788,18 @@ const useAppStore = create((set, get) => {
     const raw = row?.card_json
     const obj = typeof raw === 'string' ? JSON.parse(raw) : raw
     if (!obj) return
+    // 「待补对话示例」是这一行的状态（不在卡的内容里；非空 = 待补），同样以服务端返回的为准。
+    const examples_pending_for = row.examples_pending_for || null
     set((s) => {
       const updated = {
         // revision 跟着卡走：下一次编辑 / 挪动要按写回后的这一版核对（乐观锁，后端 §13）
         cards: s.cards.map((c) =>
           c.id === cardId
-            ? { ...c, card_json: typeof c.card_json === 'string' ? JSON.stringify(obj) : obj, revision: row.revision }
+            ? { ...c, card_json: typeof c.card_json === 'string' ? JSON.stringify(obj) : obj, revision: row.revision, examples_pending_for }
             : c
         ),
         currentCard: s.currentCard?.id === cardId
-          ? { ...s.currentCard, ...obj, card_json: obj, revision: row.revision }
+          ? { ...s.currentCard, ...obj, card_json: obj, revision: row.revision, examples_pending_for }
           : s.currentCard,
       }
       if (s.sessionId && s.currentCard?.id === cardId) {
@@ -1831,6 +1833,32 @@ const useAppStore = create((set, get) => {
     if (!res.ok || !data.ok) throw new Error(data.detail || '挪动失败，请刷新后重试')
     get()._applyServerCard(cardId, data.card)
     return data
+  },
+
+  // 「待补对话示例」的两个出口（规则只在后端 core/examples_pending.py；这里只调接口、写回结果）。
+  // 重新找一次：返回找到没有（true / false）；调用出错抛给调用方（编辑页自己呈现），机会还在。
+  refindExamples: async (cardId, revision) => {
+    const res = await fetchWithTimeout(`/api/distill/card/${cardId}/examples/refind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ revision }),
+    })
+    const data = await res.json()
+    get()._applyServerCard(cardId, data.card)
+    return Boolean(data.found)
+  },
+
+  // 关掉了提醒：本地立刻清掉（弹窗已经关了），再告诉服务端。没告诉成，下次打开这张卡还会提醒。
+  dismissExamplesPending: async (cardId) => {
+    set((s) => ({
+      cards: s.cards.map((c) => (c.id === cardId ? { ...c, examples_pending_for: null } : c)),
+      currentCard: s.currentCard?.id === cardId ? { ...s.currentCard, examples_pending_for: null } : s.currentCard,
+    }))
+    try {
+      await fetchWithTimeout(`/api/distill/card/${cardId}/examples/dismiss`, { method: 'POST' })
+    } catch (err) {
+      console.warn('[store] dismissExamplesPending failed:', err)
+    }
   },
   }
 })

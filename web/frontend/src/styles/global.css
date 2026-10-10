@@ -7203,6 +7203,40 @@ label[for] {
   padding-right: 8px;
 }
 
+/* 编辑页顶部的提示条（待补对话示例 / 重新找的结果）：一行说明 + 可选的按钮 */
+.edit-card-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--input-radius);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.edit-card-notice > span {
+  flex: 1;
+}
+
+.edit-card-notice > button {
+  flex-shrink: 0;
+}
+
+/* 编辑页里只读的内容（各阶段下的对话示例）：与输入框同字体，不可编辑 */
+.edit-card-readonly {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px dashed var(--input-border);
+  border-radius: var(--input-radius);
+  font: 13px/1.5 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ── Archive List Modal ── */
 
 .archive-list-modal {
