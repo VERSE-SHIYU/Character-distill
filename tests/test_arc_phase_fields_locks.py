@@ -118,7 +118,8 @@ def test_s3b_projected_card_constructed_only_in_arc_view():
 # ── S4 描述规则、稳定类规则常量各一次 ────────────────────────────────────────
 def test_s4_rule_constants_defined_once():
     text = _read(_CORE / "distiller.py")
-    for name in ("_PHASE_EXCERPT_RULE", "_PHASE_DESCRIPTION_RULE", "_STABLE_FIELD_RULE"):
+    for name in ("_PHASE_EXCERPT_RULE", "_PHASE_DESCRIPTION_RULE", "_STABLE_FIELD_RULE",
+                 "_EVIDENCE_RULE", "_PHASE_VERBATIM_RULE"):
         n = len(re.findall(rf"^{name}\s*(?::[^=]+)?=", text, re.M))
         assert n == 1, f"{name} 在 distiller.py 定义 {n} 次（应恰好一次）"
 

@@ -293,8 +293,8 @@ MUTATIONS = [
      TARGET, [("repl", DIST, [
          ('[{"phase": 1, "quote": "…"}]；只填原文里确实这样过的阶段；',
           '[{"phase": 9, "quote": "…"}]；只填原文里确实这样过的阶段；'),
-         ('    {"memory": "关键经历（原文出处）", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]}\\n',
-          '    {"memory": "关键经历（原文出处）", "occurrences": [{"phase": 9, "quote": "该阶段原文摘录"}]}\\n'),
+         ('    {"memory": "关键经历\' + _EVIDENCE_EXAMPLE + \'", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]}\\n',
+          '    {"memory": "关键经历\' + _EVIDENCE_EXAMPLE + \'", "occurrences": [{"phase": 9, "quote": "该阶段原文摘录"}]}\\n'),
          ('    {"situation": "一类情境", "behavior": "具体做法", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}, {"phase": 2, "quote": "该阶段原文摘录"}]}\\n',
           '    {"situation": "一类情境", "behavior": "具体做法", "occurrences": [{"phase": 9, "quote": "该阶段原文摘录"}, {"phase": 2, "quote": "该阶段原文摘录"}]}\\n'),
      ])], "RED"),
