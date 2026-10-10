@@ -47,4 +47,12 @@ describe('textToExamples：表单文本 → 列表', () => {
     expect(textToExamples('')).toEqual([])
     expect(textToExamples(undefined)).toEqual([])
   })
+
+  it('空白行两边不挨着另一个空行，也算分组', () => {
+    expect(textToExamples('A\nB\n \nC\nD')).toEqual(['A\nB', 'C\nD'])
+  })
+
+  it('只填了一行也保留', () => {
+    expect(textToExamples('只填了一行')).toEqual(['只填了一行'])
+  })
 })
