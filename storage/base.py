@@ -299,7 +299,12 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def update_published_card(self, card_id: str, user_id: str, card_json: str, description: str, tags: str, message: str, old_json: str) -> dict | None:
-        """Update an already-published card, write the next version, return that version."""
+        """Update an already-published card, write the next version, return that version.
+
+        **比较后写入**：库里的 `card_json` 仍等于调用方读到的 `old_json` 才写；不等（读写之间
+        别的请求改过这张卡）→ 不写、不落版本记录，返回 None，由调用方报冲突。PG 保证这一条；
+        SQLite 已冻结、未同步（AGENTS.md「存储改动只保证 PG」）。
+        """
 
     @abstractmethod
     async def get_card_versions_owned(self, card_id: str, user_id: str) -> list[dict]:

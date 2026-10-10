@@ -5254,11 +5254,15 @@ class PostgresStore(StorageBase):
             diff_json = json.dumps(diff, ensure_ascii=False)
 
             async with await self._connect() as conn:
-                await conn.execute(
+                # 比较后写入：库里的内容仍是调用方读到的 `old_json` 才写（与 `update_card` 同理）。
+                # 不等 → 这次更新依据的已是旧内容，不写、不落版本记录，返回 None。
+                tag = await conn.execute(
                     """UPDATE cards SET card_json = $1, market_description = $2, market_tags = $3, publish_message = $4
-                       WHERE id = $5 AND deleted_at IS NULL""",
-                    card_json, description, tags, message, card_id,
+                       WHERE id = $5 AND deleted_at IS NULL AND card_json = $6""",
+                    card_json, description, tags, message, card_id, old_json,
                 )
+                if self._parse_rowcount(tag) == 0:
+                    return None
                 ver_row = await conn.fetchrow(
                     "SELECT COALESCE(MAX(version_num), 0) + 1 FROM card_versions WHERE card_id = $1",
                     card_id,
