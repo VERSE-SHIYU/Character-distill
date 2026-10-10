@@ -119,8 +119,8 @@ def _clean_tasks():
         D._user_slots.clear()
 
 
-# 正文默认带角色的对话引号句：落卡前要按编号从原文挑对话示例（WP17），挑不出即任务
-# 失败 —— 用「角色说的话」这种无引号正文，几条通道用例会全部红在「找不到对话句」上。
+# 正文默认带角色的对话引号句：落卡前要按编号从原文挑对话示例（WP17）。用「角色说的话」
+# 这种无引号正文，卡照常落但没有示例，核对示例的几条通道用例会红在断言上。
 _BODY = "路人道：“先前的话。”\n角色道：“我说一句话。”"
 
 
@@ -172,7 +172,7 @@ def _run_bg(store, user_id, text_id, distiller, monkeypatch, body=_BODY):
 
     直接调 `_run_distill_task`（改动就在它里面），不经 HTTP：本文件不考路由与槽位，
     那两条各自的用例在 test_distill_task_api.py。`body` 是交给蒸馏的正文（默认带对话
-    引号；预检那条用例要一段挑不出对话句的）。
+    引号；保底出卡的目标检查要一段挑不出对话句的）。
     """
     task_id = f"dt_{uuid.uuid4().hex}"
     _run_async(store.create_distill_task(
@@ -425,11 +425,6 @@ class _RosterDistiller:
     def identify_characters(self, content):
         return [{"name": "角色"}]
 
-    def dialogue_candidates(self, content, name, aliases=(), roster=()):
-        # 预检（补充 1-第 4 步）：通道拿到别名之后先调它一眼，返回值不保留。本组不考
-        # 抽取，给个非空即可 —— 抽取与两条失败判据在 test_distiller_dialogue_pick 里核。
-        return [object()]
-
     def distill_incremental(self, content, character_name, aliases=None, **kw):
         return CharacterCard.model_validate(
             {"name": character_name, "dialogue_examples": ["模型编的示例"]})
@@ -610,139 +605,30 @@ class TestOneParseableCardOnBothChannels:
         assert _all_dialogue_examples(tm.saved[0]) == ["路人：先前的话。\n角色：我说一句话。"]
 
 
-# ── 7. 预检前移：原文里挑不出对话句 → 长步骤之前失败，不花钱（补充 1-第 4 步） ────
+# ── 7. （已移走）原文里挑不出对话句：不再在长步骤之前失败，而是照常出卡 ——
+#        见 tests/test_dialogue_fallback_goal.py（spec dialogue-fallback）。
 
 
-class _RecordingLLM(_FormattingLLM):
-    """在 `_FormattingLLM` 上记一笔调用名 —— 本组要看的是「除识别外一个调用都没发生」。
-
-    短正文的识别走 `chat`（单分片，不进归组判定）；Map 走 `async_chat`、一次读完走
-    `chat_stream_long`、挑选走 `select_by_schema`。记住方法名就分得出长步骤那三类。
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.calls: list[str] = []
-
-    def chat(self, system, messages, **kw):
-        # 识别那一跳不带 max_tokens；带它的是长步骤（分片分析那条），据此分开记。
-        self.calls.append("chat" if not kw else "chat+k")
-        return super().chat(system, messages)
-
-    async def async_chat(self, *a, **kw):
-        self.calls.append("async_chat")
-        return await super().async_chat(*a, **kw)
-
-    def chat_stream_long(self, *a, **kw):
-        self.calls.append("chat_stream_long")
-        return super().chat_stream_long(*a, **kw)
-
-    def select_by_schema(self, *a, **kw):
-        self.calls.append("select_by_schema")
-        return super().select_by_schema(*a, **kw)
-
-
-def _no_quote_body() -> str:
-    """没有对话引号的正文：识别照给名单，但按编号挑不出本角色的对话句。
-
-    尾巴带 uuid：识别按「正文指纹 + 模型 + 口径版本」缓存，撞上前面用例的缓存就不会
-    再走一次识别，`calls` 里连 `chat` 都没有 —— 前提断言会当场拆穿。
-    """
-    return f"角色说的话，没有引号{uuid.uuid4().hex}"
-
-
-NO_CANDIDATE_TEXT = "原文里找不到「角色」的对话句"
-
-
-def _recording_distiller() -> tuple[Distiller, _RecordingLLM]:
-    """真 `Distiller` + 记录调用名的假适配器 —— 本组判的正是它内部哪一步先跑。"""
-    llm = _RecordingLLM()
-    d = Distiller(llm=llm, config_path=None)
-    d._longctx_threshold = 0      # 正文短也走分片那条，别让「一次读完」被短文本挡掉
-    d._chunk_size = 3000
-    return d, llm
-
-
-def _assert_no_paid_step_ran(llm: _RecordingLLM) -> None:
-    """除识别（`chat`）外不该有任何 Map / 一次读完 / 挑选调用。"""
-    assert "chat" in llm.calls, f"识别都没跑，本用例没测到预检：{llm.calls}"
-    assert [c for c in llm.calls if c != "chat"] == [], (
-        f"预检没拦住长步骤，付费调用已经发生：{llm.calls}")
-
-
-class TestNoCandidateFailsBeforeAnyPaidStep:
-    """原文里挑不出本角色的对话句 → 三条通道都在长步骤之前失败（补充 1-第 4 步）。
-
-    失败本身不难（挑选那一步也会抛），难的是**在花钱之前**抛：预检放在别名之后、
-    长步骤之前，就是为此。故每条通道都核两件事 —— 失败文案，以及假适配器上没有任何
-    长步骤调用。
-
-    变异：把预检删掉或挪到长步骤之后 → 记录里出现 Map / 一次读完 / 挑选，断言红；
-    预检即使不删，只要挪到后面，任务照样失败但钱已经花掉（文案断言仍绿、调用断言红）。
-    """
-
-    def test_bg(self, store, user_id, monkeypatch):
-        tid = _seed_text(store, user_id)
-        distiller, llm = _recording_distiller()
-
-        row = _run_bg(store, user_id, tid, distiller, monkeypatch,
-                      body=_no_quote_body())
-
-        assert row["status"] == "error"
-        assert NO_CANDIDATE_TEXT in row["message"], row["message"]
-        _assert_no_paid_step_ran(llm)
-
-    def test_sse(self, store, user_id, monkeypatch):
-        # 正文从库里读（通道读的是 `text_rec["content"]`），不是 `_BODY`。
-        tid = _seed_text(store, user_id, body=_no_quote_body())
-        distiller, llm = _recording_distiller()
-        client = _build_client(store, user_id, monkeypatch, distiller=distiller)
-
-        r = client.post("/api/distill/run_stream",
-                        json={"text_id": tid, "character_name": "角色"})
-
-        assert r.status_code == 200
-        errs = _sse_errors(r.text)
-        assert len(errs) == 1, f"期望恰好一帧 error，实际 {errs}"
-        assert NO_CANDIDATE_TEXT in errs[0]["error"], errs[0]["error"]
-        _assert_no_paid_step_ran(llm)
-
-    def test_text_manager(self, store, user_id, monkeypatch):
-        tid = _seed_text(store, user_id, body=_no_quote_body())
-        distiller, llm = _recording_distiller()
-        tm = TextManager(lambda: store, distiller, object(), {}, memory_manager=None)
-        client = _build_client(
-            store, user_id, monkeypatch, distiller=distiller, tm=tm)
-
-        r = client.post(
-            "/api/distill/run", json={"text_id": tid, "character_name": "角色"})
-
-        assert r.status_code == 400, r.text
-        assert NO_CANDIDATE_TEXT in r.json()["detail"], r.json()["detail"]
-        _assert_no_paid_step_ran(llm)
-
-
-# ── 8. 两个 async 通道：预检与挑选不阻塞事件循环（补充 1-第 4 步） ────────────
+# ── 8. 两个 async 通道：落卡前的后置步骤不阻塞事件循环 ──────────────────────
 
 SLEEPY = 0.3
 
 
 class _SleepyDistiller:
-    """`dialogue_candidates` 与 `finalize_card` 各睡 0.3 秒的假蒸馏器。
+    """`finalize_card` 睡 0.3 秒的假蒸馏器。
 
-    两段都必须挪到线程里（`asyncio.to_thread`）：直接在协程里 `time.sleep`，这 0.6 秒
+    这一段必须挪到线程里（`asyncio.to_thread`）：直接在协程里 `time.sleep`，这 0.3 秒
     事件循环停摆，SSE 通道上的其他请求、别的并发调用全被堵住。
     """
 
     def identify_characters(self, content):
         return [{"name": "角色"}, {"name": "路人"}]
 
-    def dialogue_candidates(self, content, name, aliases=(), roster=()):
-        time.sleep(SLEEPY)
-        return [object()]
-
     def distill_incremental(self, content, character_name, aliases=None, **kw):
         return CharacterCard.model_validate({"name": character_name})
+
+    def fill_relationships(self, draft, text, character_name):
+        return None      # SSE 在转卡前补关系；没有它流程到不了 `finalize_card`
 
     def distill_incremental_stream(self, content, name, aliases=None, **kw):
         yield json.dumps({"name": name}, ensure_ascii=False)
@@ -802,7 +688,7 @@ class TestAsyncChannelsDoNotBlockTheEventLoop:
                                      json={"text_id": tid, "character_name": "角色"})
 
         ticks, stall = _run_async(_ticks_while(_drive()))
-        assert ticks >= 10, f"预检/挑选把事件循环堵住了：0.6 秒里只跳了 {ticks} 次"
+        assert ticks >= 10, f"后置步骤把事件循环堵住了：0.3 秒里只跳了 {ticks} 次"
         assert stall < _MAX_STALL, f"有同步阻塞：最长 {stall:.3f} 秒没跳一次"
 
     def test_text_manager(self, store, user_id):
@@ -811,7 +697,7 @@ class TestAsyncChannelsDoNotBlockTheEventLoop:
                          memory_manager=None)
 
         ticks, stall = _run_async(_ticks_while(tm.get_or_distill(tid, "角色", user_id)))
-        assert ticks >= 10, f"预检/挑选把事件循环堵住了：0.6 秒里只跳了 {ticks} 次"
+        assert ticks >= 10, f"后置步骤把事件循环堵住了：0.3 秒里只跳了 {ticks} 次"
         assert stall < _MAX_STALL, f"有同步阻塞：最长 {stall:.3f} 秒没跳一次"
 
 

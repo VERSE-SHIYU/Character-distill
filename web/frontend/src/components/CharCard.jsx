@@ -127,7 +127,7 @@ function CharPanelBody({ textId, goBack }) {
         {detailLoading ? (
           <Loading text="加载角色…" />
         ) : currentCard ? (
-          <CardDetail card={currentCard} textId={textId} goBack={goBack} />
+          <CardDetail key={currentCard.id || currentCard.card_id} card={currentCard} textId={textId} goBack={goBack} />
         ) : null}
       </div>
     )
@@ -141,7 +141,7 @@ function CharPanelBody({ textId, goBack }) {
         {detailLoading ? (
           <Loading text="加载角色…" />
         ) : currentCard ? (
-          <CardDetail card={currentCard} textId={textId} goBack={goBack} />
+          <CardDetail key={currentCard.id || currentCard.card_id} card={currentCard} textId={textId} goBack={goBack} />
         ) : (
           <div className="char-detail-empty">
             <div className="char-detail-empty-icon"><User size={28} /></div>
@@ -631,6 +631,8 @@ function CardDetail({ card, textId, goBack }) {
   const getUserRole = useAppStore((s) => s.getUserRole)
   const updateCard = useAppStore((s) => s.updateCard)
   const moveUnlocated = useAppStore((s) => s.moveUnlocated)
+  const refindExamples = useAppStore((s) => s.refindExamples)
+  const dismissExamplesPending = useAppStore((s) => s.dismissExamplesPending)
   const [showShareConfirm, setShowShareConfirm] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [cropFile, setCropFile] = useState(null)
@@ -726,9 +728,24 @@ function CardDetail({ card, textId, goBack }) {
     }
   }
 
-  const handleSaveEdit = async (cardJson) => {
-    await updateCard(card.id || card.card_id, cardJson, card.revision)
+  // 编辑页交回的是它打开时那张卡、那一版（`opened`），不取这里此刻的 `card`：弹窗开着时卡在
+  // 别处变过，按打开时的版本提交，由后端的版本锁报冲突。
+  const handleSaveEdit = async (cardJson, opened) => {
+    await updateCard(opened.cardId, cardJson, opened.revision)
     setShowEditModal(false)
+  }
+
+  // 新蒸馏出来、还没配上对话示例的卡（`examples_pending_for` 非空，记在服务端）：打开它就弹出
+  // 编辑页，让用户自己填，或让系统重新找一次。保存、重新找、关掉都会清掉这个标记 —— 提醒只有
+  // 这一次。
+  const examplesPending = canWrite && Boolean(card.examples_pending_for)
+  useEffect(() => {
+    if (examplesPending) setShowEditModal(true)
+  }, [examplesPending])
+
+  const closeEdit = () => {
+    setShowEditModal(false)
+    if (examplesPending) dismissExamplesPending(card.id || card.card_id)
   }
 
   return (
@@ -950,8 +967,12 @@ function CardDetail({ card, textId, goBack }) {
         isOpen={showEditModal}
         data={data}
         cardId={card.id || card.card_id}
+        revision={card.revision}
         onSave={handleSaveEdit}
-        onClose={() => setShowEditModal(false)}
+        onClose={closeEdit}
+        onRefindExamples={examplesPending
+          ? (opened) => refindExamples(opened.cardId, opened.revision)
+          : undefined}
       />
 
       <ImageCropModal

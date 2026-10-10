@@ -82,6 +82,7 @@
 **缺 `phase` 键**时整卡仍失败：`DraftOccurrence.phase` / `DraftAttitude.phase` 是必填，pydantic 抛
 `ValidationError`，`BeforeValidator` 不会跑。真跑未出现这种情况；要处理它得改发给模型的结构（给默认值）
 或另开第二处校验，代价大于收益（返工经验第 1、25 条）。**只记不修。**
+（2026-10-09 已被 draft-phase-tagged.md 取代）
 
 ### 测试（`tests/test_arc_phase_fields_unit.py` 追加）
 

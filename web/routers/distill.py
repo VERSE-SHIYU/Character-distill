@@ -26,7 +26,9 @@ from core.arc_view import project_card, valid_phase
 from core.card_out import CARD_CONFLICT, card_revision, out_card
 from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
+from core import examples_pending
 from core.embeddings import EMBEDDING_KEY_REQUIRED
+from core.nonfatal import nonfatal_sync
 from core.unlocated import UnknownPhase, move_unlocated
 from core.export import export_tavern_json
 from core.card_draft import card_from_draft
@@ -309,6 +311,19 @@ async def _persist_awakening(storage, card_id: str, user_id: str, awakening: str
     print(f"[distill] Persisted awakening_message to card {card_id}")
 
 
+DONE_MESSAGE = "蒸馏完成 ✓"
+DONE_WITHOUT_EXAMPLES_MESSAGE = "蒸馏完成，未配上对话示例（可在编辑角色卡时手动填写）"
+
+
+def _done_message(card: CharacterCard) -> str:
+    """蒸馏完成时给用户的那句话 —— bg 任务与 SSE 共用，文案只此一处。
+
+    挑不出对话示例不再让整张卡失败（spec dialogue-fallback）；但不能悄悄少一项，
+    故完成文案里点明。有没有示例由 `CharacterCard.has_dialogue_examples` 判，这里只渲染。
+    """
+    return DONE_MESSAGE if card.has_dialogue_examples() else DONE_WITHOUT_EXAMPLES_MESSAGE
+
+
 def _generate_awakening(llm, card: CharacterCard, storage=None) -> str:
     """Generate an awakening line for a newly distilled character.
 
@@ -397,11 +412,6 @@ def _run_distill_task(
         if not name:
             name = target_character_name(chars)
         aliases = aliases_for(chars, name)
-
-        # 预检（补充 1-第 4 步）：原文里挑不出本角色的对话句就在长步骤之前失败 —— 那条
-        # 判据与挑选共用 `dialogue_candidates`，预检过了挑选就不会再因此失败。约 0.1 秒
-        # 的纯计算，返回值不保留（本线程同步，不必挪进线程池）。
-        distiller.dialogue_candidates(content, name, aliases, chars)
 
         _set_task(task_id, {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
 
@@ -540,7 +550,8 @@ def _run_distill_task(
             _set_task(task_id, {"status": "error", "message": "蒸馏失败：数据校验错误，请重试", "character": name})
             return
 
-        # 后置步骤：核对引文 + 贴对话示例（WP18 / WP17）。失败按任务失败（不 fail-open）。
+        # 后置步骤：核对引文 + 贴对话示例（WP18 / WP17）。挑不出示例时卡照常返回（保底在
+        # `finalize_card` 里）；它抛出来的都按任务失败处理。
         card = distiller.finalize_card(card, content, name, aliases, chars)
         card_dict = card.model_dump()
 
@@ -586,6 +597,15 @@ def _run_distill_task(
             return
         print(f"[distill] Card saved: card_id={result.get('card_id','')} name={name} text_id={text_id} user_id={user_id}")
 
+        # 没配上对话示例的卡记「待补」（规则在 `core.examples_pending`）。记不上不影响落卡：
+        # 里面那层吞的是写库出错，这一层吞的是投递到主 loop 超时。
+        with nonfatal_sync("examples_pending", "submit mark after distill"):
+            submit_to_main_loop(
+                examples_pending.mark_after_distill(
+                    get_storage(), result.get("card_id", ""), user_id, card, name),
+                timeout=30,
+            )
+
         # Generate awakening line (non-fatal, outside lock)
         awakening = _generate_awakening(llm, card, storage=get_storage())
 
@@ -604,7 +624,7 @@ def _run_distill_task(
             "card_id": result.get("card_id", ""),
             "character": name,
             "progress_pct": 100,
-            "message": "蒸馏完成 ✓",
+            "message": _done_message(card),
         }
         if awakening:
             update_dict["awakening"] = awakening
@@ -1083,21 +1103,15 @@ async def distill_stream(
 
         # 名单走唯一入口：命中缓存即不发 LLM，未命中才识别一次并写回
         nonlocal char_name
-        # 识别失败、「挑不出目标角色」与预检挑不出对话句三类结果都在这一个 except 里
-        # 渲染：本生成器在下面 chat 那圈 try 之外，靠冒泡会变成未处理的生成器异常而不是
-        # 错误帧，故就地 yield —— 与本生成器蒸馏段的 except 同形、共用 user_facing_error
-        # 这一份口径链。预检不另写第二段 try：挪进这里就是为了共用这一个出口。
+        # 识别失败与「挑不出目标角色」两类结果都在这一个 except 里渲染：本生成器在下面
+        # chat 那圈 try 之外，靠冒泡会变成未处理的生成器异常而不是错误帧，故就地 yield ——
+        # 与本生成器蒸馏段的 except 同形、共用 user_facing_error 这一份口径链。
         try:
             chars = await resolve_characters(
                 storage, distiller, req.text_id, user_id, content)
             if not char_name:
                 char_name = target_character_name(chars)
             aliases = aliases_for(chars, char_name)
-            # 预检（补充 1-第 4 步）：原文里挑不出本角色的对话句就在长步骤之前失败。
-            # 与挑选共用 `dialogue_candidates`，验收口径因此只有一处；约 0.1 秒的纯
-            # 计算也得挪出事件循环（本生成器跑在请求 loop 上，同步跑等于堵住它）。
-            await asyncio.to_thread(
-                distiller.dialogue_candidates, content, char_name, aliases, chars)
         except Exception as exc:
             logger.error("Identify failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
@@ -1160,16 +1174,16 @@ async def distill_stream(
         try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
             # 位置检查要 normalize 整本原文（约 0.3s CPU），本生成器跑在事件循环线程上 ——
-            # 同步跑会堵住它，与上面 dialogue_candidates 同法挪进 to_thread。
+            # 同步跑会堵住它，故挪进 to_thread。
             card = await asyncio.to_thread(card_from_draft, data, content)
         except Exception as exc:
             logger.error("Card validation failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': '蒸馏失败：数据校验错误，请重试'}, ensure_ascii=False, default=str)}\n\n"
             return
 
-        # 后置步骤：核对引文 + 贴对话示例（WP18 / WP17）。与 bg 任务同一步，失败即错误帧
-        # 收场（不 fail-open）。本通道是 SSE 生成器，冒泡会变成未处理的生成器异常而不是
-        # 错误帧，故就地 yield —— 与其他失败帧同形。
+        # 后置步骤：核对引文 + 贴对话示例（WP18 / WP17）。与 bg 任务同一步：挑不出示例
+        # 时卡照常返回，它抛出来的才是错误帧收场。本通道是 SSE 生成器，冒泡会变成未处理
+        # 的生成器异常而不是错误帧，故就地 yield —— 与其他失败帧同形。
         try:
             card = await asyncio.to_thread(
                 distiller.finalize_card,
@@ -1190,6 +1204,10 @@ async def distill_stream(
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
 
+        # 没配上对话示例的卡记「待补」（规则在 `core.examples_pending`，记不上不影响落卡）。
+        await examples_pending.mark_after_distill(
+            storage, result.get("card_id", ""), user_id, card, char_name)
+
         # Generate awakening line (fails open, async context)
         awakening = ""
         if per_user_llm is not None:
@@ -1209,7 +1227,8 @@ async def distill_stream(
         # done（任务终态判据）只是撞名。本流不建 DB 任务行、不产任务状态对象，故不带
         # status/actions/poll_after_ms —— 前端 normalizeTask 的 task_id+status 门会挡掉
         # 它，不会被误判成任务终态。改这里前先看前端那道门。
-        done_payload = {'done': True, 'awakening': awakening, **result}
+        done_payload = {'done': True, 'awakening': awakening,
+                        'message': _done_message(card), **result}
         yield f"data: {json.dumps(done_payload, ensure_ascii=False, default=str)}\n\n"
 
     # OTel context 传播点：distill 根 span（wf=distill 与 chat 分链路统计）
@@ -1297,7 +1316,70 @@ async def update_card(
     result = await storage.update_card(card_id, validated.model_dump(), expected=record["card_json"])
     if result is None:
         raise HTTPException(409, CARD_CONFLICT)
+    # 用户保存过了：这张卡不再「待补对话示例」（三个出口之一，规则在 `core.examples_pending`）。
+    result = await examples_pending.settle(storage, card_id, user["id"], result)
     return {"ok": True, "card": out_card(result)}   # B4：返回的卡写进 store，出卡只经 out_card
+
+
+# ── 待补对话示例 ─────────────────────────────────────────────────────────────
+# 规则只在 `core.examples_pending`（何时记、何时清、怎么重新找）。这里只做属主与版本核对、
+# 把结果写回。保存（上面的 PATCH）、重新找、关掉是清掉「待补」的三个出口。
+
+EXAMPLES_NOT_PENDING = "这张卡已经处理过了，不能再重新找"
+
+
+class RefindExamplesRequest(BaseModel):
+    revision: str         # 编辑页打开时那一版；卡变过即 409，不往变过的卡上贴
+
+
+@router.post("/card/{card_id}/examples/refind")
+async def refind_dialogue_examples(
+    card_id: str,
+    req: RefindExamplesRequest,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+):
+    """给一张「待补对话示例」的卡重新找一次 —— 只在「待补」时能用，找到与否都清掉「待补」。
+
+    调用模型出错由 `examples_pending.refind` 照实抛出、走统一出口，「待补」不清：可以再点。
+    """
+    from deps import get_distiller, get_user_llm
+
+    user_id = user["id"]
+    record = await storage.get_card_owned(card_id, user_id)
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not record:
+        raise HTTPException(404, "Card not found")
+    if not record.get(examples_pending.PENDING_FOR):
+        raise HTTPException(409, EXAMPLES_NOT_PENDING)
+    if card_revision(record["card_json"]) != req.revision:
+        raise HTTPException(409, CARD_CONFLICT)
+    llm = await get_user_llm(user_id, storage)
+    if llm is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
+    refound = await examples_pending.refind(storage, get_distiller(llm=llm), record, user_id)
+    result = record
+    if refound is not None:
+        result = await storage.update_card(card_id, refound.model_dump(), expected=record["card_json"])
+        if result is None:
+            raise HTTPException(409, CARD_CONFLICT)
+    result = await examples_pending.settle(storage, card_id, user_id, result)
+    return {"ok": True, "found": refound is not None, "card": out_card(result)}
+
+
+@router.post("/card/{card_id}/examples/dismiss")
+async def dismiss_examples_pending(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+):
+    """用户关掉了提醒（没填、也没让系统找）：清掉「待补」，卡的内容不动。"""
+    record = await storage.get_card_owned(card_id, user["id"])
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not record:
+        raise HTTPException(404, "Card not found")
+    result = await examples_pending.settle(storage, card_id, user["id"], record)
+    return {"ok": True, "card": out_card(result)}
 
 
 class MoveUnlocatedRequest(BaseModel):

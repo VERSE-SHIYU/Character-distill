@@ -34,8 +34,11 @@ from core.card_relationships import dedupe_relationship_targets
 from core.chat_preprocessor import ChatPreprocessor
 from core.quotes import (
     MAX_EXAMPLES,
+    OUTSIDER,
+    PICK_SLOTS,
     UNDECIDED,
     Candidate,
+    SpeakerOptions,
     build_example,
     extract_candidates,
     normalized_starts,
@@ -659,8 +662,8 @@ def _other_people(
 ) -> list[dict]:
     """名单里**除本角色外**的人物：`[{"name", "aliases"}]`。
 
-    预检（`dialogue_candidates` 判「有没有别人可当对方」）与挑选（enum 的可选项、提示词里
-    的名单）都从这一处取，不各写一份 —— 两处一旦分家，预检放行的名单与挑选看到的名单就
+    取候选（`dialogue_candidates` 判「有没有别人可当对方」）与挑选（enum 的可选项、提示词里
+    的名单）都从这一处取，不各写一份 —— 两处一旦分家，取候选时认的名单与挑选看到的名单就
     不是同一份。本角色的标准名与别名一并排除，否则 enum 里多出一个「自己」，模型可能
     选出自己接自己的组。
     """
@@ -1846,12 +1849,9 @@ class Distiller:
     ) -> list[Candidate]:
         """抽取「本角色」（含别名）的候选对话句；抽不出就抛 `DistillError`。
 
-        预检与挑选共用这一个方法（补充 1-第 3 步）：三条通道在花钱之前先调一眼，挑选时
-        `attach_dialogue_examples` 再调一次 —— 同一个纯函数、同样的输入，结果必然相同，
-        所以「预检过了，挑选就不会因为没候选而失败」这句成立。抽候选约 0.1 秒（约束 11），
-        跨长步骤把候选对象带着走不值这点钱。
+        只由 `attach_dialogue_examples` 调用。
 
-        两种抽不出都是任务失败（不是落一张没有示例的卡）：
+        两种抽不出（原因写进异常，调用方决定怎么处理）：
         - 名单里除本角色外没有别人 —— enum 没有可选的对方，成不了「一问一答」；
         - 原文里找不到带本角色名的对话句 —— 提示里点出认的引号，版本用了别的引号时能看出
           来（本轮只认 `“”`/`「」`/`『』`，见 `core/quotes.py`）。
@@ -1890,30 +1890,33 @@ class Distiller:
         （对话示例 3 组只命中 1 组，都是在中间吞掉了另一个说话人的台词）。故这里换成
         「代码抽取带编号的候选 → 模型只回编号 → 代码按编号取原文」，逐字由构造保证。
 
-        上一句的说话人同理由模型读整段片段后从名单 enum 里选（每格一个 `speaker{i}`）——
-        按引导语里的人名取名会把宾语当主语（问题①：「送入刘姥姥口中，因笑道」是凤姐说的），
-        代码只负责校验与拼装。
+        上一句的说话人同理由模型读整段片段后选（每格一个 `speaker{i}`）—— 按引导语里的人名
+        取名会把宾语当主语（问题①：「送入刘姥姥口中，因笑道」是凤姐说的），代码只负责校验
+        与拼装。可选值见 `SpeakerOptions`：名单里的其他人，外加本人／「名单外的人」／「无法
+        判断」三个如实作答的出口（选到后三者的格子被丢弃）。
 
-        挑选结果**不是变长数组而是 MAX_EXAMPLES 个固定槽位**：宝玉验收实测候选多到 1672 条，
+        挑选结果**不是变长数组而是 `PICK_SLOTS` 个固定槽位**：宝玉验收实测候选多到 1672 条，
         提示词让它「挑出所有合格的」→ 输出无界 → 4096 截断报错。数组长度 strict 的 Schema
-        拦不住（不支持 `maxItems`，约束 6），故把「最多几组」做成结构：格子数固定，挑不满的
-        填 0。
+        拦不住（不支持 `maxItems`，约束 6），故把「最多几组」做成结构：字段数固定，挑不满的
+        填 0。格子数是 `MAX_EXAMPLES` 的两倍（见 `core/quotes.py::PICK_SLOTS`）：模型如实标出
+        「上一句是本人／名单外的人」的格子会被丢弃，只给 `MAX_EXAMPLES` 格时这些格子会把名额
+        占光（实测赵太爷 3 格全丢、0 组）；`valid_picks` 按格顺序取前 `MAX_EXAMPLES` 组合格的。
 
-        候选由调用方从 `dialogue_candidates` 取（本方法不再自己抽取，两处判据因此同源）；
+        候选由调用方从 `dialogue_candidates` 取（本方法不自己抽取）；
         `others` 是 `_other_people` 算出的名单里**除本人外**的人物（`[{"name", "aliases"}]`）：
-        标准名做 enum 的可选项，标准名加别名写进提示词，好让模型把原文里的别称（「凤丫头」）
-        对回标准名。
+        标准名做 `SpeakerOptions` 里合格的可选项（本人与本人的别名都不进），标准名加别名写进
+        提示词，好让模型把原文里的别称（「凤丫头」）对回标准名。
 
-        挑选结果一组都成不了对，抛 `DistillError` —— 与其他后置步骤同口径：任务是失败，
-        不是落一张没有对话示例的卡。
+        挑选结果一组都成不了对，抛 `DistillError`。要不要因此作废整张卡由调用方定：蒸馏流程
+        在 `finalize_card` 里保底（照常出卡）。
         """
-        enum = [*(dict.fromkeys(o.get("name") for o in others if o.get("name"))),
-                UNDECIDED]
-        properties = pick_slot_properties(len(candidates), enum)
-        # 槽位数固定为 MAX_EXAMPLES（见 `pick_slot_properties`）：strict 的 Schema 不支持
+        options = SpeakerOptions(
+            tuple(dict.fromkeys(o.get("name") for o in others if o.get("name"))), name)
+        properties = pick_slot_properties(len(candidates), options)
+        # 槽位数固定为 PICK_SLOTS（见 `pick_slot_properties`）：strict 的 Schema 不支持
         # array 的 maxItems（约束 6），挑选结果无界正是宝玉那次 4096 截断的根因。
-        slot_names = "、".join(pick_slot(i)[0] for i in range(1, MAX_EXAMPLES + 1))
-        speaker_names = "、".join(pick_slot(i)[1] for i in range(1, MAX_EXAMPLES + 1))
+        slot_names = "、".join(pick_slot(i)[0] for i in range(1, PICK_SLOTS + 1))
+        speaker_names = "、".join(pick_slot(i)[1] for i in range(1, PICK_SLOTS + 1))
         function = {
             "name": "pick_dialogue_examples",
             "description": f"按编号挑选最能体现「{name}」说话风格的对话示例",
@@ -1931,12 +1934,15 @@ class Distiller:
             f"（名字常是宾语，如「送入{name}口中，因笑道」）。\n"
             f"人物名单（标准名（别名））：{_roster_hint(others)}\n"
             f"请只挑同时满足以下三条的候选，按想要的顺序把编号填进 {slot_names}"
-            f"（最多 {MAX_EXAMPLES} 组；不足 {MAX_EXAMPLES} 组时，多出的格子编号填 0）：\n"
+            f"（共 {PICK_SLOTS} 格，代码按顺序取前 {MAX_EXAMPLES} 组合格的；"
+            f"没有合适的候选时，多出的格子编号填 0）：\n"
             f"① 读片段确认本句确实是「{name}」说的；\n"
             f"② 上一句是另一个人说的；\n"
             f"③ 两句是同一场景里的一问一答。\n"
-            f"每格对应的上一句说话人填进 {speaker_names}：从名单里取标准名；判不准就填"
-            f"「{UNDECIDED}」（那一格会被丢弃）。",
+            f"每格对应的上一句说话人填进 {speaker_names}：上一句的说话人可能不在名单里。"
+            f"是名单里的人，填他的标准名；是「{name}」本人说的，填「{name}」；是名单以外的人"
+            f"说的，填「{OUTSIDER}」；判不准填「{UNDECIDED}」。后三种那一格会被丢弃，这是正常结果，请如实填，不要为了凑数"
+            f"从名单里挑一个最像的。",
             [{"role": "user", "content": render_candidates(candidates)}],
             function,
         )
@@ -1945,7 +1951,7 @@ class Distiller:
         by_n = {c.n: c for c in candidates}
         examples = [
             (build_example(by_n[n], name, speaker), by_n[n].start)
-            for n, speaker in valid_picks(args, len(candidates), enum)
+            for n, speaker in valid_picks(args, len(candidates), options)
         ]
         if not examples:
             raise DistillError(
@@ -1962,9 +1968,10 @@ class Distiller:
     ) -> CharacterCard:
         """把挑选出的对话示例贴到卡上 —— 后置步骤（WP17），卡上其余字段一个不动。
 
-        **不 fail-open**：挑不出来（原文里没有这个角色的对话句 / 模型没选出可用的编号）
-        就把 `pick_dialogue_examples` 的 `DistillError` 抛出去，由调用方按任务失败处理。
-        静默落一张没有对话示例的卡，等于把「挑不出」伪装成「本来就没有」。
+        **本方法照实抛**：挑不出来（原文里没有这个角色的对话句 / 模型没选出可用的编号）
+        就把 `DistillError` 抛出去，原因在异常里。要不要因此作废整张卡由调用方定：蒸馏
+        流程经 `finalize_card` 调用，在那里保底（照常出卡）；需要把原因告诉用户的调用方
+        （只重跑这一步的入口）直接调本方法。
 
         三条产卡通道（bg 任务、SSE 流、`TextManager.get_or_distill`）共用这一处：各写
         一份的结果是其中一条悄悄漏了这一步，而卡上「没有对话示例」与「本来就没有」从
@@ -1973,10 +1980,13 @@ class Distiller:
         `roster` 是识别出的名单（`resolve_characters` 的形状）；本角色自己的名字与别名由
         `_other_people` 排除，否则 enum 里多出一个「自己」，模型可能选出自己接自己的组。
 
-        候选只从 `dialogue_candidates` 取：预检走的是同一个方法，两处不会分家。
+        候选只从 `dialogue_candidates` 取，不在这里另抽一遍。
 
         卡有起点（`has_positions`）时，示例按各自候选在原文中的位置经 `phase_of` 归到阶段
         （§3.9）；没有起点（旧卡 / 位置检查整卡跳过）时全部留顶层。
+
+        **贴 = 换掉**：卡上原有的示例（顶层与各阶段下的）先清掉，再贴这一次挑的。同一张卡贴
+        两次，结果与只贴后一次相同 —— 「重新找一次」因此可以直接调本方法，不会越贴越多。
         """
         others = _other_people(roster, name, aliases)
         candidates = self.dialogue_candidates(content, name, aliases, roster)
@@ -1985,6 +1995,8 @@ class Distiller:
         if card.character_arc.has_positions():
             pos = normalized_starts(content, [start for _, start in picked])
             card_dict["dialogue_examples"] = []
+            for phase in card_dict["character_arc"]["phases"]:
+                (phase.get("overlay") or {}).pop("dialogue_examples", None)
             for (text, _), norm_pos in zip(picked, pos):
                 # 阶段特有的示例落在 overlay（①的 `memories` 已在加载时并进去，同一个键）。
                 phase = card_dict["character_arc"]["phases"][phase_of(card, norm_pos) - 1]
@@ -2008,15 +2020,27 @@ class Distiller:
         其中一条漏掉一步从成品看不出来（卡上「没有引文 / 示例」与「本来就没有」同形）。
         三条都由代码保证：关系按 target 去重（`dedupe_relationship_targets`）、引号里的
         必是原文（核对去掉查不到的引文的引号）、示例按编号从原文复制
-        （`attach_dialogue_examples`）。失败口径不变：挑选失败照旧抛 `DistillError` 交给
-        调用方按任务失败处理。
+        （`attach_dialogue_examples`）。
+
+        **对话示例这一步保底**：挑不出来或调用模型出错，卡照常返回、只是没有示例，原因
+        进日志 —— 不让最后一个后置字段把已经付费蒸好的整张卡作废（标签、苏醒台词本来
+        就是这样）。保底只此一处，三条通道因此口径相同；通道用
+        `CharacterCard.has_dialogue_examples` 判有没有配上，自己渲染提示。去重与核对引文出错仍然抛。
 
         去重放在核对之前：先丢掉重复条目，引文撤回日志就只涉及留下来的那些条目，不会为一条
         随后被丢的重复关系报一次撤回。
         """
         card, _ = dedupe_relationship_targets(card)
         card, _ = retract_unverified(card, content)
-        return self.attach_dialogue_examples(card, content, name, aliases, roster)
+        try:
+            return self.attach_dialogue_examples(card, content, name, aliases, roster)
+        except DistillError as exc:
+            # 预期内的挑不出（没有候选 / 名单里没有别人 / 模型没选出可用的编号）。
+            logger.warning("[distill] 「%s」没有配上对话示例，照常出卡：%s", name, exc)
+        except Exception:
+            # 调用模型出错或这一步自己的缺陷：同样不让整张卡作废，但要带堆栈进日志。
+            logger.error("[distill] 「%s」挑选对话示例出错，照常出卡", name, exc_info=True)
+        return card
 
     def _auto_tag(self, card_dict: dict) -> list[str]:
         """Lightweight LLM call to pick 1-3 preset tags matching the card.

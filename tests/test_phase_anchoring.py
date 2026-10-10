@@ -418,9 +418,6 @@ class _DraftStubDistiller:
         yield {"status": "formatting", "current": 1, "total": 1}
         yield json.dumps(self.draft, ensure_ascii=False)
 
-    def dialogue_candidates(self, content, name, aliases=(), roster=()):
-        return [object()]
-
     def _auto_tag(self, card_dict):
         return []
 

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from card_visibility import page_meta as card_page_meta
+from core.card_out import card_revision
 from core.trash_service import hard_delete, restore, soft_delete
 from deps import get_storage
 from limiter import limiter
@@ -124,7 +125,8 @@ async def get_card_detail(
     card = await storage.get_card_detail(card_id, user["id"])
     if not card:
         raise HTTPException(404, "角色不存在")
-    return {**card, **card_page_meta(card)}
+    # `revision`：广场卡详情页据此在编辑保存时带回来核对（乐观锁，判据只在 `card_revision`）。
+    return {**card, "revision": card_revision(card.get("card_json") or ""), **card_page_meta(card)}
 
 
 @router.get("/{card_id}")

@@ -787,10 +787,12 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
           isOpen={!!editCard}
           data={parseCardJson(editCard)}
           cardId={editCard.id || editCard.card_id}
-          onSave={async (cardJson) => {
+          revision={editCard.revision}
+          onSave={async (cardJson, opened) => {
             // 走 store 的唯一 PATCH 出口（带 revision，乐观锁）。失败不在这里吞：错误抛给
             // EditCardModal，由弹窗自己呈现。原先这里自己发 PUT —— 后端只有 PATCH，必 405。
-            await updateCard(editCard.id || editCard.card_id, cardJson, editCard.revision)
+            // 卡号和版本号用弹窗交回的（它打开时那张卡、那一版）。
+            await updateCard(opened.cardId, cardJson, opened.revision)
             setEditCard(null)
             // Refresh all cards
             const res = await fetchCardsByText(editCard.text_id)
