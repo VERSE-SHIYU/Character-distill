@@ -237,12 +237,12 @@ def test_the_previous_speaker_is_the_models_choice_not_a_name_found_in_the_lead(
     assert out == ["凤姐：你尝尝这个。\n刘姥姥：姑娘说得是。"]
 
 
-def test_the_subjects_alias_is_out_of_the_enum_and_a_subject_pick_is_dropped():
+def test_the_subjects_alias_is_out_of_the_enum_but_the_standard_name_is_in():
     """本角色的**别名**不进 enum（同一人两个选项）；标准名进 enum 是为了让模型如实标出
-    「上一句是本人说的」，但选到本人的格子被丢弃 —— 卡里不出现「自己接自己」。
+    「上一句是本人说的」。选到本人的格子被丢弃由目标检查 K9、K10 守，不在本条。
 
-    变异：别名也进 enum → 名单里「刘姥姥／姥姥」会各成一个选项，enum 断言红；`accepts`
-    接受本人 → 产出里出现「刘姥姥：…」自接自答，第一条断言红。
+    变异：别名也进 enum → 名单里「刘姥姥／姥姥」会各成一个选项，enum 断言红；标准名
+    不进 enum → enum 断言红。
     """
     llm = _PickLLM({"pick1": 1, "speaker1": "凤姐"})
     source = ('凤姐忙和刘姥姥摆手道：“你老快别这样说。”\n'

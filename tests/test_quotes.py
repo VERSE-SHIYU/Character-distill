@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from core.quotes import (
     CITATION_MIN_CHARS,
     MAX_EXAMPLES,
@@ -19,6 +21,7 @@ from core.quotes import (
     SpeakerOptions,
     build_example,
     extract_candidates,
+    is_spoken,
     normalize,
     quoted_spans,
     render_candidates,
@@ -69,6 +72,44 @@ def test_the_very_first_quote_is_not_a_candidate():
     text = "刘姥姥笑道：“姑娘说得是。”\n凤姐道：“你老慢慢说。”\n"
 
     assert extract_candidates(text, ["刘姥姥"]) == []
+
+
+@pytest.mark.parametrize("inner, spoken", [
+    ("可恶！", True), ("然而……。", True), ("我真傻，真的，", True), ("你还不配……", True),
+    ("既然如此．．．", True),            # 公版《水浒传》：全角点当省略号
+    ("What?", True), ("好的~", True),
+    ("退一步想", False), ("庭训", False), ("阿Ｑ", False), ("第3", False),
+    ("", False), ("  ", False),
+])
+def test_a_quote_is_a_spoken_line_unless_it_ends_in_a_word_character(inner, spoken):
+    """台词以标点或符号收尾；叙述里带引号的词以字、字母、数字收尾。不靠标点清单。
+
+    变异：改回只认列出来的几种标点 → 没列到的（「．」）判成不是台词；恒真 → 后六条红。
+    """
+    assert is_spoken(inner) is spoken
+
+
+def test_a_finished_line_before_the_quote_is_not_its_lead():
+    """上一行已经收住（标题这类不带句读的一行），换行就是断点：那一行里的名字不是引导语。
+
+    变异：`_lead_before` 不再把换行当断点 → 标题里的「刘姥姥」成了引导语，多出一条候选。
+    """
+    text = "凤姐道：“你老请坐。”\n刘姥姥进大观园\n“这园子真大。”\n"
+
+    assert extract_candidates(text, ["刘姥姥"]) == []
+
+
+@pytest.mark.parametrize("end", ["：", "，", ":", ","])
+def test_a_lead_left_unfinished_before_a_newline_still_leads_its_quote(end):
+    """引导语以冒号或逗号收尾 = 话没说完，后面的换行不是断点；全角半角都算。
+
+    变异：收尾不过 `_same_width` 就比 → 全角的两条找不到候选；从 `_UNFINISHED` 里去掉一种 →
+    那一种的全角半角两条都找不到。
+    """
+    text = f"凤姐道：“你老请坐。”\n刘姥姥笑道{end}\n“姑娘说得是。”\n"
+
+    assert [(c.lead, c.line) for c in extract_candidates(text, ["刘姥姥"])] == [
+        (f"刘姥姥笑道{end}", "姑娘说得是。")]
 
 
 def test_a_candidate_carries_the_source_fragment_ending_at_its_own_line():

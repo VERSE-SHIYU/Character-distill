@@ -142,9 +142,8 @@ _QUOTE_PAIRS = (("“", "”"), ("「", "」"), ("『", "』"))
 _SENTENCE_END = "。！？"
 _LEAD_BREAK = re.compile(f"[{_SENTENCE_END}\n]")   # 引导语只取紧贴引号的那一句
 _NARRATION_SENTENCE = re.compile(f"[{_SENTENCE_END}]")
-_UNFINISHED = ("：", "，", ":", ",")              # 引导语以这些收尾 = 话还没说完
-# 台词在引号里以标点收尾（“可恶！”）；叙述里带引号的词不以标点收尾（“庭训”“退一步想”）。
-_SPOKEN_END = frozenset("。！？…—，～、；：’』」,.!?~-")
+# 引导语以冒号、逗号收尾 = 话还没说完。写的是 `_same_width` 折叠后的字形：全角半角都算。
+_UNFINISHED = (":", ",")
 # 两句之间的叙述超过这么多句，就不是一问一答（中间隔了别的事）。
 MAX_NARRATION_BETWEEN = 2
 
@@ -184,9 +183,14 @@ class Candidate(NamedTuple):
 
 
 def is_spoken(inner: str) -> bool:
-    """引号里的这段是不是一句台词：以标点收尾的是，否则是叙述里带引号的词。"""
+    """引号里的这段是不是一句台词：台词以标点或符号收尾（“可恶！”），叙述里带引号的词以
+    字、字母或数字收尾（“庭训”“退一步想”）。
+
+    判的是「最后一个字是不是字」，不列标点清单：清单总会漏（公版《水浒传》用「．．．」当
+    省略号），漏掉的台词既进不了候选，也当不了下一句的上一句。
+    """
     tail = inner.rstrip()
-    return bool(tail) and tail[-1] in _SPOKEN_END
+    return bool(tail) and not tail[-1].isalnum()
 
 
 def _pairable(text: str, prev: "re.Match[str]", cur: "re.Match[str]") -> bool:
@@ -198,7 +202,8 @@ def _pairable(text: str, prev: "re.Match[str]", cur: "re.Match[str]") -> bool:
 
 
 def _same_width(s: str) -> str:
-    """全角字母数字与半角当同一个字（名单写「小D」、正文写「小Ｄ」）。只用于比名字。"""
+    """全角与半角当同一个字：比名字（名单写「小D」、正文写「小Ｄ」）和比引导语的收尾标点
+    （`_UNFINISHED`）都过它，本模块不另列全角半角对照。"""
     return unicodedata.normalize("NFKC", s)
 
 
@@ -212,7 +217,7 @@ def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
 
     一个引号成为候选，要同时满足三条 —— 每条规则都写在它自己的函数里，此处不重复：
 
-    1. 本句是台词（`is_spoken`）：引号内以标点收尾；叙述里带引号的词（“退一步想”）不算。
+    1. 本句是台词（`is_spoken`）：引号内不以字收尾；叙述里带引号的词（“退一步想”）不算。
     2. 与紧邻的前一个引号能成对（`_pairable`）：前一个是台词，且两句之间的叙述不超过
        `MAX_NARRATION_BETWEEN` 句。全文第一句没有上一句、成不了对，不编号也不进候选。
     3. 署名里出现本角色的名字或别名：署名取引号前的引导语（`_lead_before`）与引号后那半句
@@ -249,7 +254,7 @@ def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
 def _lead_before(text: str, quotes: list, i: int, start: int) -> tuple[str, int]:
     """第 i 个引号之前、离它最近的那截引导语，以及它在原文里的起点。
 
-    引导语到上一个句读为止。换行也算断点，除非换行前那半句还没说完（以「：」「，」收尾，
+    引导语到上一个句读为止。换行也算断点，除非换行前那半句还没说完（以冒号、逗号收尾，
     如「闰土又对我说：⏎“……”」）—— 那是引导语和引号分在了两行。
 
     起点返回的是**切掉前后空白之前**的位置：片段按下限截取时用它算「往前 60 字」。
@@ -257,7 +262,7 @@ def _lead_before(text: str, quotes: list, i: int, start: int) -> tuple[str, int]
     gap_start = quotes[i - 1].end() if i else 0
     head = text[gap_start:start]
     body = head.rstrip()
-    if not body.endswith(_UNFINISHED):
+    if not _same_width(body[-1:]).endswith(_UNFINISHED):
         body = head                      # 引导语已经说完：尾部的换行照常算断点
     cut = 0
     for mb in _LEAD_BREAK.finditer(body):
