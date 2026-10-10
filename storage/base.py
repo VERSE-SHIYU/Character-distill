@@ -189,6 +189,15 @@ class StorageBase(ABC):
         不比较的话后写的会静默覆盖先写的。`expected` 必填，新调用点不会漏掉这一步。
         """
 
+    @abstractmethod
+    async def set_card_examples_pending(self, card_id: str, user_id: str, character: str | None) -> bool:
+        """置 / 清这张卡的「待补对话示例」（`cards.examples_pending_for`，属主过滤在 SQL）。
+
+        `character` 是蒸馏时找示例用的角色名（待补）；`None` 清掉（不待补）。返回是否写到了行
+        （非属主 / 不存在 → False）。这一列**只由本方法写**：`save_card` / `update_card` 不碰
+        它 —— 它是这一行的流程状态，不是卡的内容（docs/specs/examples-pending.md）。
+        """
+
     # ── Card domain (market / fork / versions) ────────────
     #
     # 卡片域契约的其余部分（market / 版本 / fork / 举报 / 精选 / 跨境界）。

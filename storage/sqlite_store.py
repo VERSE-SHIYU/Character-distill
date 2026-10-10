@@ -157,6 +157,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "099_remote_profile_disabled.sql",
     # 100：PG 035 新增列的孪生，同上。
     "100_session_arc_phase.sql",
+    # 101：PG 036 新增列的孪生，同上。
+    "101_cards_examples_pending.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -1257,6 +1259,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Update card failed: {exc}")
             raise
 
+    async def set_card_examples_pending(self, card_id: str, user_id: str, character: str | None) -> bool:
+        """置 / 清「待补对话示例」（属主过滤在 SQL）。契约见 `StorageBase.set_card_examples_pending`。"""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE cards SET examples_pending_for = ? WHERE id = ? AND user_id = ?",
+                    (character, card_id, user_id),
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Set card examples_pending failed: {exc}")
+            raise
+
     async def get_card_unscoped(self, id: str) -> dict | None:
         """Get one card record by id — 无身份读。
 
@@ -1268,7 +1284,7 @@ class SQLiteStore(StorageBase):
             pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_live_published_copy_of('c2', 'c')} LIMIT 1"
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ?",
+                    f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, c.examples_pending_for AS examples_pending_for, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -1286,7 +1302,7 @@ class SQLiteStore(StorageBase):
             pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_live_published_copy_of('c2', 'c')} LIMIT 1"
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ? AND c.user_id = ?",
+                    f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, c.examples_pending_for AS examples_pending_for, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ? AND c.user_id = ?",
                     (id, user_id),
                 )
                 row = await cursor.fetchone()
@@ -1382,12 +1398,12 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 if user_id:
                     cursor = await conn.execute(
-                        f"SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags, ({pub_sub}) AS published_id FROM cards WHERE text_id = ? AND user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
+                        f"SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags, examples_pending_for, ({pub_sub}) AS published_id FROM cards WHERE text_id = ? AND user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
                         (text_id, user_id),
                     )
                 else:
                     cursor = await conn.execute(
-                        f"SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags, ({pub_sub}) AS published_id FROM cards WHERE text_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
+                        f"SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags, examples_pending_for, ({pub_sub}) AS published_id FROM cards WHERE text_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
                         (text_id,),
                     )
                 rows = await cursor.fetchall()

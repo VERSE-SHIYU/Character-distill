@@ -723,6 +723,19 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Update card failed: {exc}")
             raise
 
+    async def set_card_examples_pending(self, card_id: str, user_id: str, character: str | None) -> bool:
+        """置 / 清「待补对话示例」（属主过滤在 SQL）。契约见 `StorageBase.set_card_examples_pending`。"""
+        try:
+            async with await self._connect() as conn:
+                tag = await conn.execute(
+                    "UPDATE cards SET examples_pending_for = $1 WHERE id = $2 AND user_id = $3",
+                    character, card_id, user_id,
+                )
+                return self._parse_rowcount(tag) > 0
+        except Exception as exc:
+            print(f"[PostgresStore] Set card examples_pending failed: {exc}")
+            raise
+
     async def get_card_unscoped(self, id: str) -> dict | None:
         """Get one card record by id — 无身份读。
 
@@ -734,7 +747,7 @@ class PostgresStore(StorageBase):
             pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_live_published_copy_of('c2', 'c')} LIMIT 1"
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = $1",
+                    f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, c.examples_pending_for AS examples_pending_for, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = $1",
                     id,
                 )
             return self._row_to_dict(row)
@@ -751,7 +764,7 @@ class PostgresStore(StorageBase):
             pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_live_published_copy_of('c2', 'c')} LIMIT 1"
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = $1 AND c.user_id = $2",
+                    f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, c.examples_pending_for AS examples_pending_for, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = $1 AND c.user_id = $2",
                     id, user_id,
                 )
             return self._row_to_dict(row)
@@ -846,12 +859,12 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 if user_id:
                     rows = await conn.fetch(
-                        f"SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags, ({pub_sub}) AS published_id FROM cards WHERE text_id = $1 AND user_id = $2 AND deleted_at IS NULL ORDER BY created_at DESC",
+                        f"SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags, examples_pending_for, ({pub_sub}) AS published_id FROM cards WHERE text_id = $1 AND user_id = $2 AND deleted_at IS NULL ORDER BY created_at DESC",
                         text_id, user_id,
                     )
                 else:
                     rows = await conn.fetch(
-                        f"SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags, ({pub_sub}) AS published_id FROM cards WHERE text_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC",
+                        f"SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags, examples_pending_for, ({pub_sub}) AS published_id FROM cards WHERE text_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC",
                         text_id,
                     )
             return self._list_rows(rows)

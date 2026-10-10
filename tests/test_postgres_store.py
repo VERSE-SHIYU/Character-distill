@@ -1645,6 +1645,60 @@ class TestPgCardCompareAndSwap:
 
 
 @_pg
+class TestPgCardExamplesPending:
+    """`cards.examples_pending_for`（docs/specs/examples-pending.md）：行上的流程状态，非空 = 待补、
+    值是蒸馏时用的角色名。只由 `set_card_examples_pending` 写；`save_card` / `update_card` 不碰它，
+    复制卡不带走它。"""
+
+    @staticmethod
+    async def _pending(store, card_id, user_id, text_id) -> tuple:
+        owned = await store.get_card_owned(card_id, user_id)
+        listed = next(r for r in await store.list_cards(text_id, user_id) if r["id"] == card_id)
+        return owned["examples_pending_for"], listed["examples_pending_for"]
+
+    async def test_a_new_card_is_not_pending(self, store, text_id, card_id, user_id):
+        await store.save_text(text_id, "src.txt", "source", user_id=user_id)
+        await store.save_card(card_id, text_id, "Alice", json.dumps({"name": "Alice"}), user_id=user_id)
+        assert await self._pending(store, card_id, user_id, text_id) == (None, None)
+
+    async def test_set_and_clear_show_up_on_both_reads(self, store, text_id, card_id, user_id):
+        await store.save_text(text_id, "src.txt", "source", user_id=user_id)
+        await store.save_card(card_id, text_id, "Alice", json.dumps({"name": "Alice"}), user_id=user_id)
+        assert await store.set_card_examples_pending(card_id, user_id, "爱丽丝") is True
+        assert await self._pending(store, card_id, user_id, text_id) == ("爱丽丝", "爱丽丝")
+        assert (await store.get_card_unscoped(card_id))["examples_pending_for"] == "爱丽丝"
+        assert await store.set_card_examples_pending(card_id, user_id, None) is True
+        assert await self._pending(store, card_id, user_id, text_id) == (None, None)
+
+    async def test_a_non_owner_cannot_set_it(self, store, text_id, card_id, user_id):
+        await store.save_text(text_id, "src.txt", "source", user_id=user_id)
+        await store.save_card(card_id, text_id, "Alice", json.dumps({"name": "Alice"}), user_id=user_id)
+        other = f"usr_{uuid.uuid4().hex}"
+        assert await store.set_card_examples_pending(card_id, other, "爱丽丝") is False
+        assert await self._pending(store, card_id, user_id, text_id) == (None, None)
+
+    async def test_saving_and_updating_the_card_leave_it_alone(self, store, text_id, card_id, user_id):
+        await store.save_text(text_id, "src.txt", "source", user_id=user_id)
+        await store.save_card(card_id, text_id, "Alice", json.dumps({"name": "Alice"}), user_id=user_id)
+        await store.set_card_examples_pending(card_id, user_id, "爱丽丝")
+        await store.save_card(f"other_{card_id}", text_id, "Alice", json.dumps({"name": "Alice", "identity": "重蒸"}), user_id=user_id)
+        base = (await store.get_card_owned(card_id, user_id))["card_json"]
+        out = await store.update_card(card_id, {"name": "Alice", "identity": "改过"}, expected=base)
+        assert out["examples_pending_for"] == "爱丽丝"
+        assert await self._pending(store, card_id, user_id, text_id) == ("爱丽丝", "爱丽丝")
+
+    async def test_a_fork_does_not_carry_it(self, store, text_id, card_id, user_id):
+        await store.save_text(text_id, "src.txt", "source", user_id=user_id)
+        await store.save_card(card_id, text_id, "Alice", json.dumps({"name": "Alice"}), user_id=user_id)
+        await store.update_card_visibility(card_id, "public")
+        await store.set_card_examples_pending(card_id, user_id, "爱丽丝")
+        forker = f"usr_{uuid.uuid4().hex}"
+        fork = await store.fork_card(card_id, f"fork_{uuid.uuid4().hex[:8]}", forker, "")
+        assert json.loads(fork["card_json"]) == {"name": "Alice"}
+        assert fork["examples_pending_for"] is None
+
+
+@_pg
 class TestPgOwnedIdentityIsolation:
     async def test_get_text_owned_hides_non_owner_rows(self, store, text_id, user_id):
         await store.save_text(text_id, "src.txt", "属主内容", user_id=user_id)
