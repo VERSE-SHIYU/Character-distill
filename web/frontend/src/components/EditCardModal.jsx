@@ -2,6 +2,7 @@ import { useState } from 'react'
 import ErrorBox from './common/ErrorBox'
 import ObjectListField from './common/ObjectListField'
 import { withRowKeys, cleanRows } from '../utils/objectRows'
+import { examplesToText, textToExamples } from '../utils/dialogueExamples'
 
 function splitLines(val) {
   return (Array.isArray(val) ? val.join('\n') : val || '')
@@ -49,45 +50,48 @@ const BEHAVIOR_COLUMNS = [
   { key: 'behavior', placeholder: '具体怎么做', maxLength: 80, flex: 2 },
 ]
 
-export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, editName = false }) {
+// 表单的初值：只在表单挂载时从卡上取一次（见 EditCardModal）。
+function initialForm(data) {
   const style = data.speaking_style || {}
-  const rels = data.relationships || []
+  return {
+    name: data.name || '',
+    identity: data.identity || '',
+    personality_traits: splitLines(data.personality_traits),
+    tone: style.tone || '',
+    sentence_pattern: style.sentence_pattern || '',
+    catchphrases: splitLines(style.catchphrases),
+    vocabulary_level: style.vocabulary_level || '',
+    taboo_words: splitLines(style.taboo_words),
+    values: splitLines(data.values),
+    key_memories: splitLines(data.key_memories),
+    inner_tensions: splitLines(data.inner_tensions),
+    background: data.background || '',
+    first_message: data.first_message || '',
+    emotional_patterns: splitLines(data.emotional_patterns),
+    decision_style: data.decision_style || '',
+    arc_axis: data.character_arc?.axis || '',
+    dialogue_examples: examplesToText(data.dialogue_examples),
+  }
+}
 
-  const [form, setForm] = useState({})
+// 弹窗每次打开都重新挂载表单：表单的初值只在挂载时从 `data` 取一次。所以开着的这一次，用户
+// 填的内容不会被父组件重渲染冲掉；关掉再开（或换了一张卡）拿到的一定是现在这张卡。宿主是
+// 一直挂着本组件还是打开时才挂，结果都一样。
+export default function EditCardModal({ isOpen, ...props }) {
+  if (!isOpen) return null
+  return <EditCardForm {...props} />
+}
+
+function EditCardForm({ data, onSave, onClose, editName = false }) {
+  const style = data.speaking_style || {}
+
+  const [form, setForm] = useState(() => initialForm(data))
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
-  const [relationships, setRelationships] = useState([])
-  const [arcPhases, setArcPhases] = useState([])
-  const [behaviors, setBehaviors] = useState([])
-
-  // lazy init on open
-  if (isOpen && Object.keys(form).length === 0) {
-    const init = {
-      name: data.name || '',
-      identity: data.identity || '',
-      personality_traits: splitLines(data.personality_traits),
-      tone: style.tone || '',
-      sentence_pattern: style.sentence_pattern || '',
-      catchphrases: splitLines(style.catchphrases),
-      vocabulary_level: style.vocabulary_level || '',
-      taboo_words: splitLines(style.taboo_words),
-      values: splitLines(data.values),
-      key_memories: splitLines(data.key_memories),
-      inner_tensions: splitLines(data.inner_tensions),
-      background: data.background || '',
-      first_message: data.first_message || '',
-      emotional_patterns: splitLines(data.emotional_patterns),
-      decision_style: data.decision_style || '',
-      arc_axis: data.character_arc?.axis || '',
-      dialogue_examples: Array.isArray(data.dialogue_examples)
-        ? data.dialogue_examples.join('\n\n')
-        : (data.dialogue_examples || ''),
-    }
-    setForm(init)
-    setRelationships(withRowKeys(rels))
-    setArcPhases(withRowKeys(data.character_arc?.phases).map((p) => ({ ...p, behaviors: withRowKeys(p.behaviors) })))
-    setBehaviors(withRowKeys(data.situation_behaviors))
-  }
+  const [relationships, setRelationships] = useState(() => withRowKeys(data.relationships))
+  const [arcPhases, setArcPhases] = useState(() =>
+    withRowKeys(data.character_arc?.phases).map((p) => ({ ...p, behaviors: withRowKeys(p.behaviors) })))
+  const [behaviors, setBehaviors] = useState(() => withRowKeys(data.situation_behaviors))
 
   const update = (field, value) => setForm((f) => ({ ...f, [field]: value }))
 
@@ -159,7 +163,7 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
       },
       situation_behaviors: cleanRows(behaviors, BEHAVIOR_COLUMNS),
       relationships: cleanRows(relationships, REL_COLUMNS),
-      dialogue_examples: joinLines(form.dialogue_examples.replace(/\n\n+/g, '\n\n')),
+      dialogue_examples: textToExamples(form.dialogue_examples),
     }
     setSaving(true)
     setSaveError(null)
@@ -172,8 +176,6 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
       setSaving(false)
     }
   }
-
-  if (!isOpen) return null
 
   return (
     <div className="modal-overlay" onClick={onClose}>
