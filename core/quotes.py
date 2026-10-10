@@ -203,7 +203,7 @@ def _pairable(text: str, prev: "re.Match[str]", cur: "re.Match[str]") -> bool:
 
 def _same_width(s: str) -> str:
     """全角与半角当同一个字：比名字（名单写「小D」、正文写「小Ｄ」）和比引导语的收尾标点
-    （`_UNFINISHED`）都过它，本模块不另列全角半角对照。"""
+    （`_UNFINISHED`）都过它。（`normalize` 去标点用的 `_DROP_CHARS` 是另一条规则，不走这里。）"""
     return unicodedata.normalize("NFKC", s)
 
 

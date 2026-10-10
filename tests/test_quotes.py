@@ -89,6 +89,19 @@ def test_a_quote_is_a_spoken_line_unless_it_ends_in_a_word_character(inner, spok
     assert is_spoken(inner) is spoken
 
 
+def test_a_signature_closed_by_a_newline_still_counts():
+    """引号后的署名没有句读、以换行收住（“……”刘姥姥笑道⏎）也算署名；片段截到换行之前。
+
+    变异：`_tail_after` 不认换行收尾 → 这句找不到候选。
+    """
+    text = "凤姐道：“你老请坐。”\n“姑娘说得是。”刘姥姥笑道\n"
+
+    cands = extract_candidates(text, ["刘姥姥"])
+
+    assert [c.line for c in cands] == ["姑娘说得是。"]
+    assert cands[0].context.endswith("”刘姥姥笑道")
+
+
 def test_a_finished_line_before_the_quote_is_not_its_lead():
     """上一行已经收住（标题这类不带句读的一行），换行就是断点：那一行里的名字不是引导语。
 
