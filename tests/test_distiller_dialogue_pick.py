@@ -259,7 +259,7 @@ def test_the_subjects_alias_is_out_of_the_enum_but_the_standard_name_is_in():
 
 
 def test_attach_passes_the_failure_through_instead_of_saving_an_empty_field():
-    """挑不出来 → 抛出，绝不返回一张示例为空的卡（空示例与「本来就没有」从成品分不出）。"""
+    """挑不出来 → 本方法照实抛出，原因在异常里；保底（照常出卡）是 `finalize_card` 的事。"""
     d = Distiller(llm=_PickLLM({"pick1": 1, "speaker1": "凤姐"}),
                   config_path=None)
 

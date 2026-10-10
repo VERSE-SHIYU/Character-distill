@@ -277,11 +277,6 @@ class _CardStubDistiller:
         yield {"status": "formatting", "current": 1, "total": 1}
         yield json.dumps(self.CARD, ensure_ascii=False)
 
-    def dialogue_candidates(self, content, name, aliases=(), roster=()):
-        # 预检（补充 1-第 4 步）：路由拿到别名之后先调它一眼，返回值不保留。本组不考
-        # 抽取，给个非空即可 —— 抽取与两条失败判据在 test_distiller_dialogue_pick 里核。
-        return [object()]
-
     def _auto_tag(self, card_dict):
         return []
 
@@ -352,21 +347,25 @@ class TestDialogueExamplesPostStep:
         # 别名的来源是 `aliases_for` —— 路由不在这里重挑一遍名字。
         assert distiller.pick_calls == [("正文", "乙", ("小乙",), 2)]
 
-    def test_a_failed_pick_fails_the_task_instead_of_saving_a_card_without_examples(
+    def test_an_error_out_of_finalize_card_fails_the_task(
             self, monkeypatch, store):
-        """挑选失败按任务失败处理：不落卡、上屏拿到挑选失败的原因。
+        """`finalize_card` 抛出来的按任务失败处理：不落卡、上屏拿到原因。
+
+        挑不出对话示例已经不走这条路（保底在 `finalize_card` 里面，见
+        test_dialogue_fallback_goal）；这里守的是路由自己不再多吞一层 —— 去重、核对
+        引文出错时不能悄悄落一张没处理过的卡。
 
         变异：把这次调用挪进上面那段 fail-open 的 auto-tag try（或就地 try 掉）→
-        `saved` 非空，两条断言都红 —— 成品卡会安静地没有对话示例。
+        `saved` 非空，两条断言都红。
         """
         distiller = _CardStubDistiller(
-            pick_error=DistillError("挑选对话示例失败：没有可用的编号"))
+            pick_error=DistillError("蒸馏失败：落卡前的处理出错"))
 
         saved, snapshots = _run_to_card(monkeypatch, store, distiller)
 
         assert saved == []
         errors = [s for s in snapshots if s.get("status") == "error"]
-        assert errors and errors[-1]["message"] == "挑选对话示例失败：没有可用的编号"
+        assert errors and errors[-1]["message"] == "蒸馏失败：落卡前的处理出错"
 
 
 # ── 路由测试（B / C / D）：独立 app + 真 SQLiteStore ────────────────────────
@@ -737,11 +736,6 @@ class _ChunkEmittingDistiller:
 
     def identify_characters(self, content):
         return [{"name": "甲", "aliases": []}]
-
-    def dialogue_candidates(self, content, name, aliases=(), roster=()):
-        # 预检（补充 1-第 4 步）：路由拿到别名之后先调它一眼，返回值不保留。本组不考
-        # 抽取，给个非空即可 —— 抽取与两条失败判据在 test_distiller_dialogue_pick 里核。
-        return [object()]
 
     def distill_incremental_stream(self, text, character_name, *,
                                    aliases=None, text_type="story",

@@ -321,3 +321,5 @@
 `additionalProperties: false`；`integer` 支持 `minimum`/`maximum`；array 不支持 `minItems`/`maxItems`。
 
 > **取代（2026-10-10）**：本文件的「补充 1-第 2 步」抽取规则、enum 不含本角色、补充 2 的「`MAX_EXAMPLES` 个固定槽位」三处，已由 `docs/specs/dialogue-pairing.md`（§5）取代。
+
+> **取代（2026-10-10）**：「挑不出对话示例按任务失败处理（不落没有示例的卡）」与「补充 1-第 4 步：三条通道在长步骤之前做预检」两处，已由 `docs/specs/dialogue-fallback.md`（§5）取代；「补充 1-第 3 步」里取候选只走 `dialogue_candidates` 这一条仍然有效。
