@@ -1163,7 +1163,7 @@ async def distill_stream(
         try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
             # 位置检查要 normalize 整本原文（约 0.3s CPU），本生成器跑在事件循环线程上 ——
-            # 同步跑会堵住它，与上面 dialogue_candidates 同法挪进 to_thread。
+            # 同步跑会堵住它，故挪进 to_thread。
             card = await asyncio.to_thread(card_from_draft, data, content)
         except Exception as exc:
             logger.error("Card validation failed: %s", exc, exc_info=True)
