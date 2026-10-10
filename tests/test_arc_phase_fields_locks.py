@@ -342,11 +342,15 @@ def test_s15_out_card_is_the_only_card_out():
     #    （spec arc-phase-unlocated §6：本意是「流到开聊按钮的卡都经 out_card」，不是「只两处」）。
     #    机械判据：distill 路由里凡是**把 `storage.update_card` 的结果 return 出去**的函数，
     #    都必须在集合里（后台任务只写不返回，不算）。
+    #    「待补对话示例」的两个出口（重新找、关掉，docs/specs/examples-pending.md）同样把卡返回给
+    #    store，同样经 out_card。
     callers = _callers(_WEB / "routers" / "distill.py", "out_card")
     assert callers == {"list_cards", "list_standalone_cards", "update_card",
-                       "move_unlocated_item"}, f"out_card 调用点不对：{callers}"
+                       "move_unlocated_item", "refind_dialogue_examples",
+                       "dismiss_examples_pending"}, f"out_card 调用点不对：{callers}"
     returning = _returns_result_of(_WEB / "routers" / "distill.py", "update_card")
-    assert returning == {"update_card", "move_unlocated_item"}, f"返回更新后卡片的接口变了：{returning}"
+    assert returning == {"update_card", "move_unlocated_item",
+                         "refind_dialogue_examples"}, f"返回更新后卡片的接口变了：{returning}"
     assert returning <= callers, f"返回更新后卡片却没走 out_card：{returning - callers}"
     extra = _files(_BOTH, r"\bout_card\(") - {"core/card_out.py", "web/routers/distill.py"}
     assert not extra, f"out_card 在别处也被调/定义：{extra}"

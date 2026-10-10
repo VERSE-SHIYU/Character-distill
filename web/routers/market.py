@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from core import roles
 from core.authz import fetch_for_actor
+from core.card_out import CARD_CONFLICT, card_revision
 from core.schema import PRESET_TAGS
 from account_visibility import AccountView, identity, page_meta, view_of
 from card_visibility import page_meta as card_page_meta
@@ -104,6 +105,9 @@ class UpdatePublishRequest(BaseModel):
     market_description: str = ""
     market_tags: str = ""
     publish_message: str = ""
+    # 编辑保存带上编辑所依据的那一版（详情接口给的 `revision`），不符即 409。恢复版本、
+    # 更新发布是整张覆盖，不带。
+    revision: str = ""
 
 
 # ── Concrete routes first (no wildcard card_id) ──
@@ -414,7 +418,8 @@ async def get_card_detail(
     card = await storage.get_market_card_detail(card_id, user.get("id", ""))
     if not card:
         raise HTTPException(404, "角色不存在或未公开")
-    return {**card, **card_page_meta(card)}
+    # `revision`：广场卡详情页据此在编辑保存时带回来核对（乐观锁，判据只在 `card_revision`）。
+    return {**card, "revision": card_revision(card.get("card_json") or ""), **card_page_meta(card)}
 
 
 @router.get("/card/{card_id}/book-versions")
@@ -548,6 +553,10 @@ async def update_published_card(
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
     if not card:
         raise HTTPException(404, "Card not found")
+    # 乐观锁：编辑所依据的那一版已经不是库里这一版 → 409，排在预审之前（不为注定失败的保存
+    # 跑一次审核）。核对与写入之间又被改，由存储层比较后写入拦住（下面的 `not ver`）。
+    if body.revision and card_revision(card["card_json"]) != body.revision:
+        raise HTTPException(409, CARD_CONFLICT)
     # Same pre-screen as first-time publish: keyword + two-channel review,
     # applied to the *incoming* payload (that is the untrusted content being pushed).
     await _publish_preflight({**card, "card_json": body.card_json}, user, storage)
@@ -560,7 +569,7 @@ async def update_published_card(
         body.publish_message, old_json,
     )
     if not ver:
-        raise HTTPException(500, "更新失败")
+        raise HTTPException(409, CARD_CONFLICT)
     return {"version": ver}
 
 

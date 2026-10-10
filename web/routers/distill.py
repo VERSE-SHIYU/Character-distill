@@ -26,7 +26,9 @@ from core.arc_view import project_card, valid_phase
 from core.card_out import CARD_CONFLICT, card_revision, out_card
 from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
+from core import examples_pending
 from core.embeddings import EMBEDDING_KEY_REQUIRED
+from core.nonfatal import nonfatal_sync
 from core.unlocated import UnknownPhase, move_unlocated
 from core.export import export_tavern_json
 from core.card_draft import card_from_draft
@@ -594,6 +596,15 @@ def _run_distill_task(
             })
             return
         print(f"[distill] Card saved: card_id={result.get('card_id','')} name={name} text_id={text_id} user_id={user_id}")
+
+        # 没配上对话示例的卡记「待补」（规则在 `core.examples_pending`）。记不上不影响落卡：
+        # 里面那层吞的是写库出错，这一层吞的是投递到主 loop 超时。
+        with nonfatal_sync("examples_pending", "submit mark after distill"):
+            submit_to_main_loop(
+                examples_pending.mark_after_distill(
+                    get_storage(), result.get("card_id", ""), user_id, card, name),
+                timeout=30,
+            )
 
         # Generate awakening line (non-fatal, outside lock)
         awakening = _generate_awakening(llm, card, storage=get_storage())
@@ -1193,6 +1204,10 @@ async def distill_stream(
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
 
+        # 没配上对话示例的卡记「待补」（规则在 `core.examples_pending`，记不上不影响落卡）。
+        await examples_pending.mark_after_distill(
+            storage, result.get("card_id", ""), user_id, card, char_name)
+
         # Generate awakening line (fails open, async context)
         awakening = ""
         if per_user_llm is not None:
@@ -1301,7 +1316,70 @@ async def update_card(
     result = await storage.update_card(card_id, validated.model_dump(), expected=record["card_json"])
     if result is None:
         raise HTTPException(409, CARD_CONFLICT)
+    # 用户保存过了：这张卡不再「待补对话示例」（三个出口之一，规则在 `core.examples_pending`）。
+    result = await examples_pending.settle(storage, card_id, user["id"], result)
     return {"ok": True, "card": out_card(result)}   # B4：返回的卡写进 store，出卡只经 out_card
+
+
+# ── 待补对话示例 ─────────────────────────────────────────────────────────────
+# 规则只在 `core.examples_pending`（何时记、何时清、怎么重新找）。这里只做属主与版本核对、
+# 把结果写回。保存（上面的 PATCH）、重新找、关掉是清掉「待补」的三个出口。
+
+EXAMPLES_NOT_PENDING = "这张卡已经处理过了，不能再重新找"
+
+
+class RefindExamplesRequest(BaseModel):
+    revision: str         # 编辑页打开时那一版；卡变过即 409，不往变过的卡上贴
+
+
+@router.post("/card/{card_id}/examples/refind")
+async def refind_dialogue_examples(
+    card_id: str,
+    req: RefindExamplesRequest,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+):
+    """给一张「待补对话示例」的卡重新找一次 —— 只在「待补」时能用，找到与否都清掉「待补」。
+
+    调用模型出错由 `examples_pending.refind` 照实抛出、走统一出口，「待补」不清：可以再点。
+    """
+    from deps import get_distiller, get_user_llm
+
+    user_id = user["id"]
+    record = await storage.get_card_owned(card_id, user_id)
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not record:
+        raise HTTPException(404, "Card not found")
+    if not record.get(examples_pending.PENDING_FOR):
+        raise HTTPException(409, EXAMPLES_NOT_PENDING)
+    if card_revision(record["card_json"]) != req.revision:
+        raise HTTPException(409, CARD_CONFLICT)
+    llm = await get_user_llm(user_id, storage)
+    if llm is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
+    refound = await examples_pending.refind(storage, get_distiller(llm=llm), record, user_id)
+    result = record
+    if refound is not None:
+        result = await storage.update_card(card_id, refound.model_dump(), expected=record["card_json"])
+        if result is None:
+            raise HTTPException(409, CARD_CONFLICT)
+    result = await examples_pending.settle(storage, card_id, user_id, result)
+    return {"ok": True, "found": refound is not None, "card": out_card(result)}
+
+
+@router.post("/card/{card_id}/examples/dismiss")
+async def dismiss_examples_pending(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+):
+    """用户关掉了提醒（没填、也没让系统找）：清掉「待补」，卡的内容不动。"""
+    record = await storage.get_card_owned(card_id, user["id"])
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not record:
+        raise HTTPException(404, "Card not found")
+    result = await examples_pending.settle(storage, card_id, user["id"], record)
+    return {"ok": True, "card": out_card(result)}
 
 
 class MoveUnlocatedRequest(BaseModel):

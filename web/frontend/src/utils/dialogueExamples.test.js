@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { examplesToText, textToExamples } from './dialogueExamples'
+import { examplesByPhase, examplesToText, textToExamples } from './dialogueExamples'
 
 const PAIR1 = '掌柜：孔乙己么？你还欠十九个钱呢！\n孔乙己：这……下回还清罢。这一回是现钱，酒要好。'
 const PAIR2 = '阿Q：秃儿！快回去，和尚等着你……\n小尼姑：你怎么动手动脚……'
@@ -54,5 +54,25 @@ describe('textToExamples：表单文本 → 列表', () => {
 
   it('只填了一行也保留', () => {
     expect(textToExamples('只填了一行')).toEqual(['只填了一行'])
+  })
+})
+
+describe('examplesByPhase：各阶段下的示例', () => {
+  it('只列有示例的阶段，带上阶段的序号和名字', () => {
+    const card = { character_arc: { phases: [
+      { label: '早', overlay: { dialogue_examples: [PAIR1] } },
+      { label: '中', overlay: { values: ['别的字段'] } },
+      { overlay: { dialogue_examples: [PAIR2] } },
+    ] } }
+    expect(examplesByPhase(card)).toEqual([
+      { index: 0, label: '早', examples: [PAIR1] },
+      { index: 2, label: '', examples: [PAIR2] },
+    ])
+  })
+
+  it('没有阶段、没有 overlay、空卡都给空列表', () => {
+    expect(examplesByPhase({})).toEqual([])
+    expect(examplesByPhase({ character_arc: { phases: [{ label: '早' }] } })).toEqual([])
+    expect(examplesByPhase(undefined)).toEqual([])
   })
 })

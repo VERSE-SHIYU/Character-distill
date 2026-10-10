@@ -1878,13 +1878,13 @@ class Distiller:
         「上一句是本人／名单外的人」的格子会被丢弃，只给 `MAX_EXAMPLES` 格时这些格子会把名额
         占光（实测赵太爷 3 格全丢、0 组）；`valid_picks` 按格顺序取前 `MAX_EXAMPLES` 组合格的。
 
-        候选由调用方从 `dialogue_candidates` 取（本方法不再自己抽取，两处判据因此同源）；
+        候选由调用方从 `dialogue_candidates` 取（本方法不自己抽取）；
         `others` 是 `_other_people` 算出的名单里**除本人外**的人物（`[{"name", "aliases"}]`）：
         标准名做 `SpeakerOptions` 里合格的可选项（本人与本人的别名都不进），标准名加别名写进
         提示词，好让模型把原文里的别称（「凤丫头」）对回标准名。
 
-        挑选结果一组都成不了对，抛 `DistillError` —— 与其他后置步骤同口径：任务是失败，
-        不是落一张没有对话示例的卡。
+        挑选结果一组都成不了对，抛 `DistillError`。要不要因此作废整张卡由调用方定：蒸馏流程
+        在 `finalize_card` 里保底（照常出卡）。
         """
         options = SpeakerOptions(
             tuple(dict.fromkeys(o.get("name") for o in others if o.get("name"))), name)
@@ -1960,6 +1960,9 @@ class Distiller:
 
         卡有起点（`has_positions`）时，示例按各自候选在原文中的位置经 `phase_of` 归到阶段
         （§3.9）；没有起点（旧卡 / 位置检查整卡跳过）时全部留顶层。
+
+        **贴 = 换掉**：卡上原有的示例（顶层与各阶段下的）先清掉，再贴这一次挑的。同一张卡贴
+        两次，结果与只贴后一次相同 —— 「重新找一次」因此可以直接调本方法，不会越贴越多。
         """
         others = _other_people(roster, name, aliases)
         candidates = self.dialogue_candidates(content, name, aliases, roster)
@@ -1968,6 +1971,8 @@ class Distiller:
         if card.character_arc.has_positions():
             pos = normalized_starts(content, [start for _, start in picked])
             card_dict["dialogue_examples"] = []
+            for phase in card_dict["character_arc"]["phases"]:
+                (phase.get("overlay") or {}).pop("dialogue_examples", None)
             for (text, _), norm_pos in zip(picked, pos):
                 # 阶段特有的示例落在 overlay（①的 `memories` 已在加载时并进去，同一个键）。
                 phase = card_dict["character_arc"]["phases"][phase_of(card, norm_pos) - 1]

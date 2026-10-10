@@ -84,7 +84,6 @@ export default function MarketCardDetail() {
   const [viewVersion, setViewVersion] = useState(null)
   const [restoring, setRestoring] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
-  const [editing, setEditing] = useState(false)
   const [cropFile, setCropFile] = useState(null)
   const [avatarSaving, setAvatarSaving] = useState(false)
   const avatarInputRef = useRef(null)
@@ -437,33 +436,31 @@ export default function MarketCardDetail() {
     }
   }
 
-  const handleEditSave = async (cardJson) => {
-    setEditing(true)
-    try {
-      const res = await fetchWithTimeout(`/api/market/${cardId}/publish`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({
-          card_json: JSON.stringify(cardJson),
-          market_description: card.market_description || '',
-          market_tags: card.market_tags || '',
-          publish_message: '编辑更新',
-        }),
-      })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.detail || '保存失败')
-      }
-      setShowEditModal(false)
-      const cardRes = await fetchWithTimeout(`/api/market/card/${cardId}`)
-      const cardData = await cardRes.json()
-      setCard(cardData)
-      setLiked(cardData.liked_by_me || false)
-      setLikes(cardData.likes || 0)
-    } finally {
-      // 失败不在这里显示：错误抛给 EditCardModal，由弹窗自己呈现
-      setEditing(false)
+  // 编辑保存带上编辑页打开时那一版（`opened.revision`）：卡在别处变过，后端报冲突，不整张盖掉。
+  // 恢复版本（上面）是有意的整张覆盖，不带。
+  // 失败不在这里显示：错误抛给 EditCardModal，由弹窗自己呈现；保存没结束时不让关也由它管。
+  const handleEditSave = async (cardJson, opened) => {
+    const res = await fetchWithTimeout(`/api/market/${cardId}/publish`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({
+        card_json: JSON.stringify(cardJson),
+        market_description: card.market_description || '',
+        market_tags: card.market_tags || '',
+        publish_message: '编辑更新',
+        revision: opened.revision,
+      }),
+    })
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.detail || '保存失败')
     }
+    setShowEditModal(false)
+    const cardRes = await fetchWithTimeout(`/api/market/card/${cardId}`)
+    const cardData = await cardRes.json()
+    setCard(cardData)
+    setLiked(cardData.liked_by_me || false)
+    setLikes(cardData.likes || 0)
   }
 
   const handleAvatarChange = (e) => {
@@ -1149,9 +1146,10 @@ export default function MarketCardDetail() {
           isOpen={showEditModal}
           data={parseCardJson(card)}
           cardId={cardId}
+          revision={card.revision}
           editName={true}
           onSave={handleEditSave}
-          onClose={() => { if (!editing) setShowEditModal(false) }}
+          onClose={() => setShowEditModal(false)}
         />
       )}
 
