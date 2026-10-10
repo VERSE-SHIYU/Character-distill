@@ -468,22 +468,13 @@ class TextManager:
                 self._storage, self._distiller, text_id, user_id, content)
             aliases = aliases_for(chars, character_name)
 
-            # 预检（补充 1-第 4 步）：原文里挑不出本角色的对话句就在长步骤之前失败 ——
-            # 与挑选共用 `dialogue_candidates`，省掉「付了钱才发现挑不出」。约 0.1 秒的
-            # 纯计算也挪出事件循环（本协程跑在请求 loop 上）。
-            await asyncio.to_thread(
-                self._distiller.dialogue_candidates,
-                content, character_name, aliases, chars,
-            )
-
             try:
                 card = await asyncio.to_thread(
                     self._distiller.distill_incremental, content, character_name, aliases
                 )
                 # 后置步骤（WP18 / WP17）：核对引文 + 贴对话示例。格式化模板里已没有示例
-                # 这个字段，三条产卡通道各接一次。漏接的那条静默落一张没有示例的卡 ——
-                # 与「本来就没有」从成品看不出来。失败（挑不出）冒泡，与识别失败同口径
-                # 交给统一出口。
+                # 这个字段，三条产卡通道各接一次。挑不出示例时卡照常返回（保底在
+                # `finalize_card` 里）；其余后置步骤出错仍冒泡，交给统一出口。
                 card = await asyncio.to_thread(
                     self._distiller.finalize_card,
                     card, content, character_name, aliases, chars,

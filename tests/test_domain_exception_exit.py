@@ -65,12 +65,6 @@ class _FakeDistiller:
     def identify_characters(self, content: str) -> list:
         return []
 
-    def dialogue_candidates(self, content, name, aliases=(), roster=()):
-        # 预检（补充 1-第 4 步）：通道拿到别名之后先调它一眼，返回值不保留。本组不考
-        # 抽取，给个非空即可 —— 缺了它，预检的 AttributeError 会落进那圈共用 except，
-        # 把下面那个 DistillError 的文案换成通用文案。
-        return [object()]
-
     def distill_incremental_stream(self, content, name, aliases, text_type):
         raise self._exc
         yield  # noqa: unreachable —— 只为把它变成 generator

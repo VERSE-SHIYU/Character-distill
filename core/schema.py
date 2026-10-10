@@ -315,6 +315,16 @@ class CharacterCard(BaseModel):
     cognitive: CognitiveProfile = CognitiveProfile()  # 认知/语言画像
     awakening_message: str = ""  # 蒸馏完成时生成的苏醒台词
 
+    def has_dialogue_examples(self) -> bool:
+        """卡上有没有对话示例：顶层或任一阶段下有一组就算有（有起点的卡，示例归在阶段下）。
+
+        「蒸馏完成但没配上示例」要告诉用户，那句话由各通道渲染；有没有，只在这里判。
+        """
+        from core.card_layers import get_path   # card_layers 反过来 import 本模块，故不放顶部
+
+        return bool(self.dialogue_examples) or any(
+            get_path(p.overlay, "dialogue_examples") for p in self.character_arc.phases)
+
 
 # ── 格式化字段分组（WP7）──────────────────────────────────────────────
 # 流式蒸馏的格式化按组并行生成；非流式 distill_incremental 仍用完整提示词。

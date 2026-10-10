@@ -638,8 +638,8 @@ def _other_people(
 ) -> list[dict]:
     """名单里**除本角色外**的人物：`[{"name", "aliases"}]`。
 
-    预检（`dialogue_candidates` 判「有没有别人可当对方」）与挑选（enum 的可选项、提示词里
-    的名单）都从这一处取，不各写一份 —— 两处一旦分家，预检放行的名单与挑选看到的名单就
+    取候选（`dialogue_candidates` 判「有没有别人可当对方」）与挑选（enum 的可选项、提示词里
+    的名单）都从这一处取，不各写一份 —— 两处一旦分家，取候选时认的名单与挑选看到的名单就
     不是同一份。本角色的标准名与别名一并排除，否则 enum 里多出一个「自己」，模型可能
     选出自己接自己的组。
     """
@@ -1825,12 +1825,9 @@ class Distiller:
     ) -> list[Candidate]:
         """抽取「本角色」（含别名）的候选对话句；抽不出就抛 `DistillError`。
 
-        预检与挑选共用这一个方法（补充 1-第 3 步）：三条通道在花钱之前先调一眼，挑选时
-        `attach_dialogue_examples` 再调一次 —— 同一个纯函数、同样的输入，结果必然相同，
-        所以「预检过了，挑选就不会因为没候选而失败」这句成立。抽候选约 0.1 秒（约束 11），
-        跨长步骤把候选对象带着走不值这点钱。
+        只由 `attach_dialogue_examples` 调用。
 
-        两种抽不出都是任务失败（不是落一张没有示例的卡）：
+        两种抽不出（原因写进异常，调用方决定怎么处理）：
         - 名单里除本角色外没有别人 —— enum 没有可选的对方，成不了「一问一答」；
         - 原文里找不到带本角色名的对话句 —— 提示里点出认的引号，版本用了别的引号时能看出
           来（本轮只认 `“”`/`「」`/`『』`，见 `core/quotes.py`）。
@@ -1947,9 +1944,10 @@ class Distiller:
     ) -> CharacterCard:
         """把挑选出的对话示例贴到卡上 —— 后置步骤（WP17），卡上其余字段一个不动。
 
-        **不 fail-open**：挑不出来（原文里没有这个角色的对话句 / 模型没选出可用的编号）
-        就把 `pick_dialogue_examples` 的 `DistillError` 抛出去，由调用方按任务失败处理。
-        静默落一张没有对话示例的卡，等于把「挑不出」伪装成「本来就没有」。
+        **本方法照实抛**：挑不出来（原文里没有这个角色的对话句 / 模型没选出可用的编号）
+        就把 `DistillError` 抛出去，原因在异常里。要不要因此作废整张卡由调用方定：蒸馏
+        流程经 `finalize_card` 调用，在那里保底（照常出卡）；需要把原因告诉用户的调用方
+        （只重跑这一步的入口）直接调本方法。
 
         三条产卡通道（bg 任务、SSE 流、`TextManager.get_or_distill`）共用这一处：各写
         一份的结果是其中一条悄悄漏了这一步，而卡上「没有对话示例」与「本来就没有」从
@@ -1958,7 +1956,7 @@ class Distiller:
         `roster` 是识别出的名单（`resolve_characters` 的形状）；本角色自己的名字与别名由
         `_other_people` 排除，否则 enum 里多出一个「自己」，模型可能选出自己接自己的组。
 
-        候选只从 `dialogue_candidates` 取：预检走的是同一个方法，两处不会分家。
+        候选只从 `dialogue_candidates` 取，不在这里另抽一遍。
 
         卡有起点（`has_positions`）时，示例按各自候选在原文中的位置经 `phase_of` 归到阶段
         （§3.9）；没有起点（旧卡 / 位置检查整卡跳过）时全部留顶层。
@@ -1993,15 +1991,27 @@ class Distiller:
         其中一条漏掉一步从成品看不出来（卡上「没有引文 / 示例」与「本来就没有」同形）。
         三条都由代码保证：关系按 target 去重（`dedupe_relationship_targets`）、引号里的
         必是原文（核对去掉查不到的引文的引号）、示例按编号从原文复制
-        （`attach_dialogue_examples`）。失败口径不变：挑选失败照旧抛 `DistillError` 交给
-        调用方按任务失败处理。
+        （`attach_dialogue_examples`）。
+
+        **对话示例这一步保底**：挑不出来或调用模型出错，卡照常返回、只是没有示例，原因
+        进日志 —— 不让最后一个后置字段把已经付费蒸好的整张卡作废（标签、苏醒台词本来
+        就是这样）。保底只此一处，三条通道因此口径相同；通道用
+        `CharacterCard.has_dialogue_examples` 判有没有配上，自己渲染提示。去重与核对引文出错仍然抛。
 
         去重放在核对之前：先丢掉重复条目，引文撤回日志就只涉及留下来的那些条目，不会为一条
         随后被丢的重复关系报一次撤回。
         """
         card, _ = dedupe_relationship_targets(card)
         card, _ = retract_unverified(card, content)
-        return self.attach_dialogue_examples(card, content, name, aliases, roster)
+        try:
+            return self.attach_dialogue_examples(card, content, name, aliases, roster)
+        except DistillError as exc:
+            # 预期内的挑不出（没有候选 / 名单里没有别人 / 模型没选出可用的编号）。
+            logger.warning("[distill] 「%s」没有配上对话示例，照常出卡：%s", name, exc)
+        except Exception:
+            # 调用模型出错或这一步自己的缺陷：同样不让整张卡作废，但要带堆栈进日志。
+            logger.error("[distill] 「%s」挑选对话示例出错，照常出卡", name, exc_info=True)
+        return card
 
     def _auto_tag(self, card_dict: dict) -> list[str]:
         """Lightweight LLM call to pick 1-3 preset tags matching the card.
