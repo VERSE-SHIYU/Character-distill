@@ -27,6 +27,7 @@ RECENCY_TAU_HOURS = 72 # 指数衰减时间常数（小时）
 REFLECTION_THRESHOLD = 30   # 累计重要性达此值（且满足双条件）触发反思
 REFLECTION_MIN_ROUNDS = 8   # 距上次反思最少轮数，防高频触发
 REFLECTION_MIN_QUALITY = 3  # 触发反思最少需要的高质量（importance>=7）原始记忆条数
+GET_ALL_FIRST_BATCH = 200   # 读全量时第一批要的条数；拿满了就翻倍再要（mem0 默认只给 20）
 
 # ── 情绪极性关键词（子串匹配，覆盖 LLM 丰富情绪词）──
 _POSITIVE_KEYWORDS = [
@@ -474,10 +475,16 @@ class MemoryView:
         if not self.enabled:
             return []
         try:
-            results = self._mem.get_all(filters=scope.filters())
-            if isinstance(results, dict):
-                results = results.get("results", [])
-            return results
+            # mem0 的 get_all 只认条数（默认 20），没有「全部」；按批要，拿满了就翻倍再要，
+            # 直到拿回来的比要的少 —— 那才是读完了。
+            limit = GET_ALL_FIRST_BATCH
+            while True:
+                results = self._mem.get_all(filters=scope.filters(), top_k=limit)
+                if isinstance(results, dict):
+                    results = results.get("results", [])
+                if len(results) < limit:
+                    return results
+                limit *= 2
         except Exception as exc:
             logger.warning("Mem0 get_all failed: %s", exc, exc_info=True)
             return []
