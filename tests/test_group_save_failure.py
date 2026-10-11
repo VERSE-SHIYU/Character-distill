@@ -196,7 +196,7 @@ def _make_two_card_group(client, store, uid) -> tuple[str, list[str]]:
     })
     assert r.status_code == 200, (
         f"建群这一步就失败了，后面的帧断言无从谈起：{r.status_code} {r.text[:200]}")
-    return r.json()["group_id"], [c1, c2]
+    return r.json()["group"]["id"], [c1, c2]
 
 
 def _broadcast(client, gid, cid) -> list[dict]:

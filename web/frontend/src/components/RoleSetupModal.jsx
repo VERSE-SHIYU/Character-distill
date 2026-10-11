@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
+import { phaseHeader } from '../utils/card'
 
 export default function RoleSetupModal({ isOpen, characterName, characterId, relationships, textType, arcPhases, selectable, onConfirm, onSkip }) {
   const getUserRole = useAppStore((s) => s.getUserRole)
@@ -72,7 +73,7 @@ export default function RoleSetupModal({ isOpen, characterName, characterId, rel
           <div className="modal-title">确认身份</div>
           <p className="role-confirm-text">
             你将以 <strong>「{trimmed}」</strong> 的身份与 <strong>{characterName}</strong> 对话
-            {showPhasePicker && `（阶段 ${selectedPhase}/${phaseCount}${arcPhases[selectedPhase - 1]?.label ? ` · ${arcPhases[selectedPhase - 1].label}` : ''}）`}
+            {showPhasePicker && `（${phaseHeader(selectedPhase, arcPhases[selectedPhase - 1]?.label, phaseCount)}）`}
           </p>
           <div className="modal-actions">
             <button type="button" className="btn-secondary" onClick={handleBack}>
@@ -154,7 +155,7 @@ export default function RoleSetupModal({ isOpen, characterName, characterId, rel
                     onChange={() => choosePhase(k)}
                   />
                   <span className="role-phase-text">
-                    阶段 {k}{p.label ? ` · ${p.label}` : ''}
+                    {phaseHeader(k, p.label)}
                     {p.state && <span className="role-phase-state">{p.state}</span>}
                   </span>
                 </label>

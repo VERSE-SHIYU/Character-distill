@@ -788,7 +788,7 @@ class TestGroupSessionOwnership:
         })
         assert r.status_code == 200, (
             f"建群这一步就失败了，后面的属主断言无从谈起：{r.status_code} {r.text[:200]}")
-        return r.json()["group_id"], cid
+        return r.json()["group"]["id"], cid
 
     def test_T3_group_send_non_owner_404(
         self, store, owner, owner_client, intruder_client, chat_capable_llm, light_rag

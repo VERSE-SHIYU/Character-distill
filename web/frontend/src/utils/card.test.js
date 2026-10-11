@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseCardJson } from './card.js'
+import { parseCardJson, effectiveArcPhase, arcPhaseDisplay, arcPhaseOptions } from './card.js'
 
 describe('parseCardJson identity normalization', () => {
   it('keeps string identity', () => {
@@ -61,5 +61,71 @@ describe('parseCardJson 弧线归一（旧卡字符串数组 → { axis, phases 
     const card = { card_json: { character_arc: ['a'] } }
     parseCardJson(card)
     expect(card.card_json.character_arc).toEqual(['a'])
+  })
+})
+
+describe('effectiveArcPhase（没选 = 最后阶段）', () => {
+  const card = { card_json: { character_arc: { axis: 'x', phases: [{ label: '冷' }, { label: '' }, { label: '暖' }] } } }
+
+  it('无阶段的卡 → null', () => {
+    expect(effectiveArcPhase({ card_json: {} }, 1)).toBeNull()
+    expect(effectiveArcPhase({ card_json: { character_arc: { phases: [] } } }, 2)).toBeNull()
+  })
+
+  it('k 为 null / 0 / 越界 → 最后阶段 n', () => {
+    expect(effectiveArcPhase(card, null)).toBe(3)
+    expect(effectiveArcPhase(card, 0)).toBe(3)
+    expect(effectiveArcPhase(card, 4)).toBe(3)
+    expect(effectiveArcPhase(card, -1)).toBe(3)
+  })
+
+  it('合法 k → k', () => {
+    expect(effectiveArcPhase(card, 1)).toBe(1)
+    expect(effectiveArcPhase(card, 2)).toBe(2)
+  })
+})
+
+describe('arcPhaseDisplay（阶段文字，不看 selectable）', () => {
+  const card = { card_json: { character_arc: { axis: 'x', phases: [{ label: '冷' }, { label: '' }, { label: '暖' }] } } }
+
+  it('有 label：阶段 k/n · label', () => {
+    expect(arcPhaseDisplay(card, 1)).toBe('阶段 1/3 · 冷')
+  })
+
+  it('无 label：只写阶段 k/n', () => {
+    expect(arcPhaseDisplay(card, 2)).toBe('阶段 2/3')
+  })
+
+  it('没选 / 越界 → 最后阶段，显示它的 label', () => {
+    expect(arcPhaseDisplay(card, null)).toBe('阶段 3/3 · 暖')
+  })
+
+  it('无阶段 → 空串', () => {
+    expect(arcPhaseDisplay({ card_json: {} }, 1)).toBe('')
+  })
+
+  it('不看 selectable：不可选的卡照常显示', () => {
+    const unselectable = { card_json: { character_arc: { phases: [{ label: '甲' }], selectable: false } } }
+    expect(arcPhaseDisplay(unselectable, null)).toBe('阶段 1/1 · 甲')
+  })
+})
+
+describe('arcPhaseOptions（下拉选项，value 为字符串）', () => {
+  it('不可选 → []', () => {
+    const card = { card_json: { character_arc: { phases: [{ label: '甲' }], selectable: false } } }
+    expect(arcPhaseOptions(card)).toEqual([])
+  })
+
+  it('无阶段 → []', () => {
+    expect(arcPhaseOptions({ card_json: {} })).toEqual([])
+    expect(arcPhaseOptions({ card_json: { character_arc: { phases: [], selectable: true } } })).toEqual([])
+  })
+
+  it('可选：每阶段一项，value 为字符串，有 label 带 · label', () => {
+    const card = { card_json: { character_arc: { phases: [{ label: '冷' }, { label: '' }], selectable: true } } }
+    expect(arcPhaseOptions(card)).toEqual([
+      { value: '1', label: '阶段 1 · 冷' },
+      { value: '2', label: '阶段 2' },
+    ])
   })
 })
