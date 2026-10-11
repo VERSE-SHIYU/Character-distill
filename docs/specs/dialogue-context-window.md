@@ -177,6 +177,10 @@ core/distiller.py:2036:            return self.attach_dialogue_examples(card, co
 | 挑选那一步不过上限 | C1、C2 |
 | 上限挪到 `dialogue_candidates`（不守在交给模型处） | C1 |
 | 抽候选时不编号 | 16 条（C4 和三个现有测试文件里的） |
+| 台词里的句末不算（只数叙述里的） | `test_quotes.py` 里 §11 补的那条 |
+| 换行也算句末 | 同上 |
+| 刚好数到全文第一个句末时从头带起（`k >= 0` 写成 `k > 0`） | 同上 |
+| 从上一句的开引号往前数（不从引导语起点） | **存活，等价**：引导语里没有句末符号，两种数法结果相同（鲁迅 5 篇加公版《红楼梦》1,969 条候选，片段 0 条不同） |
 | 恰好 40 条也重取（`<=` 写成 `<`） | **存活，等价**：40 条里均匀取 40 条取到的就是原来那 40 条，编号也相同，行为没有差别 |
 
 ## 6. 测试
@@ -187,7 +191,7 @@ core/distiller.py:2036:            return self.attach_dialogue_examples(card, co
 python -m pytest -q tests/test_dialogue_context_goal.py tests/test_quotes.py tests/test_dialogue_pairing_goal.py tests/test_distiller_dialogue_pick.py tests/test_distill_task_api.py tests/test_identify_failure_channels.py tests/test_usage_identity_context.py tests/test_longbook_acceptance_card.py tests/test_dialogue_fallback_goal.py tests/test_examples_pending_goal.py tests/test_card_quotes.py
 ```
 
-沙箱里这 11 个文件在第 2 版原型上是 224 条全过（比第 1 版多的 1 条是上限两侧的单测）。本段不改前端，不跑 `npm test`。合并门是分支 CI；合并只做 git 操作。报告里不写本地全量的数字。
+沙箱里这 11 个文件在第 2 版原型上是 224 条全过（比第 1 版多的 1 条是上限两侧的单测）。§11 补了一条单测之后是 225 条。本段不改前端，不跑 `npm test`。合并门是分支 CI；合并只做 git 操作。报告里不写本地全量的数字。
 
 ## 7. 没有验证的
 
@@ -230,3 +234,43 @@ python -m pytest -q tests/test_dialogue_context_goal.py tests/test_quotes.py tes
 - 「数到台词中间时退到引导语开头」仍然是自研的工程规则（§4 依据表），没有文献。它和「往前带 10 句」是同一条规则的两半（都在回答「片段从哪开始」），所以放在同一个函数里，没有拆成两处。
 - 抽候选时先用 `n=0` 占位、返回前统一编号。占位的 0 不出这个函数；把它去掉要改 `Candidate` 的形状，会牵动 `render_candidates`、`build_example` 和所有用到它的测试，超出本段范围。
 
+## 11. 补充：审计 `d134dd0`（2026-10-11，Claude 拉分支审）
+
+审的是 PR #134，分支头 `d134dd0`，三个提交 `eb903ca`、`47bd62e`、`d134dd0`。审的人是这份 spec 和参考实现的作者，不算独立复核；独立复核另做。
+
+先跑目标检查（在分支上逐个提交实跑）：`eb903ca` 7 红 4 绿（C1、C2、W1–W5）；`47bd62e` 5 红 6 绿（W1–W5）；`d134dd0` 11 绿。§6 那条命令 224 条全过。分支 CI：Build run 38109168827，提交 `d134dd0`，结论 success。
+
+逐文件：
+
+| 文件 | 看过，结论 |
+|---|---|
+| `core/quotes.py` | 与参考实现逐字相同。`_numbered`、`_context_start`、`spread_evenly` 各一处，规则没有写第二遍 |
+| `core/distiller.py` | 与参考实现逐字相同。上限只在 `_pick_dialogue_examples` 开头一行，`dialogue_candidates` 没动 |
+| `tests/test_quotes.py` | 与参考实现逐字相同。**有缺口，见下** |
+| `tests/test_dialogue_context_goal.py` | sha256 前 16 位 `dc024263c8a3e7c4`，与交付的一致 |
+| `docs/specs/dialogue-context-window.md` | sha256 前 16 位 `30a7bcb0f892b634`，与交付的一致 |
+| `docs/specs/dialogue-pairing.md`、`docs/specs/distill-verbatim-dialogue.md` | 末尾各多一行「取代（2026-10-11）」，别处没动 |
+
+分支相对 `main` 只改了这 7 个文件。实现没有偏离 spec。
+
+问题一条，属于 spec 和测试设计的缺口，不是实现偏离：
+
+| 问题 | 根因 | 处理 |
+|---|---|---|
+| §4 段 2 第 1 条写了「一句」怎么数（按 `。！？`，台词里的也算；换行不算），但没有测试守它。审计自补的变异里有 3 条存活：台词里的句末不算、换行也算句末、刚好数到全文第一个句末时从头带起 | W4 和改写的那条单测，用的文本只有叙述句、只有一行，而且离全文开头很远。这三种数法在这样的文本上结果相同，测试分不出来 | 在 `tests/test_quotes.py` 补一条 `test_a_sentence_is_counted_by_its_end_mark_spoken_or_not_and_a_line_break_is_not_one`：文本里有台词里的句末、有不带句号的换行，并且刚好数到全文第一个句末。补上后这 3 条都变红。只加测试，不改实现 |
+
+审计自补的变异（在 `d134dd0` 上跑，不在 §5 第 2 版原来那 14 条里）：
+
+| 方向 | 变异 | 补测试前 | 补测试后 |
+|---|---|---|---|
+| 放宽 | 台词里的句末不算 | 存活 | 红 |
+| 放宽 | 刚好数到全文第一个句末时从头带起 | 存活 | 红 |
+| 放宽 | 从上一句的开引号往前数 | 存活（等价） | 存活（等价） |
+| 放宽 | 上限只管渲染，schema 的编号上限仍按全部候选 | C1、C3 红 | 同左 |
+| 过严 | 换行也算句末 | 存活 | 红 |
+| 过严 | 落在台词里时往后跳到台词结束 | W5 红 | 同左 |
+| 过严 | 均匀取不含最后一条 | C1、上限那条单测红 | 同左 |
+| 过严 | 上限 39 | C1、C3 红 | 同左 |
+| 过严 | 不足 10 句时一句都不带 | W1、W2、W3 红 | 同左 |
+
+没有核实的：CI 页面上 gate、sentinel 两个 job 各有 9 条「Event loop is closed」的标注，run 的结论是 success；`main` 上有没有同样的标注没有查。

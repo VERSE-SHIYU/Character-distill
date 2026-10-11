@@ -164,6 +164,27 @@ def test_the_fragment_keeps_the_previous_line_and_ten_sentences_before_it():
     assert "先这么说" not in c.context, "再上一句落在 10 句之外，不该进来"
 
 
+def test_a_sentence_is_counted_by_its_end_mark_spoken_or_not_and_a_line_break_is_not_one():
+    """「一句」按句末符号（。！？）数：台词里的也算，换行不算。
+
+    上一句之前共 11 个句末（开头 2 句、贾母那句台词里 3 个、叙述 6 句），片段该从第 2 句起 ——
+    这也是「刚好数到全文第一个句末」的边界。
+
+    变异：台词里的句末不算 → 只数到 8 个，从全文开头带起，红；换行也算句末 → 起点落进贾母
+    那句台词、退到「贾母道」，红；刚好数到第一个句末时从头带起（`k >= 0` 写成 `k > 0`）→ 红。
+    """
+    text = ("开头第一句。开头第二句。\n"
+            "贾母道：“甲。乙！丙？”\n"
+            + "".join(f"叙述第{i}句。" for i in range(1, 7))
+            + "没有句号的一行\n"
+            + "凤姐笑道：“你老慢慢说。”\n"
+            + "刘姥姥道：“姑娘说得是。”\n")
+
+    c = extract_candidates(text, ["刘姥姥"])[0]
+
+    assert c.context == text[text.index("开头第二句。"):text.rindex("”") + 1]
+
+
 def _one_per_round(n):
     text = "".join(f"凤姐道：“第{i}问？”\n刘姥姥道：“第{i}答。”\n" for i in range(1, n + 1))
     return extract_candidates(text, ["刘姥姥"])
