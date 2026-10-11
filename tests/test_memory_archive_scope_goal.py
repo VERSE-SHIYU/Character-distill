@@ -27,7 +27,7 @@ import math
 import os
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import FrozenInstanceError, dataclass
 from pathlib import Path
 
 # 必须在 import mem0 **之前**：mem0 在 import 期读这个变量（memory/telemetry.py）。
@@ -46,6 +46,7 @@ import server  # noqa: E402
 from affinity_verdict import verdict  # noqa: E402
 from core.chat_engine import ChatEngine  # noqa: E402
 from core.memory_manager import MemoryManager  # noqa: E402
+from core.memory_scope import MemoryScope  # noqa: E402
 from core.schema import CharacterCard  # noqa: E402
 from routers.auth import _create_access_token, get_jwt_secret  # noqa: E402
 from storage.sqlite_store import SQLiteStore  # noqa: E402
@@ -534,6 +535,20 @@ def test_G6b_engine_without_card_id_reads_and_writes_nothing(manager, threads):
     assert not _has(rz0.r2, "存档Z0"), "空卡 id 的引擎还在取重逢记忆"
     assert rz0.r3 is None, f"空卡 id 的引擎还在取到期事件：{rz0.r3}"
     assert rz0.r4 is False, "空卡 id 的引擎还在反思"
+
+
+def test_G0_scope_is_immutable():
+    """``MemoryScope`` 是不可变值对象：给 ``run_id``/``card_id`` 赋值必须抛 ``FrozenInstanceError``。
+
+    否则 ``scope.run_id = None`` 会把存档范围当场变成整卡范围。
+    """
+    scope = MemoryScope.archive("card-g0", "arch-g0")
+    assert scope.filters() == {"user_id": "card-g0", "run_id": "session:arch-g0"}
+    with pytest.raises(FrozenInstanceError, match="run_id"):
+        scope.run_id = None
+    with pytest.raises(FrozenInstanceError, match="card_id"):
+        scope.card_id = "card-other"
+    assert scope.run_id == "session:arch-g0", "赋值失败后范围不该变"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

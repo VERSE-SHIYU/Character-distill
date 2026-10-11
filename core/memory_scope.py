@@ -7,9 +7,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 
+@dataclass(frozen=True, slots=True)
 class MemoryScope:
     """这条记忆属于谁。不可变值对象；把归属翻成 mem0 的过滤条件只此一处。
 
@@ -18,24 +20,21 @@ class MemoryScope:
     不带前缀分不出来。
     """
 
-    __slots__ = ("card_id", "run_id")
-
-    def __init__(self, card_id: str, run_id: str | None) -> None:
-        self.card_id = card_id
-        self.run_id = run_id
+    card_id: str
+    run_id: str | None
 
     @classmethod
-    def archive(cls, card_id: str, session_id: str) -> "MemoryScope":
+    def archive(cls, card_id: str, session_id: str) -> MemoryScope:
         """一对一存档。"""
         return cls(card_id, f"session:{session_id}")
 
     @classmethod
-    def group(cls, card_id: str, group_id: str) -> "MemoryScope":
+    def group(cls, card_id: str, group_id: str) -> MemoryScope:
         """群聊。"""
         return cls(card_id, f"group:{group_id}")
 
     @classmethod
-    def whole_card(cls, card_id: str) -> "MemoryScope":
+    def whole_card(cls, card_id: str) -> MemoryScope:
         """整张卡（不带范围）—— 只给删除用。"""
         return cls(card_id, None)
 
@@ -45,16 +44,6 @@ class MemoryScope:
         if self.run_id:
             f["run_id"] = self.run_id
         return f
-
-    def __eq__(self, other: object) -> bool:
-        return (isinstance(other, MemoryScope)
-                and other.card_id == self.card_id and other.run_id == self.run_id)
-
-    def __hash__(self) -> int:
-        return hash((self.card_id, self.run_id))
-
-    def __repr__(self) -> str:
-        return f"MemoryScope(card_id={self.card_id!r}, run_id={self.run_id!r})"
 
 
 class ScopedMemory:
