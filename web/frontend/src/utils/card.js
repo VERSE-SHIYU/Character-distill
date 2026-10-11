@@ -41,13 +41,17 @@ export function effectiveArcPhase(card, arcPhase) {
   return arcPhase >= 1 && arcPhase <= n ? arcPhase : n
 }
 
+/** 阶段文字的唯一一处：`阶段 k`（给 n 时 `阶段 k/n`），有 label 加 ` · label`。 */
+export function phaseHeader(k, label, n) {
+  return `阶段 ${k}${n ? `/${n}` : ''}${label ? ` · ${label}` : ''}`
+}
+
 /** 阶段文字：`阶段 k/n`（有 label 时加 ` · label`）；无阶段 → 空串。**不看 selectable**。 */
 export function arcPhaseDisplay(card, arcPhase) {
   const phases = parseCardJson(card)?.character_arc?.phases || []
   const k = effectiveArcPhase(card, arcPhase)
   if (k == null) return ''
-  const label = phases[k - 1]?.label || ''
-  return `阶段 ${k}/${phases.length}${label ? ` · ${label}` : ''}`
+  return phaseHeader(k, phases[k - 1]?.label, phases.length)
 }
 
 /** 下拉选项（`common/Select` 收字符串 value）：卡不可选（`selectable` 不为真）或无阶段 → `[]`。 */
@@ -56,7 +60,7 @@ export function arcPhaseOptions(card) {
   if (!arc?.selectable) return []
   return (arc.phases || []).map((p, i) => ({
     value: String(i + 1),
-    label: `阶段 ${i + 1}${p?.label ? ` · ${p.label}` : ''}`,
+    label: phaseHeader(i + 1, p?.label),
   }))
 }
 

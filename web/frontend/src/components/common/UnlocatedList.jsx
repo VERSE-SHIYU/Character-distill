@@ -10,6 +10,7 @@
 import { useState } from 'react'
 import Select from './Select'
 import { overlayLeaves, overlayLabel } from './ArcList'
+import { phaseHeader } from '../../utils/card'
 
 function MoveControl({ phases, initial, label, onMove }) {
   const [phase, setPhase] = useState(String(initial))
@@ -25,7 +26,7 @@ function MoveControl({ phases, initial, label, onMove }) {
         ariaLabel={`把「${label}」挪到哪个阶段`}
         value={phase}
         options={phases.map((p, i) => ({
-          value: String(i + 1), label: `阶段 ${i + 1}${p.label ? ` · ${p.label}` : ''}` }))}
+          value: String(i + 1), label: phaseHeader(i + 1, p.label) }))}
         onChange={setPhase}
         disabled={busy}
       />

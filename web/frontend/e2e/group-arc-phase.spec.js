@@ -48,14 +48,18 @@ async function setup(page, { groups = [], cards = CARDS } = {}) {
       let body = {}
       try { body = JSON.parse(route.request().postData() || '{}') } catch { /* ignore */ }
       sentCreate.push(body)
-      // 后端把身份与 member_phases 回显进响应，前端据此走 enterGroup。
+      // 后端落库后返回整行群（与 /api/group/list 同形状），前端据此走 enterGroup。
       return json({
-        group_id: 'gnew', name: body.name || '群聊',
-        user_persona_type: body.user_persona_type || 'director',
-        user_persona_card_id: body.user_persona_card_id || '',
-        user_persona_name: body.user_persona_name || '',
-        user_persona_desc: body.user_persona_desc || '',
-        member_phases: body.member_phases || {},
+        group: {
+          id: 'gnew', name: body.name || '群聊',
+          card_ids: body.card_ids || [],
+          user_persona_type: body.user_persona_type || 'director',
+          user_persona_card_id: body.user_persona_card_id || '',
+          user_persona_name: body.user_persona_name || '',
+          user_persona_desc: body.user_persona_desc || '',
+          member_phases: body.member_phases || {},
+          created_at: '2026-01-01T00:00:00Z',
+        },
       })
     }
     return json({})
@@ -122,17 +126,28 @@ test('扮演某张卡：它的下拉消失；改回导演：回来', async ({ pa
   await expect(rows).toHaveCount(2)                                   // 改回导演 → 甲 回来
 })
 
-test('改甲为阶段 1 → 创建 → 请求体 member_phases 甲=1、乙=最后、扮演的卡不在', async ({ page }) => {
+test('选甲/乙/丙、扮演乙、改甲为阶段 1 → 创建 → 请求体 member_phases 恰为 { 甲: 1 }', async ({ page }) => {
   const sent = await setup(page)
-  await openCreateStep2(page)
+  await page.locator('.messages-sidebar-header .btn-primary').click()
+  await expect(page.locator('.group-create-card')).toHaveCount(4)
+  await page.locator('.group-create-card', { hasText: '甲' }).click()
+  await page.locator('.group-create-card', { hasText: '乙' }).click()
+  await page.locator('.group-create-card', { hasText: '丙' }).click()   // 丙 不可选：不进时期列表
+  await page.locator('.group-create-modal .modal-actions .btn-primary').click()   // 下一步
+  await expect(page.locator('.modal-label', { hasText: '你以谁的身份参与？' })).toBeVisible()
+
+  // 扮演乙：乙 从时期列表里退出
+  await page.locator('.persona-option', { hasText: '扮演已选角色' }).click()
+  await page.locator('.persona-sub .persona-char-btn', { hasText: '乙' }).click()
 
   await page.locator('.group-create-row', { hasText: '甲' }).locator('.ui-select').click()
   await page.getByRole('option', { name: '阶段 1 · 冷' }).click()
   await page.locator('.group-create-modal .modal-actions .btn-primary').click()   // 创建群聊
 
   await expect.poll(() => sent.length).toBe(1)
-  expect(sent[0].card_ids).toEqual(['a', 'b'])
-  expect(sent[0].member_phases, `请求体：${JSON.stringify(sent[0])}`).toEqual({ a: 1, b: 2 })
+  expect(sent[0].card_ids).toEqual(['a', 'b', 'c'])
+  // 乙 是扮演的、丙 不可选 → 只有甲（改成阶段 1）进请求体
+  expect(sent[0].member_phases, `请求体：${JSON.stringify(sent[0])}`).toEqual({ a: 1 })
 })
 
 test('成员标签：新建群按 member_phases 显示；旧群无该列 → 最后阶段；无阶段卡不显示', async ({ page }) => {

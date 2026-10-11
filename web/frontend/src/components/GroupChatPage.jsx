@@ -23,11 +23,11 @@ import UnsavedHint from './common/UnsavedHint'
 import SplitOrFullscreen from './common/SplitOrFullscreen'
 import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
-import { parseCardJson, arcPhaseOptions, arcPhaseDisplay, effectiveArcPhase } from '../utils/card'
+import { parseCardJson, arcPhaseDisplay } from '../utils/card'
 import { displayName } from '../utils/displayName'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
-import { blockedBySameCharacter, aiMemberIds, parseCardIds } from '../utils/groupMembers'
+import { blockedBySameCharacter, aiMemberIds, parseCardIds, groupPhaseChoices, memberPhasesPayload } from '../utils/groupMembers'
 import GroupPhasePicker from './GroupPhasePicker'
 
 /** 通过 card_id 从后端获取单张角色卡信息 */
@@ -195,17 +195,15 @@ export default function GroupChatPage() {
   const [memberPhases, setMemberPhases] = useState({})  // 建群第 2 步：卡 id → 选的阶段号（只存改过的）
 
   // 建群第 2 步的选时期列表：AI 成员里「可选阶段」的卡各一项。渲染与请求体都只读它。
-  const phaseChoices = useMemo(() => {
-    return aiMemberIds(selectedCardIds, personaType, personaCardId)
-      .map((id) => {
-        const card = cardCache[id] || allCards.find((c) => (c.id || c.card_id) === id)
-        if (!card) return null
-        const options = arcPhaseOptions(card)
-        if (options.length === 0) return null
-        return { cardId: id, card, options, value: memberPhases[id] ?? effectiveArcPhase(card, null), avatar: cardAvatars[id] }
-      })
-      .filter(Boolean)
-  }, [selectedCardIds, personaType, personaCardId, memberPhases, cardCache, allCards, cardAvatars])
+  // 算法在 `utils/groupMembers.groupPhaseChoices`（纯函数，vitest 直接验），这里只喂数据源。
+  const phaseChoices = useMemo(() => groupPhaseChoices({
+    cardIds: selectedCardIds,
+    personaType,
+    personaCardId,
+    memberPhases,
+    lookup: (id) => cardCache[id] || allCards.find((c) => (c.id || c.card_id) === id),
+    avatarOf: (id) => cardAvatars[id],
+  }), [selectedCardIds, personaType, personaCardId, memberPhases, cardCache, allCards, cardAvatars])
 
   /** 建群表单的身份那几项 + 新加的 memberPhases，一处重置（打开弹窗、建群成功、点「上一步」都调它）。 */
   function resetCreateForm() {
@@ -601,25 +599,15 @@ export default function GroupChatPage() {
         user_persona_card_id: personaCardId,
         user_persona_name: personaName.trim(),
         user_persona_desc: personaDesc.trim(),
-        member_phases: Object.fromEntries(phaseChoices.map((c) => [c.cardId, c.value])),
+        member_phases: memberPhasesPayload(phaseChoices),
       }
       const data = await postJSON('/api/group/create', body)
       setShowCreate(false)
       resetCreateForm()
-      // 建群成功走「进群」那条路：新建的群和点开已有的群同一套（带全 user_persona_*/member_phases）。
-      const created = {
-        id: data.group_id,
-        name: data.name,
-        card_ids: selectedCardIds,
-        user_persona_type: data.user_persona_type,
-        user_persona_card_id: data.user_persona_card_id,
-        user_persona_name: data.user_persona_name,
-        user_persona_desc: data.user_persona_desc,
-        member_phases: data.member_phases,
-        created_at: new Date().toISOString(),
-      }
-      setGroups(prev => [created, ...prev])
-      enterGroup(created)
+      // 建群成功走「进群」那条路：后端返回的就是落库那一行，与 `/api/group/list` 同形状 ——
+      // 不再手抄一份，群对象加字段只改一处。
+      setGroups(prev => [data.group, ...prev])
+      enterGroup(data.group)
     } catch (err) {
       setError(err.message)
     } finally {
