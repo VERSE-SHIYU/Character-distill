@@ -12,10 +12,14 @@
 
    | 文件（worktree 内路径） | sha256 |
    | --- | --- |
-   | `tests/test_group_arc_phase_goal.py` | `78f9da4065e49cc68976f6fd07136187826d7e4bbdc46d0ca4265bbb8ec4e662` |
+   | `tests/test_group_arc_phase_goal.py` | `210539dfebaf57831589e16922c649356ebe5e3eab8858afd78c10a616c72ccc` |
    | `docs/specs/artifacts/group-arc-phase-proto.patch` | `ffe4f4357931fc3d3eebabd08d67b21287ff03b6147344ee9b6c5c5af64ed66e` |
 
+   目标检查 sha 为 **10-11 修复轮作者更新：G4 改断言（建群返回与列群同形状）、新增 G7**（旧值 `78f9da40…` 作废）。
+
    PowerShell：`Test-Path <路径>` 为真，`Get-FileHash -Algorithm SHA256 <路径>` 与上表一致。
+
+   修复提示词里写的 S0「9 绿 1 红」是作者预判错了。`_create` 改读 `r.json()["group"]["id"]` 以后，R4 落地之前 10 条都会红；commit 2 之后 10 条全绿，与实际一致。
 2. `git log -1` 在 `bc3e1df` 或它之后；`main` 上 `storage/migrations_pg/` 最大号是 036、`storage/migrations/` 最大号是 101。**如果 ④ 段 1 已先合并、占用了 037 / 102，本段顺延到下一个号**（两处文件名、`sqlite_store.py` 次序表、迁移注释里的孪生号一起改）。
 3. 逐条复核 §3「已查实的约束」：打开对应行，确认内容还在。行号漂了只要内容在就继续，内容变了就停。
 
