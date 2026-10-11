@@ -778,6 +778,20 @@ class StorageBase(ABC):
         """Persist full affinity state JSON and set affinity_initialized=1."""
 
     @abstractmethod
+    async def save_session_record(self, session_id: str, record_json: str) -> None:
+        """Persist a one-to-one session's record JSON (`sessions.session_record`).
+
+        Does **not** touch `updated_at`: that column is the last-chat time the departure
+        notice reads, and saving the record is not a chat event."""
+
+    @abstractmethod
+    async def load_session_record_unscoped(self, session_id: str) -> str:
+        """Return the session's record JSON ("" when never saved), with no ownership filter.
+
+        Called by the engine restore path (no user context). Anything reachable from
+        a logged-in request must not call this."""
+
+    @abstractmethod
     async def load_affinity_state_unscoped(self, session_id: str) -> tuple[str, bool]:
         """Return (state_json, initialized) for a session, with no ownership filter.
 
