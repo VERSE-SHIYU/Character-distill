@@ -23,11 +23,12 @@ import UnsavedHint from './common/UnsavedHint'
 import SplitOrFullscreen from './common/SplitOrFullscreen'
 import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
-import { parseCardJson } from '../utils/card'
+import { parseCardJson, arcPhaseOptions, arcPhaseDisplay, effectiveArcPhase } from '../utils/card'
 import { displayName } from '../utils/displayName'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 import { blockedBySameCharacter, aiMemberIds, parseCardIds } from '../utils/groupMembers'
+import Select from './common/Select'
 
 /** 通过 card_id 从后端获取单张角色卡信息 */
 async function fetchCardById(cardId) {
@@ -191,6 +192,30 @@ export default function GroupChatPage() {
   const [personaCardId, setPersonaCardId] = useState('')
   const [personaName, setPersonaName] = useState('')
   const [personaDesc, setPersonaDesc] = useState('')
+  const [memberPhases, setMemberPhases] = useState({})  // 建群第 2 步：卡 id → 选的阶段号（只存改过的）
+
+  // 建群第 2 步的选时期列表：AI 成员里「可选阶段」的卡各一项。渲染与请求体都只读它。
+  const phaseChoices = useMemo(() => {
+    return aiMemberIds(selectedCardIds, personaType, personaCardId)
+      .map((id) => {
+        const card = cardCache[id] || allCards.find((c) => (c.id || c.card_id) === id)
+        if (!card) return null
+        const options = arcPhaseOptions(card)
+        if (options.length === 0) return null
+        return { cardId: id, card, options, value: memberPhases[id] ?? effectiveArcPhase(card, null) }
+      })
+      .filter(Boolean)
+  }, [selectedCardIds, personaType, personaCardId, memberPhases, cardCache, allCards])
+
+  /** 建群表单的身份那几项 + 新加的 memberPhases，一处重置（打开弹窗、建群成功、点「上一步」都调它）。 */
+  function resetCreateForm() {
+    setPersonaStep(false)
+    setPersonaType('director')
+    setPersonaCardId('')
+    setPersonaName('')
+    setPersonaDesc('')
+    setMemberPhases({})
+  }
 
   const loadGroups = useCallback(async () => {
     setLoading(true)
@@ -516,11 +541,7 @@ export default function GroupChatPage() {
     setSelectedCardIds([])
     setSelectedTextId('')
     setError(null)
-    setPersonaStep(false)
-    setPersonaType('director')
-    setPersonaCardId('')
-    setPersonaName('')
-    setPersonaDesc('')
+    resetCreateForm()
 
     // Load cards grouped by text_id
     const grouped = {}
@@ -580,29 +601,25 @@ export default function GroupChatPage() {
         user_persona_card_id: personaCardId,
         user_persona_name: personaName.trim(),
         user_persona_desc: personaDesc.trim(),
+        member_phases: Object.fromEntries(phaseChoices.map((c) => [c.cardId, c.value])),
       }
       const data = await postJSON('/api/group/create', body)
       setShowCreate(false)
-      // Reset create form
-      setPersonaStep(false)
-      setPersonaType('director')
-      setPersonaCardId('')
-      setPersonaName('')
-      setPersonaDesc('')
-      // Enter the newly created group — exclude played character from AI members
-      const aiCardIds = aiMemberIds(selectedCardIds, personaType, personaCardId)
-      setCurrentGroup({
+      resetCreateForm()
+      // 建群成功走「进群」那条路：新建的群和点开已有的群同一套（带全 user_persona_*/member_phases）。
+      const created = {
         id: data.group_id,
         name: data.name,
-        card_ids: aiCardIds,
+        card_ids: selectedCardIds,
         user_persona_type: data.user_persona_type,
         user_persona_card_id: data.user_persona_card_id,
         user_persona_name: data.user_persona_name,
-      })
-      setGroupUserAvatar(null)
-      // Also add to sidebar list so it appears immediately
-      setGroups(prev => [{ id: data.group_id, name: data.name, card_ids: JSON.stringify(selectedCardIds), created_at: new Date().toISOString() }, ...prev])
-      setMessages([])
+        user_persona_desc: data.user_persona_desc,
+        member_phases: data.member_phases,
+        created_at: new Date().toISOString(),
+      }
+      setGroups(prev => [created, ...prev])
+      enterGroup(created)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -1386,6 +1403,7 @@ export default function GroupChatPage() {
                                 identity = cj.identity || ''
                               } catch {}
                             }
+                            const phaseLine = card ? arcPhaseDisplay(card, currentGroup.member_phases?.[cardId]) : ''
                             const handleMemberClick = () => {
                               if (!card) return
                               navigateTo('marketCardDetail', { marketCardId: card.id || card.card_id, groupId: currentGroup?.id })
@@ -1396,6 +1414,7 @@ export default function GroupChatPage() {
                                 <div className="group-member-info">
                                   <span className="group-member-name">{card?.name || '?'}</span>
                                   {identity && <span className="group-member-identity">{identity}</span>}
+                                  {phaseLine && <span className="group-member-identity">{phaseLine}</span>}
                                   {groupAffinities[cardId] ? (
                                     <span className="group-member-affinity">
                                       {groupAffinities[cardId].stage_emoji} {groupAffinities[cardId].stage_name} · {groupAffinities[cardId].affinity}
@@ -1517,6 +1536,7 @@ export default function GroupChatPage() {
 
             {/* Step 2: Persona identity selection */}
             {selectedTextId && personaStep && (
+              <>
               <div className="group-create-section">
                 <label className="modal-label">你以谁的身份参与？</label>
 
@@ -1592,11 +1612,33 @@ export default function GroupChatPage() {
                   )}
                 </div>
               </div>
+
+              {phaseChoices.length > 0 && (
+                <div className="group-create-section">
+                  <label className="modal-label">每个角色的时期</label>
+                  {phaseChoices.map(({ cardId, card, options, value }) => (
+                    <div key={cardId} className="group-member-item">
+                      <Avatar name={card.name} size={36} src={cardAvatars[cardId]} />
+                      <div className="group-member-info">
+                        <span className="group-member-name">{card.name}</span>
+                      </div>
+                      <Select
+                        size="sm"
+                        ariaLabel={`${card.name} 的时期`}
+                        value={String(value)}
+                        options={options}
+                        onChange={(v) => setMemberPhases((prev) => ({ ...prev, [cardId]: Number(v) }))}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+              </>
             )}
 
             <div className="modal-actions">
               <button type="button" className="btn-secondary" onClick={() => {
-                if (personaStep) { setPersonaStep(false); setPersonaType('director'); setPersonaCardId(''); setPersonaName(''); setPersonaDesc('') }
+                if (personaStep) resetCreateForm()
                 else setShowCreate(false)
               }}>{personaStep ? '上一步' : '取消'}</button>
               {!personaStep ? (
