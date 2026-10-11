@@ -476,6 +476,15 @@ async def _publish_preflight(card: dict, user: dict, storage: StorageBase) -> No
         raise HTTPException(400, verdict.user_message)
 
 
+def _published_response(card_id: str, **extra) -> dict:
+    """发布类接口（首次发布、更新发布）的返回：都带广场卡的 `card_id`。
+
+    界面上「确认发布」和「更新发布」是同一段代码，按拿没拿到 `card_id` 判成功。两个接口各写
+    各的返回时，更新发布只给了 `version`，结果是更新成功、界面却报失败。
+    """
+    return {"card_id": card_id, **extra}
+
+
 @router.post("/{card_id}/publish")
 @limiter.limit("30/minute")
 async def publish_card(
@@ -536,7 +545,7 @@ async def publish_card(
     except Exception as exc:
         logger.error("Forward card to peer failed for %s: %s", ok, exc, exc_info=True)
 
-    return {"ok": True, "card_id": ok}
+    return _published_response(ok, ok=True)
 
 
 @router.put("/{card_id}/publish")
@@ -570,7 +579,7 @@ async def update_published_card(
     )
     if not ver:
         raise HTTPException(409, CARD_CONFLICT)
-    return {"version": ver}
+    return _published_response(card_id, version=ver)
 
 
 @router.get("/{card_id}/versions")
