@@ -17,7 +17,8 @@ from deps import get_sessions, get_storage, touch_session
 from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
-from core.affinity_service import read_persisted_affinity, resolve_session_affinity
+from core.affinity_service import resolve_session_affinity
+from core.session_restore import restore_engine_state
 from core.message_outbox import (
     FlushReport, FlushRequest, SaveState, save_field, terminal_frame,
 )
@@ -219,18 +220,8 @@ async def _ensure_session(
         if m["role"] == "summary":
             engine.last_summary = m["content"]
             break
-    # Restore affinity from DB
-    try:
-        data, source = await read_persisted_affinity(session_id, storage)
-        # 走 to_thread：升级分支里 `load_affinity` 会调 `_save_affinity_state`，那是
-        # `submit_to_main_loop(wait=True)` —— 在本 loop 上直接调就是主 loop 等自己。
-        if source == 'state':
-            await asyncio.to_thread(engine.load_affinity, data, initialized=True)
-        else:
-            # legacy（已评估旧格式）或全新默认行 → load_affinity 自行判定升级/初值计算
-            await asyncio.to_thread(engine.load_affinity, data)
-    except Exception as exc:
-        logger.warning("Restore affinity failed (non-fatal): %s", exc, exc_info=True)
+    # Restore affinity + session record from DB（两个恢复路径共用一个入口）
+    await restore_engine_state(engine, session_id, storage)
     # 条目整份来自 `new_session_entry`（`_create_session` 登记的就是原 id），
     # `lock` / `retract_state` / `outbox` 都随条目一起过来 —— 不在这里补默认值。
 

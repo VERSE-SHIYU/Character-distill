@@ -161,6 +161,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     # 101：PG 036 新增列的孪生，同上。
     "101_cards_examples_pending.sql",
     # 102：PG 037 新增列的孪生，同上。
+    "102_session_record.sql",
+    # 102：PG 037 新增列的孪生，同上。
     "102_group_member_phases.sql",
 )
 
@@ -4495,6 +4497,30 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Cancel distills by text failed: {exc}")
             raise
+
+    async def save_session_record(self, session_id: str, record_json: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE sessions SET session_record = ? WHERE id = ?",
+                    (record_json, session_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save session record failed: {exc}")
+            raise StoreError("save_session_record", exc) from exc
+
+    async def load_session_record_unscoped(self, session_id: str) -> str:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT session_record FROM sessions WHERE id = ?", (session_id,),
+                )
+                row = await cursor.fetchone()
+            return (row[0] or "") if row else ""
+        except Exception as exc:
+            print(f"[SQLiteStore] Load session record failed: {exc}")
+            raise StoreError("load_session_record_unscoped", exc) from exc
 
     async def load_affinity_state_unscoped(self, session_id: str) -> tuple[str, bool]:
         try:

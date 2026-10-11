@@ -43,6 +43,9 @@ UNSCOPED_ALLOWLIST = {
         "同上：引擎读自身 session_id，无调用方身份可传",
     "core/chat_engine.py:generate_reunion_greeting":
         "同上：引擎读自身 session_id，无调用方身份可传",
+    "core/session_restore.py:restore_engine_state":
+        "恢复存档时读本场记录：按 session_id 读，属主校验在调用方完成（两个恢复路径"
+        "chat._rebuild_session / history.resume_session 上游已验）；与 read_persisted_affinity 同一理由",
     "core/affinity_service.py:read_persisted_affinity":
         "唯一持久化亲和力读取入口：按 session_id 读，属主校验在调用方完成"
         "（chat.get_affinity 先 get_session_owned；_rebuild_session / resume_session 上游已验）；"

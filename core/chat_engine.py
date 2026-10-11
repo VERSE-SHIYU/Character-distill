@@ -29,6 +29,8 @@ from core.telemetry import set_current_attr
 from core.affinity_service import AffinityService, calc_stage
 from core.affinity_rules import MAX_DROP, relational_tier
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext
+from core import session_record as record_protocol
+from core.session_record import SessionRecord
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +198,8 @@ class ChatEngine:
         self._reflection_service = ReflectionService(self._scoped)
         self._event_service = EventService(self._scoped)
         self._pipeline = EvaluationPipeline()
+        # 本场记录（④ 段 1）：只有一对一存档有；群聊引擎（session_id=""）始终为空且不注入
+        self._session_record = SessionRecord()
         self._last_user_msg_at = None
 
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
@@ -693,6 +697,17 @@ class ChatEngine:
         except Exception as exc:
             logger.warning("Save affinity state failed (non-fatal): %s", exc, exc_info=True)
 
+    @property
+    def _has_session_record(self) -> bool:
+        """本场记录只属于一对一存档：有存档 id、不在群里。"""
+        return bool(self._session_id) and not self._group_id
+
+    def load_session_record(self, record: SessionRecord) -> None:
+        """恢复存档时装回持久化的本场记录（`core/session_restore.restore_engine_state` 调）。
+
+        这里不判一对一：用不用它只由 `_has_session_record` 在使用处判一次（注入、交给评估）。"""
+        self._session_record = record
+
     def ingest_reaction_signals(self, signals: list[dict]) -> None:
         """对外接口：转发给 ReactionService（保持群聊等外部调用不破）。"""
         self._reaction_service.ingest(signals)
@@ -784,8 +799,11 @@ class ChatEngine:
             llm=self.llm,
             reaction_appraisal=reaction_appraisal,
             departure_notice=departure_notice,
+            session_record=self._session_record if self._has_session_record else None,
         )
         result = self._pipeline.run(ctx)
+        if result.session_record is not None:
+            self._session_record = result.session_record
         self._last_importance = result.importance
         self._last_in_character = result.in_character
         self._last_assertion_confidence = result.assertion_confidence
@@ -800,8 +818,7 @@ class ChatEngine:
         # ── P1 影子模式：静默判定，只记录不动作 ──
         if result.applied:
             self._shadow_estrangement_check()
-        # 单一保存点：每次评估后持久化完整情感状态
-        self._save_affinity_state()
+        # 这一轮的好感和本场记录由评估流水线在同一步落库（唯一保存点），这里不再另存
         print(f"[Affinity] Evaluation complete for session={self._session_id}")
 
     def _shadow_estrangement_check(self) -> None:
@@ -1086,7 +1103,7 @@ class ChatEngine:
         in_character < 40 时，【边界感】块移至系统提示物理最末端（最贴近生成位置）。
         其余增强块顺序固定。
         """
-        persona = self._build_affinity_persona_block()
+        persona = self._build_affinity_persona_block() + self._build_session_record_block()
         cognitive = self._build_cognitive_block()
         events = self._event_service.build_candidate_block()
         relationships = self._build_relationship_block()
@@ -1099,6 +1116,12 @@ class ChatEngine:
             return persona + cognitive + events + relationships + life_exchange + boundary + catchphrase
         else:
             return persona + boundary + cognitive + events + relationships + life_exchange + catchphrase
+
+    def _build_session_record_block(self) -> str:
+        """本场记录的注入块（动态区，和好感、情绪同一块）。群聊、空记录都是空串。"""
+        if not self._has_session_record:
+            return ""
+        return record_protocol.render_block(self._session_record)
 
     # ── 时间感知构建 ────────────────────────────────────────────
 
