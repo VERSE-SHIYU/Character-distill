@@ -98,7 +98,7 @@ async def _create(world, names, phases, **persona):
     body.update(persona)
     r = await _call(world, "POST", "/api/group/create", body)
     assert r.status_code == 200, r.text
-    return r.json()["group_id"]
+    return r.json()["group"]["id"]
 
 
 def _labels(engine):
@@ -164,20 +164,27 @@ async def test_g3_unselectable_card_ignores_phase(world):
         assert _labels(group.engines[ids["甲"]]) == ["冷"]
 
 
-# ── G4 建群与列群接口都带回每个人物的阶段（群聊页成员标签据此显示）─────────────
+# ── G4 建群响应就是这一行群（与列群返回同一形状），带回每个人物的阶段 ───────────
+#     建群与点开已有群在前端走同一条 enterGroup —— 两边形状必须相同，加字段只改一处（补充 R4）。
 
 @_pg
-async def test_g4_create_and_list_return_member_phases(world):
+async def test_g4_create_returns_the_same_row_as_list(world):
     ids = world["ids"]
     r = await _call(world, "POST", "/api/group/create", {
         "card_ids": [ids["甲"], ids["乙"]], "member_phases": {ids["甲"]: 1},
         "user_persona_type": "stranger", "user_persona_name": "路人"})
-    assert r.json()["member_phases"] == {ids["甲"]: 1}, r.json()
-    gid = r.json()["group_id"]
+    assert r.status_code == 200, r.text
+    created = r.json()["group"]
+    assert created["member_phases"] == {ids["甲"]: 1}, created
     r = await _call(world, "GET", "/api/group/list")
     assert r.status_code == 200, r.text
-    g = next(x for x in r.json()["groups"] if x["id"] == gid)
-    assert g["member_phases"] == {ids["甲"]: 1}, g
+    listed = next(x for x in r.json()["groups"] if x["id"] == created["id"])
+    assert set(created) == set(listed), (
+        f"建群返回与列群返回不是同一形状：只在建群 {set(created) - set(listed)}，"
+        f"只在列群 {set(listed) - set(created)}")
+    for k in ("name", "card_ids", "user_persona_type", "user_persona_card_id",
+              "user_persona_name", "user_persona_desc", "member_phases"):
+        assert created[k] == listed[k], (k, created[k], listed[k])
 
 
 # ── G5 用户扮演的人物不选时期：传了也不落库，不影响 AI 成员 ────────────────────
@@ -207,3 +214,22 @@ async def test_g6_prompt_follows_member_phase(world):
     assert "后来" not in early, "阶段 1 的人物提示词里出现了阶段 2 的状态"
     assert _BOUNDARY_NOTICE not in late, "最后阶段的人物不该带边界说明"
     assert "后来" in late
+
+
+# ── G7 恢复群用库里的阶段，不再过 valid_phase（与一对一恢复同口径，补充 R5）──────
+#     建群时卡可选、存了阶段 1；之后卡变得不可选（缺指纹）→ 重建仍在阶段 1。
+#     谁在恢复路径「顺手」加上 valid_phase，这条就红。
+
+@_pg
+async def test_g7_restore_keeps_stored_phase_even_if_card_became_unselectable(world):
+    ids = world["ids"]
+    gid = await _create(world, ["甲", "乙"], {"甲": 1})
+    text_id = (await world["store"].get_card_owned(ids["甲"], world["uid"]))["text_id"]
+    saved = await world["store"].save_card(
+        ids["甲"], text_id, "甲", _card_json("甲", _ARC_UNSELECTABLE), user_id=world["uid"])
+    assert (saved or {}).get("id", ids["甲"]) == ids["甲"], "夹具没改到同一张卡"
+    rec = await world["store"].get_card_owned(ids["甲"], world["uid"])
+    assert "source_fingerprint" not in json.loads(rec["card_json"])["character_arc"], "夹具没生效"
+    group = await _restarted(world, gid)
+    assert _labels(group.engines[ids["甲"]]) == ["冷"], "恢复群对库里的阶段又做了 valid_phase 校验"
+
