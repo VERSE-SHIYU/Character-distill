@@ -245,10 +245,16 @@ def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
         prev_lead, prev_start = _lead_before(text, quotes, i - 1, prev.start())
         start = max(prev_start - _CONTEXT_BACK,
                     quotes[i - 2].end() if i >= 2 else 0)
-        out.append(Candidate(n=len(out) + 1, lead=lead, line=m.group(1),
+        out.append(Candidate(n=0, lead=lead, line=m.group(1),
                              prev_lead=prev_lead, prev_line=prev.group(1),
                              context=text[start:end], start=m.start()))
-    return out
+    return _numbered(out)
+
+
+def _numbered(candidates: Sequence[Candidate]) -> list[Candidate]:
+    """按给出的顺序从 1 起编号。编号只在这里定：给模型看的编号（`render_candidates`）、
+    schema 里编号的上限、按编号取回原文，认的都是这同一个 `n`。"""
+    return [c._replace(n=n) for n, c in enumerate(candidates, start=1)]
 
 
 def _lead_before(text: str, quotes: list, i: int, start: int) -> tuple[str, int]:
@@ -283,6 +289,22 @@ def _tail_after(text: str, quotes: list, i: int) -> tuple[str, int]:
         return "", m.end()
     end = closed.start() if closed.group() == "\n" else closed.end()
     return text[m.end():closed.start()], end
+
+
+# 交给模型挑选的候选最多这么多条。长书主角的候选上千条（公版《红楼梦》贾宝玉 1730 条），
+# 每条带着片段全交出去是上百万 token，超过模型一次能读的量；挑 3 组示例也用不着。
+MAX_CANDIDATES = 40
+
+
+def spread_evenly(candidates: Sequence[Candidate]) -> list[Candidate]:
+    """候选多于 `MAX_CANDIDATES` 条时，按出场顺序均匀取这么多条（首尾都取），重新编号。
+
+    均匀取是为了全书各处都有：只取开头那些的话，示例全落在故事最前面。不多于上限时原样返回。
+    """
+    if len(candidates) <= MAX_CANDIDATES:
+        return list(candidates)
+    last = len(candidates) - 1
+    return _numbered([candidates[i * last // (MAX_CANDIDATES - 1)] for i in range(MAX_CANDIDATES)])
 
 
 def render_candidates(candidates: Sequence[Candidate]) -> str:

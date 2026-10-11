@@ -45,6 +45,7 @@ from core.quotes import (
     pick_slot,
     pick_slot_properties,
     render_candidates,
+    spread_evenly,
     valid_picks,
 )
 from core.roster_aggregate import (
@@ -1902,7 +1903,8 @@ class Distiller:
         「上一句是本人／名单外的人」的格子会被丢弃，只给 `MAX_EXAMPLES` 格时这些格子会把名额
         占光（实测赵太爷 3 格全丢、0 组）；`valid_picks` 按格顺序取前 `MAX_EXAMPLES` 组合格的。
 
-        候选由调用方从 `dialogue_candidates` 取（本方法不自己抽取）；
+        候选由调用方从 `dialogue_candidates` 取（本方法不自己抽取）；多于 `MAX_CANDIDATES` 条时
+        在这里先全书均匀取（`spread_evenly`）—— 上限守在交给模型的这一处，谁传候选进来都一样。
         `others` 是 `_other_people` 算出的名单里**除本人外**的人物（`[{"name", "aliases"}]`）：
         标准名做 `SpeakerOptions` 里合格的可选项（本人与本人的别名都不进），标准名加别名写进
         提示词，好让模型把原文里的别称（「凤丫头」）对回标准名。
@@ -1910,6 +1912,7 @@ class Distiller:
         挑选结果一组都成不了对，抛 `DistillError`。要不要因此作废整张卡由调用方定：蒸馏流程
         在 `finalize_card` 里保底（照常出卡）。
         """
+        candidates = spread_evenly(candidates)
         options = SpeakerOptions(
             tuple(dict.fromkeys(o.get("name") for o in others if o.get("name"))), name)
         properties = pick_slot_properties(len(candidates), options)

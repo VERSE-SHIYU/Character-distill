@@ -14,6 +14,7 @@ import pytest
 
 from core.quotes import (
     CITATION_MIN_CHARS,
+    MAX_CANDIDATES,
     MAX_EXAMPLES,
     OUTSIDER,
     PICK_SLOTS,
@@ -25,6 +26,7 @@ from core.quotes import (
     normalize,
     quoted_spans,
     render_candidates,
+    spread_evenly,
     valid_picks,
     verbatim_in,
 )
@@ -159,6 +161,27 @@ def test_the_fragment_keeps_the_previous_line_and_caps_narration_before_it_at_si
     assert "你老慢慢说" in c.context, "上一句（凤姐那句）在片段里"
     assert c.context == text[text.index("凤姐笑道：") - 60:text.rindex("”") + 1]
     assert "先这么说" not in c.context, "再上一句整个落在 60 字之外，不该进来"
+
+
+def _one_per_round(n):
+    text = "".join(f"凤姐道：“第{i}问？”\n刘姥姥道：“第{i}答。”\n" for i in range(1, n + 1))
+    return extract_candidates(text, ["刘姥姥"])
+
+
+def test_candidates_at_the_cap_are_untouched_and_one_more_is_thinned_to_the_cap():
+    """上限两侧：恰好 `MAX_CANDIDATES` 条原样返回；多一条就取成 `MAX_CANDIDATES` 条，
+    首尾都在、出场顺序不变、编号从 1 重排。
+
+    变异：抽样后不重排编号 → 第二条断言红；只取开头那些 → 第三条断言红。
+    """
+    at_cap = _one_per_round(MAX_CANDIDATES)
+    assert spread_evenly(at_cap) == at_cap
+
+    over = _one_per_round(MAX_CANDIDATES + 1)
+    thinned = spread_evenly(over)
+    assert [c.n for c in thinned] == list(range(1, MAX_CANDIDATES + 1))
+    assert thinned[0].line == over[0].line and thinned[-1].line == over[-1].line
+    assert [c.start for c in thinned] == sorted(c.start for c in thinned)
 
 
 # ── 引号样式：一份文本只用出现最多的那一对（补充 1-第 1 步）─────────────────
