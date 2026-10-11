@@ -12,7 +12,7 @@ from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 
 from core.trash_service import empty_trash, hard_delete, restore, soft_delete
-from core.affinity_service import read_persisted_affinity
+from core.session_restore import restore_engine_state
 from core.memory_manager import MemoryManager
 from deps import get_memory_manager, get_sessions, get_storage
 from core.schema import CharacterCard, parse_evidence
@@ -275,18 +275,8 @@ async def resume_session(
 
     # 7.（身份已在构造时经 `session_identity` 注入，不再事后赋值 —— S5）
 
-    # 8. Restore affinity from DB — each session has independent scores
-    try:
-        data, source = await read_persisted_affinity(session_id, storage)
-        # 走 to_thread：升级分支里 `load_affinity` 会调 `_save_affinity_state`，那是
-        # `submit_to_main_loop(wait=True)` —— 在本 loop 上直接调就是主 loop 等自己。
-        if source == 'state':
-            await asyncio.to_thread(engine.load_affinity, data, initialized=True)
-        else:
-            # legacy（已评估旧格式）或全新默认行 → load_affinity 自行判定升级/初值计算
-            await asyncio.to_thread(engine.load_affinity, data)
-    except Exception as exc:
-        logger.warning("Restore affinity failed (non-fatal): %s", exc, exc_info=True)
+    # 8. Restore affinity + session record — each session has its own（两个恢复路径共用一个入口）
+    await restore_engine_state(engine, session_id, storage)
 
     # 9. Generate reunion greeting (before any save_message — updated_at must not be polluted)
     # ── 今日到访计数 ──
