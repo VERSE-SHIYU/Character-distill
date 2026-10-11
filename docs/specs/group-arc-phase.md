@@ -40,7 +40,7 @@
 | G5 | 用户扮演的人物传了时期也不落库，不建引擎 | 红 | 绿 |
 | G6 | 阶段 1 的人物提示词里有边界说明、没有阶段 2 的状态；最后阶段的人物相反 | 红 | 绿 |
 
-Claude 已在沙箱实跑（Python 3.13，PG 16，库 `charsim_test`）：main `bc3e1df` 上 **9 failed**；套上参考补丁后 **9 passed**。受影响的后端测试（§6 列的文件）在补丁上全过；`test_evidence_integrity.py::test_code_sha_resolves` 在沙箱 main 上同样失败，原因是沙箱浅克隆查不到旧 commit，与本段无关。
+Claude 已在沙箱实跑（Python 3.13，PG 16，库 `charsim_test`）：main `bc3e1df` 上 **9 failed**；套上参考补丁后 **9 passed**（这是 G7 加入前的首轮数字；现为 10 条）。受影响的后端测试（§6 列的文件）在补丁上全过；`test_evidence_integrity.py::test_code_sha_resolves` 在沙箱 main 上同样失败，原因是沙箱浅克隆查不到旧 commit，与本段无关。
 
 前端没有放进目标检查（要浏览器），由 §6 的 Playwright 断言守。
 
@@ -215,7 +215,7 @@ aiMemberIds(selectedCardIds, personaType, personaCardId)
 
 1. **[数据库]** 加 `038_group_member_phases.sql` 与孪生 `103_group_member_phases.sql`，登记 SQLite 次序表；同一 commit 放入 `tests/test_group_arc_phase_goal.py`（此时红，正常）。
 2. **[存储]** 新建 `storage/group_row.py`；两后端 8 处解码改调 `decode_group_row`；`create_group_session` 收 `member_phases`；三个读点带新列。
-3. **[后端]** 新建 `web/group_engines.py`（4.2 三样）；`group.py` 建群与恢复群改调它、删掉重复段；请求字段与响应字段。**本 commit 后目标检查 9 条全绿。**
+3. **[后端]** 新建 `web/group_engines.py`（4.2 三样）；`group.py` 建群与恢复群改调它、删掉重复段；请求字段与响应字段。**本 commit 后目标检查 10 条全绿（G7 由复核 R5 加入）。**
 4. **[前端]** `utils/card.js` 三个函数及单测，`defaultArcPhase` 与 `ChatArea` 改用；`utils/groupMembers.js` 加 `aiMemberIds`、搬入 `parseCardIds` 及单测，F10、F13 各处改用。此步不改任何行为。
 5. **[前端]** 建群弹窗选时期、`resetCreateForm`、建群成功走 `enterGroup`（4.5）；成员标签显示时期（4.6）；新增 `e2e/group-arc-phase.spec.js`。
 
