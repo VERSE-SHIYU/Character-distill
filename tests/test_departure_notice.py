@@ -10,6 +10,7 @@ from core.chat_engine import (
     ChatEngine, WATCH_GAP_MIN_HOURS, WATCH_GAP_MAX_HOURS,
     _departure_notice_dates,
 )
+from core.memory_scope import ScopedMemory
 import core.scheduling as scheduling
 
 
@@ -43,7 +44,7 @@ class TestGapLogic:
         engine.llm = MagicMock()
         engine.rag = MagicMock()
         engine._session_id = "test-session"
-        engine._memory = None
+        engine._scoped = ScopedMemory(None, None)
         # 本类不测存储：存储传 None，走不到投递，也就用不着注册投递实现。
         engine._storage = None
         engine._card_id = "test-card"
