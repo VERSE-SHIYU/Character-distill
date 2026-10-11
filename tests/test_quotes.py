@@ -14,6 +14,7 @@ import pytest
 
 from core.quotes import (
     CITATION_MIN_CHARS,
+    MAX_CANDIDATES,
     MAX_EXAMPLES,
     OUTSIDER,
     PICK_SLOTS,
@@ -25,6 +26,7 @@ from core.quotes import (
     normalize,
     quoted_spans,
     render_candidates,
+    spread_evenly,
     valid_picks,
     verbatim_in,
 )
@@ -142,14 +144,15 @@ def test_a_candidate_carries_the_source_fragment_ending_at_its_own_line():
     assert PARA.index(c.context) <= PARA.index("凤姐忙和刘姥姥摆手道："), "从上一句之前起"
 
 
-def test_the_fragment_keeps_the_previous_line_and_caps_narration_before_it_at_sixty():
-    """片段必含上一句（模型得看对方怎么接的话），上一句之前最多带 60 字叙述，且不吞掉
-    再上一句的台词：一段长叙述整段塞进去是几倍的成本与注意力。
+def test_the_fragment_keeps_the_previous_line_and_ten_sentences_before_it():
+    """片段必含上一句（模型得看对方怎么接的话），上一句之前再带 `_CONTEXT_SENTENCES_BACK` 句
+    原文：上一句写的是「他说」时，「他」是谁写在更前面。更早的不带：成本与注意力。
 
-    变异：起点取再上一句结尾（不设 60 字上限）→ 整段叙述连「先这么说」一起进片段，红。
+    变异：改回「往前 60 字、不越过再上一句」→ 片段从第 10 句中间起，第三条断言红；
+    不设上限（从头带起）→「先这么说」进片段，红。
     """
     text = ("凤姐道：“先这么说。”\n"
-            + "贾母听了，也不言语。" * 10
+            + "".join(f"贾母听了第{i}回，也不言语。" for i in range(1, 13))
             + "凤姐笑道：“你老慢慢说。”\n"
             + "刘姥姥道：“姑娘说得是。”\n")
 
@@ -157,8 +160,87 @@ def test_the_fragment_keeps_the_previous_line_and_caps_narration_before_it_at_si
 
     assert c.context.endswith("刘姥姥道：“姑娘说得是。”"), "到本句收尾引号止"
     assert "你老慢慢说" in c.context, "上一句（凤姐那句）在片段里"
-    assert c.context == text[text.index("凤姐笑道：") - 60:text.rindex("”") + 1]
-    assert "先这么说" not in c.context, "再上一句整个落在 60 字之外，不该进来"
+    assert c.context == text[text.index("贾母听了第3回"):text.rindex("”") + 1]
+    assert "先这么说" not in c.context, "再上一句落在 10 句之外，不该进来"
+
+
+def test_a_sentence_is_counted_by_its_end_mark_spoken_or_not_and_a_line_break_is_not_one():
+    """「一句」按句末符号（。！？）数：台词里的也算，换行不算。
+
+    上一句之前共 11 个句末（开头 2 句、贾母那句台词里 3 个、叙述 6 句），片段该从第 2 句起 ——
+    这也是「刚好数到全文第一个句末」的边界。
+
+    变异：台词里的句末不算 → 只数到 8 个，从全文开头带起，红；换行也算句末 → 起点落进贾母
+    那句台词、退到「贾母道」，红；刚好数到第一个句末时从头带起（`k >= 0` 写成 `k > 0`）→ 红。
+    """
+    text = ("开头第一句。开头第二句。\n"
+            "贾母道：“甲。乙！丙？”\n"
+            + "".join(f"叙述第{i}句。" for i in range(1, 7))
+            + "没有句号的一行\n"
+            + "凤姐笑道：“你老慢慢说。”\n"
+            + "刘姥姥道：“姑娘说得是。”\n")
+
+    c = extract_candidates(text, ["刘姥姥"])[0]
+
+    assert c.context == text[text.index("开头第二句。"):text.rindex("”") + 1]
+
+
+def test_the_fragment_start_at_its_edges():
+    """片段起点的三个边界。
+
+    ① 上一句之前不足 10 句 → 从全文开头带起，一句不丢。
+       变异：不足时从第一个句末之后起 → 红。
+    ② 数到的位置落在一句台词里，它前面还有别的台词 → 退到**这一句**的引导语，不是更前面那句。
+       变异：退到再前一句台词 → 红。
+    ③ 数不到句末（全文不用「。！？」断句）→ 上一句的引导语之前恰好带 `_CONTEXT_CHARS_BACK` 字。
+       变异：不封顶 → 红；封顶多一字少一字 → 红；半角句号也算句末 → 红。
+    ④ 数够了 10 句、但这 10 句超过 `_CONTEXT_CHARS_BACK` 字 → 同样按字数截。两种情形：
+       落在一句很长的台词里（不因为「退到引导语」把整句台词带上）；10 句都是很长的叙述。
+       变异：先封顶、再退到引导语 → 红；退到引导语之后不再封顶 → 红；只在不足 10 句时封顶 → 红。
+    """
+    tail = "凤姐笑道：“你老慢慢说。”\n刘姥姥道：“姑娘说得是。”\n"
+
+    short = "第一句叙述。第二句叙述。" + tail
+    assert extract_candidates(short, ["刘姥姥"])[0].context == short.rstrip("\n")
+
+    nested = ("凤姐道：“先这么说。”\n"
+              "贾母道：“" + "".join(f"第{i}件事。" for i in range(1, 16)) + "”\n" + tail)
+    assert extract_candidates(nested, ["刘姥姥"])[0].context == nested[nested.index("贾母道："):].rstrip("\n")
+
+    endless = "他又说了一句话. " * 400 + "\n" + tail
+    c = extract_candidates(endless, ["刘姥姥"])[0]
+    assert c.context == endless[endless.index("凤姐笑道：") - 2000:].rstrip("\n")
+
+    monologue = "贾母道：“" + "很长的一句话。" * 500 + "”\n" + tail
+    c = extract_candidates(monologue, ["刘姥姥"])[0]
+    assert c.context == monologue[monologue.index("凤姐笑道：") - 2000:].rstrip("\n")
+
+    narration = "".join("这一句叙述很长，" * 50 + f"第{i}句完。" for i in range(1, 12)) + "\n" + tail
+    c = extract_candidates(narration, ["刘姥姥"])[0]
+    assert c.context == narration[narration.index("凤姐笑道：") - 2000:].rstrip("\n")
+
+
+def _one_per_round(n):
+    text = "".join(f"凤姐道：“第{i}问？”\n刘姥姥道：“第{i}答。”\n" for i in range(1, n + 1))
+    return extract_candidates(text, ["刘姥姥"])
+
+
+def test_candidates_at_the_cap_are_untouched_and_one_more_is_thinned_to_the_cap():
+    """上限两侧：恰好 `MAX_CANDIDATES` 条原样返回；多一条就取成 `MAX_CANDIDATES` 条，
+    首尾都在、出场顺序不变、编号从 1 重排。
+
+    变异：抽样后不重排编号 → 第二条断言红；只取开头那些 → 第三条断言红。
+    """
+    at_cap = _one_per_round(MAX_CANDIDATES)
+    assert spread_evenly(at_cap) == at_cap
+    renumbered = spread_evenly([at_cap[4], at_cap[8]])          # 递进来的编号是 5、9
+    assert [c.n for c in renumbered] == [1, 2], "不到上限也重新编号：模型看到的总是 1 到 N"
+
+    over = _one_per_round(MAX_CANDIDATES + 1)
+    thinned = spread_evenly(over)
+    assert [c.n for c in thinned] == list(range(1, MAX_CANDIDATES + 1))
+    assert thinned[0].line == over[0].line and thinned[-1].line == over[-1].line
+    assert [c.start for c in thinned] == sorted(c.start for c in thinned)
 
 
 # ── 引号样式：一份文本只用出现最多的那一对（补充 1-第 1 步）─────────────────
