@@ -115,6 +115,7 @@ web/routers/text.py:430:    ok = await hard_delete("text", text_id, user, storag
 | D4 | `DELETE /api/group/{id}/permanent` | 进回收站后还在；永久删除后两个成员在这个群里的都为 0；同一张卡在另一个群的、它的一对一存档的不变 |
 | D5 | `DELETE /api/text/{id}/permanent` | 书下面一张正常的卡、一张已在回收站的卡，记忆都为 0；别的书的卡不变 |
 | D5b | 同上，带 `keep_cards=true` | 卡还在，记忆不变 |
+| D5c | 进回收站时不带 `keep_cards`，永久删除时带 `keep_cards=true` | 卡还在，记忆不变 |
 | D6 | 存档永久删除，记忆库这一刻删不动 | 返回 500；存档行还在回收站；记忆没少；恢复正常后重试成功 |
 | D7 | 存档永久删除，记忆系统没开 | 照样删成功 |
 

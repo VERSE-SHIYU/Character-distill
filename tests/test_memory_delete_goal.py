@@ -259,6 +259,22 @@ def test_D5b_deleting_a_book_but_keeping_cards_keeps_their_memories(env):
     assert env.count(s) == 2, "留卡删书把卡的记忆清了"
 
 
+def test_D5c_keeping_cards_only_at_the_permanent_step_keeps_their_memories(env):
+    """书进回收站时**没**选留卡（卡还挂在书上），永久删除时才选留卡 —— 卡活下来，记忆也得在。
+
+    D5b 两步都带 keep_cards：进回收站那一步就把卡摘走了，永久删除时书名下已经没有卡，
+    测不到「永久删除这一步看不看 keep_cards」。这条才测得到。
+    """
+    book = env.text()
+    card = env.card(book)
+    s = env.remember(MemoryScope.archive(card, env.archive(card)), 2)
+    env.delete(f"/api/text/{book}")                               # 不留卡：卡还挂在书上
+    assert _run(env.store.get_card_unscoped(card))["text_id"] == book, "前提破了：卡已经不挂在书上"
+    env.delete(f"/api/text/{book}/permanent?keep_cards=true")     # 这一步才选留卡
+    assert _run(env.store.get_card_unscoped(card)) is not None, "前提破了：留卡删书后卡不在了"
+    assert env.count(s) == 2, "永久删除时选了留卡，卡的记忆却被清了"
+
+
 # ═══ D6 清不掉记忆就不删行；D7 记忆系统没开照样能删 ═════════════════════════
 
 def test_D6_a_failed_cleanup_leaves_the_archive_in_the_trash(env, monkeypatch):
