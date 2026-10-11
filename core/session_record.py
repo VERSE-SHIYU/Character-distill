@@ -39,18 +39,22 @@ class Column:
 # 顺序就是注入块里的顺序。定义的出处见 spec `session-record-extract.md` §3。
 COLUMNS: tuple[Column, ...] = (
     Column("known", "{who}知道的关于对方的事",
-           "对方自己说出的、关于对方本人的事：身份、经历、喜好、身边的人。依据只能是对方的原话。"),
+           "对方明确说出的、关于对方本人的事实：身份、经历、身体状况、明说的喜好、身边的人。"
+           "依据只能是对方的原话；对方提的问题不是关于对方的事实。"),
     Column("relation", "{who}和对方关系的变化",
            "只在这一轮改变了两人之间的义务、冲突、相互期待或以后能否联系上时才记"
            "（原文：a recurring person mention becomes a relationship only when it changes "
            "obligations, conflicts, mutual expectations, or later reachability）。"),
-    Column("events", "发生过的事和约定",
-           "两人之间发生过的事，以及任何一方做出的承诺、计划或决定。"),
+    Column("plans", "还没兑现的约定和计划",
+           "任何一方做出的、还没兑现的承诺、计划或决定，包括对方说的行程和安排。"
+           "{who}讲自己的经历、看法、习惯，或劝对方做什么，都不记。"),
 )
 _COLUMN_KEYS = frozenset(c.key for c in COLUMNS)
 
 SOURCE_USER, SOURCE_CHARACTER = "user", "character"
-FIELD_ADD, FIELD_REPLACE = "record_add", "record_replace"
+# 输出只有一个列表：每条事实一项；要取代旧条目，就在这一项上带 ``supersedes``（旧条目编号）。
+# 一件事只写一项（Mem0 §2.1：每条候选事实对应一个操作）。
+FIELD_OPS, FIELD_SUPERSEDES = "record_ops", "supersedes"
 
 # 抽取调用的采样温度：PHASE-Tree 的状态抽取用 0.0（update_session_moment.py:281）。
 EXTRACT_TEMPERATURE = 0.0
@@ -126,16 +130,41 @@ the entry being superseded. Look ACTIVELY for supersession patterns: "actually",
 （中文如「改主意了」「不…了」「改成」「换成」「其实」「取消」）. An entry that has merely not \
 been mentioned recently is NOT contradicted: do not supersede it.
 7. NO CHANGE: If the turn contains no new state-relevant information, or if the state already \
-captures everything, return empty lists.
+captures everything, return an empty list.
 8. **你必须用中文撰写所有输出内容。**
 
 ## Columns
 {columns}
 
 ## Output format
-Output ONLY a valid JSON object, no other text:
-{{"{add}": [{{"col": "{keys}", "text": "...", "evidence": "..."}}],
- "{replace}": [{{"id": <ID of the entry being superseded>, "col": "{keys}", "text": "...", "evidence": "..."}}]}}
+Output ONLY a valid JSON object, no other text. One item per fact; a fact that supersedes an \
+existing entry is ONE item carrying "{sup}":
+{{"{ops}": [{{"col": "{keys}", "text": "...", "evidence": "...", "{sup}": <ID of the entry being superseded, or null>}}]}}
+
+## Few shot examples
+(Character 「老陈」 below is only an example, not part of the real conversation.)
+
+Current state: （还没有）
+对方：你平时喜欢喝什么茶？
+老陈：龙井吧，清淡。
+Output: {{"{ops}": []}}
+
+Current state: （还没有）
+对方：我在杭州读研究生，下个月要去北京面试。
+老陈：那可得好好准备。
+Output: {{"{ops}": [{{"col": "known", "text": "对方在杭州读研究生。", "evidence": "我在杭州读研究生", "{sup}": null}}, {{"col": "plans", "text": "对方下个月要去北京面试。", "evidence": "下个月要去北京面试", "{sup}": null}}]}}
+
+Current state: #2 [plans] 对方下个月要去北京面试。
+对方：面试改到上海了，不去北京了。
+老陈：上海也好。
+Output: {{"{ops}": [{{"col": "plans", "text": "对方下个月的面试改在上海，不去北京了。", "evidence": "面试改到上海了，不去北京了", "{sup}": 2}}]}}
+
+Current state: （还没有）
+对方：说好了，你教我钓鱼。
+老陈：行，下周三来。
+Output: {{"{ops}": [{{"col": "plans", "text": "老陈答应下周三教对方钓鱼。", "evidence": "行，下周三来", "{sup}": null}}]}}
+
+Do not return anything from the custom few shot example prompts provided above.
 """
 
 
@@ -143,9 +172,10 @@ def render_extraction_prompt(record: SessionRecord, *, char_name: str, user_mess
                              assistant_reply: str) -> tuple[str, str]:
     """抽取调用的 (system, user)。system 只随角色名变；user 是当前有效条目 + 这一轮。"""
     columns = "\n".join(
-        f"- {c.key}「{c.label.format(who=char_name)}」：{c.definition}" for c in COLUMNS)
+        f"- {c.key}「{c.label.format(who=char_name)}」：{c.definition.format(who=char_name)}"
+        for c in COLUMNS)
     system = _EXTRACT_SYSTEM.format(
-        char=char_name, columns=columns, add=FIELD_ADD, replace=FIELD_REPLACE,
+        char=char_name, columns=columns, ops=FIELD_OPS, sup=FIELD_SUPERSEDES,
         keys="|".join(c.key for c in COLUMNS))
     current = "".join(
         f"#{e.id} [{e.col}] {e.text}\n" for e in record.active()) or "（还没有）\n"
@@ -201,25 +231,22 @@ def _checked(op: Any, user_message: str, assistant_reply: str) -> tuple[dict | N
     return {"col": col, "text": text.strip(), "evidence": evidence, "source": source}, ""
 
 
-def _ops(data: dict, key: str, warns: list[str]) -> list[Any]:
-    raw = data.get(key)
-    if raw is None:
-        return []
-    if not isinstance(raw, list):
-        warns.append(f"{key} is not a list, ignored")
-        return []
-    return raw
-
-
 def apply(record: SessionRecord, data: dict, user_message: str,
           assistant_reply: str) -> tuple[SessionRecord, list[str]]:
-    """把抽取回复里的操作应用到 `record` 上。纯函数，不做 IO。"""
+    """把抽取回复里的操作按顺序应用到 `record` 上。纯函数，不做 IO。
+
+    每一项是一条事实：带 ``supersedes`` 就取代那条旧条目，不带就新增。
+    """
     warns: list[str] = []
-    adds, replaces = _ops(data, FIELD_ADD, warns), _ops(data, FIELD_REPLACE, warns)
-    if len(adds) + len(replaces) > MAX_OPS_PER_TURN:
-        warns.append(f"too many ops ({len(adds) + len(replaces)}), kept first {MAX_OPS_PER_TURN}")
-        replaces = replaces[:MAX_OPS_PER_TURN]
-        adds = adds[:MAX_OPS_PER_TURN - len(replaces)]
+    ops = data.get(FIELD_OPS)
+    if ops is None:
+        ops = []
+    if not isinstance(ops, list):
+        warns.append(f"{FIELD_OPS} is not a list, ignored")
+        ops = []
+    if len(ops) > MAX_OPS_PER_TURN:
+        warns.append(f"too many ops ({len(ops)}), kept first {MAX_OPS_PER_TURN}")
+        ops = ops[:MAX_OPS_PER_TURN]
 
     entries = list(record.entries)
     next_id = record._next_id()
@@ -229,31 +256,28 @@ def apply(record: SessionRecord, data: dict, user_message: str,
         entries.append(Entry(id=next_id, replaces=replaces_id, **fields))
         next_id += 1
 
-    for op in replaces:
+    for op in ops:
         fields, why = _checked(op, user_message, assistant_reply)
         if fields is None:
-            warns.append(f"replace dropped: {why}")
+            warns.append(f"op dropped: {why}")
+            continue
+        target_id = op.get(FIELD_SUPERSEDES)
+        if target_id is None:
+            add(fields)
             continue
         # 在本轮已改过的列表上找：同一轮里第二次取代同一条时，它已经失效（R2）
-        target = next((e for e in entries if e.id == op.get("id")), None)
+        target = next((e for e in entries if e.id == target_id), None)
         if target is None or not target.active:                             # R2
-            warns.append(f"replace target {op.get('id')!r} missing or inactive, added instead")
+            warns.append(f"supersede target {target_id!r} missing or inactive, added instead")
             add(fields)
             continue
         if target.col != fields["col"] or target.col == "relation":
             # 关系一栏按先后记成轨迹，不覆盖；跨栏取代不成立 —— 都按新增
-            warns.append(f"replace of #{target.id} ({target.col}) as {fields['col']} added instead")
+            warns.append(f"supersede of #{target.id} ({target.col}) as {fields['col']} added instead")
             add(fields)
             continue
         entries[entries.index(target)] = replace(target, active=False)
         add(fields, replaces_id=target.id)
-
-    for op in adds:
-        fields, why = _checked(op, user_message, assistant_reply)
-        if fields is None:
-            warns.append(f"add dropped: {why}")
-            continue
-        add(fields)
 
     return SessionRecord(tuple(entries)), warns
 

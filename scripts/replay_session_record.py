@@ -86,9 +86,13 @@ def main() -> int:
     ap.add_argument("--transcript", required=True)
     ap.add_argument("--card-name", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--limit", type=int, default=0,
+                    help="只重放前 N 轮（小重放，先看方向对不对）；0 = 全部")
     args = ap.parse_args()
 
     turns = json.loads(Path(args.transcript).read_text(encoding="utf-8"))["turns"]
+    if args.limit:
+        turns = turns[:args.limit]
     key = os.getenv("DEEPSEEK_API_KEY")
     if not key:
         print("需要 DEEPSEEK_API_KEY")

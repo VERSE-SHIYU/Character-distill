@@ -46,12 +46,17 @@ def _add(col: str, text: str, evidence: str) -> dict:
     return {"col": col, "text": text, "evidence": evidence}
 
 
-def _apply(record: SessionRecord, **ops):
-    return rec.apply(record, ops, USER_SAYS, CHAR_SAYS)
+def _apply(record: SessionRecord, *ops):
+    return rec.apply(record, {rec.FIELD_OPS: list(ops)}, USER_SAYS, CHAR_SAYS)
+
+
+def _sup(target, col: str, text: str, evidence: str) -> dict:
+    """一项「取代 #target」的操作。"""
+    return {**_add(col, text, evidence), rec.FIELD_SUPERSEDES: target}
 
 
 def _one(col: str, text: str, evidence: str) -> SessionRecord:
-    record, warns = _apply(SessionRecord(), record_add=[_add(col, text, evidence)])
+    record, warns = _apply(SessionRecord(), *[_add(col, text, evidence)])
     assert not warns and len(record.active()) == 1, warns
     return record
 
@@ -60,16 +65,16 @@ def _one(col: str, text: str, evidence: str) -> SessionRecord:
 
 def test_R0_an_entry_needs_verbatim_evidence_from_this_turn():
     """必须有依据：依据原话不在这一轮里 → 丢掉（R1、R4 都靠它）。"""
-    ok, _ = _apply(SessionRecord(), record_add=[_add("events", "下个月去北京面试", "下个月要去北京面试")])
-    bad, warns = _apply(SessionRecord(), record_add=[_add("events", "下个月去北京面试", "他说过想去上海")])
+    ok, _ = _apply(SessionRecord(), *[_add("plans", "下个月去北京面试", "下个月要去北京面试")])
+    bad, warns = _apply(SessionRecord(), *[_add("plans", "下个月去北京面试", "他说过想去上海")])
     assert [e.text for e in ok.active()] == ["下个月去北京面试"]
     assert bad.active() == [] and warns
 
 
 def test_R1_relation_needs_evidence_and_never_touches_affinity():
     """R1：关系一栏只收有对话依据的条目；只有结论、没依据的丢掉。好感只看③（P3 测结构）。"""
-    ok, _ = _apply(SessionRecord(), record_add=[_add("relation", "说起西湖时放松了些", "我也去过西湖")])
-    bad, warns = _apply(SessionRecord(), record_add=[_add("relation", "关系变好了", "")])
+    ok, _ = _apply(SessionRecord(), *[_add("relation", "说起西湖时放松了些", "我也去过西湖")])
+    bad, warns = _apply(SessionRecord(), *[_add("relation", "关系变好了", "")])
     assert len(ok.active()) == 1
     assert bad.active() == [] and warns
 
@@ -77,7 +82,7 @@ def test_R1_relation_needs_evidence_and_never_touches_affinity():
 def test_R1_relation_column_is_a_trajectory_not_overwritten():
     """关系一栏按先后记成轨迹：对它的「取代」按新增处理，旧的一条仍然有效。"""
     record = _one("relation", "一开始有些防备", "原来你在杭州读书啊")
-    record, warns = _apply(record, record_replace=[{"id": 1, **_add("relation", "愿意多说了", "我也去过西湖")}])
+    record, warns = _apply(record, *[_sup(1, "relation", "愿意多说了", "我也去过西湖")])
     assert [e.text for e in record.active()] == ["一开始有些防备", "愿意多说了"]
     assert warns
     assert "一开始有些防备 → 愿意多说了" in rec.render_block(record)
@@ -85,87 +90,90 @@ def test_R1_relation_column_is_a_trajectory_not_overwritten():
 
 def test_R2_replace_checks_the_id():
     """R2：编号存在且有效 → 旧的失效、新的生效；不存在 / 已失效 → 按新增，旧的不受影响，有 warning。"""
-    base = _one("events", "下个月去上海面试", "面试")
-    good, warns = _apply(base, record_replace=[{"id": 1, **_add("events", "下个月去北京面试", "北京面试")}])
+    base = _one("plans", "下个月去上海面试", "面试")
+    good, warns = _apply(base, *[_sup(1, "plans", "下个月去北京面试", "北京面试")])
     assert not warns
     assert [(e.id, e.active) for e in good.entries] == [(1, False), (2, True)]
     assert good.get(2).replaces == 1
 
-    for bad_id in (99, "1", None):
-        out, warns = _apply(base, record_replace=[{"id": bad_id, **_add("events", "新的", "北京面试")}])
+    for bad_id in (99, "1"):
+        out, warns = _apply(base, *[_sup(bad_id, "plans", "新的", "北京面试")])
         assert out.get(1).active, f"id={bad_id!r} 把旧条目弄失效了"
         assert len(out.active()) == 2 and warns, f"id={bad_id!r} 没按新增处理"
+    # 不带编号（null）就是普通新增，不算错
+    out, warns = _apply(base, _sup(None, "plans", "新的", "北京面试"))
+    assert out.get(1).active and len(out.active()) == 2 and not warns
 
     # 已失效的条目不能再被取代（同一轮里第二次取代同一条也算）
-    twice, warns = _apply(base, record_replace=[
-        {"id": 1, **_add("events", "去北京面试", "北京面试")},
-        {"id": 1, **_add("events", "去杭州面试", "杭州读研究生")}])
+    twice, warns = _apply(base, *[
+        _sup(1, "plans", "去北京面试", "北京面试"),
+        _sup(1, "plans", "去杭州面试", "杭州读研究生")])
     assert [e.text for e in twice.active()] == ["去北京面试", "去杭州面试"] and warns
 
 
 def test_R2_ids_belong_to_one_archive():
     """别的存档的编号对这份记录来说就是不存在 —— 按新增，不动这里的任何条目。"""
-    mine = _one("events", "下个月去北京面试", "北京面试")
-    out, warns = _apply(mine, record_replace=[{"id": 7, **_add("events", "去杭州", "杭州读研究生")}])
+    mine = _one("plans", "下个月去北京面试", "北京面试")
+    out, warns = _apply(mine, *[_sup(7, "plans", "去杭州", "杭州读研究生")])
     assert out.get(1).active and len(out.active()) == 2 and warns
 
 
 def test_R3_long_column_warns_but_is_injected_whole(caplog):
     """R3：某一栏超线只打 warning，条目完整注入；未超线没有 warning。"""
-    short = _one("events", "下个月去北京面试", "北京面试")
+    short = _one("plans", "下个月去北京面试", "北京面试")
     with caplog.at_level(logging.WARNING, logger="core.session_record"):
         rec.render_block(short)
     assert not caplog.records
 
     long_text = "杭州读研究生" * 80
     record = SessionRecord(tuple(
-        rec.Entry(id=i, col="events", text=f"{i}{long_text}", evidence="x", source="user")
+        rec.Entry(id=i, col="plans", text=f"{i}{long_text}", evidence="x", source="user")
         for i in range(1, 4)))
     with caplog.at_level(logging.WARNING, logger="core.session_record"):
         block = rec.render_block(record)
-    assert any("events" in r.getMessage() for r in caplog.records)
+    assert any("plans" in r.getMessage() for r in caplog.records)
     assert all(e.text in block for e in record.entries), "超线的栏被截了"
 
 
 def test_R4_replace_needs_an_explicit_contradiction_this_turn():
     """R4：取代必须带这一轮里推翻旧条目的原话；「没再提」给不出原话 → 丢掉，旧条目仍有效。"""
-    base = _one("events", "下个月去北京面试", "北京面试")
-    out, warns = _apply(base, record_replace=[
-        {"id": 1, **_add("events", "好像不去面试了", "最近没再提面试")}])
+    base = _one("plans", "下个月去北京面试", "北京面试")
+    out, warns = _apply(base, *[
+        _sup(1, "plans", "好像不去面试了", "最近没再提面试")])
     assert [e.text for e in out.active()] == ["下个月去北京面试"] and warns
 
 
 def test_R5_source_is_decided_by_code_and_known_takes_only_the_user():
     """R5：来源由依据出现在哪一边定（不信模型）；「他对你的了解」只收用户说的。"""
-    ok, _ = _apply(SessionRecord(), record_add=[_add("known", "在杭州读研究生", "杭州读研究生")])
+    ok, _ = _apply(SessionRecord(), *[_add("known", "在杭州读研究生", "杭州读研究生")])
     assert ok.active()[0].source == rec.SOURCE_USER
 
-    bad, warns = _apply(SessionRecord(), record_add=[
+    bad, warns = _apply(SessionRecord(), *[
         _add("known", "去过西湖", "我也去过西湖"),
         {**_add("known", "去过西湖", "我也去过西湖"), "source": "user"}])   # 模型自称来源也不信
     assert bad.active() == [] and len(warns) == 2
 
-    events, _ = _apply(SessionRecord(), record_add=[_add("events", "他提到去过西湖", "我也去过西湖")])
+    events, _ = _apply(SessionRecord(), *[_add("plans", "他提到去过西湖", "我也去过西湖")])
     assert events.active()[0].source == rec.SOURCE_CHARACTER
 
 
 def test_R6_superseded_entries_stay_stored_but_are_not_injected():
     base = _one("known", "在上海读书", "读研究生")
-    out, _ = _apply(base, record_replace=[{"id": 1, **_add("known", "在杭州读研究生", "杭州读研究生")}])
+    out, _ = _apply(base, *[_sup(1, "known", "在杭州读研究生", "杭州读研究生")])
     block = rec.render_block(out)
     assert "在杭州读研究生" in block and "在上海读书" not in block
     assert "在上海读书" in out.to_persist()
 
 
 def test_R7_no_ops_leave_the_record_unchanged():
-    base = _one("events", "下个月去北京面试", "北京面试")
-    for data in ({}, {rec.FIELD_ADD: [], rec.FIELD_REPLACE: []}, {rec.FIELD_ADD: None}):
+    base = _one("plans", "下个月去北京面试", "北京面试")
+    for data in ({}, {rec.FIELD_OPS: []}, {rec.FIELD_OPS: None}):
         out, warns = rec.apply(base, data, USER_SAYS, CHAR_SAYS)
         assert out.entries == base.entries and not warns
 
 
 def test_R8_persist_round_trip_and_corrupt_data():
-    base = _one("events", "下个月去北京面试", "北京面试")
+    base = _one("plans", "下个月去北京面试", "北京面试")
     assert SessionRecord.from_persist(base.to_persist()) == base
     assert SessionRecord.from_persist("") == SessionRecord()
     assert SessionRecord.from_persist("{broken") == SessionRecord()
@@ -261,20 +269,20 @@ def loop_submitter(monkeypatch):
                         lambda coro, wait=True, timeout=0: asyncio.new_event_loop().run_until_complete(coro))
 
 
-_BJ = {rec.FIELD_ADD: [_add("events", "下个月去北京面试", "北京面试")]}
+_BJ = {rec.FIELD_OPS: [_add("plans", "下个月去北京面试", "北京面试")]}
 
 
 def test_P1_extraction_is_its_own_call_and_the_affinity_prompt_is_untouched():
     """P1（G1）：一对一每轮两次调用 —— 好感评估的提示词里没有任何本场记录内容（和群聊、
     不带本场记录时逐字相同）；本场记录由单独一次抽取调用更新，用低温派生的适配器。"""
-    record = _one("events", "下个月去北京面试", "北京面试")
+    record = _one("plans", "下个月去北京面试", "北京面试")
     single = _ScriptLLM(_verdict())
     EvaluationPipeline().run(_ctx(single, record=record))
     plain = AffinityService().build_evaluation_prompt(_Card(), USER_SAYS, CHAR_SAYS, "对方", "")
     assert single.prompts == [plain], "好感评估的提示词被本场记录改动了"
     assert len(single.record_calls) == 1 and single.derived == [rec.EXTRACT_TEMPERATURE]
     system, user = single.record_calls[0]
-    assert "#1 [events] 下个月去北京面试" in user and USER_SAYS in user and CHAR_SAYS in user
+    assert "#1 [plans] 下个月去北京面试" in user and USER_SAYS in user and CHAR_SAYS in user
     for frame in ("你现在就是", "内心", "inner_voice", "好感"):
         assert frame not in system + user, f"抽取提示词里混进了角色扮演 / 好感的框架：{frame}"
 
@@ -305,7 +313,7 @@ def test_P2_record_and_affinity_fail_separately(loop_submitter):
     record = SessionRecord()
     _, clean = state_after(_ScriptLLM(_verdict()))
     for broken_llm in (_FailingRecordLLM(_verdict(), record=_BJ),
-                       _ScriptLLM(_verdict(), record={rec.FIELD_ADD: "not a list"})):
+                       _ScriptLLM(_verdict(), record={rec.FIELD_OPS: "not a list"})):
         out, broken = state_after(broken_llm)
         assert out.applied and broken == clean, "本场记录坏了把好感也拖下水"
         assert out.session_record is record
@@ -326,7 +334,7 @@ def test_P3_record_ops_do_not_change_the_affinity_verdict(loop_submitter):
         EvaluationPipeline().run(_ctx(_ScriptLLM(_verdict(), record=record_reply), record=SessionRecord(),
                                       storage=_SpyStorage(), svc=svc))
         return svc.affinity, svc.relation
-    assert run({}) == run({rec.FIELD_ADD: [_add("relation", "放松了些", "我也去过西湖")]})
+    assert run({}) == run({rec.FIELD_OPS: [_add("relation", "放松了些", "我也去过西湖")]})
 
 
 def test_P4_one_save_point_per_turn(loop_submitter):
@@ -374,6 +382,8 @@ _TRANSCRIBED = (
     "Do NOT fabricate events or emotions not supported by the text.",
     "You MUST write ALL",
     "**你必须用中文撰写所有输出内容。**",
+    # mem0 2.0.20 configs/prompts.py:51
+    "Do not return anything from the custom few shot example prompts provided above.",
     # AutoPersonas（arXiv 2607.08252v1，p.45）
     "a recurring person mention becomes a relationship only when it changes obligations, "
     "conflicts, mutual expectations, or later reachability",
@@ -391,6 +401,17 @@ def test_X1_transcribed_rules_are_verbatim():
     text = _prompt().replace("entry", "unit").replace("entries", "units")
     missing = [t for t in _TRANSCRIBED if t not in text]
     assert not missing, missing
+
+
+def test_X1b_examples_are_not_taken_from_the_replay_conversation():
+    """示范用另编的人物和句子：不能含验收那场对话里的内容，否则重放成了对答案（spec §3.3）。"""
+    system, _ = rec.render_extraction_prompt(SessionRecord(), char_name="孔乙己",
+                                             user_message="", assistant_reply="")
+    examples = system[system.index("## Few shot examples"):]
+    assert "老陈" in examples
+    for leaked in ("孔乙己", "林小满", "苏州", "猫", "西湖", "桂花糕", "论语", "孟子", "京城", "金陵",
+                   "下棋", "小芸", "歇"):
+        assert leaked not in examples, leaked
 
 
 def test_X2_third_person_with_names_extraction_and_second_person_only_in_the_block():
@@ -455,7 +476,7 @@ async def test_E1_a_record_belongs_to_its_archive_and_survives_a_restore():
     await store._ensure_initialized()
     try:
         _, cid, a, b = await _seed(store)
-        llm = _ScriptLLM(_verdict(), record={rec.FIELD_ADD: [_add("known", "在杭州读研究生", "杭州读研究生")]})
+        llm = _ScriptLLM(_verdict(), record={rec.FIELD_OPS: [_add("known", "在杭州读研究生", "杭州读研究生")]})
         live = _engine(store, llm, cid, a)
         async with main_loop_registered():
             await asyncio.to_thread(live.post_stream_process, USER_SAYS, CHAR_SAYS)
@@ -480,7 +501,7 @@ async def test_E2_the_user_never_sees_it():
     await store._ensure_initialized()
     try:
         uid, cid, a, _ = await _seed(store)
-        llm = _ScriptLLM(_verdict(), record={rec.FIELD_ADD: [_add("known", "在杭州读研究生", "杭州读研究生")]})
+        llm = _ScriptLLM(_verdict(), record={rec.FIELD_OPS: [_add("known", "在杭州读研究生", "杭州读研究生")]})
         async with main_loop_registered():
             await asyncio.to_thread(_engine(store, llm, cid, a).post_stream_process, USER_SAYS, CHAR_SAYS)
         assert "在杭州读研究生" in await store.load_session_record_unscoped(a), "前提：确实存进去了"
@@ -519,7 +540,7 @@ async def test_E4_group_engines_never_carry_a_record():
         counting = _CountingStore(store)
         llm = _ScriptLLM(_verdict(), record=_BJ)
         eng = _engine(counting, llm, cid, group_id=_uid("g"))
-        eng.load_session_record(_one("events", "下个月去北京面试", "北京面试"))  # 装进去也不用
+        eng.load_session_record(_one("plans", "下个月去北京面试", "北京面试"))  # 装进去也不用
         async with main_loop_registered():
             await asyncio.to_thread(eng.post_stream_process, USER_SAYS, CHAR_SAYS)
         assert llm.record_calls == [], "群聊不该有抽取调用"
@@ -530,8 +551,8 @@ async def test_E4_group_engines_never_carry_a_record():
 
 
 def test_R9_one_turn_keeps_at_most_the_op_cap():
-    ops = [_add("events", f"第{i}件事", "北京面试") for i in range(rec.MAX_OPS_PER_TURN + 2)]
-    out, warns = _apply(SessionRecord(), record_add=ops)
+    ops = [_add("plans", f"第{i}件事", "北京面试") for i in range(rec.MAX_OPS_PER_TURN + 2)]
+    out, warns = _apply(SessionRecord(), *ops)
     assert len(out.active()) == rec.MAX_OPS_PER_TURN and warns
 
 
@@ -544,7 +565,7 @@ async def test_E5_saving_the_record_leaves_updated_at_alone():
         uid, _, a, _ = await _seed(store)
         before = (await store.get_session_owned(a, uid))["updated_at"]
         await asyncio.sleep(1.1)
-        await store.save_session_record(a, _one("events", "下个月去北京面试", "北京面试").to_persist())
+        await store.save_session_record(a, _one("plans", "下个月去北京面试", "北京面试").to_persist())
         assert (await store.get_session_owned(a, uid))["updated_at"] == before
         assert "北京面试" in await store.load_session_record_unscoped(a)
     finally:

@@ -21,7 +21,7 @@
 
 ## 1. 目标检查（第 1 个提交就带上）
 
-文件：`tests/test_session_record_goal.py`。原有 21 条中的 P 组和 E 组改写，新增 5 条，共 26 条。
+文件：`tests/test_session_record_goal.py`。原有 21 条中的 P 组和 E 组改写，新增 6 条，共 27 条（第二轮修改后；见文末「补充」）。
 
 | 检查 | 守什么 | main `9b0052af` 上 | 原型上 |
 |---|---|---|---|
@@ -32,12 +32,13 @@
 | P4 | 每轮保存点：有变化时 `affinity`、`record` 各一次；没变化不存；群聊只存 `group` | 红 | 绿 |
 | P5 | 抽取用量记在 `chat_session_record` 下 | 红 | 绿 |
 | P6 | 低温适配器每个源适配器只派生一次，换了源适配器才重新派生 | 红 | 绿 |
-| X1 | 照抄的 10 句原文在提示词里一字不差（只允许 unit→entry） | 红 | 绿 |
+| X1 | 照抄的 11 句原文在提示词里一字不差（只允许 unit→entry） | 红 | 绿 |
+| X1b | 示范用另编的人物和句子，不含验收那场对话里的人名、物件、地名 | 红 | 绿 |
 | X2 | 抽取提示词里栏名用角色名、没有「他对你」；注入块用「你知道的关于对方的事」 | 红 | 绿 |
 | E1–E4 | 真引擎 + 真 PG：存档隔离、恢复后接得上、用户看不到、一轮各存一次、群聊不带（沿用，改为从抽取调用拿操作） | E1–E3 红，E4 绿 | 绿 |
 | R0–R9、E5 | 校验规则、序列化、`updated_at`（沿用，不改） | 绿 | 绿 |
 
-原始输出（沙箱，PG16）：main 上 `11 failed, 15 passed`；原型上 `26 passed`；原型全量 `3518 passed, 1 skipped, 0 failed`。
+原始输出（沙箱，PG16）：main 上收集即报错（`core.session_record` 没有 `FIELD_OPS`），整文件红；原型上 `27 passed`。第一轮原型全量 `3518 passed, 1 skipped, 0 failed`；第二轮只改了 `core/session_record.py`、本测试文件和重放脚本，受影响的三个测试文件 `52 passed`。
 
 真模型的检查不在单元测试里，在 §6（重放）、§7（受控探针）、§8（整场验收）。
 
@@ -105,7 +106,7 @@ def run(self, ctx):
 
 ### 3.3 抽取提示词与出处
 
-渲染出来的提示词：角色名「孔乙己」，当前已有 1 条。
+渲染出来的提示词（第二轮）：角色名「孔乙己」，当前已有 1 条。
 
 ```
 You are a character state analyst. After each conversation turn, you update the tracked state of one save between the character 「孔乙己」 and the user, who is referred to as 「对方」.
@@ -117,19 +118,43 @@ You are a character state analyst. After each conversation turn, you update the 
 4. Do NOT duplicate information already in an existing entry -- check the current state first.
 5. Keep content concise -- one clear sentence per entry.
 6. SUPERSEDE an existing entry when new information contradicts or updates it. Include the ID of the entry being superseded. Look ACTIVELY for supersession patterns: "actually", "instead", "no longer", "switched to", "cancelled", "replaced X with Y", "now Y not X" （中文如「改主意了」「不…了」「改成」「换成」「其实」「取消」）. An entry that has merely not been mentioned recently is NOT contradicted: do not supersede it.
-7. NO CHANGE: If the turn contains no new state-relevant information, or if the state already captures everything, return empty lists.
+7. NO CHANGE: If the turn contains no new state-relevant information, or if the state already captures everything, return an empty list.
 8. **你必须用中文撰写所有输出内容。**
 
 ## Columns
-- known「孔乙己知道的关于对方的事」：对方自己说出的、关于对方本人的事：身份、经历、喜好、身边的人。依据只能是对方的原话。
+- known「孔乙己知道的关于对方的事」：对方明确说出的、关于对方本人的事实：身份、经历、身体状况、明说的喜好、身边的人。依据只能是对方的原话；对方提的问题不是关于对方的事实。
 - relation「孔乙己和对方关系的变化」：只在这一轮改变了两人之间的义务、冲突、相互期待或以后能否联系上时才记（原文：a recurring person mention becomes a relationship only when it changes obligations, conflicts, mutual expectations, or later reachability）。
-- events「发生过的事和约定」：两人之间发生过的事，以及任何一方做出的承诺、计划或决定。
+- plans「还没兑现的约定和计划」：任何一方做出的、还没兑现的承诺、计划或决定，包括对方说的行程和安排。孔乙己讲自己的经历、看法、习惯，或劝对方做什么，都不记。
 
 ## Output format
-Output ONLY a valid JSON object, no other text:
-{"record_add": [{"col": "known|relation|events", "text": "...", "evidence": "..."}],
- "record_replace": [{"id": <ID of the entry being superseded>, "col": "known|relation|events", "text": "...", "evidence": "..."}]}
------（以上 system，约 540 token；以下 user）-----
+Output ONLY a valid JSON object, no other text. One item per fact; a fact that supersedes an existing entry is ONE item carrying "supersedes":
+{"record_ops": [{"col": "known|relation|plans", "text": "...", "evidence": "...", "supersedes": <ID of the entry being superseded, or null>}]}
+
+## Few shot examples
+(Character 「老陈」 below is only an example, not part of the real conversation.)
+
+Current state: （还没有）
+对方：你平时喜欢喝什么茶？
+老陈：龙井吧，清淡。
+Output: {"record_ops": []}
+
+Current state: （还没有）
+对方：我在杭州读研究生，下个月要去北京面试。
+老陈：那可得好好准备。
+Output: {"record_ops": [{"col": "known", "text": "对方在杭州读研究生。", "evidence": "我在杭州读研究生", "supersedes": null}, {"col": "plans", "text": "对方下个月要去北京面试。", "evidence": "下个月要去北京面试", "supersedes": null}]}
+
+Current state: #2 [plans] 对方下个月要去北京面试。
+对方：面试改到上海了，不去北京了。
+老陈：上海也好。
+Output: {"record_ops": [{"col": "plans", "text": "对方下个月的面试改在上海，不去北京了。", "evidence": "面试改到上海了，不去北京了", "supersedes": 2}]}
+
+Current state: （还没有）
+对方：说好了，你教我钓鱼。
+老陈：行，下周三来。
+Output: {"record_ops": [{"col": "plans", "text": "老陈答应下周三教对方钓鱼。", "evidence": "行，下周三来", "supersedes": null}]}
+
+Do not return anything from the custom few shot example prompts provided above.
+-----（以上 system，约 923 token；以下 user）-----
 ## Current state
 #1 [known] 对方自称林小满，苏州人
 
@@ -147,12 +172,13 @@ Output ONLY a valid JSON object, no other text:
 | 规则 2 | PHASE-Tree `:96–101` 规则 7 | 换成具体称呼 | P2 |
 | 规则 3、4、5 | StateMem E.1 Rules 前三条 | 照抄，unit→entry | — |
 | 规则 6 | StateMem E.1 第 2 项 SUPERSEDE | 照抄，unit→entry；括号里的中文例子是 Claude 加的；末句沿用 R4 | 原文例子都是英文；R4 来自 #140 已定的设计 |
-| 规则 7 | StateMem E.1 第 5 项 NO CHANGE | 照抄，「return empty lists」对应我们的输出格式 | — |
+| 规则 7 | StateMem E.1 第 5 项 NO CHANGE | 照抄，「return an empty list」对应我们的输出格式 | — |
 | 规则 8 | PHASE-Tree `:155` | 照抄 | — |
-| known 栏定义 | R5（#140 已定）；StateMem E.1「From USER statements」 | 我们的定义 | 原文是任务场景（请求、偏好、更正），换成角色扮演里关于对方的事 |
+| known 栏定义 | StateMem E.1「From USER statements: explicit requests, preferences, corrections」；mem0 `configs/prompts.py:116`「Create the facts based on the user messages only」；R5 | 「明确说出的」对应 explicit；「对方提的问题不是关于对方的事实」是范围的反面写明 | 第一轮丢了 explicit，重放里 107 条「对方问起 X」 |
 | relation 栏定义 | AutoPersonas arXiv 2607.08252v1 p.45 | 括号里照抄原句，前面是中文对应 | — |
-| events 栏定义 | PHASE-Tree `:114` commitments「Promises or decisions the character made」 | 扩到双方，加「发生过的事」 | 用户的承诺和计划（带《论语》、去京城）也要能被取代（P4） |
-| 输出格式 | PHASE-Tree `:132`「Output ONLY a valid JSON object」 | 字段沿用 #140 的 `record_add` / `record_replace` | 校验代码不变 |
+| plans 栏定义（原 events） | StateMem E.1「constraints, commitments, or facts」「binding commitments, remaining obligations」；PHASE-Tree `:114` commitments「Promises or decisions」；mem0 `prompts.py:21`「Track Plans and Intentions … any plans the user has shared」；PHASE-Tree `:77–79`「Only track what THIS character learned, felt, or committed to」 | 只记双方还没兑现的承诺、计划、决定，含对方的行程；角色自述和劝告不记 | 第一轮写成「发生过的事」，重放里 228 条角色自述和「再次劝去歇息」；用户计划归栏不一 |
+| 输出格式 | PHASE-Tree `:132`「Output ONLY a valid JSON object」；Mem0 §2.1（arXiv 2504.19413 p.4）每条候选事实对应一个操作 | 一个列表 `record_ops`，每条事实一项，取代就在这一项上带 `supersedes` | 第一轮分两个列表，第 16 轮同一件事写了两遍 |
+| 示范（4 个，含 1 个「不用记」） | mem0 `prompts.py:27–44`（示范含「Hi.」→ 空列表）；`:51` 照抄末句 | 人物和句子另编（「老陈」），不取验收那场的内容，由 X1b 守 | 提高 A–D 的服从度，又不让重放变成对答案 |
 | user 段（当前有效条目 + 这一轮） | StateMem E.1 的 `{current_state}`、`{latest_turn}` | — | — |
 
 从旧说明里删掉的：「每条写完整，带上必要的前因」。上一场的条目正是因为这句写成了长段解读；它和 E.1 的「one clear sentence per unit」冲突，以照抄的原文为准。
@@ -187,15 +213,17 @@ Output ONLY a valid JSON object, no other text:
 ## 6. 步骤
 
 0. **[核对]** 执行方逐条复核 §2 的事实，有一条不成立就停下报告。
-1. **[测试，提交 1]** 只提交 `tests/test_session_record_goal.py`。在 main 上应是 11 红 15 绿。
-2. **[core + 脚本，提交 2]** 提交其余改动。目标检查 26 条全绿，受影响测试和 `npm test` 通过。
-3. **[本地，真模型]** 跑重放（§7.1）。全部判定线都过才推分支、开 PR。不过就停下，把 `summary.json` 和 `replay.json` 交给 Claude，**不自己改提示词**。
+1. **[测试，提交 1]** 只提交 `tests/test_session_record_goal.py`。在 main 上应是收集即报错（没有 `FIELD_OPS`）。
+2. **[core + 脚本，提交 2]** 提交其余改动。目标检查 27 条全绿，受影响测试和 `npm test` 通过。
+3. **[本地，真模型]** 先小重放（前 30 轮，§7.1），过了再全量重放。全部判定线都过才推分支、开 PR。不过就停下，把 `summary.json` 和 `replay.json` 交给 Claude，**不自己改提示词**。
 4. **[PR]** Claude 拉分支复核：逐文件看、全量和 main 对比、自补变异（见 §9）。Tracy 合并。
 5. **[本地，真模型]** 合并后先跑受控探针（§7.2），过了再跑整场验收（§7.3）。
 
 ## 7. 真模型检查
 
-### 7.1 重放（第 3 步，约 $0.05，峰时翻倍）
+### 7.1 重放（第 3 步；小重放约 $0.01，全量约 $0.03，峰时翻倍）
+
+小重放先加 `--limit 30`（含 8 条种子、2 处改口、21 轮填充），判定线同下；过了再去掉 `--limit` 跑全量。
 
 ```
 python scripts/replay_session_record.py --transcript <上一场的 transcript.json> --card-name 孔乙己 --out e2e/scratch/replay-session-record
@@ -251,6 +279,8 @@ Claude 另外逐条读 `replay.json` 里的记录，看内容对不对，不只�
 | 改写任一照抄的原句（如去掉「-- check the current state first」） | X1 |
 | 栏名改回「他对你的了解」，或注入块用角色名 | X2 |
 | `extract` 不经 `apply`，直接收模型给的条目 | R0–R5（经 P、E 组） |
+| `supersedes` 为 null 时也打 warning，或当作取代 | R2 |
+| 示范里换成验收那场的句子 | X1b |
 
 ## 10. 测试
 
@@ -262,4 +292,25 @@ Claude 另外逐条读 `replay.json` 里的记录，看内容对不对，不只�
 
 ## 补充
 
-（复核、执行中发现的问题写在这里。）
+### 重放第 1 次（10-12 01:34，本地，`2cb1152d`）
+
+判定线过 3 条、不过 3 条：种子 8/8、改口取代 2/2、独白腔 0 都过；第 16 轮重复记、填充轮新增「了解」107 条、注入块 9,156 token 不过。逐轮看 `replay.json`：
+
+- 填充轮每轮固定三条：「对方问起孔乙己 X」进 known；角色自述进 events；「再次劝对方去歇息」进 events。后两类 228 条，来源全是角色。
+- 带《论语》进了 events，去京城进了 known，用户的计划归栏不一。
+- 第 16 轮取代 #9 之后，又新增了同一件事。
+
+原因是第一轮的栏定义和文献对不上：known 丢了 explicit；events 写成了「发生过的事」；用户计划没定归栏；输出分两个列表。
+
+### 第二轮修改（10-12 09:10，Tracy 同意按此修）
+
+| 改什么 | 出处 |
+|---|---|
+| known：只记对方明确说出的关于自己的事实，对方提的问题不算 | StateMem E.1 explicit；mem0 `prompts.py:116` |
+| events → plans（还没兑现的约定和计划），含对方的行程；角色自述和劝告不记 | StateMem E.1 commitments；PHASE-Tree `:114`、`:77–79`；mem0 `prompts.py:21` |
+| 输出合成一个列表 `record_ops`，取代带 `supersedes` | Mem0 §2.1 p.4 |
+| 加 4 个示范，人物另编 | mem0 `prompts.py:27–44`、`:51` |
+
+代码校验规则（原话依据、来源判定、R5、编号核对、关系栏只追加、每轮 6 条上限）不变。
+
+如果小重放还压不住 known 栏，下一步换 Mem0 的两步法（§2.1：先抽候选，再逐条和已有条目比，可选「不动」），每轮多一次调用；不再只改措辞。
