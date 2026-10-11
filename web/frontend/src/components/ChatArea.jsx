@@ -439,13 +439,13 @@ function ChatView() {
     if (!cardId) return
     setMemoriesLoading(true)
     try {
-      const res = await fetchWithTimeout(`/api/memory/list/${cardId}`)
+      const res = await fetchWithTimeout(`/api/memory/list/${cardId}?session_id=${sessionId}`)
       const data = await res.json()
       setMemories(data.memories || [])
       setMemoryConfigured(data.configured !== false)
     } catch { /* ignore */ }
     finally { setMemoriesLoading(false) }
-  }, [cardId])
+  }, [cardId, sessionId])
 
   const handleSend = useCallback(
     (text) => {
@@ -863,7 +863,7 @@ function ChatView() {
           setMemoryClearConfirm(false)
           setMemoryError(null)
           try {
-            await fetchWithTimeout(`/api/memory/clear/${cardId}`, { method: 'DELETE' })
+            await fetchWithTimeout(`/api/memory/clear/${cardId}?session_id=${sessionId}`, { method: 'DELETE' })
             setMemories([])
           } catch (err) { setMemoryError(err.message || '清空失败') }
         }}
@@ -896,7 +896,7 @@ function ChatView() {
                       if (!addMemText.trim()) return
                       setMemoryError(null)
                       try {
-                        await fetchWithTimeout(`/api/memory/add/${cardId}`, {
+                        await fetchWithTimeout(`/api/memory/add/${cardId}?session_id=${sessionId}`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ text: addMemText.trim() }),
