@@ -119,9 +119,9 @@ web/routers/text.py:430:    ok = await hard_delete("text", text_id, user, storag
 | D6 | 存档永久删除，记忆库这一刻删不动 | 返回 500；存档行还在回收站；记忆没少；恢复正常后重试成功 |
 | D7 | 存档永久删除，记忆系统没开 | 照样删成功 |
 
-调用点 × 检查：F2 的 6 处和 F3 的 1 处，每处至少被一条检查从接口打到（存档两处 D1，卡两处 D3，群 D4，书 D5/D5b，清空回收站 D2）。
+调用点 × 检查：F2 的 6 处和 F3 的 1 处，每处至少被一条检查从接口打到（存档两处 D1，卡两处 D3，群 D4，书 D5/D5b/D5c，清空回收站 D2）。
 
-沙箱结果：未改代码 **8 failed, 2 passed**（D5b、D7 本来就该绿）；按第 4 节改完 **10 passed**。
+沙箱结果：未改代码 **8 failed, 3 passed**（D5b、D5c、D7 本来就该绿）；按第 4 节改完 **11 passed**。
 
 ## 6. 规模
 
@@ -129,8 +129,8 @@ web/routers/text.py:430:    ok = await hard_delete("text", text_id, user, storag
 
 ## 7. 提交顺序
 
-1. spec + 目标检查（跑出 8 failed, 2 passed）。
-2. 存储层新方法 + `trash_service` + 7 处接口 + 第 4.4 节的两处测试（跑出 10 passed）。
+1. spec + 目标检查（跑出 8 failed, 3 passed）。
+2. 存储层新方法 + `trash_service` + 7 处接口 + 第 4.4 节的两处测试（跑出 11 passed）。
 
 ## 8. 测试
 
