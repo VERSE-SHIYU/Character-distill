@@ -106,8 +106,8 @@ Claude 已在沙箱实跑（Python 3.13，PG 16，库 `charsim_test`）：main `
 ### 4.1 存（数据库 + 存储层）
 
 - 新列 `group_sessions.member_phases TEXT NOT NULL DEFAULT '{}'`：JSON，卡 id → 阶段号。**只存选了且有效的**；没出现的卡 = 最后阶段。只在建群时写一次。
-  - PG：`storage/migrations_pg/037_group_member_phases.sql`（`ADD COLUMN IF NOT EXISTS`）。
-  - SQLite 孪生：`storage/migrations/102_group_member_phases.sql`，并登记进 `sqlite_store.py` 次序表末尾。
+  - PG：`storage/migrations_pg/038_group_member_phases.sql`（`ADD COLUMN IF NOT EXISTS`）。
+  - SQLite 孪生：`storage/migrations/103_group_member_phases.sql`，并登记进 `sqlite_store.py` 次序表末尾。
 - **JSON 列的编解码只写一处**：新模块 `storage/group_row.py`，两个函数：
   - `encode_member_phases(member_phases) -> str`（写库用）。
   - `decode_group_row(d) -> dict`：解开 `card_ids`，行里有 `member_phases` 就一并解开。
@@ -213,7 +213,7 @@ aiMemberIds(selectedCardIds, personaType, personaCardId)
 
 ## 5. 步骤（按依赖顺序，每步一个 commit）
 
-1. **[数据库]** 加 `037_group_member_phases.sql` 与孪生 `102_group_member_phases.sql`，登记 SQLite 次序表；同一 commit 放入 `tests/test_group_arc_phase_goal.py`（此时红，正常）。
+1. **[数据库]** 加 `038_group_member_phases.sql` 与孪生 `103_group_member_phases.sql`，登记 SQLite 次序表；同一 commit 放入 `tests/test_group_arc_phase_goal.py`（此时红，正常）。
 2. **[存储]** 新建 `storage/group_row.py`；两后端 8 处解码改调 `decode_group_row`；`create_group_session` 收 `member_phases`；三个读点带新列。
 3. **[后端]** 新建 `web/group_engines.py`（4.2 三样）；`group.py` 建群与恢复群改调它、删掉重复段；请求字段与响应字段。**本 commit 后目标检查 9 条全绿。**
 4. **[前端]** `utils/card.js` 三个函数及单测，`defaultArcPhase` 与 `ChatArea` 改用；`utils/groupMembers.js` 加 `aiMemberIds`、搬入 `parseCardIds` 及单测，F10、F13 各处改用。此步不改任何行为。
@@ -414,3 +414,7 @@ $ grep -rn "group-chat-layout" web/frontend/src --include=*.jsx --include=*.js |
 部分仍死 / 部分错套。所以本段不动这 16 条，样式补充问题 1（时期行拆类）照做。
 
 Tracy 10-12 定：成员间距的根因是旧布局（0ac7149d 换成 SplitOrFullscreen）留下的死样式，⑤ 不在这里零碎地修，并入单独的『CSS 死选择器』一项，全量调查后统一处理。⑤ 段 A 不动这 16 条，e2e 也不加成员间距的断言。
+
+### 迁移号顺延（10-12，#140 先合并）
+
+10-12 #140（session-record）先合并，占用了 037 / 102，本段按 §0 第 2 条顺延到 038 / 103（两处文件名、`sqlite_store.py` 次序表、迁移注释里的孪生号一起改）。

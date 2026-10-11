@@ -162,8 +162,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "101_cards_examples_pending.sql",
     # 102：PG 037 新增列的孪生，同上。
     "102_session_record.sql",
-    # 102：PG 037 新增列的孪生，同上。
-    "102_group_member_phases.sql",
+    # 103：PG 038 新增列的孪生，同上。
+    "103_group_member_phases.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
