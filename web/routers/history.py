@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 
-from core.trash_service import hard_delete, restore, soft_delete
+from core.trash_service import empty_trash, hard_delete, restore, soft_delete
 from core.affinity_service import read_persisted_affinity
 from core.memory_manager import MemoryManager
 from deps import get_memory_manager, get_sessions, get_storage
@@ -77,12 +77,8 @@ async def purge_trash(
     memory_manager: MemoryManager | None = Depends(get_memory_manager),
 ) -> dict[str, Any]:
     """Permanently delete all sessions in trash."""
-    user_id = user["id"]
-    # 逐个走 hard_delete：「永久删一个存档」只有一条路，清记忆的对应关系只在那一条路上。
-    sessions = await storage.list_trash_sessions(user_id)
-    for session in sessions:
-        await hard_delete("session", session["id"], user, storage, memory=memory_manager)
-    return {"ok": True, "purged": len(sessions)}
+    purged = await empty_trash(user, storage, memory=memory_manager)
+    return {"ok": True, "purged": purged}
 
 
 @router.post("/clear-all")

@@ -490,10 +490,6 @@ class StorageBase(ABC):
         """Restore a soft-deleted session."""
 
     @abstractmethod
-    async def purge_trash(self, user_id: str = "") -> int:
-        """Permanently delete all soft-deleted sessions."""
-
-    @abstractmethod
     async def hard_delete_session(self, id: str) -> bool:
         """Permanently delete one session (hard delete)."""
 

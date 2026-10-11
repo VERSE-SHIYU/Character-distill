@@ -1652,24 +1652,6 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Restore session failed: {exc}")
             raise
 
-    async def purge_trash(self, user_id: str = "") -> int:
-        """Permanently delete all soft-deleted sessions. Returns count."""
-        try:
-            async with await self._connect() as conn:
-                if user_id:
-                    tag = await conn.execute(
-                        "DELETE FROM sessions WHERE deleted_at IS NOT NULL AND user_id = $1",
-                        user_id,
-                    )
-                else:
-                    tag = await conn.execute(
-                        "DELETE FROM sessions WHERE deleted_at IS NOT NULL"
-                    )
-                return self._parse_rowcount(tag)
-        except Exception as exc:
-            print(f"[PostgresStore] Purge trash failed: {exc}")
-            raise
-
     async def hard_delete_session(self, id: str) -> bool:
         """Permanently delete one session (hard delete)."""
         try:

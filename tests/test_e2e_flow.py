@@ -212,8 +212,7 @@ class TestFullUserFlow:
 
         # Purge
         await store.delete_session(session_id)
-        purged = await store.purge_trash()
-        assert purged >= 1
+        assert await store.hard_delete_session(session_id) is True
         trash2 = await store.list_trash_sessions()
         assert not any(s["id"] == session_id for s in trash2)
 
@@ -280,6 +279,5 @@ class TestFullUserFlow:
 
         # ── Final cleanup ──
         await store.delete_session(session_id)
-        purged = await store.purge_trash()
-        assert purged >= 1
+        assert await store.hard_delete_session(session_id) is True
         assert not any(s["id"] == session_id for s in await store.list_trash_sessions())
