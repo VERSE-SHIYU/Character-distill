@@ -436,7 +436,7 @@ function ChatView() {
   useKeyboardFocus({ rootRef, enabled: nativeKbd, onFocus: handleKbdFocus, getRiseTarget: getComposerWrap })
 
   const loadMemories = useCallback(async () => {
-    if (!cardId) return
+    if (!cardId || !sessionId) return
     setMemoriesLoading(true)
     try {
       const res = await fetchWithTimeout(`/api/memory/list/${cardId}?session_id=${sessionId}`)
@@ -857,7 +857,7 @@ function ChatView() {
       <ConfirmModal
         isOpen={memoryClearConfirm}
         title="清空记忆"
-        message="确定清空该角色的全部记忆？此操作不可恢复。"
+        message="确定清空这个存档的全部记忆？此操作不可恢复。"
         confirmText="清空"
         onConfirm={async () => {
           setMemoryClearConfirm(false)
