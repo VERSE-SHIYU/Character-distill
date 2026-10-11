@@ -204,7 +204,7 @@ class _FakeMemory:
         self.cfg = cfg
         self.deleted: list[str] = []
 
-    def get_all(self, filters=None):
+    def get_all(self, filters=None, top_k=None):
         return {"results": []}
 
     def delete_all(self, user_id=None, run_id=None):
