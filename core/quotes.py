@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import bisect
 import re
 import unicodedata
 from typing import NamedTuple, Sequence
@@ -162,8 +163,11 @@ def _quote_re(text: str) -> "re.Pattern[str] | None":
                       + re.escape(right) + "]*)" + re.escape(right))
 
 
-# 片段里上一句之前最多再带这么长的叙述：一段长叙述整段塞进去，是几倍的成本与注意力。
-_CONTEXT_BACK = 60
+# 片段里上一句之前再带这么多句原文（叙述、别人的台词都算）：上一句写的是「他说」或没有
+# 署名时，「他」是谁写在更前面，模型得看得见才判得出。10 句取自中文小说说话人识别用的窗口
+# （Chen et al., Findings of EMNLP 2023：前后各 10 句）；依据与测量见
+# `docs/specs/dialogue-context-window.md`。
+_CONTEXT_SENTENCES_BACK = 10
 
 
 class Candidate(NamedTuple):
@@ -225,14 +229,15 @@ def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
 
     引导语/署名里的人名常是宾语（「送入刘姥姥口中，因笑道」是凤姐说的），所以**归属对不对
     不靠这段子串判定**：模型读 `context` 整段确认后再挑（见 `render_candidates`）。片段起点
-    仍由 `_lead_before` 给出（上一句之前最多 `_CONTEXT_BACK` 字），终点到本句署名那半句为止
-    （`_tail_after`）—— 模型得看见引号后的署名才判得出是谁说的。
+    由 `_context_start` 给出（上一句之前 `_CONTEXT_SENTENCES_BACK` 句），终点到本句署名那半句
+    为止（`_tail_after`）—— 模型得看见引号后的署名才判得出是谁说的。
     """
     wanted = [_same_width(n) for n in names if n]
     quote_re = _quote_re(text)
     if quote_re is None:
         return []
     quotes = list(quote_re.finditer(text))
+    sentence_ends = [s.end() for s in _NARRATION_SENTENCE.finditer(text)]
     out: list[Candidate] = []
     for i, m in enumerate(quotes[1:], start=1):        # 第一句没有上一句
         prev = quotes[i - 1]
@@ -243,8 +248,7 @@ def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
         if not _names_any((lead, tail), wanted):
             continue
         prev_lead, prev_start = _lead_before(text, quotes, i - 1, prev.start())
-        start = max(prev_start - _CONTEXT_BACK,
-                    quotes[i - 2].end() if i >= 2 else 0)
+        start = _context_start(text, quotes, sentence_ends, prev_start)
         out.append(Candidate(n=0, lead=lead, line=m.group(1),
                              prev_lead=prev_lead, prev_line=prev.group(1),
                              context=text[start:end], start=m.start()))
@@ -263,7 +267,7 @@ def _lead_before(text: str, quotes: list, i: int, start: int) -> tuple[str, int]
     引导语到上一个句读为止。换行也算断点，除非换行前那半句还没说完（以冒号、逗号收尾，
     如「闰土又对我说：⏎“……”」）—— 那是引导语和引号分在了两行。
 
-    起点返回的是**切掉前后空白之前**的位置：片段按下限截取时用它算「往前 60 字」。
+    起点返回的是**切掉前后空白之前**的位置：`_context_start` 从它往前数句子。
     """
     gap_start = quotes[i - 1].end() if i else 0
     head = text[gap_start:start]
@@ -274,6 +278,21 @@ def _lead_before(text: str, quotes: list, i: int, start: int) -> tuple[str, int]
     for mb in _LEAD_BREAK.finditer(body):
         cut = mb.end()
     return body[cut:].strip(), gap_start + cut
+
+
+def _context_start(text: str, quotes: list, sentence_ends: Sequence[int], prev_start: int) -> int:
+    """片段的起点：从上一句的引导语（`prev_start`）往前数 `_CONTEXT_SENTENCES_BACK` 句。
+
+    数到的位置落在某句台词里面时，退到那句台词的引导语开头 —— 片段不从半句话开始，那句话
+    是谁说的也一并带上。`sentence_ends` 是全文的句末位置（升序），由调用方算一次、各条候选
+    共用：逐条重扫全文在长书上是平方级的。
+    """
+    k = bisect.bisect_right(sentence_ends, prev_start) - _CONTEXT_SENTENCES_BACK - 1
+    start = sentence_ends[k] if k >= 0 else 0
+    q = bisect.bisect_right(quotes, start, key=lambda m: m.start()) - 1
+    if q >= 0 and start < quotes[q].end():
+        _, start = _lead_before(text, quotes, q, quotes[q].start())
+    return start
 
 
 def _tail_after(text: str, quotes: list, i: int) -> tuple[str, int]:

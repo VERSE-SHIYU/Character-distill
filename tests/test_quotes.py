@@ -144,14 +144,15 @@ def test_a_candidate_carries_the_source_fragment_ending_at_its_own_line():
     assert PARA.index(c.context) <= PARA.index("凤姐忙和刘姥姥摆手道："), "从上一句之前起"
 
 
-def test_the_fragment_keeps_the_previous_line_and_caps_narration_before_it_at_sixty():
-    """片段必含上一句（模型得看对方怎么接的话），上一句之前最多带 60 字叙述，且不吞掉
-    再上一句的台词：一段长叙述整段塞进去是几倍的成本与注意力。
+def test_the_fragment_keeps_the_previous_line_and_ten_sentences_before_it():
+    """片段必含上一句（模型得看对方怎么接的话），上一句之前再带 `_CONTEXT_SENTENCES_BACK` 句
+    原文：上一句写的是「他说」时，「他」是谁写在更前面。更早的不带：成本与注意力。
 
-    变异：起点取再上一句结尾（不设 60 字上限）→ 整段叙述连「先这么说」一起进片段，红。
+    变异：改回「往前 60 字、不越过再上一句」→ 片段从第 10 句中间起，第三条断言红；
+    不设上限（从头带起）→「先这么说」进片段，红。
     """
     text = ("凤姐道：“先这么说。”\n"
-            + "贾母听了，也不言语。" * 10
+            + "".join(f"贾母听了第{i}回，也不言语。" for i in range(1, 13))
             + "凤姐笑道：“你老慢慢说。”\n"
             + "刘姥姥道：“姑娘说得是。”\n")
 
@@ -159,8 +160,8 @@ def test_the_fragment_keeps_the_previous_line_and_caps_narration_before_it_at_si
 
     assert c.context.endswith("刘姥姥道：“姑娘说得是。”"), "到本句收尾引号止"
     assert "你老慢慢说" in c.context, "上一句（凤姐那句）在片段里"
-    assert c.context == text[text.index("凤姐笑道：") - 60:text.rindex("”") + 1]
-    assert "先这么说" not in c.context, "再上一句整个落在 60 字之外，不该进来"
+    assert c.context == text[text.index("贾母听了第3回"):text.rindex("”") + 1]
+    assert "先这么说" not in c.context, "再上一句落在 10 句之外，不该进来"
 
 
 def _one_per_round(n):
