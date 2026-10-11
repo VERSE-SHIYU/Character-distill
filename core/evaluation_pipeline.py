@@ -13,6 +13,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from core import session_record as record_protocol
+from core.session_record import SessionRecord
 from core.utils import try_record_usage
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,8 @@ class EvalContext:
     llm: Any
     reaction_appraisal: str = ""
     departure_notice: str = ""
+    # 一对一存档的本场记录；群聊（或没有存档）为 None —— 不抽、不存、提示词不变。
+    session_record: SessionRecord | None = None
 
 
 @dataclass
@@ -48,6 +52,7 @@ class EvalResult:
     in_character: int = 80  # 瞬时信号，不入库，不跨 session
     ooc_reason: str = ""
     assertion_confidence: int = 50  # 用户输入可信度，用于记忆写入过滤
+    session_record: SessionRecord | None = None  # 应用本轮操作后的本场记录（一对一）
 
 
 class EvaluationPipeline:
@@ -83,11 +88,15 @@ class EvaluationPipeline:
         assertion_confidence = data.get("assertion_confidence", 50)
         if not isinstance(assertion_confidence, int) or assertion_confidence < 0 or assertion_confidence > 100:
             assertion_confidence = 50
+        # 本场记录和好感各自校验：这里出错只丢本场记录这一部分，好感照常生效
+        record = self._apply_session_record(ctx, data)
         # 到此核心状态已落定，下面任何异常都不得回滚
 
         # ── SIDE-EFFECT layer（全部 fire-and-forget）─────────────
         self._persist_time_event(ctx, data)
         self._persist_affinity(ctx)
+        if record is not ctx.session_record:
+            self._persist_session_record(ctx, record)
 
         return EvalResult(
             importance=importance,
@@ -96,6 +105,7 @@ class EvaluationPipeline:
             in_character=in_character,
             ooc_reason=ooc_reason,
             assertion_confidence=assertion_confidence,
+            session_record=record,
             applied=True,
         )
 
@@ -112,6 +122,7 @@ class EvaluationPipeline:
                 ctx.card, ctx.user_message, ctx.assistant_reply,
                 ctx.user_role, ctx.reaction_appraisal,
                 departure_notice=ctx.departure_notice,
+                **self._record_prompt_parts(ctx),
             )
             # 1次自动重试（间隔2s），应对瞬时 LLM 连接故障
             reply = None
@@ -142,6 +153,30 @@ class EvaluationPipeline:
         except Exception as exc:
             logger.warning("Affinity eval failed session=%s: %s", ctx.session_id, exc, exc_info=True)
             return None
+
+    @staticmethod
+    def _record_prompt_parts(ctx: EvalContext) -> dict[str, str]:
+        """一对一时给评估提示词加本场记录的说明和字段；群聊什么都不加。"""
+        if ctx.session_record is None:
+            return {}
+        return {"record_rules": record_protocol.render_rules(ctx.session_record),
+                "record_fields": record_protocol.render_json_fields()}
+
+    @staticmethod
+    def _apply_session_record(ctx: EvalContext, data: dict) -> SessionRecord | None:
+        """应用本轮的本场记录操作。没有操作或全被丢掉时原样返回同一个对象（调用方据此不落库）。"""
+        if ctx.session_record is None:
+            return None
+        try:
+            record, warns = record_protocol.apply(
+                ctx.session_record, data, ctx.user_message, ctx.assistant_reply)
+        except Exception as exc:  # 本场记录坏了不能拖累好感
+            logger.warning("Session record update failed, record unchanged (session=%s): %r",
+                           ctx.session_id, exc, exc_info=True)
+            return ctx.session_record
+        for w in warns:
+            logger.warning("Session record (session=%s): %s", ctx.session_id, w)
+        return record if record.entries != ctx.session_record.entries else ctx.session_record
 
     # ── SIDE-EFFECT 1: 时间事件 ───────────────────────────────
 
@@ -200,6 +235,7 @@ class EvaluationPipeline:
                 logger.warning("Group affinity save failed (group=%s card=%s): %s",
                                    ctx.group_id, ctx.card_id, exc, exc_info=True)
         elif ctx.session_id:
+            # 一对一每轮好感的唯一保存点（引擎评估完不再另存一次）
             try:
                 from core.scheduling import submit_to_main_loop
                 import time as _t
@@ -214,3 +250,18 @@ class EvaluationPipeline:
             except Exception as exc:
                 logger.warning("Session affinity state save failed (session=%s): %s",
                                    ctx.session_id, exc, exc_info=True)
+
+    # ── SIDE-EFFECT 3: 本场记录持久化（只在本轮有变化时）────────────
+
+    def _persist_session_record(self, ctx: EvalContext, record: SessionRecord) -> None:
+        if not (ctx.storage and ctx.session_id):
+            return
+        try:
+            from core.scheduling import submit_to_main_loop
+            submit_to_main_loop(
+                ctx.storage.save_session_record(ctx.session_id, record.to_persist()),
+                timeout=15,
+            )
+        except Exception as exc:
+            logger.warning("Session record save failed (session=%s): %s",
+                           ctx.session_id, exc, exc_info=True)
