@@ -304,4 +304,63 @@ $ ls storage/migrations_pg | tail -2 ; ls storage/migrations | grep -v README | 
 
 ## 补充
 
-（审计发现写在这里。）
+### 独立复核（10-11，复核 PR 头 `47975db`，基线 `bc3e1df`）
+
+**实跑结果**（PG 16 一次性库，端口 55433；每次换新库）：
+
+- 目标检查：`bc3e1df` 9 failed，PR 头 9 passed。
+- §6 后端 9 个文件：两边都是 193 passed / 1 skipped，无差异。（同一个库先跑 PR 再跑 base 会让 base 的 `TestPgFreshSchemaClosure` 3 条红——是 037 已落库，不是代码问题；必须每次换新库。）
+- `npm test`：99 文件 / 552 条全过。
+- **Playwright 未执行**：复核沙箱拉不到浏览器（`cdn.playwright.dev` 被网络白名单拦）。两张截图也没看到。e2e 结论只来自读代码，见 R3。
+
+**变异**（每条改一处、跑完即还原）：
+
+| 编号 | 改法 | 被谁抓到 |
+| --- | --- | --- |
+| B1 | 恢复群 `arc_phase=None` | G2、G3×4、G6 |
+| B2 | `resolve_member_phases` 不过 `valid_phase`，原样收 | G3×4 |
+| B3 | 扮演的卡一起进 `resolve_member_phases` | G5 |
+| B4（过严） | 选了最后阶段也不收 | 无——**等价变异**（不存 = 最后阶段，行为相同），不算缺口 |
+| B5（过严） | 恢复群也过 `valid_phase` | **无**，见 R5 |
+| B6（过严） | `decode_group_row` 把 `member_phases` 解成 `{}` | G2–G6 共 8 条 |
+| F1 | `aiMemberIds` 不剔除 | `groupMembers.test` |
+| F2 | `effectiveArcPhase` 越界不回落 | `card.test` |
+| F3 | 请求体 `member_phases` 改为对全部 AI 成员（含不可选卡）取值 | **无**（vitest 无覆盖；e2e 也抓不到，见 R3） |
+| F4（过严） | 阶段 1 也回落到最后 | `card.test` ×2、`ChatAreaArcPhase.test` |
+| F5（过严） | 少于 3 阶段的卡不给选 | `card.test` |
+
+**问题**（R = 复核发现；「实现偏离」= 代码没照 spec；「spec 错」= spec 自己的结论不成立）
+
+**R1｜spec 错：4.7「群表再加一个 JSON 列 → 1 处」不成立。** 实测要改：`group_row.py`、PG/SQLite 各 3 条 SELECT 列清单、各 1 条 INSERT、各 1 个 `create_group_session` 签名——约 9 处。`group_row` 只集中了「解码」，没集中「列清单」。
+根因：列名在每条 SQL 里手写，与解码不在同一处。
+改法：`storage/group_row.py` 加 `GROUP_COLUMNS`（列名元组）与 `GROUP_SELECT`（拼好的列清单），两个 store 的 3 条 SELECT 都引用它；4.7 这一行改写为实际处数，或做完上述收拢后再写 1。
+
+**R2｜spec 错：4.7「阶段文字的格式 → 1 处」不成立。** `阶段 k · label` 这串格式现在有 4 处：`utils/card.js:50`（`arcPhaseDisplay`）、`:59`（`arcPhaseOptions`，本段新写）、`common/UnlocatedList.jsx:28`、`RoleSetupModal.jsx:75/157`。后端已有唯一出口 `core/arc_view.phase_header`，前端没有对应物。
+根因：`arcPhaseDisplay` 与 `arcPhaseOptions` 各自拼串，本段又新增了一处重复。
+改法：`utils/card.js` 加 `phaseHeader(k, label)`（与后端 `phase_header` 同名同义），`arcPhaseDisplay`、`arcPhaseOptions`、`UnlocatedList` 都调它；`RoleSetupModal` 按 §7 不动，但在表里注明它是剩下的例外。
+
+**R3｜实现偏离（测试）：e2e 第 3 条标题与断言不符，F3 永远抓不到。** 标题写「扮演的卡不在」，但这条用的是导演身份、只选了甲乙（都可选）：请求体里从没出现过扮演的卡或不可选的卡，断言 `{a:1, b:2}` 对这两种越界都是空检。F3 变异在 vitest 和这条 e2e 下都存活。
+根因：请求体规则（「只发 `phaseChoices` 里的卡」）只在 e2e 里守，而 e2e 的场景没构造出要被排除的卡。
+改法：这条 e2e 改为选甲、乙、丙（丙不可选），身份「扮演乙」；断言 `member_phases` 恰为 `{a: 1}`。
+
+**R4｜spec 错：4.7「群对象加一个字段 → 1 处」不成立。** `handleCreate` 里的 `created` 仍逐个手抄 `data.*` 字段（`GroupChatPage.jsx:608–619`）；建群响应（`group.py` 末尾手写的 dict）和列群返回的行（`list_group_sessions`）是两份形状。加字段要改：建群响应、`created` 手抄、列群 SELECT（R1）——至少 3 处。4.5 把 F14 的「漏字段」修好了，但「手拼」本身没去掉。
+根因：建群接口没有返回「群行」，而是另拼一份。
+改法：建群成功后由存储层读回这一行（`get_group_session_owned` → `decode_group_row`），响应体 `{"group": 行}`；前端 `enterGroup(data.group)`，`setGroups(prev => [data.group, ...prev])`，删掉 `created` 手抄。新建与点开就真正是同一个形状、同一条路。
+
+**R5｜spec 缺守护：设计决定 b 没有测试。** 恢复群不过 `valid_phase`（B5）的反向变异全绿。决定本身成立：与一对一 `session_identity` 同口径，且 `arc_view.valid_phase` 注释写明归一不吃 `has_positions` 门（DA8）。但没有一条检查区分这两种写法，以后有人「顺手」在恢复路径加校验不会被发现。
+改法：目标检查加一条：建群时卡可选、存了阶段 1 → 改库里的卡让 `has_positions` 为假 → 重建 → 引擎仍在阶段 1（与一对一恢复一致）。
+
+**R6｜实现偏离 spec 流程：`47975db` 新增了 CSS。** 4.5 写的是「不新增 CSS；排不开就停下报告，附截图，由 Tracy 定」。这个 commit 把 `.group-create-card` 拆成 `.group-create-row`（布局）+ `.group-create-card`（交互），属于拆类、没有新视觉值，第 1 步角色卡同时加了两个类，复核未发现漏改的用法。但 spec 没有记录这次改动是谁定的。
+改法：若是 Tracy 定的，在 4.5 补一行「10-11 Tracy 定：允许拆出 `.group-create-row`」；否则按 4.5 退回。
+
+**R7｜面外，记录不处理：后端「谁是 AI 成员」写了 3 遍**（`routers/group.py:127`、`:288`、`:324`）。4.7 只声明前端一处，没错；但后端同一规则 3 处，与本段「每条规则只写一处」的原则不一致。建议排进后续段，抽 `group_engines.ai_member_ids(card_ids, persona_type, persona_card_id)`。
+
+**对 5 个设计决定的结论**
+
+- a（新加列，不改 `card_ids` 结构）：成立。`card_ids` 被清理孤儿卡、列群、前端 `parseCardIds` 多处读，改结构牵连更大；孤儿键按卡 id 取不影响结果（§7 已写）。
+- b（恢复群不过 `valid_phase`）：成立，但缺守护（R5）。
+- c（建群成功走 `enterGroup`）：方向对，修好了 F14；没做彻底（R4）。
+- d（`web/group_engines.py`）：成立。C14 由三处构造变两处，两条路共用依赖准备；`text_id` 移到循环外经核实是全群同一本书（`_check_group_members` 保证），不是错。
+- e（4.7 表）：8 行里 3 行不成立（R1、R2、R4），1 行是逐值参数时要改两个调用点（加「每个成员不同」的构造参数时，建群与恢复两处都要传）。
+
+**合并前必须处理**：R3（测试空检）、R6（流程记录）。R1、R2、R4 至少要把 4.7 改成真实处数；按「每条规则只写一处」的原则，建议本段一起收拢。R5 建议本段加。R7 不在本段。
