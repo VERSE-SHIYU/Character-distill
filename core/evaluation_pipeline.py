@@ -64,14 +64,25 @@ class EvaluationPipeline:
     result = pipeline.run(ctx)
     """
 
+    def __init__(self) -> None:
+        # 本场记录抽取用的低温适配器，按「派生自哪个适配器」缓存：派生会新建客户端，
+        # 不能每轮建；引擎换了适配器（换 key）就重新派生。
+        self._record_llm_src: Any = None
+        self._record_llm: Any = None
+
     def run(self, ctx: EvalContext) -> EvalResult:
         """执行完整管道。
 
-        1. CORE 层：LLM 调用 → JSON 解析 → 状态回写
-           任一失败 → return EvalResult(applied=False, importance=5)
-        2. SIDE-EFFECT 1：时间事件持久化（独立 try）
-        3. SIDE-EFFECT 2：好感持久化到 DB（独立 try）
+        1. 好感评估（`_run_affinity`）：CORE 层 LLM 调用 → JSON 解析 → 状态回写 → 落库
+        2. 本场记录（`_run_session_record`，只在一对一）：**单独一次** LLM 调用 → 校验 → 有变化才落库
+        两步各是各的失败域：哪一步失败都不影响另一步。
         """
+        result = self._run_affinity(ctx)
+        result.session_record = self._run_session_record(ctx)
+        return result
+
+    def _run_affinity(self, ctx: EvalContext) -> EvalResult:
+        """好感评估：任一 CORE 失败 → EvalResult(applied=False, importance=5)；副作用各自 try。"""
         # ── CORE layer ─────────────────────────────────────────
         data = self._core_evaluate(ctx)
         if data is None:
@@ -88,15 +99,11 @@ class EvaluationPipeline:
         assertion_confidence = data.get("assertion_confidence", 50)
         if not isinstance(assertion_confidence, int) or assertion_confidence < 0 or assertion_confidence > 100:
             assertion_confidence = 50
-        # 本场记录和好感各自校验：这里出错只丢本场记录这一部分，好感照常生效
-        record = self._apply_session_record(ctx, data)
         # 到此核心状态已落定，下面任何异常都不得回滚
 
         # ── SIDE-EFFECT layer（全部 fire-and-forget）─────────────
         self._persist_time_event(ctx, data)
         self._persist_affinity(ctx)
-        if record is not ctx.session_record:
-            self._persist_session_record(ctx, record)
 
         return EvalResult(
             importance=importance,
@@ -105,7 +112,6 @@ class EvaluationPipeline:
             in_character=in_character,
             ooc_reason=ooc_reason,
             assertion_confidence=assertion_confidence,
-            session_record=record,
             applied=True,
         )
 
@@ -122,7 +128,6 @@ class EvaluationPipeline:
                 ctx.card, ctx.user_message, ctx.assistant_reply,
                 ctx.user_role, ctx.reaction_appraisal,
                 departure_notice=ctx.departure_notice,
-                **self._record_prompt_parts(ctx),
             )
             # 1次自动重试（间隔2s），应对瞬时 LLM 连接故障
             reply = None
@@ -154,29 +159,44 @@ class EvaluationPipeline:
             logger.warning("Affinity eval failed session=%s: %s", ctx.session_id, exc, exc_info=True)
             return None
 
-    @staticmethod
-    def _record_prompt_parts(ctx: EvalContext) -> dict[str, str]:
-        """一对一时给评估提示词加本场记录的说明和字段；群聊什么都不加。"""
-        if ctx.session_record is None:
-            return {}
-        return {"record_rules": record_protocol.render_rules(ctx.session_record),
-                "record_fields": record_protocol.render_json_fields()}
+    # ── 本场记录（一对一）─────────────────────────────────────
 
-    @staticmethod
-    def _apply_session_record(ctx: EvalContext, data: dict) -> SessionRecord | None:
-        """应用本轮的本场记录操作。没有操作或全被丢掉时原样返回同一个对象（调用方据此不落库）。"""
+    def _run_session_record(self, ctx: EvalContext) -> SessionRecord | None:
+        """单独一次抽取调用更新本场记录；有变化才落库。群聊（record 为 None）不调用、不存。
+
+        失败（调用、解析、校验抛错）只丢这一轮的本场记录更新，记录原样返回，好感不受影响。
+        重试由适配器自己的预算负责（`LLMAdapter.chat`），这里不再套一层。
+        """
         if ctx.session_record is None:
             return None
+
+        def call(system: str, user: str) -> str:
+            llm = self._record_llm_for(ctx.llm)
+            reply = llm.chat(system, [{"role": "user", "content": user}])
+            try_record_usage(ctx.storage, llm,
+                             action="chat_session_record", source="EvaluationPipeline")
+            return reply
+
         try:
-            record, warns = record_protocol.apply(
-                ctx.session_record, data, ctx.user_message, ctx.assistant_reply)
-        except Exception as exc:  # 本场记录坏了不能拖累好感
+            record, warns = record_protocol.extract(
+                ctx.session_record, char_name=ctx.card.name, user_message=ctx.user_message,
+                assistant_reply=ctx.assistant_reply, call=call)
+        except Exception as exc:  # 本场记录坏了不能拖累别的
             logger.warning("Session record update failed, record unchanged (session=%s): %r",
                            ctx.session_id, exc, exc_info=True)
             return ctx.session_record
         for w in warns:
             logger.warning("Session record (session=%s): %s", ctx.session_id, w)
-        return record if record.entries != ctx.session_record.entries else ctx.session_record
+        if record.entries == ctx.session_record.entries:
+            return ctx.session_record
+        self._persist_session_record(ctx, record)
+        return record
+
+    def _record_llm_for(self, llm: Any) -> Any:
+        if llm is not self._record_llm_src:
+            self._record_llm = llm.derive(temperature=record_protocol.EXTRACT_TEMPERATURE)
+            self._record_llm_src = llm
+        return self._record_llm
 
     # ── SIDE-EFFECT 1: 时间事件 ───────────────────────────────
 
