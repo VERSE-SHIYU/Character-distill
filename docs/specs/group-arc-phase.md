@@ -168,8 +168,8 @@ aiMemberIds(selectedCardIds, personaType, personaCardId)
 **界面**：第 2 步「你以谁的身份参与？」那一段下面，`phaseChoices` 非空时新加一段 `group-create-section`：
 
 - 标题：`modal-label`「每个角色的时期」。
-- 每行：沿用成员条目的结构和样式类（F7：`group-member-item` > `Avatar` + `group-member-info` > `group-member-name`），右边 `common/Select size="sm"`（F8），`options` 与 `value` 来自 `phaseChoices`。
-- **不新增 CSS。** 现有类在弹窗里排不开，停下报告，附截图，由 Tracy 定。
+- 每行：行布局类 `group-create-row`（`Avatar` + `group-create-card-info` > `group-create-card-name`），右边 `common/Select size="sm"`（F8），`options` 与 `value` 来自 `phaseChoices`。组件抽成 `components/GroupPhasePicker.jsx`（纯展示，props 只收 `choices` / `onChange`，不读 store、不发请求）。
+- 类拆法（`.group-create-card` 拆成 `.group-create-row` 行布局 + `.group-create-card` 卡片交互）与抽 `GroupPhasePicker`，是 **Tracy 10-11 22:01** 看截图后选「B：补样式」时定的（同一次也确认了样式补充 v2 的方案：拆类、抽组件）。原「借用成员条目类 / 不新增 CSS / 排不开就停下」的写法**被这条决定取代**（R6 记录缺失的补记）。
 
 **建群成功走「进群」那条路（F14 的根治）**：成功后组一个群对象 `created`（`id / name / card_ids: selectedCardIds / user_persona_* / member_phases: data.member_phases / created_at`），`setGroups(prev => [created, ...prev])`，然后 `enterGroup(created)`。删掉原来手拼的 `setCurrentGroup({...})`、`setGroupUserAvatar(null)`、`setMessages([])`。这样新建的群和点开已有的群走同一条路，`member_phases` 不用再单独接一遍；以后群对象加字段只改一处。
 
@@ -191,16 +191,21 @@ aiMemberIds(selectedCardIds, personaType, personaCardId)
 
 ### 4.7 自检：以后加一个东西要改几处
 
-| 以后要加 / 改的 | 改哪里 | 处数 |
+（R1–R7 修复后重写：每行写出**现在的唯一位置**。）
+
+| 以后要加 / 改的 | 唯一位置 | 处数 |
 | --- | --- | --- |
-| 群表再加一个 JSON 列 | `storage/group_row.py` | 1（加列本身的迁移另算） |
+| 群表再加一个 JSON 列 | `storage/group_row.py`（列清单 `GROUP_SESSION_COLUMNS` + 该列的解码） | 1（加列本身的迁移另算） |
+| 群会话读整行的列清单 | `storage/group_row.GROUP_SESSION_SELECT`（PG / SQLite 三个读点都引用） | 1 |
 | 群引擎加一个构造参数 | `web/group_engines.build_group_engine` | 1 |
 | 阶段校验规则 | `core/arc_view.valid_phase`（一对一、群聊共用） | 1 |
 | 「没选 = 最后阶段」的前端规则 | `utils/card.effectiveArcPhase` | 1 |
-| 阶段文字的格式 | `utils/card.arcPhaseDisplay`（一对一头部、群成员标签共用） | 1 |
+| 阶段文字的格式 | `utils/card.phaseHeader`（`arcPhaseDisplay` / `arcPhaseOptions` 与五处调用共用） | 1 |
 | 「谁是 AI 成员」的前端规则 | `utils/groupMembers.aiMemberIds` | 1 |
+| 「谁是 AI 成员」的后端规则 | `web/group_engines.ai_member_ids` | 1 |
+| 建群选时期的算法（AI 成员 → 可选卡 → 当前值） | `utils/groupMembers.groupPhaseChoices`（请求体由 `memberPhasesPayload` 从它生成） | 1 |
 | 建群表单加一个字段的重置 | `resetCreateForm` | 1 |
-| 群对象加一个字段 | 后端返回里加；前端新建与点开都走 `enterGroup` | 1 |
+| 群对象加一个字段 | 后端返回整行（`get_group_session_owned`）；前端新建与点开都走 `enterGroup` | 1 |
 
 ## 5. 步骤（按依赖顺序，每步一个 commit）
 
@@ -364,3 +369,44 @@ $ ls storage/migrations_pg | tail -2 ; ls storage/migrations | grep -v README | 
 - e（4.7 表）：8 行里 3 行不成立（R1、R2、R4），1 行是逐值参数时要改两个调用点（加「每个成员不同」的构造参数时，建群与恢复两处都要传）。
 
 **合并前必须处理**：R3（测试空检）、R6（流程记录）。R1、R2、R4 至少要把 4.7 改成真实处数；按「每条规则只写一处」的原则，建议本段一起收拢。R5 建议本段加。R7 不在本段。
+
+### 作者处理意见（10-11，Claude，spec 作者）
+
+逐条判定（依据：复核实跑结果，以及作者在 PR 头 e816577 上重核的行）：
+
+- R1｜认，spec 错。4.7 把「解码集中」当成了「加列只改一处」。修：列清单收进 storage/group_row.py。
+- R2｜认，spec 错，而且本段新写的 arcPhaseOptions 又加了一处重复。修：前端 phaseHeader 一处，五个用处都改调。后端 phase_header（「阶段 i·label」，给提示词用）与前端（「阶段 k · label」，给界面用）格式不同、语言不同，不强行合并。
+- R3｜认，测试空检。修：请求体算法抽成纯函数加 vitest（不依赖浏览器）；e2e 第 3 条构造出要被排除的卡。
+- R4｜认，spec 错：4.5 只修了漏字段，没去掉手拼。修：建群响应改为返回这一行群；目标检查 G4 改为断言建群返回与列群返回同形状。
+- R5｜认。目标检查加 G7：卡在建群后变得不可选，重建仍在存下的阶段。作者已在 PR 头上实跑：G7 绿；套上 B5 变异（恢复群也过 valid_phase）后 G7 红。
+- R6｜不成立，是记录缺失。拆出 .group-create-row 是 Tracy 10-11 22:01 定的（看截图后选「B：补样式」，同时确认了样式补充 v2 的方案：拆类、抽 GroupPhasePicker）。4.5 补记这一句。
+- R7｜认，本段处理（项目规矩：发现的问题本轮修，不记账）。修：web/group_engines.ai_member_ids，后端三处改调。
+
+### 「成员间距 / 16 条死选择器」当时的结论（样式补充问题 2）
+
+结论：**停下报告，没有改**。依据是样式补充说明第 4 条 —— 判定为「换布局」而非「改名」就停下，附截图交 Tracy 定。这一段原位记录当时的判定与 git log 原始输出：
+
+```
+$ git log -1 --format='%h %ad %s' --date=short 0ac7149d
+0ac7149d 2026-07-04 refactor(chat): adopt shared shell across chat/dm/group, flatten mobile containers
+
+$ git log -S "group-chat-layout" --oneline -- web/frontend/src | head
+9a83f9f6 refactor(theme): 落地主题系统 v2（删 data-theme 维度 + 存储 key 冲突 + 遗留别名迁移）
+685271f3 fix(mobile): keyboard vvchange only on height shrink, respect userScrolledUp
+aed1d42d fix(mobile): keyboard-aware chat container height via visualViewport
+0ac7149d refactor(chat): adopt shared shell across chat/dm/group, flatten mobile containers
+…
+
+$ grep -rn "group-chat-layout" web/frontend/src/styles/ | wc -l
+16
+$ grep -rn "group-chat-layout" web/frontend/src --include=*.jsx --include=*.js | wc -l
+0
+```
+
+判定过程：`git show 0ac7149d` 把 `<div className="private-chat group-chat-layout">` 手写分栏换成
+`<SplitOrFullscreen>` 组件（adopt shared shell）。`group-chat-page` 根节点在该 commit **前后都在**，与
+`group-chat-layout` 共存，故**不是改名**。16 条里 `.group-members-panel` / `.group-members-title` 及其媒体查询的
+宿主元素已不存在，`.group-target-chip` 现存于建群弹窗（不在群聊布局里）→ 前缀替换不是机械改名，会部分复活 /
+部分仍死 / 部分错套。所以本段不动这 16 条，样式补充问题 1（时期行拆类）照做。
+
+Tracy 10-12 定：成员间距的根因是旧布局（0ac7149d 换成 SplitOrFullscreen）留下的死样式，⑤ 不在这里零碎地修，并入单独的『CSS 死选择器』一项，全量调查后统一处理。⑤ 段 A 不动这 16 条，e2e 也不加成员间距的断言。
