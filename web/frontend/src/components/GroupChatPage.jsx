@@ -27,12 +27,7 @@ import { parseCardJson } from '../utils/card'
 import { displayName } from '../utils/displayName'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
-import { blockedBySameCharacter } from '../utils/groupMembers'
-
-function parseCardIds(raw) {
-  if (Array.isArray(raw)) return raw
-  try { return JSON.parse(raw || '[]') } catch { return [] }
-}
+import { blockedBySameCharacter, aiMemberIds, parseCardIds } from '../utils/groupMembers'
 
 /** 通过 card_id 从后端获取单张角色卡信息 */
 async function fetchCardById(cardId) {
@@ -151,8 +146,7 @@ export default function GroupChatPage() {
 
   const replyingNames = useMemo(() => {
     const ids = targetCardIds.length > 0 ? targetCardIds : (currentGroup?.card_ids || [])
-    return ids
-      .filter(id => !(currentGroup?.user_persona_type === 'character' && id === currentGroup?.user_persona_card_id))
+    return aiMemberIds(ids, currentGroup?.user_persona_type, currentGroup?.user_persona_card_id)
       .map(id => resolveCard(id)?.name)
       .filter(Boolean)
   }, [targetCardIds, currentGroup?.card_ids, currentGroup?.user_persona_type, currentGroup?.user_persona_card_id, cardCache])
@@ -400,9 +394,7 @@ export default function GroupChatPage() {
   function enterGroup(group) {
     let cardIds = parseCardIds(group.card_ids)
     // Exclude played character from AI members
-    if (group.user_persona_type === 'character' && group.user_persona_card_id) {
-      cardIds = cardIds.filter(id => id !== group.user_persona_card_id)
-    }
+    cardIds = aiMemberIds(cardIds, group.user_persona_type, group.user_persona_card_id)
     // AI count check by persona mode
     const aiCount = cardIds.length
     if (group.user_persona_type === 'director' && aiCount < 2) {
@@ -569,9 +561,7 @@ export default function GroupChatPage() {
       return
     }
     // AI count check by persona mode
-    const aiCardCount = personaType === 'character' && personaCardId
-      ? selectedCardIds.filter(id => id !== personaCardId).length
-      : selectedCardIds.length
+    const aiCardCount = aiMemberIds(selectedCardIds, personaType, personaCardId).length
     if (personaType === 'director' && aiCardCount < 2) {
       setError('导演模式需要至少2个AI角色')
       return
@@ -600,9 +590,7 @@ export default function GroupChatPage() {
       setPersonaName('')
       setPersonaDesc('')
       // Enter the newly created group — exclude played character from AI members
-      const aiCardIds = personaType === 'character' && personaCardId
-        ? selectedCardIds.filter(id => id !== personaCardId)
-        : selectedCardIds
+      const aiCardIds = aiMemberIds(selectedCardIds, personaType, personaCardId)
       setCurrentGroup({
         id: data.group_id,
         name: data.name,

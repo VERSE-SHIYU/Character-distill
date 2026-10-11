@@ -9,3 +9,14 @@ export function blockedBySameCharacter(card, selectedIds, cards) {
   if (selectedIds.includes(cardId(card))) return false
   return cards.some((c) => selectedIds.includes(cardId(c)) && c.name === card.name)
 }
+
+/** 「谁是 AI 成员」的前端唯一一处：扮演的卡（`personaType === 'character'` 时的 `personaCardId`）剔除，其余原序。 */
+export function aiMemberIds(cardIds, personaType, personaCardId) {
+  return cardIds.filter((id) => !(personaType === 'character' && id === personaCardId))
+}
+
+/** 群会话的 `card_ids` 可能是数组或 JSON 字符串（两个组件原来各写一份）。 */
+export function parseCardIds(raw) {
+  if (Array.isArray(raw)) return raw
+  try { return JSON.parse(raw || '[]') } catch { return [] }
+}

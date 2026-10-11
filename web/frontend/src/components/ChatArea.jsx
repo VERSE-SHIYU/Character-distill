@@ -14,7 +14,7 @@ import ErrorBox from './common/ErrorBox'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
-import { parseCardJson } from '../utils/card'
+import { parseCardJson, arcPhaseDisplay } from '../utils/card'
 import ChatInputBar from './common/ChatInputBar'
 import ChatBubble from './common/ChatBubble'
 import MessageReactions from './common/MessageReactions'
@@ -157,12 +157,9 @@ function ChatView() {
   const charName = cardData.name || currentCard.name || '?'
   const charIdentity = cardData.identity || ''
   const userRole = sessionUserRole || userRolesByCard[currentCard?.id || currentCard?.card_id] || ''
-  // 头部只读显示本次会话的阶段；sessionArcPhase 为 null / 越界 → 最后阶段；无阶段卡不显示。
+  // 头部只读显示本次会话的阶段（格式规则在 utils/card.arcPhaseDisplay 一处）；空串不显示。
   const sessionArcPhase = useAppStore((s) => s.sessionArcPhase)
-  const arcPhases = cardData.character_arc?.phases || []
-  const phaseCount = arcPhases.length
-  const phaseK = sessionArcPhase >= 1 && sessionArcPhase <= phaseCount ? sessionArcPhase : phaseCount
-  const phaseLabel = phaseCount ? (arcPhases[phaseK - 1]?.label || '') : ''
+  const phaseDisplay = arcPhaseDisplay(currentCard, sessionArcPhase)
 
   const [cropFile, setCropFile] = useState(null)
   const [error, setError] = useState(null)
@@ -672,10 +669,8 @@ function ChatView() {
       <div className="user-role-bar">
         <span className="user-role-label">我扮演：</span>
         <span className="user-role-locked">{userRole || '未设定'}</span>
-        {phaseCount > 0 && (
-          <span className="user-role-phase">
-            阶段 {phaseK}/{phaseCount}{phaseLabel ? ` · ${phaseLabel}` : ''}
-          </span>
+        {phaseDisplay && (
+          <span className="user-role-phase">{phaseDisplay}</span>
         )}
       </div>
 
