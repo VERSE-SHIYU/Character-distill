@@ -21,7 +21,7 @@
 
 ## 1. 目标检查（第 1 个提交就带上）
 
-文件：`tests/test_session_record_goal.py`。原有 21 条中的 P 组和 E 组改写，新增 6 条，共 27 条（第二轮修改后；见文末「补充」）。
+文件：`tests/test_session_record_goal.py`。原有 21 条中的 P 组和 E 组改写，新增 7 条，共 28 条（第三轮修改后；见文末「补充」）。
 
 | 检查 | 守什么 | main `9b0052af` 上 | 原型上 |
 |---|---|---|---|
@@ -34,11 +34,12 @@
 | P6 | 低温适配器每个源适配器只派生一次，换了源适配器才重新派生 | 红 | 绿 |
 | X1 | 照抄的 11 句原文在提示词里一字不差（只允许 unit→entry） | 红 | 绿 |
 | X1b | 示范用另编的人物和句子，不含验收那场对话里的人名、物件、地名 | 红 | 绿 |
+| R0b | 跨两句拼起来的依据会被丢掉；提示词把「依据只能来自某一句」写给了模型 | 红 | 绿 |
 | X2 | 抽取提示词里栏名用角色名、没有「他对你」；注入块用「你知道的关于对方的事」 | 红 | 绿 |
 | E1–E4 | 真引擎 + 真 PG：存档隔离、恢复后接得上、用户看不到、一轮各存一次、群聊不带（沿用，改为从抽取调用拿操作） | E1–E3 红，E4 绿 | 绿 |
 | R0–R9、E5 | 校验规则、序列化、`updated_at`（沿用，不改） | 绿 | 绿 |
 
-原始输出（沙箱，PG16）：main 上收集即报错（`core.session_record` 没有 `FIELD_OPS`），整文件红；原型上 `27 passed`。第一轮原型全量 `3518 passed, 1 skipped, 0 failed`；第二轮只改了 `core/session_record.py`、本测试文件和重放脚本，受影响的三个测试文件 `52 passed`。
+原始输出（沙箱，PG16）：main 上收集即报错（`core.session_record` 没有 `FIELD_OPS`），整文件红；原型上 `28 passed`。第一轮原型全量 `3518 passed, 1 skipped, 0 failed`；第二轮只改了 `core/session_record.py`、本测试文件和重放脚本，受影响的三个测试文件 `52 passed`（第三轮后目标检查 28 条，三个文件 53 passed）。
 
 真模型的检查不在单元测试里，在 §6（重放）、§7（受控探针）、§8（整场验收）。
 
@@ -106,13 +107,13 @@ def run(self, ctx):
 
 ### 3.3 抽取提示词与出处
 
-渲染出来的提示词（第二轮）：角色名「孔乙己」，当前已有 1 条。
+渲染出来的提示词（第三轮）：角色名「孔乙己」，当前已有 1 条。
 
 ```
 You are a character state analyst. After each conversation turn, you update the tracked state of one save between the character 「孔乙己」 and the user, who is referred to as 「对方」.
 
 ## CRITICAL RULES
-1. **USE ONLY DIALOGUE EVIDENCE.** Every entry must be grounded in something explicitly said in the latest turn. Do NOT fabricate events or emotions not supported by the text. Each entry carries "evidence": an excerpt copied verbatim from the latest turn.
+1. **USE ONLY DIALOGUE EVIDENCE.** Every entry must be grounded in something explicitly said in the latest turn. Do NOT fabricate events or emotions not supported by the text. Each entry carries "evidence": ONE continuous excerpt copied verbatim from ONE line of the latest turn (either 对方's line or 「孔乙己」's line). Never join pieces of different lines into one evidence.
 2. **THIRD-PERSON PERSPECTIVE.** You MUST write ALL entries in the THIRD PERSON: call the character 「孔乙己」 and the user 「对方」. Never use 「我」 or 「你」.
 3. Only create entries for information RELEVANT to future decisions.
 4. Do NOT duplicate information already in an existing entry -- check the current state first.
@@ -154,7 +155,7 @@ Current state: （还没有）
 Output: {"record_ops": [{"col": "plans", "text": "老陈答应下周三教对方钓鱼。", "evidence": "行，下周三来", "supersedes": null}]}
 
 Do not return anything from the custom few shot example prompts provided above.
------（以上 system，约 923 token；以下 user）-----
+-----（以上 system，约 952 token；以下 user）-----
 ## Current state
 #1 [known] 对方自称林小满，苏州人
 
@@ -168,7 +169,7 @@ Do not return anything from the custom few shot example prompts provided above.
 | 句子 | 出处 | 照抄 / 改动 | 改动的理由 |
 |---|---|---|---|
 | 第一句（角色状态分析员） | PHASE-Tree `:68`；StateMem E.1 首句 | 合两句，加角色名和「对方」 | 写明双方怎么称呼（P2）；「对方」照 PHASE-Tree `:108` 的中文示例 |
-| 规则 1 | PHASE-Tree `:81–84` 规则 3 | 去掉「or clearly implied」；「in the dialogue」改为「in the latest turn」；加 evidence 一句 | 代码要求依据是这一轮的原话（沿用 R1、R4），「暗示」给不出原话 |
+| 规则 1 | PHASE-Tree `:81–84` 规则 3 | 去掉「or clearly implied」；「in the dialogue」改为「in the latest turn」；加 evidence 的要求：只能是这一轮**某一句**里连续的一段原话，不许把两句拼起来 | 代码要求依据是这一轮的原话（`_source_of`：要么在对方那句里，要么在角色那句里），「暗示」给不出原话；提示词把代码的这条约定原样写给模型（第三轮补，见「补充」） |
 | 规则 2 | PHASE-Tree `:96–101` 规则 7 | 换成具体称呼 | P2 |
 | 规则 3、4、5 | StateMem E.1 Rules 前三条 | 照抄，unit→entry | — |
 | 规则 6 | StateMem E.1 第 2 项 SUPERSEDE | 照抄，unit→entry；括号里的中文例子是 Claude 加的；末句沿用 R4 | 原文例子都是英文；R4 来自 #140 已定的设计 |
@@ -208,16 +209,18 @@ Do not return anything from the custom few shot example prompts provided above.
 | `core/affinity_service.py` | 回退到 `bc3e1dfe` |
 | `tests/test_session_record_goal.py` | 见 §1 |
 | `scripts/replay_session_record.py` | 新文件 |
+| `scripts/probe_session_record.py` | 新文件（§7.2） |
+| `tests/test_probe_session_record_script.py` | 新文件：探针脚本的离线检查（替身模型），守住它借用的两个引擎方法 |
 | `docs/specs/session-record.md` | 首行标「抽取部分已被本文件取代」 |
 
 ## 6. 步骤
 
 0. **[核对]** 执行方逐条复核 §2 的事实，有一条不成立就停下报告。
 1. **[测试，提交 1]** 只提交 `tests/test_session_record_goal.py`。在 main 上应是收集即报错（没有 `FIELD_OPS`）。
-2. **[core + 脚本，提交 2]** 提交其余改动。目标检查 27 条全绿，受影响测试和 `npm test` 通过。
-3. **[本地，真模型]** 先小重放（前 30 轮，§7.1），过了再全量重放。全部判定线都过才推分支、开 PR。不过就停下，把 `summary.json` 和 `replay.json` 交给 Claude，**不自己改提示词**。
+2. **[core + 脚本，提交 2]** 提交其余改动。目标检查 28 条全绿，受影响测试和 `npm test` 通过。
+3. **[本地，真模型]** 先小重放（前 30 轮，§7.1），过了再全量重放，**全量连跑两次都要全过**（温度 0 也不保证每次输出一样，见「补充」）。然后跑受控探针（§7.2）。都过了才推分支、开 PR。不过就停下，把 `summary.json` 和 `replay.json` 交给 Claude，**不自己改提示词**。
 4. **[PR]** Claude 拉分支复核：逐文件看、全量和 main 对比、自补变异（见 §9）。Tracy 合并。
-5. **[本地，真模型]** 合并后先跑受控探针（§7.2），过了再跑整场验收（§7.3）。
+5. **[本地，真模型]** 受控探针（§7.2）在开 PR 之前跑；合并后再跑整场验收（§7.3）。
 
 ## 7. 真模型检查
 
@@ -244,12 +247,25 @@ python scripts/replay_session_record.py --transcript <上一场的 transcript.js
 
 Claude 另外逐条读 `replay.json` 里的记录，看内容对不对，不只看数。
 
-### 7.2 受控探针（第 5 步，约 $0.05）
+### 7.2 受控探针（全量重放过了之后、开 PR 之前，约 $0.02）
 
-用重放得到的最终记录，把历史按 `_build_llm_messages` 的算法（`core/chat_engine.py:555–575`）截到所有种子和改口之外。同样 10 道题各问两次：带记录、不带记录。
+脚本 `scripts/probe_session_record.py`。
 
-- 不带记录应答不上，证明窗口和 Mem0 都没有兜底。上一场 139 轮里 `search_memory` 一次都没被调用过。
-- 带记录要 ≥ 8/10，且改口过的内容用新值。
+- **历史**：只放最后一处种子 / 改口之后、第 1 题之前的对话（第 17–129 轮，11,632 token，在 12,800 的窗口之内）。种子和改口的原话一定不在发出去的内容里，脚本逐题核对，出现了就中止。
+- **记录**：从全量重放的 `replay.json` 还原到第 129 轮结束时。
+- **提示词**：真引擎拼，`_compose_system_prompt(include_dynamic=False)` 加 `_build_llm_messages`，和线上同一条路。但不走路由器、不检索 Mem0，也不跑每轮收尾。
+- **分两组**：同样 10 题，每题各问两次，一组带记录，一组不带记录。
+- **判定**：
+  - 9 道有标准答案的题：带记录 ≥ 8 道答对；不带记录 ≤ 3 道（历史里角色自己反复提过「脚上那伤」，蒙对几道是正常的）。
+  - 第 139 题（态度）没有标准答案，由 Claude 读答案判。
+  - 不带记录那组超线，说明还有别的路在兜底，探针作废。
+
+```
+python scripts/probe_session_record.py --transcript <transcript.json> --replay <全量 replay.json> \
+  --card-json <cards.card_json 导出的文件> --user-role "<会话 48cad3b35abd 的 user_role>" --out e2e/scratch/probe-session-record
+```
+
+限制：好感状态用的是默认值，没有恢复成那场的数值；注入块之外的增强块（好感档位等）可能和线上略有差别。这些不影响「记录在不在、角色读不读」这件事。
 
 ### 7.3 整场验收（第 5 步，≤ $1）
 
@@ -284,7 +300,7 @@ Claude 另外逐条读 `replay.json` 里的记录，看内容对不对，不只�
 
 ## 10. 测试
 
-本地只跑 `tests/test_session_record_goal.py`，加上受影响的 `tests/test_departure_notice.py`、`tests/test_storage_scope_lock.py`，以及 `npm test`。库用 Docker 起的 PG。合并前提是分支 CI 绿。全量由 Claude 在沙箱跑并和 main 对比。
+本地只跑 `tests/test_session_record_goal.py`、`tests/test_probe_session_record_script.py`，加上受影响的 `tests/test_departure_notice.py`、`tests/test_storage_scope_lock.py`，以及 `npm test`。库用 Docker 起的 PG。合并前提是分支 CI 绿。全量由 Claude 在沙箱跑并和 main 对比。
 
 ## 11. 判断清单（发出前逐条对照过读过的行）
 
@@ -314,3 +330,21 @@ Claude 另外逐条读 `replay.json` 里的记录，看内容对不对，不只�
 代码校验规则（原话依据、来源判定、R5、编号核对、关系栏只追加、每轮 6 条上限）不变。
 
 如果小重放还压不住 known 栏，下一步换 Mem0 的两步法（§2.1：先抽候选，再逐条和已有条目比，可选「不动」），每轮多一次调用；不再只改措辞。
+
+### 重放第 2 次（10-12 09:39，本地，第二轮 + docstring，`6cc6fe2e`）
+
+小重放 30 轮 6/6 全过。全量 139 轮 5/6：「每条种子都记到」7/8。其余全过：填充轮新增「了解」0 条，注入块 154 token，两处改口都用取代完成、没有重复。
+
+- 第 7 轮（用户请孔乙己回来教下棋）模型给的依据是「你答应我，等我回来教我下棋，好不好？……教棋的事，回来再说。」，把对方那句和角色那句拼在了一起。代码的 `_source_of` 只认「在对方那句里」或「在角色那句里」，所以丢掉了。
+- 同样的前 7 轮，小重放那次这一条是记下来的。说明温度 0 下 DeepSeek 的输出也会变，单跑一次的结果不够。
+
+### 第三轮修改（10-12 09:55）
+
+| 改什么 | 理由 |
+|---|---|
+| 规则 1 写明：依据只能是这一轮**某一句**里连续的一段原话，不许把两句拼起来 | 这是代码早就有的约定（`_source_of`），提示词原来只写了「这一轮的原话」，没写清楚。提示词照代码的约定写，代码不放宽 |
+| 新增目标检查 R0b：拼接依据会被丢掉，而且提示词里写了这条 | 守住提示词和代码这条约定的一致 |
+| 门槛：全量重放连跑两次都要 6/6 | 应对同一提示词跑两次结果不同 |
+| 新增 `tests/test_probe_session_record_script.py` | 探针脚本借用 `ChatEngine._compose_system_prompt`、`_build_llm_messages` 两个私有方法；引擎改了它们，这条离线检查先红，不等花钱跑探针时才发现。没有为此给引擎加公开接口 |
+
+已知、这次不动：低温派生适配器的缓存在流水线一份（本场记录）、`core/memory_manager.py:311` 一份（Mem0 提炼），概念重复。按一个 PR 一件事，记为以后的候选。

@@ -71,6 +71,18 @@ def test_R0_an_entry_needs_verbatim_evidence_from_this_turn():
     assert bad.active() == [] and warns
 
 
+def test_R0b_evidence_is_one_line_and_the_prompt_says_so():
+    """依据只能来自这一轮的某一句（对方那句或角色那句）；跨两句拼起来的会被丢掉 ——
+    抽取提示词必须把这条写给模型（10-12 全量重放第 7 轮就是拼接依据被丢）。"""
+    stitched = USER_SAYS[-6:] + "……" + CHAR_SAYS[:6]
+    out, warns = _apply(SessionRecord(), _add("plans", "下个月去北京面试", stitched))
+    assert out.active() == [] and warns
+    system, _ = rec.render_extraction_prompt(SessionRecord(), char_name="孔乙己",
+                                             user_message="", assistant_reply="")
+    assert "ONE continuous excerpt copied verbatim from ONE line" in system
+    assert "Never join pieces of different lines" in system
+
+
 def test_R1_relation_needs_evidence_and_never_touches_affinity():
     """R1：关系一栏只收有对话依据的条目；只有结论、没依据的丢掉。好感只看③（P3 测结构）。"""
     ok, _ = _apply(SessionRecord(), *[_add("relation", "说起西湖时放松了些", "我也去过西湖")])

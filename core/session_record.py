@@ -118,7 +118,8 @@ of one save between the character 「{char}」 and the user, who is referred to 
 ## CRITICAL RULES
 1. **USE ONLY DIALOGUE EVIDENCE.** Every entry must be grounded in something explicitly said in \
 the latest turn. Do NOT fabricate events or emotions not supported by the text. Each entry \
-carries "evidence": an excerpt copied verbatim from the latest turn.
+carries "evidence": ONE continuous excerpt copied verbatim from ONE line of the latest turn \
+(either 对方's line or 「{char}」's line). Never join pieces of different lines into one evidence.
 2. **THIRD-PERSON PERSPECTIVE.** You MUST write ALL entries in the THIRD PERSON: call the \
 character 「{char}」 and the user 「对方」. Never use 「我」 or 「你」.
 3. Only create entries for information RELEVANT to future decisions.
