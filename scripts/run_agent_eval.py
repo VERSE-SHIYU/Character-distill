@@ -130,14 +130,24 @@ def keyword_in_reply(reply: str, keyword: str | None) -> bool:
 
 
 async def seed_memories(mem_mgr: Any, card_id: str) -> bool:
-    """（停用）向 memory manager 灌入固定评测记忆 —— 现在恒返回 False。
-
-    按存档隔离后，写记忆必须落进某个 `MemoryScope`（存档 / 群），而本评测流程造的是
-    一次性会话、新建引擎的记忆也是 None，没有可播种的存档。且这里拿到的是
-    `MemoryManager`（没有 `add`，只有 `MemoryView` 有），这条路在隔离之前也从未真正
-    执行过。故不再播种，也不再谎报「已预置」。签名保留，免动两处调用。
-    """
-    return False
+    """向 memory manager 灌入固定评测记忆。失败时返回 False。"""
+    if mem_mgr is None:
+        return False
+    try:
+        for pair in SEED_MEMORIES:
+            if hasattr(mem_mgr, "add"):
+                messages = [
+                    {"role": "user", "content": pair["user"]},
+                    {"role": "assistant", "content": pair["assistant"]},
+                ]
+                if asyncio.iscoroutinefunction(mem_mgr.add):
+                    await mem_mgr.add(messages, card_id, metadata={"importance": 10, "eval_seed": True})
+                else:
+                    mem_mgr.add(messages, card_id, metadata={"importance": 10, "eval_seed": True})
+        return True
+    except Exception as exc:
+        print(f"[eval] Memory seeding failed (non-fatal): {exc}")
+        return False
 
 
 # ── 单条执行 ──
