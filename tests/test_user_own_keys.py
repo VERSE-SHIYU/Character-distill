@@ -19,6 +19,7 @@ from pwdlib import PasswordHash
 import deps
 import server
 from core.schema import CharacterCard
+from core.memory_scope import MemoryScope
 from routers.auth import _create_access_token, get_jwt_secret
 from storage.sqlite_store import SQLiteStore
 
@@ -206,7 +207,7 @@ class _FakeMemory:
     def get_all(self, filters=None):
         return {"results": []}
 
-    def delete_all(self, user_id=None):
+    def delete_all(self, user_id=None, run_id=None):
         self.deleted.append(user_id)
 
 
@@ -275,8 +276,8 @@ def test_T7b_base_view_never_calls_a_model(mem_factory):
     from core.memory_manager import MemoryKeyMissing
 
     base = mem_factory.base()
-    assert mem_factory.get_all("card1") == []
-    assert mem_factory.delete_all("card1") is True and base._mem.deleted == ["card1"]
+    assert mem_factory.get_all(MemoryScope.archive("card1", "s1")) == []
+    assert mem_factory.delete_all(MemoryScope.whole_card("card1")) is True and base._mem.deleted == ["card1"]
     with pytest.raises(MemoryKeyMissing):
         base._mem.embedding_model.embed("x")
     with pytest.raises(MemoryKeyMissing):
@@ -303,7 +304,7 @@ def test_T5b_real_mem0_views_share_one_local_qdrant(tmp_path, monkeypatch):
     base = mm.base()
     clients = {id(v._mem.vector_store.client) for v in (va, vb, base)}
     assert len(clients) == 1, "三个视图没共用同一个 qdrant 客户端"
-    assert base.get_all("card1") == []
+    assert base.get_all(MemoryScope.archive("card1", "s1")) == []
 
 
 # ── T8：记忆接口 —— 查看 / 删除不需要 key；写入没 key → 409 ─────────────────
@@ -322,15 +323,18 @@ def mem_client(client, mem_factory):
 def test_T8_memory_routes_without_own_keys(mem_client, store, user):
     _assert_premise(store, user)
     src_id, _ = _seed_public_pair(store, user["id"])
+    sid = f"sess_{uuid.uuid4().hex[:12]}"
+    _run(store.save_session(sid, src_id, "user", "", user_id=user["id"]))
 
-    r = mem_client.get(f"/api/memory/list/{src_id}", headers=_token(user))
+    q = f"?session_id={sid}"
+    r = mem_client.get(f"/api/memory/list/{src_id}{q}", headers=_token(user))
     assert r.status_code == 200, r.text
     assert r.json()["configured"] is False and r.json()["enabled"] is True
 
-    r = mem_client.delete(f"/api/memory/clear/{src_id}", headers=_token(user))
+    r = mem_client.delete(f"/api/memory/clear/{src_id}{q}", headers=_token(user))
     assert r.status_code == 200, f"没 key 就清不掉自己的记忆：{r.status_code} {r.text}"
 
-    r = mem_client.post(f"/api/memory/add/{src_id}", json={"text": "一条记忆"}, headers=_token(user))
+    r = mem_client.post(f"/api/memory/add/{src_id}{q}", json={"text": "一条记忆"}, headers=_token(user))
     assert r.status_code == 409, r.text
     assert "百炼 Key" in r.json()["detail"]
 
@@ -384,7 +388,7 @@ def test_T9_saving_new_keys_reaches_the_live_session(mem_factory, monkeypatch):
     old_llm = _user_llm("old-llm")
     engine = ChatEngine(llm=old_llm, rag=None, card=CharacterCard(name="甲"), card_id="c_live",
                         storage=None, session_id="s_live", is_new_session=True)
-    assert engine._memory is None and engine.rag is None, "前提破了：会话建出来时就已有记忆 / 检索"
+    assert engine._scoped._view is None and engine.rag is None, "前提破了：会话建出来时就已有记忆 / 检索"
     deps.get_sessions()["s_live"] = new_session_entry(engine, None, uid)
     try:
         storage = _RefreshStorage({"api_key": "new-llm", "base_url": "https://api.deepseek.com",
@@ -393,11 +397,11 @@ def test_T9_saving_new_keys_reaches_the_live_session(mem_factory, monkeypatch):
 
         assert swapped == 1
         assert engine.llm is not old_llm, "LLM 没换"
-        assert engine._memory is not None, "补上两把 key 后活会话仍没有记忆"
-        assert _embed_key_of(engine._memory) == "new-emb", "记忆没用新百炼 key"
+        assert engine._scoped._view is not None, "补上两把 key 后活会话仍没有记忆"
+        assert _embed_key_of(engine._scoped._view) == "new-emb", "记忆没用新百炼 key"
         for holder in (engine._ctx_engine.memory, engine._reflection_service._memory,
                        engine._event_service._memory):
-            assert holder is engine._memory, "记忆引用有一处没换（那一处还会用旧 key 出站）"
+            assert holder is engine._scoped, "记忆引用有一处没换（那一处还会用旧 key 出站）"
         assert engine.rag == ("rag-for", "new-emb") and engine._ctx_engine.rag is engine.rag, \
             "检索没按新百炼 key 换"
     finally:

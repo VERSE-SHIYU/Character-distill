@@ -12,6 +12,7 @@ from core.memory_manager import (
     _lookup_vad, _emotion_affinity, _emotion_match, _get_emotion_polarity,
     RERANK_ALPHA, RERANK_BETA, RERANK_GAMMA, RERANK_LAMBDA,
 )
+from core.memory_scope import MemoryScope
 
 
 class TestLookupVAD:
@@ -144,7 +145,7 @@ class TestWriteFailureIsVisible:
     def test_add_failure_logs_at_error(self, caplog):
         mm = _bare_manager(_FailingMem())
         with caplog.at_level(logging.ERROR):
-            mm.add([{"role": "user", "content": "hi"}], "card1")  # 入库在后台线程
+            mm.add([{"role": "user", "content": "hi"}], MemoryScope.archive("card1", "s1"))  # 入库在后台线程
             deadline = time.time() + 5
             while not self._records(caplog, "Mem0 add failed") and time.time() < deadline:
                 time.sleep(0.02)
@@ -156,7 +157,7 @@ class TestWriteFailureIsVisible:
     def test_manual_add_failure_logs_at_error(self, caplog):
         mm = _bare_manager(_FailingMem())
         with caplog.at_level(logging.ERROR):
-            assert mm.add_manual("一条记忆", "card1") is False
+            assert mm.add_manual("一条记忆", MemoryScope.archive("card1", "s1")) is False
 
         rec = self._records(caplog, "Mem0 manual add failed")
         assert rec, "手动写入失败没留下任何日志"

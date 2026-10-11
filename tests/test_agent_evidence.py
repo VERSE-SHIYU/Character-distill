@@ -500,7 +500,7 @@ def _expected_counts() -> dict[str, int]:
     from core.rag import filter_by_characters
 
     scene = len(filter_by_characters([m for _, _, m in SCENE_ROWS], make_card().name))
-    memory = len(FakeMemory().search(QUERY, "card_test"))
+    memory = len(FakeMemory().search(QUERY))
     # 假件喂的是 DDG_ABSTRACT：AbstractText 非空 → 只取 Abstract 一条
     web = 1 if DDG_ABSTRACT["AbstractText"] else len(DDG_ABSTRACT["RelatedTopics"])
     return {"scene": scene, "memory": memory, "web": web}

@@ -149,10 +149,14 @@ def make_rag(collection=None) -> RAGEngine:
 
 
 class FakeMemory:
-    """memory_manager 替身。``enabled`` / ``card_id`` 的空值态由构造参数控制。
+    """memory_manager 替身。``enabled`` 的空值态由构造参数控制。
 
     ``raise_on_search`` 非空时抛该异常 —— 「失败」态的专属来源（区别于 rows=[] 的
     「真无匹配」）。
+
+    两处角色：`build_ctx(memory=…)` 里当 `ScopedMemory` 用（`ContextEngine` 直接调
+    `search(query, current_mood=…)`）；`ChatEngine(memory_manager=…)` 里当底层记忆视图用
+    （`ScopedMemory` 调 `search(query, scope, current_mood=…)`）。故 `scope` 有默认值。
     """
 
     def __init__(self, rows=None, enabled=True, raise_on_search: Exception | None = None):
@@ -161,8 +165,8 @@ class FakeMemory:
         self._raise = raise_on_search
         self.calls: list[dict] = []
 
-    def search(self, query, card_id, current_mood=None):
-        self.calls.append({"query": query, "card_id": card_id, "current_mood": current_mood})
+    def search(self, query, scope=None, current_mood=None):
+        self.calls.append({"query": query, "current_mood": current_mood})
         if self._raise is not None:
             raise self._raise
         return [dict(r) for r in self._rows]
@@ -274,8 +278,7 @@ def build_ctx(*, rag=None, memory=None, llm=None, card=None) -> ContextEngine:
     return ContextEngine(
         card=project_card(card or make_card(), None)[0],
         rag=rag,
-        memory_manager=memory,
-        card_id="card_test",
+        memory=memory,
         llm=llm,
         model="deepseek-v4-pro",
         storage=None,

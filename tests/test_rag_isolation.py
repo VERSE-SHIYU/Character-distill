@@ -39,7 +39,7 @@ async def test_context_engine_rag_none():
 
     card = _make_card("测试角色", ["温柔"], "测试背景")
     # 注入层只收 ProjectedCard（DA18）：投影到最后一个阶段（不截断）。
-    ctx = ContextEngine(card=project_card(card, None)[0], rag=None, card_id="test", storage=None)
+    ctx = ContextEngine(card=project_card(card, None)[0], rag=None, storage=None)
     result = ctx._retrieve_scenes("你好")
     assert result == "", f"Expected empty string, got: {result!r}"
     print("PASS (returns empty, no crash)")

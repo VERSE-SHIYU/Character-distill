@@ -311,7 +311,7 @@ class TestReflectionReturnType:
     def test_maybe_reflect_returns_bool(self):
         """ReflectionService.maybe_reflect 返回 bool 值。"""
         from core.reflection_service import ReflectionService
-        svc = ReflectionService(None, "")
+        svc = ReflectionService(None)
         result = svc.maybe_reflect(1, None, "")
         assert isinstance(result, bool)
         # Without memory and proper setup, should return False

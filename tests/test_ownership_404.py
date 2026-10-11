@@ -64,24 +64,27 @@ def intruder():
 
 
 class _MemMgr:
-    """启用的记忆管理器替身。禁用的真身会在属主门前返 400/空态，测不到属主门。"""
+    """启用的记忆管理器替身。禁用的真身会在属主门前返 400/空态，测不到属主门。
+
+    接口对齐按存档隔离后的新签名（读写收 `MemoryScope`、不在参数里带卡 id）。
+    """
 
     enabled = True
 
-    def get_all(self, card_id):
+    def get_all(self, scope):
         return []
 
-    def search(self, query, card_id, current_mood=None):
+    def search(self, query, current_mood=None):
         return []
 
-    def add(self, messages, card_id, metadata=None):
+    def add(self, messages, scope, metadata=None):
         return True
 
     def for_user(self, **_kw):
         """工厂接口：替身同时充当「用户视图」—— 调用方拿到的就是它自己。"""
         return self
 
-    def add_manual(self, text, card_id):
+    def add_manual(self, text, scope):
         return True
 
     def update(self, memory_id, text):
@@ -90,7 +93,7 @@ class _MemMgr:
     def delete(self, memory_id):
         return True
 
-    def delete_all(self, card_id):
+    def delete_all(self, scope):
         return True
 
 
@@ -417,12 +420,13 @@ class TestReportCommentValidation:
 class TestMemoryOwnership:
     def test_list_memories_404(self, store, owner, intruder_client):
         cid = _card(store, owner)
-        r = intruder_client.get(f"/api/memory/list/{cid}")
+        r = intruder_client.get(f"/api/memory/list/{cid}?session_id=s_intruder")
         assert r.status_code == 404 and r.status_code != 403
 
     def test_add_memory_404(self, store, owner, intruder_client):
         cid = _card(store, owner)
-        r = intruder_client.post(f"/api/memory/add/{cid}", json={"text": "记一笔"})
+        r = intruder_client.post(f"/api/memory/add/{cid}?session_id=s_intruder",
+                                 json={"text": "记一笔"})
         assert r.status_code == 404 and r.status_code != 403
 
     def test_update_memory_404(self, store, owner, intruder_client):
@@ -437,7 +441,7 @@ class TestMemoryOwnership:
 
     def test_clear_memories_404(self, store, owner, intruder_client):
         cid = _card(store, owner)
-        r = intruder_client.delete(f"/api/memory/clear/{cid}")
+        r = intruder_client.delete(f"/api/memory/clear/{cid}?session_id=s_intruder")
         assert r.status_code == 404 and r.status_code != 403
 
 

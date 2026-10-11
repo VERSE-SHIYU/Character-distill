@@ -20,10 +20,10 @@ class FakeMemory:
         self.reflect_captured: list[dict] | None = None
         self.reflect_storage = None
 
-    def get_all(self, card_id: str) -> list[dict]:
+    def get_all(self) -> list[dict]:
         return self._memories
 
-    def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str,
+    def reflect(self, llm, recent_memories: list[dict], char_name: str,
                 storage=None) -> None:
         self.reflect_captured = recent_memories
         self.reflect_storage = storage
@@ -49,7 +49,7 @@ class TestReflectionLowConfidenceFilter:
             _make_mem(importance=6, assertion_confidence=70),  # 正常
         ]
         memory = FakeMemory(memories)
-        svc = ReflectionService(memory, "card_test")
+        svc = ReflectionService(memory)
         svc._importance_acc = REFLECTION_THRESHOLD
         svc._rounds_since_reflect = REFLECTION_MIN_ROUNDS
 
@@ -69,7 +69,7 @@ class TestReflectionLowConfidenceFilter:
             _make_mem(importance=7, assertion_confidence=65),
         ]
         memory = FakeMemory(memories)
-        svc = ReflectionService(memory, "card_test")
+        svc = ReflectionService(memory)
         svc._importance_acc = REFLECTION_THRESHOLD
         svc._rounds_since_reflect = REFLECTION_MIN_ROUNDS
 
@@ -87,7 +87,7 @@ class TestReflectionLowConfidenceFilter:
             _make_mem(importance=7, assertion_confidence=10),
         ]
         memory = FakeMemory(memories)
-        svc = ReflectionService(memory, "card_test")
+        svc = ReflectionService(memory)
         svc._importance_acc = REFLECTION_THRESHOLD
         svc._rounds_since_reflect = REFLECTION_MIN_ROUNDS
 
@@ -106,7 +106,7 @@ class TestReflectionLowConfidenceFilter:
             _make_mem(importance=7, assertion_confidence=90),  # 正常，高质量
         ]
         memory = FakeMemory(memories)
-        svc = ReflectionService(memory, "card_test")
+        svc = ReflectionService(memory)
         svc._importance_acc = REFLECTION_THRESHOLD
         svc._rounds_since_reflect = REFLECTION_MIN_ROUNDS
 
@@ -126,7 +126,7 @@ class TestReflectionDualCondition:
 
     def test_rounds_condition_not_met(self):
         """重要性达标但轮数不足 → 不触发，累加器不归零。"""
-        svc = ReflectionService(None, "card_test")
+        svc = ReflectionService(None)
         svc._importance_acc = REFLECTION_THRESHOLD  # 重要性已达标
         svc._rounds_since_reflect = 0               # 轮数不足
 
@@ -145,7 +145,7 @@ class TestReflectionDualCondition:
             _make_mem(importance=5, assertion_confidence=70),  # 普通
         ]
         memory = FakeMemory(memories)
-        svc = ReflectionService(memory, "card_test")
+        svc = ReflectionService(memory)
         svc._importance_acc = REFLECTION_THRESHOLD
         svc._rounds_since_reflect = REFLECTION_MIN_ROUNDS
 
@@ -165,7 +165,7 @@ class TestReflectionDualCondition:
             _make_mem(importance=6, assertion_confidence=75),
         ]
         memory = FakeMemory(memories)
-        svc = ReflectionService(memory, "card_test")
+        svc = ReflectionService(memory)
         svc._importance_acc = REFLECTION_THRESHOLD
         svc._rounds_since_reflect = REFLECTION_MIN_ROUNDS
 
@@ -191,7 +191,7 @@ class TestReflectionDualCondition:
             _make_mem(importance=6, assertion_confidence=75),
         ]
         memory = FakeMemory(memories)
-        svc = ReflectionService(memory, "card_test")
+        svc = ReflectionService(memory)
         svc._importance_acc = REFLECTION_THRESHOLD
         svc._rounds_since_reflect = REFLECTION_MIN_ROUNDS
 
