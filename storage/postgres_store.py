@@ -14,6 +14,7 @@ import asyncpg  # type: ignore[import-not-found]
 
 from core.roles import ROLES
 from .base import USER_PROFILE_OP, InviteCodeUnavailable, StorageBase, StoreError
+from .group_row import decode_group_row, encode_member_phases
 from .migration_ledger import file_sha256, pending_files
 from .pg_identity_sync import align_identity_sequences
 from .secret_box import decrypt_secret, encrypt_secret
@@ -1810,17 +1811,19 @@ class PostgresStore(StorageBase):
                                    user_persona_type: str = "director",
                                    user_persona_card_id: str = "",
                                    user_persona_name: str = "",
-                                   user_persona_desc: str = "") -> None:
+                                   user_persona_desc: str = "",
+                                   member_phases: dict[str, int] | None = None) -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
                     """INSERT INTO group_sessions (id, name, card_ids, user_id,
                        user_persona_type, user_persona_card_id,
-                       user_persona_name, user_persona_desc)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
+                       user_persona_name, user_persona_desc, member_phases)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
                     id, name, json.dumps(card_ids), user_id,
                     user_persona_type, user_persona_card_id,
                     user_persona_name, user_persona_desc,
+                    encode_member_phases(member_phases),
                 )
         except Exception as exc:
             print(f"[PostgresStore] Create group session failed: {exc}")
@@ -1836,13 +1839,13 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data FROM group_sessions WHERE id = $1",
+                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data, member_phases FROM group_sessions WHERE id = $1",
                     id,
                 )
             if row is None:
                 return None
             d = self._row_to_dict(row)
-            d["card_ids"] = json.loads(d["card_ids"])
+            decode_group_row(d)
             return d
         except Exception as exc:
             print(f"[PostgresStore] Get group session (unscoped) failed: {exc}")
@@ -1853,13 +1856,13 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data FROM group_sessions WHERE id = $1 AND user_id = $2",
+                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data, member_phases FROM group_sessions WHERE id = $1 AND user_id = $2",
                     id, user_id,
                 )
             if row is None:
                 return None
             d = self._row_to_dict(row)
-            d["card_ids"] = json.loads(d["card_ids"])
+            decode_group_row(d)
             return d
         except Exception as exc:
             print(f"[PostgresStore] Get group session (owned) failed: {exc}")
@@ -1872,7 +1875,7 @@ class PostgresStore(StorageBase):
                     """SELECT id, name, card_ids, user_id, created_at,
                               user_persona_type, user_persona_card_id,
                               user_persona_name, user_persona_desc,
-                              user_avatar_data
+                              user_avatar_data, member_phases
                        FROM group_sessions
                        WHERE user_id = $1 AND (deleted_at IS NULL OR deleted_at = '')
                        ORDER BY created_at DESC""",
@@ -1881,7 +1884,7 @@ class PostgresStore(StorageBase):
             results = []
             for row in rows:
                 d = self._row_to_dict(row)
-                d["card_ids"] = json.loads(d["card_ids"])
+                decode_group_row(d)
                 results.append(d)
             return results
         except Exception as exc:
@@ -1901,7 +1904,7 @@ class PostgresStore(StorageBase):
             results = []
             for row in rows:
                 d = self._row_to_dict(row)
-                d["card_ids"] = json.loads(d["card_ids"])
+                decode_group_row(d)
                 results.append(d)
             return results
         except Exception as exc:

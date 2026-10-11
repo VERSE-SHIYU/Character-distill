@@ -25,6 +25,7 @@ except ModuleNotFoundError:
 
 from core.roles import ROLES
 from .base import InviteCodeUnavailable, StorageBase, StoreError
+from .group_row import decode_group_row, encode_member_phases
 from .secret_box import decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(__name__)
@@ -2409,17 +2410,19 @@ class SQLiteStore(StorageBase):
         user_persona_card_id: str = "",
         user_persona_name: str = "",
         user_persona_desc: str = "",
+        member_phases: dict[str, int] | None = None,
     ) -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
                     """INSERT INTO group_sessions (id, name, card_ids, user_id,
                        user_persona_type, user_persona_card_id,
-                       user_persona_name, user_persona_desc)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                       user_persona_name, user_persona_desc, member_phases)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (id, name, json.dumps(card_ids), user_id,
                      user_persona_type, user_persona_card_id,
-                     user_persona_name, user_persona_desc),
+                     user_persona_name, user_persona_desc,
+                     encode_member_phases(member_phases)),
                 )
                 await conn.commit()
         except Exception as exc:
@@ -2436,14 +2439,14 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data FROM group_sessions WHERE id = ?",
+                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data, member_phases FROM group_sessions WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
             if row is None:
                 return None
             d = self._row_to_dict(row)
-            d["card_ids"] = json.loads(d["card_ids"])
+            decode_group_row(d)
             return d
         except Exception as exc:
             print(f"[SQLiteStore] Get group session (unscoped) failed: {exc}")
@@ -2454,14 +2457,14 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data FROM group_sessions WHERE id = ? AND user_id = ?",
+                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data, member_phases FROM group_sessions WHERE id = ? AND user_id = ?",
                     (id, user_id),
                 )
                 row = await cursor.fetchone()
             if row is None:
                 return None
             d = self._row_to_dict(row)
-            d["card_ids"] = json.loads(d["card_ids"])
+            decode_group_row(d)
             return d
         except Exception as exc:
             print(f"[SQLiteStore] Get group session (owned) failed: {exc}")
@@ -2474,7 +2477,7 @@ class SQLiteStore(StorageBase):
                     """SELECT id, name, card_ids, user_id, created_at,
                               user_persona_type, user_persona_card_id,
                               user_persona_name, user_persona_desc,
-                              user_avatar_data
+                              user_avatar_data, member_phases
                        FROM group_sessions
                        WHERE user_id = ? AND (deleted_at IS NULL OR deleted_at = '')
                        ORDER BY created_at DESC""",
@@ -2484,7 +2487,7 @@ class SQLiteStore(StorageBase):
             results = []
             for row in rows:
                 d = self._row_to_dict(row)
-                d["card_ids"] = json.loads(d["card_ids"])
+                decode_group_row(d)
                 results.append(d)
             return results
         except Exception as exc:
@@ -2505,7 +2508,7 @@ class SQLiteStore(StorageBase):
             results = []
             for row in rows:
                 d = self._row_to_dict(row)
-                d["card_ids"] = json.loads(d["card_ids"])
+                decode_group_row(d)
                 results.append(d)
             return results
         except Exception as exc:
