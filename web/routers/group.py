@@ -26,7 +26,9 @@ from core.message_outbox import (
     FlushReport, FlushRequest, save_field, terminal_frame,
 )
 from core.nonfatal import nonfatal
-from web.group_engines import build_group_engine, group_engine_deps, resolve_member_phases
+from web.group_engines import (
+    ai_member_ids, build_group_engine, group_engine_deps, resolve_member_phases,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,24 +124,24 @@ async def _rebuild_group_session(
     engines: dict[str, ChatEngine] = {}
     played_card_name = ""
 
-    for card_id in session["card_ids"]:
-        # Skip the played character — user is that character, not AI
-        if persona_type == "character" and card_id == persona_card_id:
-            try:
-                # 人设卡 id 来自会话 card_ids，创建时已验属主；同一属主谓词收窄。
-                card_rec = await storage.get_card_owned(card_id, user_id)
-                if card_rec:
-                    card = CharacterCard.model_validate_json(card_rec["card_json"])
-                    played_card_name = card.name
-            except Exception as exc:
-                # 取不到人设卡名 → played_card_name 留空，该卡在群里的展示名退化成 id。
-                # 这是装饰性字段，不中断重建。
-                logger.warning(
-                    "Group rebuild: played card name unreadable (group_id=%s card_id=%s): %r",
-                    group_id, card_id, exc, exc_info=True,
-                )
-            continue
+    # 用户扮演的那张卡不建引擎；它的名字拿来当用户在群里的显示名。直接按 id 取，
+    # 不混在成员循环里判。
+    if persona_type == "character" and persona_card_id:
+        try:
+            # 人设卡 id 来自会话 card_ids，创建时已验属主；同一属主谓词收窄。
+            card_rec = await storage.get_card_owned(persona_card_id, user_id)
+            if card_rec:
+                card = CharacterCard.model_validate_json(card_rec["card_json"])
+                played_card_name = card.name
+        except Exception as exc:
+            # 取不到人设卡名 → played_card_name 留空，该卡在群里的展示名退化成 id。
+            # 这是装饰性字段，不中断重建。
+            logger.warning(
+                "Group rebuild: played card name unreadable (group_id=%s card_id=%s): %r",
+                group_id, persona_card_id, exc, exc_info=True,
+            )
 
+    for card_id in ai_member_ids(session["card_ids"], persona_type, persona_card_id):
         card_rec = await storage.get_card_owned(card_id, user_id)
         if not card_rec:
             continue
@@ -285,7 +287,7 @@ async def create_group(
         raise HTTPException(400, "路人身份需要填写名字")
 
     # AI count check by persona mode
-    ai_card_ids = [cid for cid in req.card_ids if persona_type != "character" or cid != persona_card_id]
+    ai_card_ids = ai_member_ids(req.card_ids, persona_type, persona_card_id)
     if persona_type == "director":
         if len(ai_card_ids) < 2:
             raise HTTPException(400, "导演模式需要至少2个AI角色")
@@ -301,7 +303,6 @@ async def create_group(
     # 群身份先于引擎生成：每个引擎出生时就带上它，不再等「要评估好感度了」再补。
     group_id = uuid.uuid4().hex[:12]
     engines: dict[str, ChatEngine] = {}
-    card_infos: list[dict] = []
     played_card_name = ""
     ai_cards: dict[str, CharacterCard] = {}
 
@@ -316,19 +317,17 @@ async def create_group(
     if not await storage.get_text_owned(text_id, user_id):
         raise HTTPException(404, f"原文 {text_id} 不存在")
 
+    # 扮演那张卡的名字：直接按 id 取，不混在成员循环里。
+    if persona_type == "character" and persona_card_id:
+        played_rec = next((r for r in card_recs if r["id"] == persona_card_id), None)
+        if played_rec:
+            played_card_name = CharacterCard.model_validate_json(played_rec["card_json"]).name
+
+    ai_ids = set(ai_card_ids)
     for card_rec in card_recs:
         card_id = card_rec["id"]
-        card = CharacterCard.model_validate_json(card_rec["card_json"])
-
-        # Track played character name
-        if persona_type == "character" and card_id == persona_card_id:
-            played_card_name = card.name
-            # Don't add to engines — user plays this character
-            card_infos.append({"card_id": card_id, "name": card.name, "played_by_user": True})
-            continue
-
-        ai_cards[card_id] = card
-        card_infos.append({"card_id": card_id, "name": card.name})
+        if card_id in ai_ids:
+            ai_cards[card_id] = CharacterCard.model_validate_json(card_rec["card_json"])
 
     member_phases = resolve_member_phases(ai_cards, req.member_phases)
     for card_id, card in ai_cards.items():
@@ -362,16 +361,9 @@ async def create_group(
         member_phases=member_phases,
     )
 
-    return {
-        "group_id": group_id,
-        "name": req.name or "群聊",
-        "characters": card_infos,
-        "user_persona_type": persona_type,
-        "user_persona_card_id": persona_card_id,
-        "user_persona_name": persona_name.strip() if persona_name else "",
-        "user_persona_desc": persona_desc.strip(),
-        "member_phases": member_phases,
-    }
+    # 返回落库后这一行，与 `/api/group/list` 同形状 —— 前端建群与点开已有群走同一条
+    # `enterGroup`，以后群对象加字段只改一处（列清单在 `storage/group_row`）。
+    return {"group": await storage.get_group_session_owned(group_id, user_id)}
 
 
 async def _filter_valid_card_ids(groups: list[dict], user_id: str, storage: StorageBase) -> list[dict]:

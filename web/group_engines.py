@@ -48,6 +48,18 @@ async def group_engine_deps(user_id: str, per_user_llm: Any, storage: Any, *, wh
     return GroupEngineDeps(per_user_llm, memory_manager, get_indexing_service(), emb, storage)
 
 
+def ai_member_ids(card_ids: list[str], persona_type: str, persona_card_id: str) -> list[str]:
+    """「谁是 AI 成员」的后端**唯一**一处：用户扮演的那张卡由用户说话，不算 AI 成员；其余原序。
+
+    与前端 `utils/groupMembers.aiMemberIds` 同一条规则（两侧各一处）。导演 / 路人身份
+    全员都是 AI 成员（`persona_card_id` 不生效）。
+    """
+    return [
+        cid for cid in card_ids
+        if not (persona_type == "character" and cid == persona_card_id)
+    ]
+
+
 def resolve_member_phases(ai_cards: dict[str, Any], requested: dict[str, int]) -> dict[str, int]:
     """建群时的阶段规则（唯一一处）：只收 AI 成员的、`valid_phase` 认可的阶段号。
 

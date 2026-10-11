@@ -453,7 +453,7 @@ def _group_engines(tmp_path, monkeypatch):
     r = client.post("/api/group/create", json={
         "card_ids": cards, "user_persona_type": "stranger", "user_persona_name": "路人"})
     assert r.status_code == 200, f"建群失败：{r.status_code} {r.text[:200]}"
-    return get_group_sessions()[r.json()["group_id"]]
+    return get_group_sessions()[r.json()["group"]["id"]]
 
 
 def test_group_uses_last_phase(tmp_path, monkeypatch):

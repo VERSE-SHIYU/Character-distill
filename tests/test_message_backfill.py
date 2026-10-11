@@ -334,7 +334,7 @@ def _make_group(st, uid, n: int = 2) -> tuple[str, list[str]]:
         "user_persona_name": "路人",
     })
     assert r.status_code == 200, f"建群这一步就失败了：{r.status_code} {r.text[:300]}"
-    return r.json()["group_id"], cards
+    return r.json()["group"]["id"], cards
 
 
 def _group_send(client: TestClient, gid: str, cid: str, message: str) -> dict:
