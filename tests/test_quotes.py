@@ -194,8 +194,9 @@ def test_the_fragment_start_at_its_edges():
        变异：退到再前一句台词 → 红。
     ③ 数不到句末（全文不用「。！？」断句）→ 上一句的引导语之前恰好带 `_CONTEXT_CHARS_BACK` 字。
        变异：不封顶 → 红；封顶多一字少一字 → 红；半角句号也算句末 → 红。
-    ④ 上一句之前是一句很长的台词 → 同样按字数截，不因为「退到引导语」把整句台词带上。
-       变异：先封顶、再退到引导语 → 红。
+    ④ 数够了 10 句、但这 10 句超过 `_CONTEXT_CHARS_BACK` 字 → 同样按字数截。两种情形：
+       落在一句很长的台词里（不因为「退到引导语」把整句台词带上）；10 句都是很长的叙述。
+       变异：先封顶、再退到引导语 → 红；退到引导语之后不再封顶 → 红；只在不足 10 句时封顶 → 红。
     """
     tail = "凤姐笑道：“你老慢慢说。”\n刘姥姥道：“姑娘说得是。”\n"
 
@@ -210,9 +211,13 @@ def test_the_fragment_start_at_its_edges():
     c = extract_candidates(endless, ["刘姥姥"])[0]
     assert c.context == endless[endless.index("凤姐笑道：") - 2000:].rstrip("\n")
 
-    monologue = "贾母道：“" + "很长的一句话，" * 500 + "说完了。”\n" + tail
+    monologue = "贾母道：“" + "很长的一句话。" * 500 + "”\n" + tail
     c = extract_candidates(monologue, ["刘姥姥"])[0]
     assert c.context == monologue[monologue.index("凤姐笑道：") - 2000:].rstrip("\n")
+
+    narration = "".join("这一句叙述很长，" * 50 + f"第{i}句完。" for i in range(1, 12)) + "\n" + tail
+    c = extract_candidates(narration, ["刘姥姥"])[0]
+    assert c.context == narration[narration.index("凤姐笑道：") - 2000:].rstrip("\n")
 
 
 def _one_per_round(n):
