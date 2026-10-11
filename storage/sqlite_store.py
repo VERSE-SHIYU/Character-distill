@@ -25,7 +25,7 @@ except ModuleNotFoundError:
 
 from core.roles import ROLES
 from .base import InviteCodeUnavailable, StorageBase, StoreError
-from .group_row import decode_group_row, encode_member_phases
+from .group_row import GROUP_SESSION_SELECT, decode_group_row, encode_member_phases
 from .secret_box import decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(__name__)
@@ -2439,7 +2439,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data, member_phases FROM group_sessions WHERE id = ?",
+                    f"SELECT {GROUP_SESSION_SELECT} FROM group_sessions WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -2457,7 +2457,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data, member_phases FROM group_sessions WHERE id = ? AND user_id = ?",
+                    f"SELECT {GROUP_SESSION_SELECT} FROM group_sessions WHERE id = ? AND user_id = ?",
                     (id, user_id),
                 )
                 row = await cursor.fetchone()
@@ -2474,10 +2474,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT id, name, card_ids, user_id, created_at,
-                              user_persona_type, user_persona_card_id,
-                              user_persona_name, user_persona_desc,
-                              user_avatar_data, member_phases
+                    f"""SELECT {GROUP_SESSION_SELECT}
                        FROM group_sessions
                        WHERE user_id = ? AND (deleted_at IS NULL OR deleted_at = '')
                        ORDER BY created_at DESC""",
@@ -2495,6 +2492,8 @@ class SQLiteStore(StorageBase):
             raise
 
     async def get_deleted_group_sessions(self, user_id: str) -> list[dict]:
+        # 回收站列表是精简投影：只显示名称与删除时间，**故意**不带 member_phases /
+        # user_persona_* / user_avatar_data，所以不引用 `GROUP_SESSION_SELECT`。
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(

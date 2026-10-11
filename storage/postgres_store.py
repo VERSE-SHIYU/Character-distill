@@ -14,7 +14,7 @@ import asyncpg  # type: ignore[import-not-found]
 
 from core.roles import ROLES
 from .base import USER_PROFILE_OP, InviteCodeUnavailable, StorageBase, StoreError
-from .group_row import decode_group_row, encode_member_phases
+from .group_row import GROUP_SESSION_SELECT, decode_group_row, encode_member_phases
 from .migration_ledger import file_sha256, pending_files
 from .pg_identity_sync import align_identity_sequences
 from .secret_box import decrypt_secret, encrypt_secret
@@ -1839,7 +1839,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data, member_phases FROM group_sessions WHERE id = $1",
+                    f"SELECT {GROUP_SESSION_SELECT} FROM group_sessions WHERE id = $1",
                     id,
                 )
             if row is None:
@@ -1856,7 +1856,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data, member_phases FROM group_sessions WHERE id = $1 AND user_id = $2",
+                    f"SELECT {GROUP_SESSION_SELECT} FROM group_sessions WHERE id = $1 AND user_id = $2",
                     id, user_id,
                 )
             if row is None:
@@ -1872,10 +1872,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    """SELECT id, name, card_ids, user_id, created_at,
-                              user_persona_type, user_persona_card_id,
-                              user_persona_name, user_persona_desc,
-                              user_avatar_data, member_phases
+                    f"""SELECT {GROUP_SESSION_SELECT}
                        FROM group_sessions
                        WHERE user_id = $1 AND (deleted_at IS NULL OR deleted_at = '')
                        ORDER BY created_at DESC""",
@@ -1892,6 +1889,8 @@ class PostgresStore(StorageBase):
             raise
 
     async def get_deleted_group_sessions(self, user_id: str) -> list[dict]:
+        # 回收站列表是精简投影：只显示名称与删除时间，**故意**不带 member_phases /
+        # user_persona_* / user_avatar_data，所以不引用 `GROUP_SESSION_SELECT`。
         try:
             async with await self._connect() as conn:
                 rows = await conn.fetch(
