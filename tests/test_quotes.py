@@ -185,6 +185,36 @@ def test_a_sentence_is_counted_by_its_end_mark_spoken_or_not_and_a_line_break_is
     assert c.context == text[text.index("开头第二句。"):text.rindex("”") + 1]
 
 
+def test_the_fragment_start_at_its_edges():
+    """片段起点的三个边界。
+
+    ① 上一句之前不足 10 句 → 从全文开头带起，一句不丢。
+       变异：不足时从第一个句末之后起 → 红。
+    ② 数到的位置落在一句台词里，它前面还有别的台词 → 退到**这一句**的引导语，不是更前面那句。
+       变异：退到再前一句台词 → 红。
+    ③ 数不到句末（全文不用「。！？」断句）→ 上一句的引导语之前恰好带 `_CONTEXT_CHARS_BACK` 字。
+       变异：不封顶 → 红；封顶多一字少一字 → 红；半角句号也算句末 → 红。
+    ④ 上一句之前是一句很长的台词 → 同样按字数截，不因为「退到引导语」把整句台词带上。
+       变异：先封顶、再退到引导语 → 红。
+    """
+    tail = "凤姐笑道：“你老慢慢说。”\n刘姥姥道：“姑娘说得是。”\n"
+
+    short = "第一句叙述。第二句叙述。" + tail
+    assert extract_candidates(short, ["刘姥姥"])[0].context == short.rstrip("\n")
+
+    nested = ("凤姐道：“先这么说。”\n"
+              "贾母道：“" + "".join(f"第{i}件事。" for i in range(1, 16)) + "”\n" + tail)
+    assert extract_candidates(nested, ["刘姥姥"])[0].context == nested[nested.index("贾母道："):].rstrip("\n")
+
+    endless = "他又说了一句话. " * 400 + "\n" + tail
+    c = extract_candidates(endless, ["刘姥姥"])[0]
+    assert c.context == endless[endless.index("凤姐笑道：") - 2000:].rstrip("\n")
+
+    monologue = "贾母道：“" + "很长的一句话，" * 500 + "说完了。”\n" + tail
+    c = extract_candidates(monologue, ["刘姥姥"])[0]
+    assert c.context == monologue[monologue.index("凤姐笑道：") - 2000:].rstrip("\n")
+
+
 def _one_per_round(n):
     text = "".join(f"凤姐道：“第{i}问？”\n刘姥姥道：“第{i}答。”\n" for i in range(1, n + 1))
     return extract_candidates(text, ["刘姥姥"])
@@ -198,6 +228,8 @@ def test_candidates_at_the_cap_are_untouched_and_one_more_is_thinned_to_the_cap(
     """
     at_cap = _one_per_round(MAX_CANDIDATES)
     assert spread_evenly(at_cap) == at_cap
+    renumbered = spread_evenly([at_cap[4], at_cap[8]])          # 递进来的编号是 5、9
+    assert [c.n for c in renumbered] == [1, 2], "不到上限也重新编号：模型看到的总是 1 到 N"
 
     over = _one_per_round(MAX_CANDIDATES + 1)
     thinned = spread_evenly(over)

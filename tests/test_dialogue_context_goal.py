@@ -29,6 +29,7 @@ W5 往前数到的位置落在一句台词中间 → 退到那句台词的引导
 没动别的（main 上就绿：回归守卫）
 W6 候选还是原来那几条：本句、上一句都不变
 W7 片段仍是原文的连续子串，仍到本句的署名为止
+W8 片段有界：不用「。！？」断句的长文本，上一句之前最多带 2000 字（main 上是 60 字，也绿）
 """
 from __future__ import annotations
 
@@ -36,9 +37,11 @@ import os
 import re
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from core.distiller import Distiller
+from core.distiller import DistillError, Distiller
 from core.quotes import extract_candidates
 from test_dialogue_pairing_goal import _pick, _PickLLM   # 同一步的假适配器，不另抄一份
 
@@ -163,10 +166,8 @@ def test_w1_kong_yiji_he_said_the_fragment_names_him_and_reaches_the_model():
     assert [c.prev_lead for c in cands] == ["他说，"]
     assert "孔乙己" in _before_prev(cands[0]), "「他」是谁，片段里得看得见"
 
-    try:
+    with pytest.raises(DistillError):   # 上一句标成本人 → 这一格被丢弃、没有示例：与本条无关
         d.pick_dialogue_examples(cands, "孔乙己", others)
-    except Exception:
-        pass                      # 上一句标成本人 → 这一格被丢弃、没有示例：与本条无关
     assert cands[0].context in llm.seen["messages"][0]["content"], "模型拿到的就是这段片段"
 
 
@@ -224,3 +225,12 @@ def test_w7_the_fragment_is_still_a_slice_of_the_source_ending_at_the_signature(
         c = _only(text, names)
         assert c.context in text
         assert c.context.endswith(ending)
+
+
+def test_w8_the_fragment_is_bounded_when_the_text_has_no_sentence_ends():
+    # 半角标点的文本数不到「。！？」：片段不能把全文开头到上一句整段带上。
+    text = "他又说了一句话. " * 2000 + "\n凤姐笑道：“你老慢慢说。”\n刘姥姥道：“姑娘说得是。”\n"
+    c = _only(text, ["刘姥姥"])
+
+    assert len(_before_prev(c)) <= 2000 + len("凤姐笑道：")
+

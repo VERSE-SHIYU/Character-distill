@@ -168,6 +168,11 @@ def _quote_re(text: str) -> "re.Pattern[str] | None":
 # （Chen et al., Findings of EMNLP 2023：前后各 10 句）；依据与测量见
 # `docs/specs/dialogue-context-window.md`。
 _CONTEXT_SENTENCES_BACK = 10
+# 这 10 句最长带这么多字，再长就从这里截。不用「。！？」断句的文本数不到句末，不封顶会
+# 把全文开头到上一句整段带上（14.6 万字的文本实测：一条片段 14.6 万字）；一句很长的台词
+# 也一样。2000 字取自公版五部书的实测：10 句超过它的只有《红楼梦》贾宝玉 1730 条里的 23 条，
+# 其余四部一条没有。
+_CONTEXT_CHARS_BACK = 2000
 
 
 class Candidate(NamedTuple):
@@ -229,8 +234,8 @@ def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
 
     引导语/署名里的人名常是宾语（「送入刘姥姥口中，因笑道」是凤姐说的），所以**归属对不对
     不靠这段子串判定**：模型读 `context` 整段确认后再挑（见 `render_candidates`）。片段起点
-    由 `_context_start` 给出（上一句之前 `_CONTEXT_SENTENCES_BACK` 句），终点到本句署名那半句
-    为止（`_tail_after`）—— 模型得看见引号后的署名才判得出是谁说的。
+    由 `_context_start` 给出（上一句之前 `_CONTEXT_SENTENCES_BACK` 句、封顶 `_CONTEXT_CHARS_BACK`
+    字），终点到本句署名那半句为止（`_tail_after`）—— 模型得看见引号后的署名才判得出是谁说的。
     """
     wanted = [_same_width(n) for n in names if n]
     quote_re = _quote_re(text)
@@ -281,18 +286,20 @@ def _lead_before(text: str, quotes: list, i: int, start: int) -> tuple[str, int]
 
 
 def _context_start(text: str, quotes: list, sentence_ends: Sequence[int], prev_start: int) -> int:
-    """片段的起点：从上一句的引导语（`prev_start`）往前数 `_CONTEXT_SENTENCES_BACK` 句。
+    """片段的起点：从上一句的引导语（`prev_start`）往前数 `_CONTEXT_SENTENCES_BACK` 句，
+    最长 `_CONTEXT_CHARS_BACK` 字。
 
     数到的位置落在某句台词里面时，退到那句台词的引导语开头 —— 片段不从半句话开始，那句话
-    是谁说的也一并带上。`sentence_ends` 是全文的句末位置（升序），由调用方算一次、各条候选
-    共用：逐条重扫全文在长书上是平方级的。
+    是谁说的也一并带上。字数封顶在最后：超了就按字数截，这时片段可以从半句话开始。
+    `sentence_ends` 是全文的句末位置（升序），由调用方算一次、各条候选共用：逐条重扫全文
+    在长书上是平方级的。
     """
     k = bisect.bisect_right(sentence_ends, prev_start) - _CONTEXT_SENTENCES_BACK - 1
     start = sentence_ends[k] if k >= 0 else 0
     q = bisect.bisect_right(quotes, start, key=lambda m: m.start()) - 1
     if q >= 0 and start < quotes[q].end():
         _, start = _lead_before(text, quotes, q, quotes[q].start())
-    return start
+    return max(start, prev_start - _CONTEXT_CHARS_BACK)
 
 
 def _tail_after(text: str, quotes: list, i: int) -> tuple[str, int]:
@@ -316,14 +323,15 @@ MAX_CANDIDATES = 40
 
 
 def spread_evenly(candidates: Sequence[Candidate]) -> list[Candidate]:
-    """候选多于 `MAX_CANDIDATES` 条时，按出场顺序均匀取这么多条（首尾都取），重新编号。
+    """交给模型的候选：多于 `MAX_CANDIDATES` 条时按出场顺序均匀取这么多条（首尾都取）；
+    不管取没取，都从 1 起重新编号 —— 递进来的候选带着什么编号，模型看到的都是 1 到 N。
 
-    均匀取是为了全书各处都有：只取开头那些的话，示例全落在故事最前面。不多于上限时原样返回。
+    均匀取是为了全书各处都有：只取开头那些的话，示例全落在故事最前面。
     """
-    if len(candidates) <= MAX_CANDIDATES:
-        return list(candidates)
-    last = len(candidates) - 1
-    return _numbered([candidates[i * last // (MAX_CANDIDATES - 1)] for i in range(MAX_CANDIDATES)])
+    if len(candidates) > MAX_CANDIDATES:
+        last = len(candidates) - 1
+        candidates = [candidates[i * last // (MAX_CANDIDATES - 1)] for i in range(MAX_CANDIDATES)]
+    return _numbered(candidates)
 
 
 def render_candidates(candidates: Sequence[Candidate]) -> str:
