@@ -170,17 +170,19 @@ class ChatEngine:
         self._group_id: str = group_id  # 群聊上下文：群 ID（空串=单聊或无上下文）
         # 本引擎的长期记忆：视图 + 归属（存档 / 群）绑成一个对象，分给检索、事件、反思、
         # 评估上下文共用（方案 C）。换视图只换这一个对象（set_memory → rebind）。
-        # 有群 id 用群范围，否则有存档 id 用存档范围；两者都没有 → 这个引擎没有记忆。
-        if group_id:
-            _scope: MemoryScope | None = MemoryScope.group(card_id, group_id)
-        elif session_id:
-            _scope = MemoryScope.archive(card_id, session_id)
-        else:
-            _scope = None
+        # 没有卡 id（归属键）或既无存档 id 也无群 id → 这个引擎没有记忆。空卡 id 必须
+        # 一并拦下：main 上读写都带 `and self._card_id`，否则会悄悄退回整张卡。
+        if not card_id or not (group_id or session_id):
+            _scope: MemoryScope | None = None
             logger.warning(
-                "Memory off for engine with neither session_id nor group_id (card_id=%r)",
-                card_id,
+                "Memory off for engine without a usable scope "
+                "(card_id=%r, group_id=%r, session_id=%r)",
+                card_id, group_id, session_id,
             )
+        elif group_id:
+            _scope = MemoryScope.group(card_id, group_id)
+        else:
+            _scope = MemoryScope.archive(card_id, session_id)
         self._scoped = ScopedMemory(memory_manager, _scope)
         self.history: list[dict[str, Any]] = []
         # 四维好感度（通过 AffinityService 托管，@property 透明转发）

@@ -518,6 +518,24 @@ def test_G6_engine_without_scope_reads_and_writes_nothing(manager, threads):
         "没范围的引擎把记忆写进了整张卡"
 
 
+def test_G6b_engine_without_card_id_reads_and_writes_nothing(manager, threads):
+    """有存档 id 但没有卡 id 的引擎同样不读不写（main 的旧口径带 ``and self._card_id``）。
+
+    main 上三处读写都带 ``and self._card_id``：没有卡 id 就不读不写。分支若只看存档 id 建范围，
+    空卡 id 会悄悄退回整卡，和 main 不一致。
+    """
+    view = manager.for_user(user_id=USER, llm=_UserLLM(), embedding_key="sk-emb-x")
+    z0 = _engine(view, "Z0", "", session_id="arch-Z0")
+    assert z0._scoped.enabled is False, "空卡 id 的引擎不该有可用的记忆范围"
+    _write_all(z0, threads, "Z0")
+
+    rz0 = _read_all(z0, threads, "存档Z0")
+    assert not any(_has(t, "存档Z0") for t in rz0.r1), f"空卡 id 的引擎还在读：{rz0.r1}"
+    assert not _has(rz0.r2, "存档Z0"), "空卡 id 的引擎还在取重逢记忆"
+    assert rz0.r3 is None, f"空卡 id 的引擎还在取到期事件：{rz0.r3}"
+    assert rz0.r4 is False, "空卡 id 的引擎还在反思"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # G7 整卡范围只在登记的地方用（唯一一把结构锁）
 # ═══════════════════════════════════════════════════════════════════════════════
