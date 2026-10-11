@@ -14,7 +14,7 @@ import asyncpg  # type: ignore[import-not-found]
 
 from core.roles import ROLES
 from .base import USER_PROFILE_OP, InviteCodeUnavailable, StorageBase, StoreError
-from .group_row import GROUP_SESSION_SELECT, decode_group_row, encode_member_phases
+from .group_row import GROUP_SESSION_SELECT, decode_group_row, group_insert_values
 from .migration_ledger import file_sha256, pending_files
 from .pg_identity_sync import align_identity_sequences
 from .secret_box import decrypt_secret, encrypt_secret
@@ -1814,16 +1814,18 @@ class PostgresStore(StorageBase):
                                    user_persona_desc: str = "",
                                    member_phases: dict[str, int] | None = None) -> None:
         try:
+            values = group_insert_values(
+                id=id, name=name, card_ids=card_ids, user_id=user_id,
+                user_persona_type=user_persona_type, user_persona_card_id=user_persona_card_id,
+                user_persona_name=user_persona_name, user_persona_desc=user_persona_desc,
+                member_phases=member_phases,
+            )
+            cols = ", ".join(values)
+            placeholders = ", ".join(f"${i}" for i in range(1, len(values) + 1))
             async with await self._connect() as conn:
                 await conn.execute(
-                    """INSERT INTO group_sessions (id, name, card_ids, user_id,
-                       user_persona_type, user_persona_card_id,
-                       user_persona_name, user_persona_desc, member_phases)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
-                    id, name, json.dumps(card_ids), user_id,
-                    user_persona_type, user_persona_card_id,
-                    user_persona_name, user_persona_desc,
-                    encode_member_phases(member_phases),
+                    f"INSERT INTO group_sessions ({cols}) VALUES ({placeholders})",
+                    *values.values(),
                 )
         except Exception as exc:
             print(f"[PostgresStore] Create group session failed: {exc}")

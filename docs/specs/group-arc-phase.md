@@ -199,7 +199,7 @@ aiMemberIds(selectedCardIds, personaType, personaCardId)
 
 | 以后要加 / 改的 | 唯一位置 | 处数 |
 | --- | --- | --- |
-| 群表再加一个 JSON 列 | `storage/group_row.py`（列清单 `GROUP_SESSION_COLUMNS` + 该列的解码） | 1（加列本身的迁移另算） |
+| 群表再加一个 JSON 列 | `storage/group_row.py`（读取列清单 `GROUP_SESSION_COLUMNS` + 写入映射 `group_insert_values`；store 的 `create_group_session` 参数是接口定义，不算重复规则） | 1（加列本身的迁移另算） |
 | 群会话读整行的列清单 | `storage/group_row.GROUP_SESSION_SELECT`（PG / SQLite 三个读点都引用） | 1 |
 | 群引擎加一个构造参数 | `web/group_engines.build_group_engine` | 1 |
 | 阶段校验规则 | `core/arc_view.valid_phase`（一对一、群聊共用） | 1 |
@@ -384,7 +384,7 @@ $ ls storage/migrations_pg | tail -2 ; ls storage/migrations | grep -v README | 
 - R4｜认，spec 错：4.5 只修了漏字段，没去掉手拼。修：建群响应改为返回这一行群；目标检查 G4 改为断言建群返回与列群返回同形状。
 - R5｜认。目标检查加 G7：卡在建群后变得不可选，重建仍在存下的阶段。作者已在 PR 头上实跑：G7 绿；套上 B5 变异（恢复群也过 valid_phase）后 G7 红。
 - R6｜不成立，是记录缺失。拆出 .group-create-row 是 Tracy 10-11 22:01 定的（看截图后选「B：补样式」，同时确认了样式补充 v2 的方案：拆类、抽 GroupPhasePicker）。4.5 补记这一句。
-- R7｜认，本段处理（项目规矩：发现的问题本轮修，不记账）。修：web/group_engines.ai_member_ids，后端三处改调。
+- R7｜认，本段处理（项目规矩：发现的问题本轮修，不记账）。修：`web/group_engines.ai_member_ids`；`routers/group.py` 现有 2 个调用点（`:144` 恢复群、`:290` 建群），替代了旧的 3 处内联判断。
 
 ### 「成员间距 / 16 条死选择器」当时的结论（样式补充问题 2）
 

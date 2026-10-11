@@ -25,7 +25,7 @@ except ModuleNotFoundError:
 
 from core.roles import ROLES
 from .base import InviteCodeUnavailable, StorageBase, StoreError
-from .group_row import GROUP_SESSION_SELECT, decode_group_row, encode_member_phases
+from .group_row import GROUP_SESSION_SELECT, decode_group_row, group_insert_values
 from .secret_box import decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(__name__)
@@ -2413,16 +2413,18 @@ class SQLiteStore(StorageBase):
         member_phases: dict[str, int] | None = None,
     ) -> None:
         try:
+            values = group_insert_values(
+                id=id, name=name, card_ids=card_ids, user_id=user_id,
+                user_persona_type=user_persona_type, user_persona_card_id=user_persona_card_id,
+                user_persona_name=user_persona_name, user_persona_desc=user_persona_desc,
+                member_phases=member_phases,
+            )
+            cols = ", ".join(values)
+            placeholders = ", ".join("?" * len(values))
             async with await self._connect() as conn:
                 await conn.execute(
-                    """INSERT INTO group_sessions (id, name, card_ids, user_id,
-                       user_persona_type, user_persona_card_id,
-                       user_persona_name, user_persona_desc, member_phases)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (id, name, json.dumps(card_ids), user_id,
-                     user_persona_type, user_persona_card_id,
-                     user_persona_name, user_persona_desc,
-                     encode_member_phases(member_phases)),
+                    f"INSERT INTO group_sessions ({cols}) VALUES ({placeholders})",
+                    tuple(values.values()),
                 )
                 await conn.commit()
         except Exception as exc:
