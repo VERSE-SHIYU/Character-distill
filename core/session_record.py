@@ -277,6 +277,10 @@ def apply(record: SessionRecord, data: dict, user_message: str,
             warns.append(f"supersede of #{target.id} ({target.col}) as {fields['col']} added instead")
             add(fields)
             continue
+        if target.source == SOURCE_USER and fields["source"] != SOURCE_USER:
+            # R5：对方自己说的，只能由对方自己的话推翻；角色的复述不能盖掉它
+            warns.append(f"supersede of user-sourced #{target.id} by the character's words dropped")
+            continue
         entries[entries.index(target)] = replace(target, active=False)
         add(fields, replaces_id=target.id)
 

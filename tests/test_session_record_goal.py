@@ -169,6 +169,19 @@ def test_R5_source_is_decided_by_code_and_known_takes_only_the_user():
     assert events.active()[0].source == rec.SOURCE_CHARACTER
 
 
+def test_R5b_only_the_user_can_overturn_what_the_user_said():
+    """R5：对方自己说的条目，角色复述的话不能取代（10-12 重放 B 第 136 轮：角色复述「教下棋」，
+    把带着「孔乙己没明确答应」的原条目盖掉了）。对方自己改口照常取代；角色说的条目谁都能取代。"""
+    base = _one("plans", "下个月去北京面试", "下个月要去北京面试")
+    out, warns = _apply(base, _sup(1, "plans", "他提到西湖", "我也去过西湖"))      # 依据在角色那句
+    assert [e.text for e in out.active()] == ["下个月去北京面试"] and warns
+    out, warns = _apply(base, _sup(1, "plans", "改去杭州", "杭州读研究生"))         # 依据在对方那句
+    assert [e.text for e in out.active()] == ["改去杭州"] and not warns
+    said_by_char = _one("plans", "他说去过西湖", "我也去过西湖")
+    out, warns = _apply(said_by_char, _sup(1, "plans", "在杭州读研究生", "杭州读研究生"))
+    assert [e.text for e in out.active()] == ["在杭州读研究生"] and not warns
+
+
 def test_R6_superseded_entries_stay_stored_but_are_not_injected():
     base = _one("known", "在上海读书", "读研究生")
     out, _ = _apply(base, *[_sup(1, "known", "在杭州读研究生", "杭州读研究生")])
