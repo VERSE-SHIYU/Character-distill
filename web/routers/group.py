@@ -26,6 +26,7 @@ from core.message_outbox import (
     FlushReport, FlushRequest, save_field, terminal_frame,
 )
 from core.nonfatal import nonfatal
+from web.group_engines import build_group_engine, group_engine_deps, resolve_member_phases
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,9 @@ class CreateGroupRequest(BaseModel):
     user_persona_card_id: str = ""
     user_persona_name: str = ""
     user_persona_desc: str = ""
+    # 卡 id → 建群时给这个 AI 人物选的阶段号。没给 / 无效 / 卡不可选阶段 → 最后阶段；
+    # 用户扮演的那张卡给了也不收（它不由 AI 说话）。
+    member_phases: dict[str, int] = Field(default_factory=dict)
 
 
 def _check_group_members(card_recs: list[dict]) -> str:
@@ -97,8 +101,6 @@ async def _rebuild_group_session(
     from core.schema import CharacterCard
     from core.chat_engine import ChatEngine
     from core.group_session import GroupSession
-    from deps import get_indexing_service, get_user_memory
-    from web.llm_resolution import resolve_embedding
 
     session = await storage.get_group_session_owned(group_id, user_id)
     if not session:
@@ -111,23 +113,8 @@ async def _rebuild_group_session(
         # 503 只取决于请求者自己的配置，不暴露会话是否存在。
         raise HTTPException(503, "请先在设置页配置 API Key")
 
-    indexing_service = get_indexing_service()
-    try:
-        user_cfg = await storage.get_user_api_config(user_id) or {}
-    except Exception as exc:
-        user_cfg = {}
-        # 读不到用户配置 → 下面按「没配」处理：不检索、不回落全局。失败要留痕。
-        logger.warning(
-            "Group session rebuild: per-user api config unreadable, treating as unconfigured "
-            "(user_id=%s group_id=%s): %r",
-            user_id, group_id, exc, exc_info=True,
-        )
-    emb = resolve_embedding(user_cfg)
-
-    # 用户自己的两把 key 缺一把就是 None —— 引擎原有的「记忆为空即跳过」分支即「不提供记忆」。
-    memory_manager = await asyncio.to_thread(
-        get_user_memory, user_id, per_user_llm, emb.key, emb.region,
-    )
+    gdeps = await group_engine_deps(user_id, per_user_llm, storage, where=f"rebuild {group_id}")
+    member_phases: dict[str, int] = session.get("member_phases") or {}
 
     persona_type = session.get("user_persona_type", "director")
     persona_card_id = session.get("user_persona_card_id", "")
@@ -167,20 +154,10 @@ async def _rebuild_group_session(
         # 群聊成员只能是有原文的卡（见 `_check_group_members`）；原文读不到就跳过这张卡。
         if not text_id or not await storage.get_text_owned(text_id, user_id):
             continue
-        rag = indexing_service.get_rag_for_session(
-            text_id, card_id=card_id, embedding_key=emb.key, embedding_region=emb.region,
-        ) if indexing_service else None
-
-        engine = ChatEngine(
-            per_user_llm, rag, card,
-            memory_manager=memory_manager,
-            card_id=card_id,
-            storage=storage,
-            session_id="",          # 群引擎没有一对一会话
-            group_id=group_id,
-            is_new_session=True,    # 群好感随后由 load_affinity(prev) 覆盖
+        engines[card_id] = build_group_engine(
+            gdeps, card, card_id=card_id, text_id=text_id, group_id=group_id,
+            arc_phase=member_phases.get(card_id),
         )
-        engines[card_id] = engine
 
     # Verify AI count by persona mode
     if persona_type == "director" and len(engines) < 2:
@@ -316,33 +293,17 @@ async def create_group(
         if len(ai_card_ids) < 1:
             raise HTTPException(400, "至少需要1个AI角色陪你对话")
 
-    from core.schema import CharacterCard
     from core.chat_engine import ChatEngine
-    from deps import get_indexing_service, get_user_memory
-    from web.llm_resolution import resolve_embedding
+    from core.schema import CharacterCard
 
-    indexing_service = get_indexing_service()
-    try:
-        user_cfg = await storage.get_user_api_config(user_id) or {}
-    except Exception as exc:
-        user_cfg = {}
-        # 读不到用户配置 → 下面按「没配」处理：不检索、不回落全局。失败要留痕。
-        logger.warning(
-            "Group create: per-user api config unreadable, treating as unconfigured "
-            "(user_id=%s): %r", user_id, exc, exc_info=True,
-        )
-    emb = resolve_embedding(user_cfg)
-
-    # 用户自己的两把 key 缺一把就是 None —— 引擎原有的「记忆为空即跳过」分支即「不提供记忆」。
-    memory_manager = await asyncio.to_thread(
-        get_user_memory, user_id, per_user_llm, emb.key, emb.region,
-    )
+    gdeps = await group_engine_deps(user_id, per_user_llm, storage, where="create")
 
     # 群身份先于引擎生成：每个引擎出生时就带上它，不再等「要评估好感度了」再补。
     group_id = uuid.uuid4().hex[:12]
     engines: dict[str, ChatEngine] = {}
     card_infos: list[dict] = []
     played_card_name = ""
+    ai_cards: dict[str, CharacterCard] = {}
 
     card_recs: list[dict] = []
     for card_id in req.card_ids:
@@ -366,21 +327,15 @@ async def create_group(
             card_infos.append({"card_id": card_id, "name": card.name, "played_by_user": True})
             continue
 
-        rag = indexing_service.get_rag_for_session(
-            text_id, card_id=card_id, embedding_key=emb.key, embedding_region=emb.region,
-        ) if indexing_service else None
-
-        engine = ChatEngine(
-            per_user_llm, rag, card,
-            memory_manager=memory_manager,
-            card_id=card_id,
-            storage=storage,
-            session_id="",          # 群引擎没有一对一会话
-            group_id=group_id,
-            is_new_session=True,    # 群好感随后由 load_affinity(prev) 覆盖
-        )
-        engines[card_id] = engine
+        ai_cards[card_id] = card
         card_infos.append({"card_id": card_id, "name": card.name})
+
+    member_phases = resolve_member_phases(ai_cards, req.member_phases)
+    for card_id, card in ai_cards.items():
+        engines[card_id] = build_group_engine(
+            gdeps, card, card_id=card_id, text_id=text_id, group_id=group_id,
+            arc_phase=member_phases.get(card_id),
+        )
 
     if persona_type == "character":
         persona_name = persona_name or played_card_name
@@ -404,6 +359,7 @@ async def create_group(
         user_persona_card_id=persona_card_id,
         user_persona_name=persona_name.strip() if persona_name else "",
         user_persona_desc=persona_desc.strip(),
+        member_phases=member_phases,
     )
 
     return {
@@ -414,6 +370,7 @@ async def create_group(
         "user_persona_card_id": persona_card_id,
         "user_persona_name": persona_name.strip() if persona_name else "",
         "user_persona_desc": persona_desc.strip(),
+        "member_phases": member_phases,
     }
 
 
