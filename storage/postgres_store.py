@@ -3046,6 +3046,18 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get user card ids failed: {exc}")
             raise
 
+    async def get_text_card_ids(self, text_id: str) -> list[str]:
+        """Get every card ID under a text, including soft-deleted ones (for Mem0 cleanup)."""
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    "SELECT id FROM cards WHERE text_id = $1", text_id,
+                )
+            return [row[0] for row in rows]
+        except Exception as exc:
+            print(f"[PostgresStore] Get text card ids failed: {exc}")
+            raise
+
     async def delete_user(self, user_id: str) -> dict:
         """Cascade-delete a user, enqueue purge outbox atomically."""
         counts = {}

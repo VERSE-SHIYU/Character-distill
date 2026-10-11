@@ -12,8 +12,9 @@ from pydantic import BaseModel
 
 from card_visibility import page_meta as card_page_meta
 from core.card_out import card_revision
+from core.memory_manager import MemoryManager
 from core.trash_service import hard_delete, restore, soft_delete
-from deps import get_storage
+from deps import get_memory_manager, get_storage
 from limiter import limiter
 from storage.base import StorageBase
 from routers.auth import get_current_user
@@ -167,9 +168,10 @@ async def permanent_delete_card(
     request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
+    memory_manager: MemoryManager | None = Depends(get_memory_manager),
 ) -> dict:
     """Permanently delete a card (irreversible)."""
-    ok = await hard_delete("card", card_id, user, storage)
+    ok = await hard_delete("card", card_id, user, storage, memory=memory_manager)
     if not ok:
         raise HTTPException(500, "彻底删除失败")
     return {"ok": True}
@@ -183,9 +185,10 @@ async def purge_card_route(
     request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
+    memory_manager: MemoryManager | None = Depends(get_memory_manager),
 ) -> dict:
     """Permanently delete a card (irreversible). [Deprecated: use /permanent]"""
-    ok = await hard_delete("card", card_id, user, storage)
+    ok = await hard_delete("card", card_id, user, storage, memory=memory_manager)
     if not ok:
         raise HTTPException(500, "彻底删除失败")
     return {"ok": True}

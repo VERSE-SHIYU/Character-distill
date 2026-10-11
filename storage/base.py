@@ -698,6 +698,13 @@ class StorageBase(ABC):
         """Get all card IDs owned by a user (for Mem0 cleanup)."""
 
     @abstractmethod
+    async def get_text_card_ids(self, text_id: str) -> list[str]:
+        """Get every card ID under a text, **including soft-deleted ones** (for Mem0
+        cleanup). Deliberately unfiltered by owner: it must return exactly the batch
+        that `hard_delete_text`'s cascade `DELETE FROM cards WHERE text_id = ?` removes.
+        Authorization already happened when `hard_delete` fetched the text record."""
+
+    @abstractmethod
     async def create_invite_code(self, code: str, created_by: str, *, propagate: bool) -> dict:
         """Create an invite code. `propagate=True` 时同一事务写发件箱（本机生成的码）；
         从对端收到的码传 False，否则会回传给对端。"""

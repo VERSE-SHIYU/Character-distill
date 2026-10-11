@@ -113,12 +113,12 @@ class TestOwner:
         assert _status(soft_delete(entity, eid, owner, store)) is None
         assert _status(restore(entity, eid, owner, store)) is None
         assert _status(soft_delete(entity, eid, owner, store)) is None
-        assert _status(hard_delete(entity, eid, owner, store)) is None
+        assert _status(hard_delete(entity, eid, owner, store, memory=None)) is None
 
     def test_hard_before_trash_is_400(self, store, owner, seed, entity):
         """没进过回收站就永久删除 → 400（不是 404、不是 500）。"""
         eid = seed(entity, owner["id"])
-        code = _status(hard_delete(entity, eid, owner, store))
+        code = _status(hard_delete(entity, eid, owner, store, memory=None))
         assert code == 400, f"期望 400，实得 {code}"
 
     def test_unknown_id_is_404(self, store, owner, entity):
@@ -146,7 +146,7 @@ class TestNonOwner:
     def test_hard_delete_404(self, store, owner, intruder, seed, entity):
         eid = seed(entity, owner["id"])
         _run(soft_delete(entity, eid, owner, store))
-        code = _status(hard_delete(entity, eid, intruder, store))
+        code = _status(hard_delete(entity, eid, intruder, store, memory=None))
         assert code == 404, f"期望 404，实得 {code}"
 
     def test_404_detail_matches_missing_id(self, store, owner, intruder, seed, entity):
@@ -252,7 +252,7 @@ class TestAdmin:
     def test_hard_delete_foreign_ok(self, store, owner, admin, seed, entity):
         eid = seed(entity, owner["id"])
         _run(soft_delete(entity, eid, owner, store))
-        assert _status(hard_delete(entity, eid, admin, store)) is None
+        assert _status(hard_delete(entity, eid, admin, store, memory=None)) is None
 
     def test_restore_foreign_404(self, store, owner, admin, seed, entity):
         eid = seed(entity, owner["id"])
