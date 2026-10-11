@@ -312,6 +312,12 @@ OWNER_READ_ALLOWLIST = {
         "影响多少卡/会话/消息」，加身份过滤会把管理员看到的数字变成 0，故 SQL 只按 text_id 筛"
         "（sqlite: cards.text_id / sessions↔cards / messages；PG 同形）。形参 user_id 是调用点"
         "统一签名留下的，SQL 不用它。router 层的同款逃生口已在 UNSCOPED_ALLOWLIST 登记。",
+    # ── 级联删除的配套读：取的正是级联删除会删掉的那一批，与那条 DELETE 同口径 ──
+    "get_text_card_ids":
+        "永久删书时清长期记忆用（core/trash_service.py）。它故意不带身份条件：取的必须正好是"
+        "hard_delete_text 那条 `DELETE FROM cards WHERE text_id = ?` 会删掉的那一批，而那条 DELETE "
+        "也不带身份；鉴权已经在 hard_delete 取书的记录时做过（get_text_owned/get_text_unscoped）。"
+        "加身份过滤会让「回收站里别人共享的卡」这类本该被级联删掉的卡漏清，记忆成孤儿。",
 }
 
 # 管理原语：跨属主读全站数据，前提是「只有管理员路径能到」。断言把这条前提变成事实：

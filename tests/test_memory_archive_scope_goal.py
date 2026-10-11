@@ -558,12 +558,13 @@ def test_G0_scope_is_immutable():
 def test_G7_whole_card_scope_only_used_in_registered_places():
     """`whole_card`（整卡范围，只给删除用）只许出现在登记的落点。
 
-    core/ 里除 `memory_scope.py`（定义处）、`memory_manager.py`（转成过滤条件处）外，
-    任何地方出现就红；登记的调用点（本 PR 只有 `web/routers/admin.py`）必须真在用，
-    否则这把锁是空的。
+    core/ 里除 `memory_scope.py`（定义处）、`memory_manager.py`（转成过滤条件处）、
+    `trash_service.py`（`ENTITY_MAP` 各实体的 `memory_scopes` 槽）外，任何地方出现就红；
+    登记的调用点（`web/routers/admin.py` 删用户时、`core/trash_service.py` 永久删卡/书时）
+    必须真在用，否则这把锁是空的。
     """
     root = Path(__file__).resolve().parent.parent
-    allowed = {"memory_scope.py", "memory_manager.py"}
+    allowed = {"memory_scope.py", "memory_manager.py", "trash_service.py"}
     offenders = [
         str(p.relative_to(root))
         for p in sorted((root / "core").rglob("*.py"))

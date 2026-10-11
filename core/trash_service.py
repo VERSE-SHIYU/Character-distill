@@ -6,12 +6,14 @@ router handlers don't duplicate the same boilerplate across four modules.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Awaitable, Callable
 
 from fastapi import HTTPException
 
 from core.authz import fetch_for_actor
+from core.memory_scope import MemoryScope
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +35,52 @@ logger = logging.getLogger(__name__)
 # `unscoped` 是 `core.authz.fetch_for_actor` 的两个实参，每次取数都求值；`soft` / `restore` /
 # `hard` 在各自成功路径上被调用），任一槽改名都会打红对应用例。
 # `tests/test_storage_scope_lock.py` 的字符串形态仍在扫（兜底，防这类写法再出现）。
-ENTITY_MAP: dict[str, dict[str, Callable[[Any], Any]]] = {
+#
+# 第六个槽 `memory_scopes` 不是 storage 方法：它是上面的记忆范围解析函数，`hard_delete` 删行
+# 之前调它（见 `_purge_memory`）。放在同一个条目里，一个实体永久删除要知道的事只在这一处。
+# ── 永久删除要跟着清掉的长期记忆：每类东西一个解析函数 ────────────────────────────
+#
+# 「删什么清什么」的对应关系只写这一处（spec `docs/specs/memory-delete-cascade.md` §4.1）：
+# 输入是**已经取到的记录**（`hard_delete` 鉴权时拿到的）加这次的删除参数（如 text 的
+# `keep_cards`），输出要清的记忆范围列表。存储只在书那条路径上用得到（要枚举它名下的卡）。
+#
+# 每个函数挂在下面 `ENTITY_MAP` 对应实体的 `memory_scopes` 槽上：一个实体「怎么删」和「删了
+# 清哪些记忆」在同一个条目里。新增一类能永久删除的东西 → 只加一个条目；新增一个永久删除的
+# 入口 → 调 `hard_delete` 就自动带上。
+async def _session_scopes(storage: Any, record: dict, op_kwargs: dict) -> list[MemoryScope]:
+    """一对一存档：只清这个存档的 —— 同卡别的存档、群里的都不动。"""
+    return [MemoryScope.archive(record["card_id"], record["id"])]
+
+
+async def _group_scopes(storage: Any, record: dict, op_kwargs: dict) -> list[MemoryScope]:
+    """群聊：清每个成员（卡）在这个群里的 —— 成员的一对一存档、别的群不动。"""
+    return [MemoryScope.group(card_id, record["id"]) for card_id in record["card_ids"]]
+
+
+async def _card_scopes(storage: Any, record: dict, op_kwargs: dict) -> list[MemoryScope]:
+    """一张卡：整卡范围（所有存档、所有群、没有归属的旧记忆）。"""
+    return [MemoryScope.whole_card(record["id"])]
+
+
+async def _text_scopes(storage: Any, record: dict, op_kwargs: dict) -> list[MemoryScope]:
+    """一本书：留卡时不清；否则清它名下每张卡的整卡范围。
+
+    用 `get_text_card_ids`（含回收站里的卡）—— 要清的必须**正好**是 `hard_delete_text`
+    那条 `DELETE FROM cards WHERE text_id = ?` 会删掉的那一批，不多不少。
+    """
+    if op_kwargs.get("keep_cards"):
+        return []
+    return [MemoryScope.whole_card(cid) for cid in await storage.get_text_card_ids(record["id"])]
+
+
+ENTITY_MAP: dict[str, dict[str, Callable[..., Any]]] = {
     "card": dict(
         owned=lambda s: s.get_card_owned,
         unscoped=lambda s: s.get_card_unscoped,
         soft=lambda s: s.delete_card,
         restore=lambda s: s.restore_card,
         hard=lambda s: s.purge_card,
+        memory_scopes=_card_scopes,
     ),
     "session": dict(
         owned=lambda s: s.get_session_owned,
@@ -47,6 +88,7 @@ ENTITY_MAP: dict[str, dict[str, Callable[[Any], Any]]] = {
         soft=lambda s: s.delete_session,
         restore=lambda s: s.restore_session,
         hard=lambda s: s.hard_delete_session,
+        memory_scopes=_session_scopes,
     ),
     "text": dict(
         owned=lambda s: s.get_text_owned,
@@ -54,6 +96,7 @@ ENTITY_MAP: dict[str, dict[str, Callable[[Any], Any]]] = {
         soft=lambda s: s.delete_text,
         restore=lambda s: s.restore_text,
         hard=lambda s: s.hard_delete_text,
+        memory_scopes=_text_scopes,
     ),
     "group": dict(
         owned=lambda s: s.get_group_session_owned,
@@ -61,15 +104,39 @@ ENTITY_MAP: dict[str, dict[str, Callable[[Any], Any]]] = {
         soft=lambda s: s.delete_group_session,
         restore=lambda s: s.restore_group_session,
         hard=lambda s: s.hard_delete_group_session,
+        memory_scopes=_group_scopes,
     ),
 }
 
 
-def _get_entity_config(entity_type: str) -> dict[str, Callable[[Any], Any]]:
+def _get_entity_config(entity_type: str) -> dict[str, Callable[..., Any]]:
     config = ENTITY_MAP.get(entity_type)
     if not config:
         raise HTTPException(500, f"Unknown entity type: {entity_type}")
     return config
+
+
+async def _purge_memory(entity_type: str, storage: Any, record: dict,
+                        memory: Any, op_kwargs: dict) -> None:
+    """删行**之前**清掉这一实体对应的长期记忆。
+
+    清不掉就抛 500 —— 行留在回收站，用户可以重试。反过来（先删行）的话行没了而记忆还在
+    库里，就再也没有线索找到它们（spec §1）。`memory` 为 None 或没启用时跳过：记忆系统
+    没开不该挡删除。
+
+    走 `MemoryManager.delete_all`（底层视图，不依赖用户自己的 key，故没配 key 的用户也
+    清得掉）；它是同步的，挪进线程别堵住事件循环。
+    """
+    if memory is None or not memory.enabled:
+        return
+    resolve = _get_entity_config(entity_type)["memory_scopes"]
+    for scope in await resolve(storage, record, op_kwargs):
+        if not await asyncio.to_thread(memory.delete_all, scope):
+            logger.error(
+                "Memory cleanup failed for %s %s (scope=%s); leaving the row in the trash",
+                entity_type, record["id"], scope,
+            )
+            raise HTTPException(500, "记忆清理失败，请稍后重试")
 
 
 async def _fetch(entity_type: str, entity_id: str, user: dict, storage: Any, *,
@@ -141,12 +208,20 @@ async def restore(entity_type: str, entity_id: str, user: dict, storage: Any) ->
 
 
 async def hard_delete(entity_type: str, entity_id: str, user: dict, storage: Any, *,
+                      memory: Any,
                       before_mutation: Callable[[dict], Awaitable[None]] | None = None,
                       **op_kwargs: Any) -> bool:
     """Permanently delete an entity (irreversible). 属主或 admin。
 
     Validates that the entity exists, the caller may see it, and it has already
     been soft-deleted (deleted_at is set).
+
+    `memory` is the MemoryManager (or None when memory is switched off) whose memories
+    for this entity must be cleared before the row goes away; the mapping from
+    entity type to memory scopes is each `ENTITY_MAP` entry's `memory_scopes` slot. It is a **required**
+    keyword-only argument with no default, on purpose: a new permanent-delete call
+    site that forgets it fails loudly with `TypeError` instead of silently leaving
+    orphaned memories behind.
 
     before_mutation runs after both checks pass and before the first storage write;
     see `soft_delete`. op_kwargs (e.g. keep_cards, meaningful for "text") are
@@ -165,6 +240,22 @@ async def hard_delete(entity_type: str, entity_id: str, user: dict, storage: Any
     if before_mutation is not None:
         await before_mutation(record)
 
+    # 清记忆在删行之前：清失败抛 500，行还在回收站，可重试。
+    await _purge_memory(entity_type, storage, record, memory, op_kwargs)
+
     config = _get_entity_config(entity_type)
     result = await config["hard"](storage)(entity_id, **op_kwargs)
     return True if result is None else bool(result)
+
+
+async def empty_trash(user: dict, storage: Any, *, memory: Any) -> int:
+    """清空这个用户的回收站：回收站里每个存档走一次 `hard_delete`。
+
+    「永久删一个存档」只有 `hard_delete` 这一条路，清记忆的对应关系只在那条路上；批量清空
+    不另开一条。某个存档的记忆清不掉时 `hard_delete` 抛 500，它和后面的存档留在回收站，
+    可重试。返回删掉的个数。
+    """
+    sessions = await storage.list_trash_sessions(user["id"])
+    for session in sessions:
+        await hard_delete("session", session["id"], user, storage, memory=memory)
+    return len(sessions)

@@ -1652,24 +1652,6 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Restore session failed: {exc}")
             raise
 
-    async def purge_trash(self, user_id: str = "") -> int:
-        """Permanently delete all soft-deleted sessions. Returns count."""
-        try:
-            async with await self._connect() as conn:
-                if user_id:
-                    tag = await conn.execute(
-                        "DELETE FROM sessions WHERE deleted_at IS NOT NULL AND user_id = $1",
-                        user_id,
-                    )
-                else:
-                    tag = await conn.execute(
-                        "DELETE FROM sessions WHERE deleted_at IS NOT NULL"
-                    )
-                return self._parse_rowcount(tag)
-        except Exception as exc:
-            print(f"[PostgresStore] Purge trash failed: {exc}")
-            raise
-
     async def hard_delete_session(self, id: str) -> bool:
         """Permanently delete one session (hard delete)."""
         try:
@@ -3044,6 +3026,18 @@ class PostgresStore(StorageBase):
             return [row[0] for row in rows]
         except Exception as exc:
             print(f"[PostgresStore] Get user card ids failed: {exc}")
+            raise
+
+    async def get_text_card_ids(self, text_id: str) -> list[str]:
+        """Get every card ID under a text, including soft-deleted ones (for Mem0 cleanup)."""
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    "SELECT id FROM cards WHERE text_id = $1", text_id,
+                )
+            return [row[0] for row in rows]
+        except Exception as exc:
+            print(f"[PostgresStore] Get text card ids failed: {exc}")
             raise
 
     async def delete_user(self, user_id: str) -> dict:

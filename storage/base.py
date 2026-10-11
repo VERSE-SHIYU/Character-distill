@@ -490,10 +490,6 @@ class StorageBase(ABC):
         """Restore a soft-deleted session."""
 
     @abstractmethod
-    async def purge_trash(self, user_id: str = "") -> int:
-        """Permanently delete all soft-deleted sessions."""
-
-    @abstractmethod
     async def hard_delete_session(self, id: str) -> bool:
         """Permanently delete one session (hard delete)."""
 
@@ -696,6 +692,13 @@ class StorageBase(ABC):
     @abstractmethod
     async def get_user_card_ids(self, user_id: str) -> list[str]:
         """Get all card IDs owned by a user (for Mem0 cleanup)."""
+
+    @abstractmethod
+    async def get_text_card_ids(self, text_id: str) -> list[str]:
+        """Get every card ID under a text, **including soft-deleted ones** (for Mem0
+        cleanup). Deliberately unfiltered by owner: it must return exactly the batch
+        that `hard_delete_text`'s cascade `DELETE FROM cards WHERE text_id = ?` removes.
+        Authorization already happened when `hard_delete` fetched the text record."""
 
     @abstractmethod
     async def create_invite_code(self, code: str, created_by: str, *, propagate: bool) -> dict:

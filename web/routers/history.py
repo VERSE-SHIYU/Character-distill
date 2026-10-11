@@ -11,9 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 
-from core.trash_service import hard_delete, restore, soft_delete
+from core.trash_service import empty_trash, hard_delete, restore, soft_delete
 from core.affinity_service import read_persisted_affinity
-from deps import get_sessions, get_storage
+from core.memory_manager import MemoryManager
+from deps import get_memory_manager, get_sessions, get_storage
 from core.schema import CharacterCard, parse_evidence
 from core.clock import UserClock
 from core.message_outbox import SaveState, save_field
@@ -73,11 +74,11 @@ async def purge_trash(
     request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
+    memory_manager: MemoryManager | None = Depends(get_memory_manager),
 ) -> dict[str, Any]:
     """Permanently delete all sessions in trash."""
-    user_id = user["id"]
-    count = await storage.purge_trash(user_id)
-    return {"ok": True, "purged": count}
+    purged = await empty_trash(user, storage, memory=memory_manager)
+    return {"ok": True, "purged": purged}
 
 
 @router.post("/clear-all")
@@ -379,10 +380,11 @@ async def delete_session(
     user: dict = Depends(get_current_user),
     permanent: bool = Query(False, description="If true, hard-delete permanently"),
     storage: StorageBase = Depends(get_storage),
+    memory_manager: MemoryManager | None = Depends(get_memory_manager),
 ) -> dict[str, bool]:
     """Soft-delete a session (move to trash), or hard-delete if permanent=true."""
     if permanent:
-        ok = await hard_delete("session", session_id, user, storage)
+        ok = await hard_delete("session", session_id, user, storage, memory=memory_manager)
     else:
         ok = await soft_delete("session", session_id, user, storage)
     if not ok:
@@ -396,13 +398,14 @@ async def permanent_delete_session(
     request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
+    memory_manager: MemoryManager | None = Depends(get_memory_manager),
 ) -> dict[str, bool]:
     """Permanently delete a session (irreversible).
 
     Note: `DELETE /{session_id}?permanent=true` remains as a deprecated alias
     for backward compatibility.
     """
-    ok = await hard_delete("session", session_id, user, storage)
+    ok = await hard_delete("session", session_id, user, storage, memory=memory_manager)
     if not ok:
         raise HTTPException(404, "Session not found")
     return {"ok": True}

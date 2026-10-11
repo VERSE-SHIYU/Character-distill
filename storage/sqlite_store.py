@@ -3698,6 +3698,19 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get user card ids failed: {exc}")
             raise
 
+    async def get_text_card_ids(self, text_id: str) -> list[str]:
+        """Get every card ID under a text, including soft-deleted ones (for Mem0 cleanup)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id FROM cards WHERE text_id = ?", (text_id,)
+                )
+                rows = await cursor.fetchall()
+            return [row[0] for row in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get text card ids failed: {exc}")
+            raise
+
     async def delete_user(self, user_id: str) -> dict:
         """Cascade-delete a user: texts → cards → sessions → messages → stats → tokens → user."""
         counts = {}

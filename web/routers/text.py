@@ -20,10 +20,11 @@ from urllib.parse import quote
 from adapters.llm_adapter import user_facing_error
 from core.authz import fetch_for_actor
 from core.length_budget import MAX_FILE_BYTES, public_limits
+from core.memory_manager import MemoryManager
 from core.trash_service import hard_delete, restore, soft_delete
 from core import concurrency as C  # 派生与上下文传播（ctx_thread）
 from core.scheduling import submit_to_main_loop
-from deps import get_storage
+from deps import get_memory_manager, get_storage
 from storage.base import StorageBase
 
 from limiter import limiter
@@ -420,6 +421,7 @@ async def permanent_delete_text(
     request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
+    memory_manager: MemoryManager | None = Depends(get_memory_manager),
     keep_cards: bool = Query(False, description="保留角色卡（置 text_id=NULL 使之独立存活）"),
 ) -> dict:
     """Permanently delete a text and all associated data.
@@ -427,7 +429,7 @@ async def permanent_delete_text(
     keep_cards=True detaches cards (text_id→NULL) so they and their chat
     sessions survive as standalone characters.
     """
-    ok = await hard_delete("text", text_id, user, storage,
+    ok = await hard_delete("text", text_id, user, storage, memory=memory_manager,
                            before_mutation=_cancel_text_tasks, keep_cards=keep_cards)
     if not ok:
         raise HTTPException(404, "Text not found")

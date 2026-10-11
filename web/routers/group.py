@@ -14,8 +14,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from core.memory_manager import MemoryManager
 from core.trash_service import hard_delete, restore, soft_delete
-from deps import get_storage, get_user_llm, get_sessions, get_group_sessions
+from deps import get_memory_manager, get_storage, get_user_llm, get_sessions, get_group_sessions
 from adapters.llm_adapter import user_facing_error
 from limiter import limiter
 from storage.base import StorageBase
@@ -917,8 +918,9 @@ async def permanent_delete_group(
     request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
+    memory_manager: MemoryManager | None = Depends(get_memory_manager),
 ) -> dict:
     """永久删除群聊及其所有消息。"""
-    await hard_delete("group", group_id, user, storage)
+    await hard_delete("group", group_id, user, storage, memory=memory_manager)
     get_group_sessions().pop(group_id, None)
     return {"ok": True}
