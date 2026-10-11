@@ -17,6 +17,7 @@ from adapters.llm_adapter import LLMAdapter
 from core.arc_view import project_card
 from core.clock import UserClock, describe_time_period
 from core.context_engine import ContextEngine, behavior_lines, bullet_lines
+from core.memory_scope import MemoryScope, ScopedMemory
 from core.rag import RAGEngine
 from core.schema import CharacterCard, SourceTrace
 from core.tokens import count_tokens
@@ -162,12 +163,25 @@ class ChatEngine:
         self.arc_phase: int | None = arc_phase
         self._all_characters = all_characters
         self.user_role: str = user_role
-        self._memory = memory_manager
         self._card_id = card_id
         self._context_window = context_window
         self._storage = storage
         self._session_id: str = session_id
         self._group_id: str = group_id  # 群聊上下文：群 ID（空串=单聊或无上下文）
+        # 本引擎的长期记忆：视图 + 归属（存档 / 群）绑成一个对象，分给检索、事件、反思、
+        # 评估上下文共用（方案 C）。换视图只换这一个对象（set_memory → rebind）。
+        # 有群 id 用群范围，否则有存档 id 用存档范围；两者都没有 → 这个引擎没有记忆。
+        if group_id:
+            _scope: MemoryScope | None = MemoryScope.group(card_id, group_id)
+        elif session_id:
+            _scope = MemoryScope.archive(card_id, session_id)
+        else:
+            _scope = None
+            logger.warning(
+                "Memory off for engine with neither session_id nor group_id (card_id=%r)",
+                card_id,
+            )
+        self._scoped = ScopedMemory(memory_manager, _scope)
         self.history: list[dict[str, Any]] = []
         # 四维好感度（通过 AffinityService 托管，@property 透明转发）
         self._affinity_service = AffinityService()
@@ -177,8 +191,8 @@ class ChatEngine:
         self._last_in_character: int = 80  # 瞬时纠偏信号，不入库，不跨 session
         self._visit_count: int = 0  # 本次 resume 后第一条消息消费（>=3 注入觉察）
         self._last_assertion_confidence: int = 50  # 用户输入可信度，用于记忆写入过滤
-        self._reflection_service = ReflectionService(memory_manager, card_id)
-        self._event_service = EventService(self._memory, self._card_id)
+        self._reflection_service = ReflectionService(self._scoped)
+        self._event_service = EventService(self._scoped)
         self._pipeline = EvaluationPipeline()
         self._last_user_msg_at = None
 
@@ -207,8 +221,7 @@ class ChatEngine:
             card=self.card,
             arc_view=self.arc_view,
             rag=rag,
-            memory_manager=memory_manager,
-            card_id=card_id,
+            memory=self._scoped,
             llm=llm,
             model=getattr(llm, "model", ""),
             storage=storage,
@@ -231,13 +244,10 @@ class ChatEngine:
     def set_memory(self, memory: Any) -> None:
         """换长期记忆视图（用户存了新 key 后由 ``deps.refresh_user_llm`` 调）。None = 不提供记忆。
 
-        记忆的引用散在四处（本类、``ContextEngine``、反思、事件），构造时各拿了一份 ——
-        漏换一处，那一处就还用旧 key 出站。故只许经这里换。
+        检索 / 事件 / 反思 / 评估上下文共用一个 ``ScopedMemory``（方案 C），换视图只换
+        它内部的视图引用 —— 不再四处各赋值一次，也就没有「漏换一处」这件事。
         """
-        self._memory = memory
-        self._ctx_engine.memory = memory
-        self._reflection_service._memory = memory
-        self._event_service._memory = memory
+        self._scoped.rebind(memory)
 
     def set_rag(self, rag: RAGEngine | None) -> None:
         """换检索引擎（理由同 ``set_memory``）。None = 不检索。"""
@@ -579,13 +589,12 @@ class ChatEngine:
         self._evaluate_affinity(user_message, reply)
         self._last_user_msg_at = datetime.now(timezone.utc)
         self._event_service.mark_asked()
-        if self._memory and self._memory.enabled and self._card_id:
-            self._memory.add(
+        if self._scoped.enabled:
+            self._scoped.add(
                 [
                     {"role": "user", "content": user_message},
                     {"role": "assistant", "content": reply},
                 ],
-                self._card_id,
                 metadata={"importance": self._last_importance, "mood": self._mood, "affinity": self._affinity, "assertion_confidence": self._last_assertion_confidence},
             )
         reflected = self._reflection_service.maybe_reflect(
@@ -767,7 +776,7 @@ class ChatEngine:
             group_id=self._group_id,
             card_id=self._card_id,
             storage=self._storage,
-            memory=self._memory,
+            memory=self._scoped,
             affinity_service=self._affinity_service,
             reaction_service=self._reaction_service,
             llm=self.llm,
@@ -1551,10 +1560,10 @@ class ChatEngine:
 
         返回记忆文本（'；'分隔），无记忆或异常返回空串。
         """
-        if not self._memory or not self._memory.enabled or not self._card_id:
+        if not self._scoped.enabled:
             return ""
         try:
-            all_memories = self._memory.get_all(self._card_id)
+            all_memories = self._scoped.get_all()
             if not all_memories:
                 return ""
             scored = []

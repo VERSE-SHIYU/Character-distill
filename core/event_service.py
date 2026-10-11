@@ -22,22 +22,21 @@ class EventService:
 
     外部依赖
     --------
-    memory : 只读调用 memory.get_all() / memory.add_manual()
-    card_id : 当前角色卡 ID 字符串
+    memory : 这个引擎的记忆（``ScopedMemory``：视图 + 归属绑在一起），只读调用
+        ``memory.get_all()`` / 写调用 ``memory.add_manual()``。时间事件据此按存档隔离。
     """
 
-    def __init__(self, memory, card_id: str) -> None:
+    def __init__(self, memory) -> None:
         self._memory = memory
-        self._card_id = card_id
         self._asked_event_ids: set[str] = set()
         self._injected_event_id: str = ""
 
     def get_due_event(self) -> dict | None:
         """扫描记忆，返回第一个到期的未问时间事件（最接近当前时刻的）。"""
-        if not self._memory or not self._memory.enabled or not self._card_id:
+        if not self._memory or not self._memory.enabled:
             return None
         try:
-            memories = self._memory.get_all(self._card_id)
+            memories = self._memory.get_all()
             if not memories:
                 return None
 
@@ -103,11 +102,10 @@ class EventService:
             return
         self._injected_event_id = ""
         self._asked_event_ids.add(eid)
-        if self._memory and self._memory.enabled and self._card_id:
+        if self._memory and self._memory.enabled:
             try:
                 self._memory.add_manual(
                     "",
-                    self._card_id,
                     metadata={"type": "time_event_asked", "event_id": eid},
                 )
                 print(f"[ChatEngine] Marked event {eid} as asked")

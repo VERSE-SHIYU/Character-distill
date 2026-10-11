@@ -95,13 +95,6 @@ def _embed_rag_config() -> dict:
     return cfg
 
 
-def _memory_manager():
-    """memory 全局单例 —— 与生产同源 web.deps.get_memory_manager()。"""
-    from web.deps import get_memory_manager
-
-    return get_memory_manager()
-
-
 def _lazy_llm():
     """LLM 仅当环境给了 DEEPSEEK_API_KEY 才挂（web_search 的角色过滤需要它）。
     懒加载：LLMAdapter 顶层 import openai/yaml/dotenv，缺 key 时不应因 import 失败。"""
@@ -117,15 +110,19 @@ def _lazy_llm():
         return None, ""
 
 
-def _make_toolkit(card, rag, card_id: str):
+def _make_toolkit(card, rag):
     """按 CharacterCard 构建 ContextEngine + AgentToolkit。构建会 print（ContextEngine
-    预算、RAG），调用方需自行包 _stdout_to_stderr。"""
+    预算、RAG），调用方需自行包 _stdout_to_stderr。
+
+    **不挂长期记忆**：MCP 是按 card_id 路由的无身份通道，没有存档 id 也没有群 id ——
+    长期记忆已按存档隔离（spec §2），这个引擎拿不到归属，故不读也不写（search_memory
+    返回空）。要按存档搜记忆得走 web 会话。
+    """
     llm, llm_model = _lazy_llm()
     ctx = ContextEngine(
         card=card,
         rag=rag,
-        memory_manager=_memory_manager(),
-        card_id=card_id,
+        memory=None,
         llm=llm,
         model=llm_model,
         storage=_get_storage(),
@@ -171,7 +168,7 @@ def _build_toolkit_blocking(card_rec: dict, card_id: str):
 
         text_id = (card_rec.get("text_id") or "").strip()
         rag = _rag_for_text_id(text_id)
-        return _make_toolkit(card, rag, card_id)
+        return _make_toolkit(card, rag)
 
 
 async def _toolkit_for(card_id: str):

@@ -13,6 +13,7 @@ from typing import Any
 
 from adapters.llm_adapter import LLMAdapter
 from core import concurrency as C  # 派生与上下文传播（ctx_thread）
+from core.memory_scope import MemoryScope
 from core.utils import try_record_usage
 
 logger = logging.getLogger(__name__)
@@ -262,17 +263,17 @@ class MemoryManager:
     # ── 不需要 key 的操作：查看 / 删除（mem0 这几条路径不调模型）。没配 key 的用户照样能用，
     # 删用户时的清理也不依赖任何人的 key。
 
-    def get_all(self, card_id: str) -> list[dict[str, Any]]:
+    def get_all(self, scope: MemoryScope) -> list[dict[str, Any]]:
         base = self.base()
-        return base.get_all(card_id) if base is not None else []
+        return base.get_all(scope) if base is not None else []
 
     def delete(self, memory_id: str) -> bool:
         base = self.base()
         return base.delete(memory_id) if base is not None else False
 
-    def delete_all(self, card_id: str) -> bool:
+    def delete_all(self, scope: MemoryScope) -> bool:
         base = self.base()
-        return base.delete_all(card_id) if base is not None else False
+        return base.delete_all(scope) if base is not None else False
 
     def for_user(
         self,
@@ -352,7 +353,7 @@ class MemoryView:
     def context_window(self) -> int:
         return self._context_window
 
-    def search(self, query: str, card_id: str, current_mood: str | None = None) -> list[dict[str, Any]]:
+    def search(self, query: str, scope: MemoryScope, current_mood: str | None = None) -> list[dict[str, Any]]:
         """检索长期记忆，返回结构化 dict 列表（两级门控重排）。
 
         每条返回: {text, relevance, importance, age_seconds}
@@ -364,9 +365,9 @@ class MemoryView:
             return []
         try:
             query_est_tok = len(query) // 2
-            print(f"[embed-stats] Mem0 search query_len={len(query)} est_tok={query_est_tok} card={card_id}")
+            print(f"[embed-stats] Mem0 search query_len={len(query)} est_tok={query_est_tok} card={scope.card_id}")
             results = self._mem.search(
-                query, filters={"user_id": card_id}, limit=self._search_top_k
+                query, filters=scope.filters(), limit=self._search_top_k
             )
             if isinstance(results, dict):
                 results = results.get("results", [])
@@ -442,25 +443,25 @@ class MemoryView:
             print(f"[MemoryManager] search top-{len(top)} ({mood_tag}): {summary}")
         return top
 
-    def add(self, messages: list[dict[str, str]], card_id: str, metadata: dict | None = None) -> None:
+    def add(self, messages: list[dict[str, str]], scope: MemoryScope, metadata: dict | None = None) -> None:
         """将对话消息写入长期记忆（后台异步执行）。metadata 写入 Mem0 存储供检索加权。"""
         if not self.enabled:
             return
 
-        print(f"[MemoryManager] add called: card={card_id} msg_count={len(messages)} metadata={metadata}")
+        print(f"[MemoryManager] add called: card={scope.card_id} msg_count={len(messages)} metadata={metadata}")
 
         def _do_add():
             try:
-                kwargs = {"user_id": card_id}
+                kwargs = scope.filters()
                 if metadata:
                     kwargs["metadata"] = metadata
                 total_chars = sum(len(m.get("content", "")) for m in messages if isinstance(m, dict))
-                print(f"[embed-stats] Mem0 add est_tok={total_chars // 2} card={card_id}")
+                print(f"[embed-stats] Mem0 add est_tok={total_chars // 2} card={scope.card_id}")
                 result = self._mem.add(messages, **kwargs)
                 # mem0 2.0.20 成功时返回 `{"results": [...]}`，一条都没提炼出来时返回 `[]`
                 # （memory/main.py:877 与 :989）—— 两种形态都在，故不能只看一种。
                 n_results = len(result.get("results", [])) if isinstance(result, dict) else len(result)
-                print(f"[MemoryManager] add OK: card={card_id} result_len={n_results}")
+                print(f"[MemoryManager] add OK: card={scope.card_id} result_len={n_results}")
             except Exception as exc:
                 # ERROR 不是「更吓人」：写入失败 = 这条记忆丢了且不会自愈，而 WARNING
                 # 进不了 GlitchTip 的问题列表 —— 之前 SZ/SG 静默了 48 小时没人知道。
@@ -468,12 +469,12 @@ class MemoryView:
 
         C.ctx_thread(_do_add, daemon=True).start()  # context 传播点：记忆入库线程
 
-    def get_all(self, card_id: str) -> list[dict[str, Any]]:
-        """获取某角色的所有记忆。"""
+    def get_all(self, scope: MemoryScope) -> list[dict[str, Any]]:
+        """获取某个范围（存档 / 群 / 整卡）的所有记忆。"""
         if not self.enabled:
             return []
         try:
-            results = self._mem.get_all(filters={"user_id": card_id})
+            results = self._mem.get_all(filters=scope.filters())
             if isinstance(results, dict):
                 results = results.get("results", [])
             return results
@@ -481,7 +482,7 @@ class MemoryView:
             logger.warning("Mem0 get_all failed: %s", exc, exc_info=True)
             return []
 
-    def add_manual(self, text: str, card_id: str, metadata: dict | None = None) -> bool:
+    def add_manual(self, text: str, scope: MemoryScope, metadata: dict | None = None) -> bool:
         """手动添加一条单文本记忆。infer=False 避免 Mem0 LLM 提炼丢弃。
 
         metadata 可选，用于标记反思记忆 is_reflection=True 等。
@@ -489,10 +490,10 @@ class MemoryView:
         if not self.enabled:
             return False
         try:
-            kwargs = {"user_id": card_id, "infer": False}
+            kwargs = {**scope.filters(), "infer": False}
             if metadata:
                 kwargs["metadata"] = metadata
-            print(f"[embed-stats] Mem0 add_manual est_tok={len(text) // 2} card={card_id}")
+            print(f"[embed-stats] Mem0 add_manual est_tok={len(text) // 2} card={scope.card_id}")
             result = self._mem.add(text, **kwargs)
             print(f"[MemoryManager] manual add result: {result}")
             return True
@@ -500,7 +501,7 @@ class MemoryView:
             logger.error("Mem0 manual add failed: %s", exc, exc_info=True)
             return False
 
-    def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str,
+    def reflect(self, scope: MemoryScope, llm, recent_memories: list[dict], char_name: str,
                 storage=None) -> None:
         """把近期高重要性记忆综合成 1-2 条高阶洞察，后台写回。
 
@@ -547,7 +548,7 @@ class MemoryView:
                     if len(insight) < 6:
                         continue
                     ok = self.add_manual(
-                        insight, card_id,
+                        insight, scope,
                         metadata={"is_reflection": True, "importance": 8},
                     )
                     print(f"[Reflection] wrote insight (ok={ok}): {insight[:120]}")
@@ -578,12 +579,12 @@ class MemoryView:
             logger.warning("Mem0 delete failed: %s", exc, exc_info=True)
             return False
 
-    def delete_all(self, card_id: str) -> bool:
-        """清空某角色的全部记忆。"""
+    def delete_all(self, scope: MemoryScope) -> bool:
+        """清空某个范围（存档 / 群 / 整卡）的全部记忆。"""
         if not self.enabled:
             return False
         try:
-            self._mem.delete_all(user_id=card_id)
+            self._mem.delete_all(**scope.filters())
             return True
         except Exception as exc:
             logger.warning("Mem0 delete_all failed: %s", exc, exc_info=True)

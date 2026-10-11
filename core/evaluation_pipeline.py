@@ -149,7 +149,7 @@ class EvaluationPipeline:
         """从 LLM data 中抽取 time_event 并写入 Mem0。"""
         time_event = data.get("time_event")
         if not (time_event and isinstance(time_event, dict)
-                and ctx.memory and ctx.memory.enabled and ctx.card_id):
+                and ctx.memory and ctx.memory.enabled):
             return
         try:
             evt = time_event.get("event", "")
@@ -158,7 +158,6 @@ class EvaluationPipeline:
             event_id = uuid.uuid4().hex[:16]
             ctx.memory.add_manual(
                 f"对方提到「{evt}」（{when_text}），大约在{due_at}。",
-                ctx.card_id,
                 metadata={
                     "type": "time_event",
                     "event_id": event_id,
