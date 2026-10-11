@@ -36,6 +36,7 @@ class EvalContext:
     llm: Any
     reaction_appraisal: str = ""
     departure_notice: str = ""
+    scope: str = ""   # 本引擎所在的存档/群；时间事件写回据此过滤（F3：视图共用）
 
 
 @dataclass
@@ -166,6 +167,7 @@ class EvaluationPipeline:
                     "when_text": when_text,
                     "due_at": due_at,
                 },
+                scope=ctx.scope,
             )
             print(f"[EvaluationPipeline] Saved time_event: {evt} at {due_at} (id={event_id})")
         except Exception as exc:

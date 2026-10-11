@@ -20,11 +20,11 @@ class FakeMemory:
         self.reflect_captured: list[dict] | None = None
         self.reflect_storage = None
 
-    def get_all(self, card_id: str) -> list[dict]:
+    def get_all(self, card_id: str, scope: str = "") -> list[dict]:
         return self._memories
 
     def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str,
-                storage=None) -> None:
+                storage=None, scope: str = "") -> None:
         self.reflect_captured = recent_memories
         self.reflect_storage = storage
 

@@ -30,9 +30,10 @@ class ReflectionService:
     因为这些是调用方（ChatEngine）的共享状态，不属反思服务。
     """
 
-    def __init__(self, memory, card_id: str) -> None:
+    def __init__(self, memory, card_id: str, scope: str = "") -> None:
         self._memory = memory
         self._card_id = card_id
+        self._mem_scope = scope   # 本引擎所在的存档/群；素材读取与洞察写回据此过滤
         self._importance_acc: int = 0
         self._rounds_since_reflect: int = 0
 
@@ -62,7 +63,7 @@ class ReflectionService:
               f"rounds={self._rounds_since_reflect} >= {REFLECTION_MIN_ROUNDS}")
 
         try:
-            all_memories = self._memory.get_all(self._card_id)
+            all_memories = self._memory.get_all(self._card_id, scope=self._mem_scope)
         except Exception as exc:
             logger.warning("Reflection get_all failed: %s", exc, exc_info=True)
             return False
@@ -106,5 +107,5 @@ class ReflectionService:
         print(f"[Reflection] {len(raw)} raw memories, top-10 importance range: "
               f"{recent[-1]['importance']}-{recent[0]['importance']}")
         self._memory.reflect(self._card_id, llm, recent, card_name,
-                             storage=storage)
+                             storage=storage, scope=self._mem_scope)
         return True

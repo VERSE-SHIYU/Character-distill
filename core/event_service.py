@@ -26,9 +26,10 @@ class EventService:
     card_id : 当前角色卡 ID 字符串
     """
 
-    def __init__(self, memory, card_id: str) -> None:
+    def __init__(self, memory, card_id: str, scope: str = "") -> None:
         self._memory = memory
         self._card_id = card_id
+        self._mem_scope = scope   # 本引擎所在的存档/群；事件读写据此过滤（时间事件也按存档隔离）
         self._asked_event_ids: set[str] = set()
         self._injected_event_id: str = ""
 
@@ -37,7 +38,7 @@ class EventService:
         if not self._memory or not self._memory.enabled or not self._card_id:
             return None
         try:
-            memories = self._memory.get_all(self._card_id)
+            memories = self._memory.get_all(self._card_id, scope=self._mem_scope)
             if not memories:
                 return None
 
@@ -109,6 +110,7 @@ class EventService:
                     "",
                     self._card_id,
                     metadata={"type": "time_event_asked", "event_id": eid},
+                    scope=self._mem_scope,
                 )
                 print(f"[ChatEngine] Marked event {eid} as asked")
             except Exception as exc:

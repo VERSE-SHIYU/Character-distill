@@ -168,6 +168,11 @@ class ChatEngine:
         self._storage = storage
         self._session_id: str = session_id
         self._group_id: str = group_id  # 群聊上下文：群 ID（空串=单聊或无上下文）
+        # 这条记忆属于哪个存档（或哪个群）—— **只在这里定义一次**。单聊取 session_id、
+        # 群聊取 group_id；两者都是 uuid 短串，光看值分不出类型，故统一成一个不透明的
+        # 范围串，8 个读写点各自把它传下去，谁都不再自己拼「卡 + 存档」。放在引擎上而非
+        # 记忆视图上：视图按用户缓存、多个存档共用（F3），范围是引擎的身份。
+        self._mem_scope: str = group_id or session_id
         self.history: list[dict[str, Any]] = []
         # 四维好感度（通过 AffinityService 托管，@property 透明转发）
         self._affinity_service = AffinityService()
@@ -177,8 +182,10 @@ class ChatEngine:
         self._last_in_character: int = 80  # 瞬时纠偏信号，不入库，不跨 session
         self._visit_count: int = 0  # 本次 resume 后第一条消息消费（>=3 注入觉察）
         self._last_assertion_confidence: int = 50  # 用户输入可信度，用于记忆写入过滤
-        self._reflection_service = ReflectionService(memory_manager, card_id)
-        self._event_service = EventService(self._memory, self._card_id)
+        self._reflection_service = ReflectionService(memory_manager, card_id,
+                                                     scope=self._mem_scope)
+        self._event_service = EventService(self._memory, self._card_id,
+                                           scope=self._mem_scope)
         self._pipeline = EvaluationPipeline()
         self._last_user_msg_at = None
 
@@ -212,6 +219,7 @@ class ChatEngine:
             llm=llm,
             model=getattr(llm, "model", ""),
             storage=storage,
+            scope=self._mem_scope,
         )
         self.agent_mode: bool = False
 
@@ -587,6 +595,7 @@ class ChatEngine:
                 ],
                 self._card_id,
                 metadata={"importance": self._last_importance, "mood": self._mood, "affinity": self._affinity, "assertion_confidence": self._last_assertion_confidence},
+                scope=self._mem_scope,
             )
         reflected = self._reflection_service.maybe_reflect(
             self._last_importance, self.llm, self.card.name,
@@ -766,6 +775,7 @@ class ChatEngine:
             session_id=self._session_id,
             group_id=self._group_id,
             card_id=self._card_id,
+            scope=self._mem_scope,
             storage=self._storage,
             memory=self._memory,
             affinity_service=self._affinity_service,
@@ -1554,7 +1564,7 @@ class ChatEngine:
         if not self._memory or not self._memory.enabled or not self._card_id:
             return ""
         try:
-            all_memories = self._memory.get_all(self._card_id)
+            all_memories = self._memory.get_all(self._card_id, scope=self._mem_scope)
             if not all_memories:
                 return ""
             scored = []

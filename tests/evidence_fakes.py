@@ -161,7 +161,7 @@ class FakeMemory:
         self._raise = raise_on_search
         self.calls: list[dict] = []
 
-    def search(self, query, card_id, current_mood=None):
+    def search(self, query, card_id, current_mood=None, scope=None):
         self.calls.append({"query": query, "card_id": card_id, "current_mood": current_mood})
         if self._raise is not None:
             raise self._raise

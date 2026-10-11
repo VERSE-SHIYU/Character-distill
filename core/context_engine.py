@@ -225,12 +225,14 @@ class ContextEngine:
         *,
         storage: Any,
         arc_view: Any = None,
+        scope: str = "",
     ) -> None:
         self.card = require_projected(card)   # 原卡不进注入层（DA18）
         self.arc_view = arc_view
         self.rag = rag
         self.memory = memory_manager
         self.card_id = card_id
+        self._mem_scope = scope   # 本引擎所在的存档/群；记忆检索据此过滤（F3：视图共用）
         self._llm = llm
         self._storage = storage
         self.web_search_enabled = False
@@ -564,7 +566,8 @@ class ContextEngine:
     ) -> tuple[list[EvidenceItem], str | None]:
         if not self.memory or not self.memory.enabled or not self.card_id:
             return [], None
-        memories = self.memory.search(query, self.card_id, current_mood=current_mood)
+        memories = self.memory.search(query, self.card_id, current_mood=current_mood,
+                                      scope=self._mem_scope)
         return [
             memory_evidence(
                 text=m["text"],

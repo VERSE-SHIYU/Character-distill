@@ -352,7 +352,21 @@ class MemoryView:
     def context_window(self) -> int:
         return self._context_window
 
-    def search(self, query: str, card_id: str, current_mood: str | None = None) -> list[dict[str, Any]]:
+    @staticmethod
+    def _entity(card_id: str, scope: str) -> dict[str, str]:
+        """这条记忆归属谁：卡（``user_id``）+ 存档或群（``run_id``）。
+
+        整个隔离只有这一处把「卡 + 范围」拼成 mem0 的身份 —— 5 个读写方法各自只把
+        范围串传进来（范围本身在 ``ChatEngine`` 定义一次，见 ``_mem_scope``）。范围为空
+        （记忆面板 / 评测脚本这些非引擎调用方）退回旧口径：只按卡，不加 ``run_id``。
+        """
+        entity = {"user_id": card_id}
+        if scope:
+            entity["run_id"] = scope
+        return entity
+
+    def search(self, query: str, card_id: str, current_mood: str | None = None,
+               scope: str = "") -> list[dict[str, Any]]:
         """检索长期记忆，返回结构化 dict 列表（两级门控重排）。
 
         每条返回: {text, relevance, importance, age_seconds}
@@ -366,7 +380,7 @@ class MemoryView:
             query_est_tok = len(query) // 2
             print(f"[embed-stats] Mem0 search query_len={len(query)} est_tok={query_est_tok} card={card_id}")
             results = self._mem.search(
-                query, filters={"user_id": card_id}, limit=self._search_top_k
+                query, filters=self._entity(card_id, scope), limit=self._search_top_k
             )
             if isinstance(results, dict):
                 results = results.get("results", [])
@@ -442,7 +456,8 @@ class MemoryView:
             print(f"[MemoryManager] search top-{len(top)} ({mood_tag}): {summary}")
         return top
 
-    def add(self, messages: list[dict[str, str]], card_id: str, metadata: dict | None = None) -> None:
+    def add(self, messages: list[dict[str, str]], card_id: str, metadata: dict | None = None,
+            scope: str = "") -> None:
         """将对话消息写入长期记忆（后台异步执行）。metadata 写入 Mem0 存储供检索加权。"""
         if not self.enabled:
             return
@@ -451,7 +466,7 @@ class MemoryView:
 
         def _do_add():
             try:
-                kwargs = {"user_id": card_id}
+                kwargs = self._entity(card_id, scope)
                 if metadata:
                     kwargs["metadata"] = metadata
                 total_chars = sum(len(m.get("content", "")) for m in messages if isinstance(m, dict))
@@ -468,12 +483,12 @@ class MemoryView:
 
         C.ctx_thread(_do_add, daemon=True).start()  # context 传播点：记忆入库线程
 
-    def get_all(self, card_id: str) -> list[dict[str, Any]]:
-        """获取某角色的所有记忆。"""
+    def get_all(self, card_id: str, scope: str = "") -> list[dict[str, Any]]:
+        """获取某角色（某个存档）的所有记忆。"""
         if not self.enabled:
             return []
         try:
-            results = self._mem.get_all(filters={"user_id": card_id})
+            results = self._mem.get_all(filters=self._entity(card_id, scope))
             if isinstance(results, dict):
                 results = results.get("results", [])
             return results
@@ -481,7 +496,8 @@ class MemoryView:
             logger.warning("Mem0 get_all failed: %s", exc, exc_info=True)
             return []
 
-    def add_manual(self, text: str, card_id: str, metadata: dict | None = None) -> bool:
+    def add_manual(self, text: str, card_id: str, metadata: dict | None = None,
+                   scope: str = "") -> bool:
         """手动添加一条单文本记忆。infer=False 避免 Mem0 LLM 提炼丢弃。
 
         metadata 可选，用于标记反思记忆 is_reflection=True 等。
@@ -489,7 +505,7 @@ class MemoryView:
         if not self.enabled:
             return False
         try:
-            kwargs = {"user_id": card_id, "infer": False}
+            kwargs = {**self._entity(card_id, scope), "infer": False}
             if metadata:
                 kwargs["metadata"] = metadata
             print(f"[embed-stats] Mem0 add_manual est_tok={len(text) // 2} card={card_id}")
@@ -501,7 +517,7 @@ class MemoryView:
             return False
 
     def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str,
-                storage=None) -> None:
+                storage=None, scope: str = "") -> None:
         """把近期高重要性记忆综合成 1-2 条高阶洞察，后台写回。
 
         recent_memories: 已过滤的非反思记忆，每项含 text/importance/mood 等。
@@ -549,6 +565,7 @@ class MemoryView:
                     ok = self.add_manual(
                         insight, card_id,
                         metadata={"is_reflection": True, "importance": 8},
+                        scope=scope,
                     )
                     print(f"[Reflection] wrote insight (ok={ok}): {insight[:120]}")
             except Exception as exc:

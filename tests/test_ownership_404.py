@@ -68,20 +68,20 @@ class _MemMgr:
 
     enabled = True
 
-    def get_all(self, card_id):
+    def get_all(self, card_id, scope=None):
         return []
 
-    def search(self, query, card_id, current_mood=None):
+    def search(self, query, card_id, current_mood=None, scope=None):
         return []
 
-    def add(self, messages, card_id, metadata=None):
+    def add(self, messages, card_id, metadata=None, scope=None):
         return True
 
     def for_user(self, **_kw):
         """工厂接口：替身同时充当「用户视图」—— 调用方拿到的就是它自己。"""
         return self
 
-    def add_manual(self, text, card_id):
+    def add_manual(self, text, card_id, scope=None):
         return True
 
     def update(self, memory_id, text):
