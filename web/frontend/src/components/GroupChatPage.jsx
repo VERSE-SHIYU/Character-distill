@@ -28,7 +28,7 @@ import { displayName } from '../utils/displayName'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 import { blockedBySameCharacter, aiMemberIds, parseCardIds } from '../utils/groupMembers'
-import Select from './common/Select'
+import GroupPhasePicker from './GroupPhasePicker'
 
 /** 通过 card_id 从后端获取单张角色卡信息 */
 async function fetchCardById(cardId) {
@@ -202,10 +202,10 @@ export default function GroupChatPage() {
         if (!card) return null
         const options = arcPhaseOptions(card)
         if (options.length === 0) return null
-        return { cardId: id, card, options, value: memberPhases[id] ?? effectiveArcPhase(card, null) }
+        return { cardId: id, card, options, value: memberPhases[id] ?? effectiveArcPhase(card, null), avatar: cardAvatars[id] }
       })
       .filter(Boolean)
-  }, [selectedCardIds, personaType, personaCardId, memberPhases, cardCache, allCards])
+  }, [selectedCardIds, personaType, personaCardId, memberPhases, cardCache, allCards, cardAvatars])
 
   /** 建群表单的身份那几项 + 新加的 memberPhases，一处重置（打开弹窗、建群成功、点「上一步」都调它）。 */
   function resetCreateForm() {
@@ -1514,7 +1514,7 @@ export default function GroupChatPage() {
                     return (
                       <div
                         key={cardId}
-                        className={`group-create-card${selected ? ' selected' : ''}${blocked ? ' disabled' : ''}`}
+                        className={`group-create-row group-create-card${selected ? ' selected' : ''}${blocked ? ' disabled' : ''}`}
                         onClick={blocked ? undefined : () => toggleCard(cardId)}
                         aria-disabled={blocked || undefined}
                         title={blocked ? '已选了这个角色的另一个版本' : undefined}
@@ -1616,21 +1616,10 @@ export default function GroupChatPage() {
               {phaseChoices.length > 0 && (
                 <div className="group-create-section">
                   <label className="modal-label">每个角色的时期</label>
-                  {phaseChoices.map(({ cardId, card, options, value }) => (
-                    <div key={cardId} className="group-member-item">
-                      <Avatar name={card.name} size={36} src={cardAvatars[cardId]} />
-                      <div className="group-member-info">
-                        <span className="group-member-name">{card.name}</span>
-                      </div>
-                      <Select
-                        size="sm"
-                        ariaLabel={`${card.name} 的时期`}
-                        value={String(value)}
-                        options={options}
-                        onChange={(v) => setMemberPhases((prev) => ({ ...prev, [cardId]: Number(v) }))}
-                      />
-                    </div>
-                  ))}
+                  <GroupPhasePicker
+                    choices={phaseChoices}
+                    onChange={(cardId, k) => setMemberPhases((prev) => ({ ...prev, [cardId]: k }))}
+                  />
                 </div>
               )}
               </>

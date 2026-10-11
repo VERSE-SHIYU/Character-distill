@@ -25,8 +25,14 @@ const CARDS = [
   { id: 'd', name: '丁', card_json: cardJson('丁', [], sel) },
 ]
 
+// 布局用：名字长短不同（孔乙己 3 字 / 阿Q 2 字），都可有阶段。
+const LONG_SHORT = [
+  { id: 'a', name: '孔乙己', card_json: cardJson('孔乙己', ['冷', '热'], sel) },
+  { id: 'b', name: '阿Q', card_json: cardJson('阿Q', ['初', '终'], sel) },
+]
+
 /** 模拟全部 /api/*，返回 sentCreate：POST /api/group/create 的请求体数组。 */
-async function setup(page, { groups = [] } = {}) {
+async function setup(page, { groups = [], cards = CARDS } = {}) {
   const sentCreate = []
   await page.route((u) => new URL(u).pathname.startsWith('/api/'), (route) => {
     const url = new URL(route.request().url())
@@ -34,8 +40,8 @@ async function setup(page, { groups = [] } = {}) {
     const json = (body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
     if (path === '/api/auth/me') return json({ id: 'u1', username: 't', has_api_key: true })
     if (path === '/api/group/list') return json({ groups })
-    if (path.startsWith('/api/distill/cards/by-text/')) return json(CARDS)
-    if (/^\/api\/cards\/.+/.test(path)) return json(CARDS.find((c) => c.id === path.split('/').pop()) || {})
+    if (path.startsWith('/api/distill/cards/by-text/')) return json(cards)
+    if (/^\/api\/cards\/.+/.test(path)) return json(cards.find((c) => c.id === path.split('/').pop()) || {})
     if (path.endsWith('/history')) return json({ messages: [] })
     if (path.endsWith('/affinities')) return json([])
     if (path === '/api/group/create') {
@@ -92,7 +98,7 @@ test('建群第 2 步：可选卡各一个下拉默认最后阶段，不可选�
   await setup(page)
   await openCreateStep2(page)
 
-  const rows = page.locator('.group-create-section', { hasText: '每个角色的时期' }).locator('.group-member-item')
+  const rows = page.locator('.group-create-section', { hasText: '每个角色的时期' }).locator('.group-create-row')
   await expect(rows).toHaveCount(2)                                   // 丙 不可选 → 不在列表
   await expect(rows.filter({ hasText: '甲' }).locator('.ui-select')).toContainText('阶段 2 · 热')   // 默认最后阶段
   await expect(rows.filter({ hasText: '乙' }).locator('.ui-select')).toContainText('阶段 2 · 终')
@@ -108,7 +114,7 @@ test('扮演某张卡：它的下拉消失；改回导演：回来', async ({ pa
   await page.locator('.persona-option', { hasText: '扮演已选角色' }).click()
   await page.locator('.persona-sub .persona-char-btn', { hasText: '甲' }).click()
 
-  const rows = page.locator('.group-create-section', { hasText: '每个角色的时期' }).locator('.group-member-item')
+  const rows = page.locator('.group-create-section', { hasText: '每个角色的时期' }).locator('.group-create-row')
   await expect(rows).toHaveCount(1)                                   // 甲 是扮演的 → 退出列表
   await expect(rows.filter({ hasText: '甲' })).toHaveCount(0)
 
@@ -120,7 +126,7 @@ test('改甲为阶段 1 → 创建 → 请求体 member_phases 甲=1、乙=最�
   const sent = await setup(page)
   await openCreateStep2(page)
 
-  await page.locator('.group-member-item', { hasText: '甲' }).locator('.ui-select').click()
+  await page.locator('.group-create-row', { hasText: '甲' }).locator('.ui-select').click()
   await page.getByRole('option', { name: '阶段 1 · 冷' }).click()
   await page.locator('.group-create-modal .modal-actions .btn-primary').click()   // 创建群聊
 
@@ -146,7 +152,7 @@ test('成员标签：新建群按 member_phases 显示；旧群无该列 → 最
   await page.locator('.group-create-card', { hasText: '甲' }).click()
   await page.locator('.group-create-card', { hasText: '乙' }).click()
   await page.locator('.group-create-modal .modal-actions .btn-primary').click()
-  await page.locator('.group-member-item', { hasText: '甲' }).locator('.ui-select').click()
+  await page.locator('.group-create-row', { hasText: '甲' }).locator('.ui-select').click()
   await page.getByRole('option', { name: '阶段 1 · 冷' }).click()
   await page.locator('.group-create-modal .modal-actions .btn-primary').click()
   await openMembers(page)
@@ -179,4 +185,31 @@ test('建群成功直接进群：消息区为空、成员「尚未评估」；�
   await page.locator('.messages-conv-item', { hasText: '群聊' }).click()
   await openMembers(page)
   await expect(page.locator('.group-right-member-list .group-member-item').filter({ hasText: '甲' })).toHaveCount(0)
+})
+
+// 问题 1：时期行以前借用成员条目类（没内边距、下拉跟着名字长度左右漂），现在用行布局类 group-create-row。
+test('时期行布局：长短名字下拉右边缘对齐、相邻行下拉有间距；时期行不是可点卡片', async ({ page }) => {
+  await setup(page, { cards: LONG_SHORT })
+  await page.locator('.messages-sidebar-header .btn-primary').click()
+  await expect(page.locator('.group-create-card')).toHaveCount(2)
+  // 第 1 步角色卡拆类后仍是可点卡片
+  await expect(page.locator('.group-create-card').first()).toHaveCSS('cursor', 'pointer')
+
+  await page.locator('.group-create-card', { hasText: '孔乙己' }).click()
+  await page.locator('.group-create-card', { hasText: '阿Q' }).click()
+  await page.locator('.group-create-modal .modal-actions .btn-primary').click()
+
+  const rows = page.locator('.group-create-section', { hasText: '每个角色的时期' }).locator('.group-create-row')
+  await expect(rows).toHaveCount(2)
+  // 时期行只有行布局、没有卡片交互：cursor 不是 pointer
+  await expect(rows.first()).not.toHaveCSS('cursor', 'pointer')
+
+  const s0 = await rows.nth(0).locator('.ui-select').boundingBox()
+  const s1 = await rows.nth(1).locator('.ui-select').boundingBox()
+  // 名字长短不一，下拉右边缘仍对齐
+  expect(Math.abs((s0.x + s0.width) - (s1.x + s1.width))).toBeLessThanOrEqual(1)
+  // 相邻两行的下拉包围盒上下间距 ≥ 4px（行本体相邻；行内 8px padding 提供呼吸感，量谁见报告）
+  expect(s1.y - (s0.y + s0.height)).toBeGreaterThanOrEqual(4)
+
+  await page.screenshot({ path: 'e2e/group-arc-phase-step2-names.png' })
 })

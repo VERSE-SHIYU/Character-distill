@@ -13809,15 +13809,20 @@ label[for] {
   padding: 4px;
 }
 
-.group-create-card {
+/* 「头像 + 文字 + 右侧控件」的行布局。可选卡片与时期行共用；交互另见 .group-create-card */
+.group-create-row {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
   border-radius: 6px;
+  font-size: 14px;
+}
+
+/* 可点选卡片的交互（只有第 1 步的角色卡有） */
+.group-create-card {
   cursor: pointer;
   transition: background 0.15s;
-  font-size: 14px;
 }
 
 .group-create-card:hover {
