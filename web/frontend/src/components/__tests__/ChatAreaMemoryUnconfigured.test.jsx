@@ -74,7 +74,11 @@ vi.mock('../../components/common/ChatHistoryPanel', () => ({ default: () => null
 vi.mock('../../components/common/Avatar', () => ({ default: () => null }))
 vi.mock('../../components/common/Loading', () => ({ default: () => null }))
 vi.mock('../../components/common/ImageCropModal', () => ({ default: () => null }))
-vi.mock('../../components/common/ConfirmModal', () => ({ default: () => null }))
+// 面板底部「清空全部记忆」要经确认弹窗，故这个替身得能渲染出确认按钮（其它弹窗 isOpen=false → null）。
+vi.mock('../../components/common/ConfirmModal', () => ({
+  default: ({ isOpen, confirmText, onConfirm }) =>
+    isOpen ? <button data-confirm onClick={onConfirm}>{confirmText}</button> : null,
+}))
 vi.mock('../../components/common/ChatBubble', () => ({ default: () => null }))
 vi.mock('../../components/common/MessageReactions', () => ({ default: () => null }))
 vi.mock('../../components/common/ReplyQuote', () => ({ default: () => null }))
@@ -120,5 +124,29 @@ describe('记忆面板：没配齐自己的 key 时给引导', () => {
 
     await waitFor(() => expect(document.querySelector('.memory-panel').textContent).toContain('他喜欢喝美式'))
     expect(document.querySelector('.memory-unconfigured')).not.toBeNull()
+  })
+})
+
+describe('记忆面板：三个请求都带当前存档 id', () => {
+  it('列表 / 添加 / 清空 的地址里都带 session_id（面板按存档隔离）', async () => {
+    listReturns({ memories: [{ id: 'm1', memory: '他喜欢喝美式' }], enabled: true, configured: true })
+    await openMemoryPanel()
+
+    await waitFor(() => expect(fetchWithTimeout).toHaveBeenCalledWith('/api/memory/list/c1?session_id=s1'))
+
+    fireEvent.click(document.querySelector('.memory-add-trigger'))
+    fireEvent.change(document.querySelector('.memory-add-input'), { target: { value: '新记忆' } })
+    fireEvent.click([...document.querySelectorAll('.memory-add-actions button')].find((b) => b.textContent === '保存'))
+    await waitFor(() => expect(fetchWithTimeout).toHaveBeenCalledWith(
+      '/api/memory/add/c1?session_id=s1',
+      expect.objectContaining({ method: 'POST' }),
+    ))
+
+    fireEvent.click([...document.querySelectorAll('.memory-panel button')].find((b) => b.textContent.includes('清空全部记忆')))
+    fireEvent.click(document.querySelector('[data-confirm]'))
+    await waitFor(() => expect(fetchWithTimeout).toHaveBeenCalledWith(
+      '/api/memory/clear/c1?session_id=s1',
+      expect.objectContaining({ method: 'DELETE' }),
+    ))
   })
 })

@@ -21,8 +21,8 @@ class ReflectionService:
 
     外部依赖（构造注入）
     ------------------
-    memory : 只读调用 memory.get_all() / 写调用 memory.reflect()
-    card_id : 当前角色卡 ID 字符串
+    memory : 这个引擎的记忆（``ScopedMemory``：视图 + 归属绑在一起），只读调用
+        ``memory.get_all()`` / 写调用 ``memory.reflect()``。素材与洞察据此按存档隔离。
 
     方法参数
     --------
@@ -30,9 +30,8 @@ class ReflectionService:
     因为这些是调用方（ChatEngine）的共享状态，不属反思服务。
     """
 
-    def __init__(self, memory, card_id: str) -> None:
+    def __init__(self, memory) -> None:
         self._memory = memory
-        self._card_id = card_id
         self._importance_acc: int = 0
         self._rounds_since_reflect: int = 0
 
@@ -53,7 +52,7 @@ class ReflectionService:
         if not (self._importance_acc >= REFLECTION_THRESHOLD
                 and self._rounds_since_reflect >= REFLECTION_MIN_ROUNDS):
             return False
-        if not self._memory or not self._memory.enabled or not self._card_id:
+        if not self._memory or not self._memory.enabled:
             return False
         if not llm:
             return False
@@ -62,7 +61,7 @@ class ReflectionService:
               f"rounds={self._rounds_since_reflect} >= {REFLECTION_MIN_ROUNDS}")
 
         try:
-            all_memories = self._memory.get_all(self._card_id)
+            all_memories = self._memory.get_all()
         except Exception as exc:
             logger.warning("Reflection get_all failed: %s", exc, exc_info=True)
             return False
@@ -105,6 +104,5 @@ class ReflectionService:
 
         print(f"[Reflection] {len(raw)} raw memories, top-10 importance range: "
               f"{recent[-1]['importance']}-{recent[0]['importance']}")
-        self._memory.reflect(self._card_id, llm, recent, card_name,
-                             storage=storage)
+        self._memory.reflect(llm, recent, card_name, storage=storage)
         return True

@@ -23,6 +23,7 @@ from routers.auth import get_current_user
 from deps import get_config, get_sessions, get_storage, get_memory_manager, patch_config
 from storage.base import StorageBase
 from core.memory_manager import MemoryManager
+from core.memory_scope import MemoryScope
 from core import roles
 from limiter import limiter
 
@@ -315,7 +316,7 @@ async def delete_user(
         card_ids = await storage.get_user_card_ids(user_id)
         if memory_manager and memory_manager.enabled:
             for cid in card_ids:
-                memory_manager.delete_all(cid)
+                memory_manager.delete_all(MemoryScope.whole_card(cid))
     except Exception as exc:
         logger.warning("Mem0 cleanup for user %s failed: %s", user_id, exc, exc_info=True)
 
@@ -370,7 +371,7 @@ async def batch_delete_users(
             card_ids = await storage.get_user_card_ids(user_id)
             if memory_manager and memory_manager.enabled:
                 for cid in card_ids:
-                    memory_manager.delete_all(cid)
+                    memory_manager.delete_all(MemoryScope.whole_card(cid))
             # 同 delete_user：先停线程再删行，否则收尾的 save_card 会给已删用户建孤儿卡
             from routers.distill import cancel_distill_tasks_by_user_id
             await cancel_distill_tasks_by_user_id(user_id)

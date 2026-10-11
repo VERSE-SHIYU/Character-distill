@@ -48,10 +48,10 @@ class FakeMemory:
         self.raise_on_add_manual = raise_on_add_manual
         self.added: list[tuple] = []
 
-    def add_manual(self, text: str, card_id: str, metadata: dict | None = None) -> None:
+    def add_manual(self, text: str, metadata: dict | None = None) -> None:
         if self.raise_on_add_manual:
             raise RuntimeError("Memory add_manual failed (fake)")
-        self.added.append((text, card_id, metadata))
+        self.added.append((text, metadata))
 
 
 class FakeStorage:

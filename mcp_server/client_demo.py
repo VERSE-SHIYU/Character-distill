@@ -59,10 +59,10 @@ def _is_error(res) -> bool:
 
 
 async def _case_a_routing_isolation() -> None:
-    """用例 (a)：两个不同 card_id 路由到不同 toolkit / rag 引擎 / memory 隔离键。
+    """用例 (a)：两个不同 card_id 路由到不同 toolkit / rag 引擎。
 
     不依赖检索内容：router 按 card_id → 该卡 text_id → per-text_id RAGEngine 实例
-    （server._rag_by_text_id 缓存），memory 以 ctx.card_id 为 mem0 隔离键。
+    （server._rag_by_text_id 缓存）。MCP 不挂长期记忆（按 card_id 路由、无身份，见 server.py）。
     RAGEngine.collection_name 只在集合成功 load 后才填充（B 无 1024 集合 → 恒 None），
     故实例隔离才是与数据无关的路由判据；loaded 后两集合名必为 text_{text_id} 不同。
     """
@@ -88,11 +88,7 @@ async def _case_a_routing_isolation() -> None:
     print(f"  -> rag 加载态：A={ra_engine.collection is not None} "
           f"B={rb_engine.collection is not None}（内容检索需 1024 集合，见 README 行为边界）")
 
-    ca_id, cb_id = ta._ctx.card_id, tb._ctx.card_id
-    print(f"  -> memory 隔离键(card_id)：A={ca_id!r} B={cb_id!r}")
-    assert ca_id == DEFAULT_CARD_A and cb_id == DEFAULT_CARD_B and ca_id != cb_id, "memory 未按 card_id 隔离"
-
-    print("  [PASS] 两 card_id 路由到不同 toolkit / rag 引擎 / memory 隔离键")
+    print("  [PASS] 两 card_id 路由到不同 toolkit / rag 引擎")
 
 
 async def main() -> None:

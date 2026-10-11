@@ -218,8 +218,7 @@ class ContextEngine:
         self,
         card: ProjectedCard,
         rag: RAGEngine,
-        memory_manager=None,
-        card_id: str = "",
+        memory=None,
         llm=None,
         model: str = "",
         *,
@@ -229,8 +228,8 @@ class ContextEngine:
         self.card = require_projected(card)   # 原卡不进注入层（DA18）
         self.arc_view = arc_view
         self.rag = rag
-        self.memory = memory_manager
-        self.card_id = card_id
+        # 记忆 = 「视图 + 存档 / 群归属」绑成的一个对象（方案 C）；检索不再自取卡 id。
+        self.memory = memory
         self._llm = llm
         self._storage = storage
         self.web_search_enabled = False
@@ -562,9 +561,9 @@ class ContextEngine:
     def _memory_items(
         self, query: str, current_mood: str | None
     ) -> tuple[list[EvidenceItem], str | None]:
-        if not self.memory or not self.memory.enabled or not self.card_id:
+        if not self.memory or not self.memory.enabled:
             return [], None
-        memories = self.memory.search(query, self.card_id, current_mood=current_mood)
+        memories = self.memory.search(query, current_mood=current_mood)
         return [
             memory_evidence(
                 text=m["text"],

@@ -205,9 +205,9 @@ class TestReunionGreeting:
         """朋友档 + 有记忆 → prompt 含离线时刻素材。"""
         engine = _make_engine()
         engine._card_id = "card_test"
-        engine._memory = MagicMock()
-        engine._memory.enabled = True
-        engine._memory.get_all.return_value = [
+        engine._scoped = MagicMock()
+        engine._scoped.enabled = True
+        engine._scoped.get_all.return_value = [
             {"memory": "对方说喜欢下雨天", "metadata": {"importance": 8}},
             {"memory": "你们一起看了日出", "metadata": {"importance": 9}},
         ]
@@ -226,9 +226,9 @@ class TestReunionGreeting:
         """熟悉及以下 → prompt 不含离线时刻素材。"""
         engine = _make_engine()
         engine._card_id = "card_test"
-        engine._memory = MagicMock()
-        engine._memory.enabled = True
-        engine._memory.get_all.return_value = [
+        engine._scoped = MagicMock()
+        engine._scoped.enabled = True
+        engine._scoped.get_all.return_value = [
             {"memory": "对方说喜欢下雨天", "metadata": {"importance": 8}},
         ]
         # Default stage is 陌生 (from initial_affinity with no relationships)
@@ -243,9 +243,9 @@ class TestReunionGreeting:
         """朋友档但记忆为空 → 退回现有 prompt。"""
         engine = _make_engine()
         engine._card_id = "card_test"
-        engine._memory = MagicMock()
-        engine._memory.enabled = True
-        engine._memory.get_all.return_value = []
+        engine._scoped = MagicMock()
+        engine._scoped.enabled = True
+        engine._scoped.get_all.return_value = []
         engine._affinity_service.affinity = 60
         engine._affinity_service.stage = "朋友"
         engine._affinity_service.stage_emoji = "😄"
@@ -283,9 +283,9 @@ class TestReunionGreeting:
         """朋友档及以上 → prompt 含离线生活分享段。"""
         engine = _make_engine()
         engine._card_id = "card_test"
-        engine._memory = MagicMock()
-        engine._memory.enabled = True
-        engine._memory.get_all.return_value = [
+        engine._scoped = MagicMock()
+        engine._scoped.enabled = True
+        engine._scoped.get_all.return_value = [
             {"memory": "对方说喜欢下雨天", "metadata": {"importance": 8}},
         ]
         engine._affinity_service.affinity = 60
