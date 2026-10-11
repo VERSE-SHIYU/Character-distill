@@ -185,6 +185,13 @@ def _card(store, uid):
     return cid
 
 
+def _session(store, uid, cid) -> str:
+    """给 owner 建一个**真实存在**的存档（记忆归属门要先过「存档属于当前用户」这关）。"""
+    sid = f"sess_{uuid.uuid4().hex}"
+    _run_async(store.save_session(sid, cid, "user", "", user_id=uid))
+    return sid
+
+
 def _book_cards(store, uid) -> list[str]:
     """同一本书里两个不同角色的卡 —— 群聊成员的最小合法组合（`group._check_group_members`）。"""
     tid = _text(store, uid)
@@ -419,13 +426,16 @@ class TestReportCommentValidation:
 
 class TestMemoryOwnership:
     def test_list_memories_404(self, store, owner, intruder_client):
+        """闯入者带着 **owner 的真存档 id** → 404 来自「不是你的存档」，不是「存档不存在」。"""
         cid = _card(store, owner)
-        r = intruder_client.get(f"/api/memory/list/{cid}?session_id=s_intruder")
+        sid = _session(store, owner, cid)
+        r = intruder_client.get(f"/api/memory/list/{cid}?session_id={sid}")
         assert r.status_code == 404 and r.status_code != 403
 
     def test_add_memory_404(self, store, owner, intruder_client):
         cid = _card(store, owner)
-        r = intruder_client.post(f"/api/memory/add/{cid}?session_id=s_intruder",
+        sid = _session(store, owner, cid)
+        r = intruder_client.post(f"/api/memory/add/{cid}?session_id={sid}",
                                  json={"text": "记一笔"})
         assert r.status_code == 404 and r.status_code != 403
 
@@ -441,7 +451,8 @@ class TestMemoryOwnership:
 
     def test_clear_memories_404(self, store, owner, intruder_client):
         cid = _card(store, owner)
-        r = intruder_client.delete(f"/api/memory/clear/{cid}?session_id=s_intruder")
+        sid = _session(store, owner, cid)
+        r = intruder_client.delete(f"/api/memory/clear/{cid}?session_id={sid}")
         assert r.status_code == 404 and r.status_code != 403
 
 
