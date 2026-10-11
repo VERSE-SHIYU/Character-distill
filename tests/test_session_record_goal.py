@@ -1,11 +1,12 @@
 """目标检查：一对一存档的本场记录（④ 段 1，spec `docs/specs/session-record.md` §5）。
 
-目标：每个一对一存档有自己的本场记录；每轮并进评估调用抽一次；有效条目注入提示词动态区；
+目标：每个一对一存档有自己的本场记录；每轮单独一次抽取调用（spec `session-record-extract.md`）；有效条目注入提示词动态区；
 不显示给用户；群聊不受影响。存储相关的检查只在 PG 上跑（线上只用 PG）。
 
 分三层：
 - R* —— 规则（`core/session_record.apply` / `render_block`，纯函数）；
-- P* —— 评估流水线：本场记录和好感各自校验、群聊不变、只在有变化时落库；
+- P* —— 评估流水线：本场记录是单独一次抽取调用，和好感各是各的失败域；群聊不变；只在有变化时落库；
+- X* —— 抽取提示词：照抄文献的句子一字不差、第三人称；
 - E* —— 真引擎 + 真 PG：存档之间隔离、恢复后接得上、读好感接口和会话行都不带它、
   每轮一个保存点。
 """
@@ -172,22 +173,54 @@ def test_R8_persist_round_trip_and_corrupt_data():
 
 # ═══ P：评估流水线 ═══════════════════════════════════════════════════════════
 
+_RECORD_SYS = "You are a character state analyst"
+
+
 class _ScriptLLM:
+    """按 system 提示词分流的替身：好感评估回 ``reply``，本场记录抽取回 ``record``（默认没有操作）。"""
     model = "stub"
 
-    def __init__(self, reply: dict):
+    def __init__(self, reply: dict, record: dict | None = None):
         self.reply = json.dumps(reply, ensure_ascii=False)
+        self.record = json.dumps(record if record is not None else {}, ensure_ascii=False)
         self.last_usage = {"prompt_tokens": 1, "completion_tokens": 1}
-        self.prompts: list[str] = []
+        self.prompts: list[str] = []              # 好感评估的提示词
+        self.record_calls: list[tuple[str, str]] = []   # 抽取调用的 (system, user)
+        self.derived: list[float | None] = []
 
     def preflight(self):
         return None
+
+    def derive(self, *, temperature=None, **_kw):
+        self.derived.append(temperature)
+        return self
 
     def chat(self, system, messages, **_kw):
         if system.startswith(_EVAL_SYS):
             self.prompts.append(messages[0]["content"])
             return self.reply
+        if system.startswith(_RECORD_SYS):
+            self.record_calls.append((system, messages[0]["content"]))
+            return self.record
         return "回复"
+
+
+class _FailingRecordLLM(_ScriptLLM):
+    """抽取调用抛错（模拟网络 / 额度问题），好感评估照常。"""
+
+    def chat(self, system, messages, **kw):
+        if system.startswith(_RECORD_SYS):
+            raise RuntimeError("record call failed")
+        return super().chat(system, messages, **kw)
+
+
+class _FailingEvalLLM(_ScriptLLM):
+    """好感评估回的不是 JSON（评估这一轮失败），抽取照常。"""
+
+    def chat(self, system, messages, **kw):
+        if system.startswith(_EVAL_SYS):
+            return "不是 JSON"
+        return super().chat(system, messages, **kw)
 
 
 class _Card:
@@ -228,53 +261,69 @@ def loop_submitter(monkeypatch):
                         lambda coro, wait=True, timeout=0: asyncio.new_event_loop().run_until_complete(coro))
 
 
-def test_P1_one_to_one_prompt_has_the_record_section_group_prompt_is_unchanged():
-    """一对一的评估提示词带说明、当前有效条目和两个字段；群聊的和不带本场记录时逐字相同。"""
+_BJ = {rec.FIELD_ADD: [_add("events", "下个月去北京面试", "北京面试")]}
+
+
+def test_P1_extraction_is_its_own_call_and_the_affinity_prompt_is_untouched():
+    """P1（G1）：一对一每轮两次调用 —— 好感评估的提示词里没有任何本场记录内容（和群聊、
+    不带本场记录时逐字相同）；本场记录由单独一次抽取调用更新，用低温派生的适配器。"""
     record = _one("events", "下个月去北京面试", "北京面试")
     single = _ScriptLLM(_verdict())
     EvaluationPipeline().run(_ctx(single, record=record))
-    assert "本场记录更新规则" in single.prompts[0] and "#1 [events] 下个月去北京面试" in single.prompts[0]
-    assert rec.render_json_fields() in single.prompts[0], "JSON 段里没有本场记录的两个字段"
+    plain = AffinityService().build_evaluation_prompt(_Card(), USER_SAYS, CHAR_SAYS, "对方", "")
+    assert single.prompts == [plain], "好感评估的提示词被本场记录改动了"
+    assert len(single.record_calls) == 1 and single.derived == [rec.EXTRACT_TEMPERATURE]
+    system, user = single.record_calls[0]
+    assert "#1 [events] 下个月去北京面试" in user and USER_SAYS in user and CHAR_SAYS in user
+    for frame in ("你现在就是", "内心", "inner_voice", "好感"):
+        assert frame not in system + user, f"抽取提示词里混进了角色扮演 / 好感的框架：{frame}"
 
     group = _ScriptLLM(_verdict())
     EvaluationPipeline().run(_ctx(group, record=None, group_id="g1"))
-    plain = AffinityService().build_evaluation_prompt(_Card(), USER_SAYS, CHAR_SAYS, "对方", "")
-    assert group.prompts[0] == plain
+    assert group.prompts == [plain] and group.record_calls == [], "群聊不该有抽取调用"
 
 
-def test_P2_record_and_affinity_are_validated_separately(loop_submitter, monkeypatch):
-    """好感那部分坏了，本场记录照常生效；本场记录那部分坏了，好感照常生效。"""
-    record = SessionRecord()
-    bad_affinity = _ScriptLLM(_verdict(**{FIELD_EVENT: "bogus",
-                                          rec.FIELD_ADD: [_add("events", "下个月去北京面试", "北京面试")]}))
-    out = EvaluationPipeline().run(_ctx(bad_affinity, record=record, storage=_SpyStorage()))
-    assert out.applied and [e.text for e in out.session_record.active()] == ["下个月去北京面试"]
+def test_P1b_build_evaluation_prompt_has_no_record_parameters():
+    import inspect
+    params = inspect.signature(AffinityService.build_evaluation_prompt).parameters
+    assert not [p for p in params if p.startswith("record")]
 
-    def state_after(extra: dict):
+
+def test_P2_record_and_affinity_fail_separately(loop_submitter):
+    """好感评估坏了，本场记录照常更新并落库；抽取调用坏了，好感照常、本场记录原样。"""
+    spy = _SpyStorage()
+    out = EvaluationPipeline().run(_ctx(_FailingEvalLLM(_verdict(), record=_BJ),
+                                        record=SessionRecord(), storage=spy))
+    assert not out.applied, "前提：好感评估这一轮确实失败了"
+    assert [e.text for e in out.session_record.active()] == ["下个月去北京面试"] and spy.calls == ["record"]
+
+    def state_after(llm):
         svc = AffinityService()
-        result = EvaluationPipeline().run(_ctx(_ScriptLLM(_verdict(**extra)), record=record,
-                                               storage=_SpyStorage(), svc=svc))
+        result = EvaluationPipeline().run(_ctx(llm, record=record, storage=_SpyStorage(), svc=svc))
         return result, (svc.affinity, svc.trust, svc.guard, svc.mood, svc.relation)
 
-    out, broken = state_after({rec.FIELD_ADD: "not a list", rec.FIELD_REPLACE: [{"id": "x"}]})
-    _, clean = state_after({})
-    assert out.applied and broken == clean, "本场记录坏了把好感也拖下水"
-    assert broken[1] == 32, "前提：信任确实按这一轮的判定更新了"
-    assert out.session_record is record
+    record = SessionRecord()
+    _, clean = state_after(_ScriptLLM(_verdict()))
+    for broken_llm in (_FailingRecordLLM(_verdict(), record=_BJ),
+                       _ScriptLLM(_verdict(), record={rec.FIELD_ADD: "not a list"})):
+        out, broken = state_after(broken_llm)
+        assert out.applied and broken == clean, "本场记录坏了把好感也拖下水"
+        assert out.session_record is record
+    assert clean[1] == 32, "前提：信任确实按这一轮的判定更新了"
 
-    # 本场记录这一步本身抛异常：好感照常、本场记录原样，不往外漏
-    def boom(*_a, **_kw):
-        raise RuntimeError("record step blew up")
-    monkeypatch.setattr(rec, "apply", boom)
-    out, raised = state_after({rec.FIELD_ADD: [_add("events", "下个月去北京面试", "北京面试")]})
-    assert out.applied and raised == clean and out.session_record is record
+    # 抽取回的不是 JSON：同样只丢本场记录这一轮
+    class _Prose(_ScriptLLM):
+        def chat(self, system, messages, **kw):
+            return "没有变化" if system.startswith(_RECORD_SYS) else super().chat(system, messages, **kw)
+    out, prose = state_after(_Prose(_verdict()))
+    assert out.applied and prose == clean and out.session_record is record
 
 
 def test_P3_record_ops_do_not_change_the_affinity_verdict(loop_submitter):
-    """R1 的结构面：同一份好感判定，带不带本场记录操作，好感和关系状态都一样。"""
-    def run(extra):
+    """R1 的结构面：同一份好感判定，抽取出什么本场记录，好感和关系状态都一样。"""
+    def run(record_reply):
         svc = AffinityService()
-        EvaluationPipeline().run(_ctx(_ScriptLLM(_verdict(**extra)), record=SessionRecord(),
+        EvaluationPipeline().run(_ctx(_ScriptLLM(_verdict(), record=record_reply), record=SessionRecord(),
                                       storage=_SpyStorage(), svc=svc))
         return svc.affinity, svc.relation
     assert run({}) == run({rec.FIELD_ADD: [_add("relation", "放松了些", "我也去过西湖")]})
@@ -283,8 +332,7 @@ def test_P3_record_ops_do_not_change_the_affinity_verdict(loop_submitter):
 def test_P4_one_save_point_per_turn(loop_submitter):
     """一对一：有变化时好感、本场记录各存一次；没变化时不存本场记录。群聊不存本场记录。"""
     spy = _SpyStorage()
-    EvaluationPipeline().run(_ctx(_ScriptLLM(_verdict(**{rec.FIELD_ADD: [
-        _add("events", "下个月去北京面试", "北京面试")]})), record=SessionRecord(), storage=spy))
+    EvaluationPipeline().run(_ctx(_ScriptLLM(_verdict(), record=_BJ), record=SessionRecord(), storage=spy))
     assert spy.calls == ["affinity", "record"]
 
     spy = _SpyStorage()
@@ -292,9 +340,67 @@ def test_P4_one_save_point_per_turn(loop_submitter):
     assert spy.calls == ["affinity"]
 
     spy = _SpyStorage()
-    EvaluationPipeline().run(_ctx(_ScriptLLM(_verdict(**{rec.FIELD_ADD: [
-        _add("events", "下个月去北京面试", "北京面试")]})), record=None, group_id="g1", storage=spy))
+    EvaluationPipeline().run(_ctx(_ScriptLLM(_verdict(), record=_BJ), record=None, group_id="g1", storage=spy))
     assert spy.calls == ["group"]
+
+
+def test_P5_extraction_usage_is_recorded_under_its_own_action(loop_submitter, monkeypatch):
+    import core.evaluation_pipeline as ep
+    actions: list[str] = []
+    monkeypatch.setattr(ep, "try_record_usage", lambda *a, action="", **kw: actions.append(action))
+    EvaluationPipeline().run(_ctx(_ScriptLLM(_verdict()), record=SessionRecord(), storage=_SpyStorage()))
+    assert actions == ["chat_affinity_eval", "chat_session_record"]
+
+
+def test_P6_derived_adapter_is_reused_across_turns(loop_submitter):
+    """低温适配器每个源适配器只派生一次（派生会新建客户端）；换了源适配器才重新派生。"""
+    pipe, first, second = EvaluationPipeline(), _ScriptLLM(_verdict()), _ScriptLLM(_verdict())
+    for llm in (first, first, second):
+        pipe.run(_ctx(llm, record=SessionRecord(), storage=_SpyStorage()))
+    assert first.derived == [rec.EXTRACT_TEMPERATURE] and second.derived == [rec.EXTRACT_TEMPERATURE]
+
+
+# ═══ X：抽取提示词（照抄文献的句子一字不差；视角是第三人称）════════════════════
+
+_TRANSCRIBED = (
+    # StateMem 附录 E.1（arXiv 2608.19652v1，p.14–15）
+    "Only create units for information RELEVANT to future decisions",
+    "Do NOT duplicate information already in an existing unit -- check the current state first",
+    "Keep content concise -- one clear sentence per unit",
+    'Look ACTIVELY for supersession patterns: "actually", "instead", "no longer", "switched to"',
+    "If the turn contains no new state-relevant information, or if the state already captures everything",
+    # PHASE-Tree update_session_moment.py:68 / :81 / :96 / :155（commit 0be378f）
+    "You are a character state analyst.",
+    "Do NOT fabricate events or emotions not supported by the text.",
+    "You MUST write ALL",
+    "**你必须用中文撰写所有输出内容。**",
+    # AutoPersonas（arXiv 2607.08252v1，p.45）
+    "a recurring person mention becomes a relationship only when it changes obligations, "
+    "conflicts, mutual expectations, or later reachability",
+)
+
+
+def _prompt(name="孔乙己"):
+    system, user = rec.render_extraction_prompt(SessionRecord(), char_name=name, user_message=USER_SAYS,
+                                                assistant_reply=CHAR_SAYS)
+    return system + user
+
+
+def test_X1_transcribed_rules_are_verbatim():
+    """规则是照抄的（只把 unit 换成 entry 之外不改字）—— 以后谁改写了原句，这里红。"""
+    text = _prompt().replace("entry", "unit").replace("entries", "units")
+    missing = [t for t in _TRANSCRIBED if t not in text]
+    assert not missing, missing
+
+
+def test_X2_third_person_with_names_extraction_and_second_person_only_in_the_block():
+    """P2（G2）：抽取提示词里栏名用角色名，没有「他对你」；注入给角色的块才用「你」。"""
+    text = _prompt(name="孔乙己")
+    assert "他对你" not in text and "你们关系" not in text
+    for col in rec.COLUMNS:
+        assert col.label.format(who="孔乙己") in text
+    block = rec.render_block(_one("known", "在杭州读研究生", "杭州读研究生"))
+    assert "你知道的关于对方的事" in block and "孔乙己" not in block
 
 
 # ═══ E：真引擎 + 真 PG ═══════════════════════════════════════════════════════
@@ -349,7 +455,7 @@ async def test_E1_a_record_belongs_to_its_archive_and_survives_a_restore():
     await store._ensure_initialized()
     try:
         _, cid, a, b = await _seed(store)
-        llm = _ScriptLLM(_verdict(**{rec.FIELD_ADD: [_add("known", "在杭州读研究生", "杭州读研究生")]}))
+        llm = _ScriptLLM(_verdict(), record={rec.FIELD_ADD: [_add("known", "在杭州读研究生", "杭州读研究生")]})
         live = _engine(store, llm, cid, a)
         async with main_loop_registered():
             await asyncio.to_thread(live.post_stream_process, USER_SAYS, CHAR_SAYS)
@@ -374,7 +480,7 @@ async def test_E2_the_user_never_sees_it():
     await store._ensure_initialized()
     try:
         uid, cid, a, _ = await _seed(store)
-        llm = _ScriptLLM(_verdict(**{rec.FIELD_ADD: [_add("known", "在杭州读研究生", "杭州读研究生")]}))
+        llm = _ScriptLLM(_verdict(), record={rec.FIELD_ADD: [_add("known", "在杭州读研究生", "杭州读研究生")]})
         async with main_loop_registered():
             await asyncio.to_thread(_engine(store, llm, cid, a).post_stream_process, USER_SAYS, CHAR_SAYS)
         assert "在杭州读研究生" in await store.load_session_record_unscoped(a), "前提：确实存进去了"
@@ -395,7 +501,7 @@ async def test_E3_one_turn_saves_affinity_once_and_the_record_once():
     try:
         _, cid, a, _ = await _seed(store)
         counting = _CountingStore(store)
-        llm = _ScriptLLM(_verdict(**{rec.FIELD_ADD: [_add("events", "下个月去北京面试", "北京面试")]}))
+        llm = _ScriptLLM(_verdict(), record=_BJ)
         async with main_loop_registered():
             await asyncio.to_thread(_engine(counting, llm, cid, a).post_stream_process, USER_SAYS, CHAR_SAYS)
         assert sorted(counting.calls) == ["save_affinity_state", "save_session_record"], counting.calls
@@ -411,12 +517,12 @@ async def test_E4_group_engines_never_carry_a_record():
     try:
         _, cid, a, _ = await _seed(store)
         counting = _CountingStore(store)
-        llm = _ScriptLLM(_verdict(**{rec.FIELD_ADD: [_add("events", "下个月去北京面试", "北京面试")]}))
+        llm = _ScriptLLM(_verdict(), record=_BJ)
         eng = _engine(counting, llm, cid, group_id=_uid("g"))
         eng.load_session_record(_one("events", "下个月去北京面试", "北京面试"))  # 装进去也不用
         async with main_loop_registered():
             await asyncio.to_thread(eng.post_stream_process, USER_SAYS, CHAR_SAYS)
-        assert "本场记录更新规则" not in llm.prompts[0]
+        assert llm.record_calls == [], "群聊不该有抽取调用"
         assert rec.BLOCK_TITLE not in eng._build_all_enhancements()
         assert "save_session_record" not in counting.calls
     finally:
