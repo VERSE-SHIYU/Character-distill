@@ -1,6 +1,6 @@
 """目标检查：永久删除存档 / 卡 / 群 / 书时，它的长期记忆跟着删；别的不受影响。
 
-spec：`docs/specs/memory-delete-cascade.md` §5。真接口 + 真存储（sqlite）+ 真 mem0 加本地 qdrant；
+spec：`docs/specs/memory-delete-cascade.md` §5。真接口 + 真存储（PG，测试库；线上只用 PG）+ 真 mem0 加本地 qdrant；
 embedding 用确定性替身，不调任何模型。每条检查都从用户真正点的那个接口进去。
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ import uuid
 os.environ.setdefault("MEM0_TELEMETRY", "False")
 
 import pytest  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
 import mem0.embeddings.openai as _m0_embed  # noqa: E402
 import mem0.llms.openai as _m0_llm  # noqa: E402
 from pwdlib import PasswordHash  # noqa: E402
@@ -25,9 +25,11 @@ import server  # noqa: E402
 from core.memory_manager import MemoryManager  # noqa: E402
 from core.memory_scope import MemoryScope  # noqa: E402
 from routers.auth import _create_access_token, get_jwt_secret  # noqa: E402
-from storage.sqlite_store import SQLiteStore  # noqa: E402
+from conftest import PG_ENV, TEST_DATABASE_URL  # noqa: E402
+from storage.postgres_store import PostgresStore  # noqa: E402
 
 DIM = 1024
+pytestmark = PG_ENV.skipif("PG 删除清记忆目标检查")
 _PW = PasswordHash.recommended().hash("Pass1234")
 
 
@@ -65,50 +67,57 @@ class _UserLLM:
         return self
 
 
-def _run(coro):
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
-
-
 class Env:
-    """一个用户 + 真存储 + 真记忆库 + 真接口。"""
+    """一个用户 + 真存储（PG）+ 真记忆库 + 真接口。
+
+    asyncpg 的连接池绑定建它的 loop（`tests/test_comment_likes.py` `_app` 的说明）：这里每个
+    Env 自带**一个** loop，建池、造数据、发请求都在它上面跑。
+    """
 
     def __init__(self, tmp_path, monkeypatch):
-        self.store = SQLiteStore(str(tmp_path / "del.db"))
+        self.loop = asyncio.new_event_loop()
+        self.store = PostgresStore(TEST_DATABASE_URL)
+        self.run(self.store._ensure_initialized())
         self.uid = f"usr_{uuid.uuid4().hex[:12]}"
-        _run(self.store.create_user(self.uid, "删除检查用户", _PW))
+        self.run(self.store.create_user(self.uid, f"删除检查{self.uid[-6:]}", _PW))
         self.manager = MemoryManager({}, db_dir=tmp_path / "mem0_db")
         self.view = self.manager.for_user(user_id=self.uid, llm=_UserLLM(), embedding_key="sk-emb-x")
         monkeypatch.setattr(deps, "_storage", self.store)
         self.current_manager = self.manager          # 换成 None = 记忆系统没开
         server.app.dependency_overrides[deps.get_memory_manager] = lambda: self.current_manager
         deps.get_sessions().clear()
-        self.client = TestClient(server.app, raise_server_exceptions=False)
+        self.client = AsyncClient(transport=ASGITransport(app=server.app, raise_app_exceptions=False),
+                                  base_url="http://test")
         self.h = {"Authorization": f"Bearer {_create_access_token(self.uid, '删除检查用户', get_jwt_secret())}"}
+
+    def run(self, coro):
+        return self.loop.run_until_complete(coro)
+
+    def close(self):
+        self.run(self.client.aclose())
+        self.run(self.store.close())
+        self.loop.close()
 
     # ── 造数据 ──
     def text(self) -> str:
         tid = f"txt_{uuid.uuid4().hex[:12]}"
-        _run(self.store.save_text(tid, "src.txt", "正文", user_id=self.uid))
+        self.run(self.store.save_text(tid, "src.txt", "正文", user_id=self.uid))
         return tid
 
     def card(self, text_id: str | None = None) -> str:
         cid = f"card_{uuid.uuid4().hex[:12]}"
         name = f"角色{cid[-6:]}"                      # 同一本书里角色名不能重复
-        assert _run(self.store.save_card(cid, text_id or self.text(), name, '{"name": "%s"}' % name, self.uid))
+        assert self.run(self.store.save_card(cid, text_id or self.text(), name, '{"name": "%s"}' % name, self.uid))
         return cid
 
     def archive(self, card_id: str) -> str:
         sid = uuid.uuid4().hex[:12]
-        _run(self.store.save_session(sid, card_id, "user", "", user_id=self.uid))
+        self.run(self.store.save_session(sid, card_id, "user", "", user_id=self.uid))
         return sid
 
     def group(self, card_ids: list[str]) -> str:
         gid = f"grp_{uuid.uuid4().hex[:12]}"
-        _run(self.store.create_group_session(gid, "群", card_ids, user_id=self.uid))
+        self.run(self.store.create_group_session(gid, "群", card_ids, user_id=self.uid))
         return gid
 
     def remember(self, scope: MemoryScope, n: int) -> MemoryScope:
@@ -129,12 +138,12 @@ class Env:
         return self.count(MemoryScope.whole_card(card_id))
 
     def delete(self, url: str, expect: int = 200):
-        r = self.client.delete(url, headers=self.h)
+        r = self.run(self.client.delete(url, headers=self.h))
         assert r.status_code == expect, f"{url} → {r.status_code} {r.text}"
         return r
 
     def post(self, url: str, expect: int = 200):
-        r = self.client.post(url, headers=self.h)
+        r = self.run(self.client.post(url, headers=self.h))
         assert r.status_code == expect, f"{url} → {r.status_code} {r.text}"
         return r
 
@@ -149,6 +158,7 @@ def env(tmp_path, monkeypatch):
         yield e
     finally:
         server.app.dependency_overrides.pop(deps.get_memory_manager, None)
+        e.close()
 
 
 # ═══ D1 永久删一个存档：只清这个存档的 ═══════════════════════════════════════
@@ -189,8 +199,8 @@ def test_D2_purging_the_trash_clears_every_trashed_archive(env):
     assert r.json()["purged"] == 2
     assert env.count(sa) == 0 and env.count(sb) == 0, "清空回收站后存档的记忆还在"
     assert env.count(sc) == 2, "清空回收站把没删的存档的记忆也清了"
-    assert _run(env.store.get_session_unscoped(a)) is None and _run(env.store.get_session_unscoped(b)) is None
-    assert _run(env.store.get_session_unscoped(c)) is not None
+    assert env.run(env.store.get_session_unscoped(a)) is None and env.run(env.store.get_session_unscoped(b)) is None
+    assert env.run(env.store.get_session_unscoped(c)) is not None
 
 
 # ═══ D3 永久删一张卡：它的全部记忆都清 ═══════════════════════════════════════
@@ -255,7 +265,7 @@ def test_D5b_deleting_a_book_but_keeping_cards_keeps_their_memories(env):
     s = env.remember(MemoryScope.archive(card, env.archive(card)), 2)
     env.delete(f"/api/text/{book}?keep_cards=true")
     env.delete(f"/api/text/{book}/permanent?keep_cards=true")
-    assert _run(env.store.get_card_unscoped(card)) is not None, "前提破了：留卡删书后卡不在了"
+    assert env.run(env.store.get_card_unscoped(card)) is not None, "前提破了：留卡删书后卡不在了"
     assert env.count(s) == 2, "留卡删书把卡的记忆清了"
 
 
@@ -269,9 +279,9 @@ def test_D5c_keeping_cards_only_at_the_permanent_step_keeps_their_memories(env):
     card = env.card(book)
     s = env.remember(MemoryScope.archive(card, env.archive(card)), 2)
     env.delete(f"/api/text/{book}")                               # 不留卡：卡还挂在书上
-    assert _run(env.store.get_card_unscoped(card))["text_id"] == book, "前提破了：卡已经不挂在书上"
+    assert env.run(env.store.get_card_unscoped(card))["text_id"] == book, "前提破了：卡已经不挂在书上"
     env.delete(f"/api/text/{book}/permanent?keep_cards=true")     # 这一步才选留卡
-    assert _run(env.store.get_card_unscoped(card)) is not None, "前提破了：留卡删书后卡不在了"
+    assert env.run(env.store.get_card_unscoped(card)) is not None, "前提破了：留卡删书后卡不在了"
     assert env.count(s) == 2, "永久删除时选了留卡，卡的记忆却被清了"
 
 
@@ -286,19 +296,34 @@ def test_D6_a_failed_cleanup_leaves_the_archive_in_the_trash(env, monkeypatch):
     real = env.manager.delete_all
     monkeypatch.setattr(env.manager, "delete_all", lambda scope: False)   # 记忆库这一刻删不动
     env.delete(f"/api/history/{a}/permanent", expect=500)
-    row = _run(env.store.get_session_unscoped(a))
+    row = env.run(env.store.get_session_unscoped(a))
     assert row is not None and row.get("deleted_at"), "记忆没清掉，存档行却删了（记忆从此找不回来）"
     assert env.count(sa) == 2
 
     monkeypatch.setattr(env.manager, "delete_all", real)                  # 重试
     env.delete(f"/api/history/{a}/permanent")
-    assert env.count(sa) == 0 and _run(env.store.get_session_unscoped(a)) is None
+    assert env.count(sa) == 0 and env.run(env.store.get_session_unscoped(a)) is None
 
 
-def test_D7_deleting_still_works_with_memory_switched_off(env):
+def test_D7_deleting_still_works_with_memory_switched_off(env, tmp_path):
+    """记忆系统没开 = 配置 `memory.enabled: false`。线上 `get_memory_manager` 从不返回 None，
+    关掉时给的是一个 `enabled` 为假的管理器（它的 `delete_all` 返回 False）——
+    测 None 测不到「关着时把 False 当成清失败、挡住删除」这种错。"""
     card = env.card()
     a = env.archive(card)
     env.delete(f"/api/history/{a}")
-    env.current_manager = None
+    env.current_manager = MemoryManager({"enabled": False}, db_dir=tmp_path / "mem0_off")
     env.delete(f"/api/history/{a}/permanent")
-    assert _run(env.store.get_session_unscoped(a)) is None
+    assert env.run(env.store.get_session_unscoped(a)) is None
+
+
+def test_D8_hard_delete_requires_memory_with_no_default():
+    """spec §4.1：`memory` 必填、没有默认值 —— 以后新加的永久删除入口忘了传，当场 TypeError，
+    而不是悄悄不清记忆。给它一个默认值，这条就红。"""
+    import inspect
+
+    from core.trash_service import hard_delete
+
+    param = inspect.signature(hard_delete).parameters["memory"]
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY
+    assert param.default is inspect.Parameter.empty

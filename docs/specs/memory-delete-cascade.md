@@ -105,7 +105,7 @@ web/routers/text.py:430:    ok = await hard_delete("text", text_id, user, storag
 
 文件 `tests/test_memory_delete_goal.py`。随 spec 附了我在沙箱跑通的原型，可以直接用，也可以改；改了要在报告里说明。
 
-做法：真接口（`TestClient`）+ 真存储（sqlite）+ 真 mem0 加本地 qdrant，embedding 用确定性替身，不调模型。每条都从用户真正点的那个接口进去。
+做法：真接口（`AsyncClient` + `ASGITransport`）+ 真存储（PG 测试库；线上只用 PG）+ 真 mem0 加本地 qdrant，embedding 用确定性替身，不调模型。每条都从用户真正点的那个接口进去。
 
 | 检查 | 接口 | 要成立的 |
 |---|---|---|
@@ -117,11 +117,12 @@ web/routers/text.py:430:    ok = await hard_delete("text", text_id, user, storag
 | D5b | 同上，带 `keep_cards=true` | 卡还在，记忆不变 |
 | D5c | 进回收站时不带 `keep_cards`，永久删除时带 `keep_cards=true` | 卡还在，记忆不变 |
 | D6 | 存档永久删除，记忆库这一刻删不动 | 返回 500；存档行还在回收站；记忆没少；恢复正常后重试成功 |
-| D7 | 存档永久删除，记忆系统没开 | 照样删成功 |
+| D7 | 存档永久删除，记忆系统没开（配置 `enabled: false` 的管理器；线上 `get_memory_manager` 从不返回 None） | 照样删成功 |
+| D8 | `hard_delete` 的签名 | `memory` 仅限关键字、没有默认值 |
 
 调用点 × 检查：F2 的 6 处和 F3 的 1 处，每处至少被一条检查从接口打到（存档两处 D1，卡两处 D3，群 D4，书 D5/D5b/D5c，清空回收站 D2）。
 
-沙箱结果：未改代码 **8 failed, 3 passed**（D5b、D5c、D7 本来就该绿）；按第 4 节改完 **11 passed**。
+沙箱结果（PG）：未改代码 **9 failed, 3 passed**（D5b、D5c、D7 本来就该绿）；按第 4 节和 §10 改完 **12 passed**。
 
 ## 6. 规模
 
@@ -129,8 +130,8 @@ web/routers/text.py:430:    ok = await hard_delete("text", text_id, user, storag
 
 ## 7. 提交顺序
 
-1. spec + 目标检查（跑出 8 failed, 3 passed）。
-2. 存储层新方法 + `trash_service` + 7 处接口 + 第 4.4 节的两处测试（跑出 11 passed）。
+1. spec + 目标检查（跑出 9 failed, 3 passed）。
+2. 存储层新方法 + `trash_service` + 7 处接口 + 第 4.4 节的两处测试（跑出 12 passed）。
 
 ## 8. 测试
 
@@ -155,6 +156,29 @@ tests/test_ownership_404.py
 3. 这两条的真实输出：
    ```
    git grep -n -E 'hard_delete\(' -- web core          # 每一处都应带 memory=
-   git grep -n -E 'storage\.purge_trash\(' -- web core   # 应为空
+   git grep -n -E 'purge_trash' -- core storage/base.py storage/postgres_store.py tests   # 应为空（§10 ②）
    ```
 4. 和 spec 不一致的地方；面外发现只列不修。
+
+## 10. 补充：复核与结构核对（2026-10-11，head `2d2d2ff`）
+
+复核方（另一个会话）在沙箱实跑：真 mem0 + 本地 qdrant + PG16 测试库。全量：分支 3489 passed、main（`33c5173`）3476 passed，两边都是 0 failed。自补变异 14 条，3 条存活，都是目标检查的缺口，不是实现偏离 spec。Tracy 10-11 又要求按「不打补丁、隔离、抽象、复用、高内聚低耦合」核对代码，查出 3 处结构问题。一共 6 处，下表每一处都写了根因：
+
+| # | 问题（读过的行，`2d2d2ff`） | 根因 | 改法 |
+|---|---|---|---|
+| ① | 目标检查跑在 SQLite 上（`SQLiteStore(...)`）；把 PG 版 `get_text_card_ids` 改成只取未删的卡，没有检查变红 | 目标检查的存储和线上不是同一套，线上只用 PG（Tracy 10-11 定） | 存储换 `PostgresStore(TEST_DATABASE_URL)`。asyncpg 连接池绑定建它的 loop，所以每个 Env 自带一个 loop，造数据和发请求都在这个 loop 上（`AsyncClient` + `ASGITransport`），做法同 `tests/test_comment_likes.py:192–205` |
+| ② | D7 把管理器换成 `None`；线上 `get_memory_manager`（`web/deps.py:240–245`）从不返回 None，记忆关着时给的是 `enabled` 为假的管理器。把 `_purge_memory` 的 `or not memory.enabled` 去掉，没有检查变红 | 测的是线上不会出现的状态 | D7 改用 `MemoryManager({"enabled": False}, ...)` |
+| ③ | §4.1 写了「`memory` 故意没有默认值」，给它默认值 `None`，没有检查变红 | 设计上的保证没有检查守着 | 新增 D8：`inspect.signature(hard_delete)` 的 `memory` 仅限关键字、没有默认值 |
+| ④ | 同一个实体的永久删除知识分在两张表：`ENTITY_MAP`（`core/trash_service.py:38`）管怎么删，`MEMORY_SCOPES`（`:114`）管清哪些记忆；注释写着「两张表各加一行」（`:83`） | 一个实体的职责拆在两处。漏加第二张表时导入不报错，要到运行时 `MEMORY_SCOPES[entity_type]`（`:135`）才 `KeyError` | 删掉 `MEMORY_SCOPES`；四个解析函数挪到 `ENTITY_MAP` 上方，作为每个条目的第六个槽 `memory_scopes`；`_purge_memory` 从 `_get_entity_config(...)["memory_scopes"]` 取；`ENTITY_MAP` 的说明里补一句：这个槽不是 storage 方法。以后新增一类实体只加一个条目 |
+| ⑤ | 存储层 `purge_trash` 已经没有线上调用方，但还留在基类（`storage/base.py:493`）和 PG（`storage/postgres_store.py:1655–1670`）；`user_id` 为空时删全站回收站（`:1664–1667`）。测试 `tests/test_e2e_flow.py:215`、`:283` 正是这样调的，在共用的测试库里会删掉别的用例留在回收站里的数据 | 留着一条绕过清记忆的永久删除路 | 删掉基类和 PG 的 `purge_trash`；那两处测试改成 `assert await store.hard_delete_session(session_id) is True`。SQLite 那份按 Tracy 的规矩不动（它不再是抽象方法的实现，留着无害） |
+| ⑥ | 「清空回收站 = 回收站里每个存档走一次 `hard_delete`」写在路由里（`web/routers/history.py:81–84`） | 业务规则放在 web 层，和它依赖的 `hard_delete` 不在同一个模块 | `core/trash_service.py` 新增 `empty_trash(user, storage, *, memory) -> int`，路由只调它 |
+
+不改的（核过，带理由）：
+
+- `get_text_card_ids` 和删书那条 `DELETE FROM cards WHERE text_id = ?` 用同一个条件，而且只有这一个条件。清记忆必须在删行之前（§1「清不掉就不删」），所以只能先取一次。「含回收站里的卡」这一点由 PG 上的 D5 守着。
+- 7 个接口各自用 `Depends(get_memory_manager)` 注入，和注入存储是同一种写法；core 不反过来依赖 web。
+
+改完后复核方在沙箱的结果：目标检查在未改实现的代码（`f8e8e42`）上 9 failed、3 passed，改完 12 passed；受影响的 7 个文件（本节的 5 个 + `tests/test_e2e_flow.py` + `tests/test_storage.py`）287 passed；15 条变异（放宽、过严两个方向，含按新结构补的「群的槽指错」「卡的槽给空」）全红。全量 3488 passed、0 failed：比改前的分支（3489）少 1 条，原因是多了 D8，又少了 `tests/test_storage_contract_shape.py` 里 `purge_trash` 的两条参数化签名用例（PG、SQLite 各一条；方法已不在基类上），+1−2。
+
+以后要改几处：新增一类能永久删除的东西 → `ENTITY_MAP` 加一个条目；新增一个永久删除的入口 → 调 `hard_delete`（不传 `memory` 就当场 `TypeError`）。
+
