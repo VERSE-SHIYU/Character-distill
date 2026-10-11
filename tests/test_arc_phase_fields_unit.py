@@ -518,7 +518,11 @@ def test_export_field_names_come_from_registry(monkeypatch):
 # ── U16/U17 关系分批 ────────────────────────────────────────────────────
 
 def test_relationship_batch_splits_and_merges():
-    """U16：23 人 → 3 批，每批 ≤10，全部汇总、顺序稳定。"""
+    """U16：23 人 → 3 批，每批 ≤10，全部汇总、顺序稳定。
+
+    批间并行，哪一批先被调用不固定，所以只比各批的人数、不比先后；汇总结果的顺序由最后
+    一条断言守。
+    """
     from core.relationship_batch import batch_relationships, REL_BATCH_SIZE
 
     assert REL_BATCH_SIZE == 10
@@ -531,7 +535,7 @@ def test_relationship_batch_splits_and_merges():
 
     out = batch_relationships(targets, ["阶段一", "阶段二"],
                               stream_call=fake_call, prefix="前缀", name="主角")
-    assert [len(c) for c in calls] == [10, 10, 3]
+    assert sorted(len(c) for c in calls) == [3, 10, 10]
     assert [r["target"] for r in out] == targets
 
 
