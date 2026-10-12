@@ -564,6 +564,25 @@ class MemoryView:
 
         C.ctx_thread(_do_reflect, daemon=True).start()  # context 传播点：反思线程
 
+    def update_metadata(self, memory_id: str, metadata: dict, scope: MemoryScope) -> bool:
+        """只合并元数据，文本不变（mem0 ``update(metadata=...)``）。
+
+        先核对这条记忆属于 ``scope``：不属于就不改，返回 False —— 归属只在这里判，调用方不碰。
+        mem0 会用原文本重算一次向量、记一条历史（spec ``time-event-asked.md`` §2 第 7 条）。
+        """
+        if not self.enabled:
+            return False
+        try:
+            item = self._mem.get(memory_id)
+            if not item or any(item.get(k) != v for k, v in scope.filters().items()):
+                logger.warning("Mem0 update_metadata refused: %s is not in %s", memory_id, scope)
+                return False
+            self._mem.update(memory_id=memory_id, metadata=metadata)
+            return True
+        except Exception as exc:
+            logger.warning("Mem0 update_metadata failed: %s", exc, exc_info=True)
+            return False
+
     def update(self, memory_id: str, text: str) -> bool:
         """更新一条记忆的内容。"""
         if not self.enabled:

@@ -186,7 +186,7 @@ def test_T4c_group_without_embedding_key_builds_no_rag(client, store, user, monk
 
     resp = client.post("/api/group/create", json={"card_ids": card_ids}, headers=_token(user))
     assert resp.status_code == 200, f"{resp.status_code} {resp.text}"
-    gid = resp.json()["group_id"]
+    gid = resp.json()["group"]["id"]
     try:
         engines = deps.get_group_sessions()[gid].engines
         assert engines and all(e.rag is None for e in engines.values())

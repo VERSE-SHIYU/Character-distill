@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 
 import time
-import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -210,18 +209,20 @@ class EvaluationPipeline:
             evt = time_event.get("event", "")
             when_text = time_event.get("when_text", "")
             due_at = time_event.get("due_at", "")
-            event_id = uuid.uuid4().hex[:16]
-            ctx.memory.add_manual(
+            # 事件的身份就是这条记忆的 id，不另生成（spec time-event-asked.md §3 根因 2）
+            saved = ctx.memory.add_manual(
                 f"对方提到「{evt}」（{when_text}），大约在{due_at}。",
                 metadata={
                     "type": "time_event",
-                    "event_id": event_id,
                     "event": evt,
                     "when_text": when_text,
                     "due_at": due_at,
                 },
             )
-            print(f"[EvaluationPipeline] Saved time_event: {evt} at {due_at} (id={event_id})")
+            if saved:
+                print(f"[EvaluationPipeline] Saved time_event: {evt} at {due_at}")
+            else:
+                logger.warning("Save time_event failed: %s at %s", evt, due_at)
         except Exception as exc:
             logger.warning("Save time_event failed: %s", exc, exc_info=True)
 

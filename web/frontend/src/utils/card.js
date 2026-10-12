@@ -33,3 +33,34 @@ export function parseCardJson(card) {
   }
   return out
 }
+
+/** 「没选 = 最后阶段」的前端唯一一处。卡没有阶段 → null；`arcPhase` 在 1..n 内取它，否则取 n。 */
+export function effectiveArcPhase(card, arcPhase) {
+  const n = (parseCardJson(card)?.character_arc?.phases || []).length
+  if (!n) return null
+  return arcPhase >= 1 && arcPhase <= n ? arcPhase : n
+}
+
+/** 阶段文字的唯一一处：`阶段 k`（给 n 时 `阶段 k/n`），有 label 加 ` · label`。 */
+export function phaseHeader(k, label, n) {
+  return `阶段 ${k}${n ? `/${n}` : ''}${label ? ` · ${label}` : ''}`
+}
+
+/** 阶段文字：`阶段 k/n`（有 label 时加 ` · label`）；无阶段 → 空串。**不看 selectable**。 */
+export function arcPhaseDisplay(card, arcPhase) {
+  const phases = parseCardJson(card)?.character_arc?.phases || []
+  const k = effectiveArcPhase(card, arcPhase)
+  if (k == null) return ''
+  return phaseHeader(k, phases[k - 1]?.label, phases.length)
+}
+
+/** 下拉选项（`common/Select` 收字符串 value）：卡不可选（`selectable` 不为真）或无阶段 → `[]`。 */
+export function arcPhaseOptions(card) {
+  const arc = parseCardJson(card)?.character_arc
+  if (!arc?.selectable) return []
+  return (arc.phases || []).map((p, i) => ({
+    value: String(i + 1),
+    label: phaseHeader(i + 1, p?.label),
+  }))
+}
+

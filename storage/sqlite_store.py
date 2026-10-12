@@ -25,6 +25,7 @@ except ModuleNotFoundError:
 
 from core.roles import ROLES
 from .base import InviteCodeUnavailable, StorageBase, StoreError
+from .group_row import GROUP_SESSION_SELECT, decode_group_row, group_insert_values
 from .secret_box import decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(__name__)
@@ -161,6 +162,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "101_cards_examples_pending.sql",
     # 102：PG 037 新增列的孪生，同上。
     "102_session_record.sql",
+    # 103：PG 038 新增列的孪生，同上。
+    "103_group_member_phases.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -2409,17 +2412,21 @@ class SQLiteStore(StorageBase):
         user_persona_card_id: str = "",
         user_persona_name: str = "",
         user_persona_desc: str = "",
+        member_phases: dict[str, int] | None = None,
     ) -> None:
         try:
+            values = group_insert_values(
+                id=id, name=name, card_ids=card_ids, user_id=user_id,
+                user_persona_type=user_persona_type, user_persona_card_id=user_persona_card_id,
+                user_persona_name=user_persona_name, user_persona_desc=user_persona_desc,
+                member_phases=member_phases,
+            )
+            cols = ", ".join(values)
+            placeholders = ", ".join("?" * len(values))
             async with await self._connect() as conn:
                 await conn.execute(
-                    """INSERT INTO group_sessions (id, name, card_ids, user_id,
-                       user_persona_type, user_persona_card_id,
-                       user_persona_name, user_persona_desc)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (id, name, json.dumps(card_ids), user_id,
-                     user_persona_type, user_persona_card_id,
-                     user_persona_name, user_persona_desc),
+                    f"INSERT INTO group_sessions ({cols}) VALUES ({placeholders})",
+                    tuple(values.values()),
                 )
                 await conn.commit()
         except Exception as exc:
@@ -2436,14 +2443,14 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data FROM group_sessions WHERE id = ?",
+                    f"SELECT {GROUP_SESSION_SELECT} FROM group_sessions WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
             if row is None:
                 return None
             d = self._row_to_dict(row)
-            d["card_ids"] = json.loads(d["card_ids"])
+            decode_group_row(d)
             return d
         except Exception as exc:
             print(f"[SQLiteStore] Get group session (unscoped) failed: {exc}")
@@ -2454,14 +2461,14 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data FROM group_sessions WHERE id = ? AND user_id = ?",
+                    f"SELECT {GROUP_SESSION_SELECT} FROM group_sessions WHERE id = ? AND user_id = ?",
                     (id, user_id),
                 )
                 row = await cursor.fetchone()
             if row is None:
                 return None
             d = self._row_to_dict(row)
-            d["card_ids"] = json.loads(d["card_ids"])
+            decode_group_row(d)
             return d
         except Exception as exc:
             print(f"[SQLiteStore] Get group session (owned) failed: {exc}")
@@ -2471,10 +2478,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT id, name, card_ids, user_id, created_at,
-                              user_persona_type, user_persona_card_id,
-                              user_persona_name, user_persona_desc,
-                              user_avatar_data
+                    f"""SELECT {GROUP_SESSION_SELECT}
                        FROM group_sessions
                        WHERE user_id = ? AND (deleted_at IS NULL OR deleted_at = '')
                        ORDER BY created_at DESC""",
@@ -2484,7 +2488,7 @@ class SQLiteStore(StorageBase):
             results = []
             for row in rows:
                 d = self._row_to_dict(row)
-                d["card_ids"] = json.loads(d["card_ids"])
+                decode_group_row(d)
                 results.append(d)
             return results
         except Exception as exc:
@@ -2492,6 +2496,8 @@ class SQLiteStore(StorageBase):
             raise
 
     async def get_deleted_group_sessions(self, user_id: str) -> list[dict]:
+        # 回收站列表是精简投影：只显示名称与删除时间，**故意**不带 member_phases /
+        # user_persona_* / user_avatar_data，所以不引用 `GROUP_SESSION_SELECT`。
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
@@ -2505,7 +2511,7 @@ class SQLiteStore(StorageBase):
             results = []
             for row in rows:
                 d = self._row_to_dict(row)
-                d["card_ids"] = json.loads(d["card_ids"])
+                decode_group_row(d)
                 results.append(d)
             return results
         except Exception as exc:

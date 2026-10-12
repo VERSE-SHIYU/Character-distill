@@ -480,10 +480,6 @@ html.theme-midnight::before {
   box-shadow: 0 4px 16px rgba(12, 8, 18, 0.22);
 }
 
-.theme-midnight .market-card-v2:hover,
-.theme-galaxy .market-card-v2:hover {
-  box-shadow: 0 8px 24px rgba(12, 8, 18, 0.28);
-}
 
 /* Midnight — button hover 只给 shadow 不给 scale */
 .theme-midnight .btn-primary:hover,
@@ -1706,14 +1702,7 @@ html.theme-aurora::before {
     pointer-events: auto;
   }
 
-  .main-panel {
-    margin: 0;
-    border-radius: 0;
-  }
 
-  .app-shell.has-sidebar-open .main-panel {
-    margin-left: 0;
-  }
 
   .messages-layout {
     border-radius: 0;
@@ -2022,9 +2011,6 @@ label[for] {
   color: var(--text);
 }
 .page-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   flex-shrink: 0;
 }
 .page-header-back {
@@ -2176,7 +2162,6 @@ label[for] {
 }
 
 .home-empty-icon {
-  font-size: 48px;
   margin-bottom: 14px;
 }
 
@@ -2402,10 +2387,6 @@ label[for] {
   color: var(--pill-text);
 }
 
-.home-no-chars {
-  text-align: center;
-  padding: 20px;
-}
 
 .home-no-chars p {
   font-size: 13px;
@@ -4515,7 +4496,6 @@ label[for] {
 
 
 /* Old chat-topbar styles preserved for reference (unused) */
-.chat-voice-indicator { display: none; }
 .chat-web-search-ctl { display: none; }
 .chat-font-size-ctl { display: none; }
 .chat-font-btn { display: none; }
@@ -6448,8 +6428,6 @@ label[for] {
 
 .btn-sm {
   height: 32px;
-  padding: 0 14px;
-  font-size: 13px;
 }
 
 .btn-ghost-sm {
@@ -6590,17 +6568,7 @@ label[for] {
 }
 
 /* Toggle switch */
-.voice-toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
 
-.voice-toggle-label {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text);
-}
 
 .voice-toggle {
   position: relative;
@@ -7387,23 +7355,8 @@ label[for] {
 
 .modal-textarea {
   width: 100%;
-  padding: 12px 14px;
-  border: 1px solid var(--input-border);
-  border-radius: var(--input-radius);
-  background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(12px) saturate(160%);
-  -webkit-backdrop-filter: blur(12px) saturate(160%);
-  font: 13px/1.5 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-  color: var(--text);
-  outline: none;
-  resize: vertical;
-  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.modal-textarea:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15);
-}
 
 .modal-input::placeholder {
   color: var(--text-dim);
@@ -12779,9 +12732,10 @@ label[for] {
   margin: 0 16px;
 }
 
-.group-member-item { display: flex; align-items: center; gap: 8px; }
-.group-member-name { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-display); }
-.group-member-identity { display: block; font-size: 11px; color: var(--text-dim); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.group-member-item { border-bottom: 1px solid var(--glass-border); transition: background 0.15s; cursor: pointer; }
+.group-member-item:hover { background: rgba(var(--accent-rgb), 0.04); }
+.group-member-name { display: block; font-size: 15px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-display); }
+.group-member-identity { display: block; font-size: 13px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .group-member-affinity { display: block; font-size: 11px; color: var(--text-dim); margin-top: 1px; }
 
 /* History panel inside right sidebar */
@@ -13286,44 +13240,12 @@ label[for] {
   color: var(--accent);
 }
 
-/* ── Group Chat Layout Overrides (enhanced UI) ── */
-.private-chat.group-chat-layout {
-  flex-direction: row;
-  align-items: stretch;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-
 .group-chat-main {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
   min-height: 0;
-}
-
-.group-chat-layout .private-chat-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 0;
-  gap: 0;
-}
-.group-chat-layout .group-chat-messages-area {
-  padding: 16px 20px 48px;
-  gap: 18px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  flex: 1;
-  min-width: 0;
-  background: rgba(255,255,255,0.04);
-}
-/* Dark adjustments shim（聊天覆盖区，同上：只减不增） */
-.theme-midnight .group-chat-layout .group-chat-messages-area,
-.theme-galaxy .group-chat-layout .group-chat-messages-area {
-  background: rgba(0,0,0,0.08);
 }
 
 /* ── ChatBubble — shared component (cbubble) ─────────────────── */
@@ -13496,12 +13418,6 @@ label[for] {
   --cbubble-bg: color-mix(in srgb, var(--accent) 42%, #3a3240);
   --cbubble-color: #fff;
 }
-/* Target selector chips (also used in create modal) */
-.group-chat-layout .group-target-chip {
-  padding: 5px 12px;
-  font-size: 13px;
-}
-
 /* Auto conversation banner */
 .group-auto-banner {
   display: flex;
@@ -13542,60 +13458,6 @@ label[for] {
   animation: group-auto-pulse 1.2s ease-in-out infinite;
 }
 
-
-/* Member panel refinements */
-.group-chat-layout .group-members-panel {
-  width: 220px;
-  padding: 16px;
-  gap: 10px;
-  background: var(--glass-bg);
-}
-.group-chat-layout .group-members-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--glass-border);
-  letter-spacing: 0.3px;
-}
-.group-chat-layout .group-member-item {
-  padding: 8px 10px;
-  border-radius: 10px;
-  gap: 10px;
-  transition: background 0.15s;
-  cursor: default;
-  border-bottom: 1px solid var(--glass-border);
-}
-.group-chat-layout .group-member-item:hover {
-  background: rgba(var(--accent-rgb), 0.04);
-}
-.group-chat-layout .group-member-info {
-  flex: 1;
-  min-width: 0;
-}
-.group-chat-layout .group-member-name {
-  font-size: 15px;
-  font-weight: 600;
-  display: block;
-}
-.group-chat-layout .group-member-identity {
-  font-size: 13px;
-  color: var(--text-dim);
-  display: block;
-  margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-@media (max-width: 900px) {
-  .group-chat-layout .group-members-panel { width: 220px; }
-}
-@media (max-width: 768px) {
-  .group-chat-layout .group-members-panel { display: none; }
-}
 
 /* ── Director Mode: Narration Note (world-building sticky note) ── */
 .narration-note {
@@ -13809,15 +13671,20 @@ label[for] {
   padding: 4px;
 }
 
-.group-create-card {
+/* 群聊里「头像 + 文字 + 右侧控件」的行布局：建群卡片、时期行、成员条目共用；各自的交互另写 */
+.group-row {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
   border-radius: 6px;
+  font-size: 14px;
+}
+
+/* 可点选卡片的交互（只有第 1 步的角色卡有） */
+.group-create-card {
   cursor: pointer;
   transition: background 0.15s;
-  font-size: 14px;
 }
 
 .group-create-card:hover {
@@ -13861,7 +13728,7 @@ label[for] {
   border-color: var(--accent);
 }
 
-.group-create-card-info {
+.group-row-info {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -14156,15 +14023,6 @@ label[for] {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-.mine-profile-name {
-  font-size: var(--text-h3);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .mine-edit-icon {
   display: inline-flex;
@@ -17941,7 +17799,6 @@ label[for] {
   flex-direction: column;
 }
 .reader-dark .reader-toc-drawer {
-  background: #1a1a1a;
   color: #d4d4d4;
 }
 .reader-toc-drawer.open {
@@ -18702,12 +18559,6 @@ label[for] {
   /* ── Bubble max-width: relax to 78% ── */
   .cbubble-col {
     max-width: 78%;
-  }
-
-  /* ── Group chat messages: edge-to-edge ── */
-  .group-chat-layout .group-chat-messages-area {
-    padding: 12px 0 80px;
-    gap: 12px;
   }
 
   /* ── Private message body: extra bottom for sticky input bar ── */

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { postJSON, streamSSE, fetchWithTimeout, getToken, setToken, removeToken, setRefreshToken, removeAuth } from '../api/client'
-import { parseCardJson } from '../utils/card'
+import { parseCardJson, effectiveArcPhase } from '../utils/card'
 import { resolveOpeningMessages } from './openingMessage'
 import { TERMS_VERSION, PRIVACY_VERSION } from '../legal/versions'
 import { checkRepeat } from '../utils/repeatGuard'
@@ -348,10 +348,7 @@ const useAppStore = create((set, get) => {
     const v = get().getCardPref('arcPhasesByCard', cardId)
     return v == null ? null : v
   },
-  defaultArcPhase: (card) => {
-    const phases = parseCardJson(card)?.character_arc?.phases || []
-    return phases.length ? phases.length : null
-  },
+  defaultArcPhase: (card) => effectiveArcPhase(card, null),
   /** 建会话请求体：只此一处（S3）。可按的卡带选中的（未选过用最后阶段）；不可按的不带。 */
   startSessionBody: (card) => {
     const cardId = card.id || card.card_id

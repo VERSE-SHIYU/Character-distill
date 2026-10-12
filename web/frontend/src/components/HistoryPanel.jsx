@@ -15,11 +15,7 @@ import { Book, Clipboard, Trash2, ArrowLeft } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import Select from './common/Select'
 import { formatChatTime } from '../utils/time'
-
-function parseCardIds(raw) {
-  if (Array.isArray(raw)) return raw
-  try { return JSON.parse(raw || '[]') } catch { return [] }
-}
+import { parseCardIds } from '../utils/groupMembers'
 
 const PAGE_SIZE = 20
 

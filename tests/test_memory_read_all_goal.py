@@ -1,22 +1,20 @@
 """目标检查：一个存档的长期记忆「读全量」真的读全，不再被 mem0 的默认 20 条截断。
 
-spec：`docs/specs/memory-read-all.md` §5。真 mem0 + 本地 qdrant，embedding 用确定性替身，
+spec：`docs/specs/memory-read-all.md` §5。真 mem0 + 本地 qdrant，embedding 只替换出网那一步（`fake_embedding_api`），
 不调任何模型。4 个「读全部」的地方（到期事件 / 重逢问候 / 反思 / 面板列表）都走
 `MemoryView.get_all`，这里逐个验它们在各个总条数下读到的是全部。
 """
 from __future__ import annotations
 
-import hashlib
-import math
 import os
 
 os.environ.setdefault("MEM0_TELEMETRY", "False")
 
 import pytest  # noqa: E402
+from conftest import persist_time_event  # noqa: E402
 import mem0.embeddings.openai as _m0_embed  # noqa: E402
 import mem0.llms.openai as _m0_llm  # noqa: E402
 
-import core.embeddings as _embeddings  # noqa: E402
 from core.event_service import EventService  # noqa: E402
 from core.memory_manager import MemoryManager, REFLECTION_MIN_QUALITY  # noqa: E402
 from core.memory_scope import MemoryScope, ScopedMemory  # noqa: E402
@@ -26,28 +24,9 @@ DIM = 1024
 USER = "usr-read-all"
 CARD = "card-read-all"
 # 存档 A 的总条数。边界：旧上限 20；mem0 内部多取的下限 60；第一批 200；翻倍后 400。
-EXTRA = REFLECTION_MIN_QUALITY + 3   # _seed 在普通记忆之外固定写的条数：高重要度 + 2 个事件 + 1 个已问标记
+EXTRA = REFLECTION_MIN_QUALITY + 2   # _seed 在普通记忆之外固定写的条数：高重要度 + 2 个事件（「已问过」在事件自己身上）
 TOTALS = [6, 20, 21, 60, 61, 200, 201, 400, 401, 460]
 SIZES = [t - EXTRA for t in TOTALS]
-
-
-class _Embedder:
-    def __init__(self, **_kw):
-        pass
-
-    @staticmethod
-    def _vec(text: str) -> list[float]:
-        v = [0.0] * DIM
-        for t in text:
-            v[int(hashlib.md5(t.encode()).hexdigest(), 16) % DIM] += 1.0
-        n = math.sqrt(sum(x * x for x in v)) or 1.0
-        return [x / n for x in v]
-
-    def embed(self, text, memory_action=None):
-        return self._vec(text)
-
-    def embed_batch(self, texts, memory_action="add"):
-        return [self._vec(t) for t in texts]
 
 
 class _Quiet:
@@ -66,10 +45,9 @@ class _UserLLM:
 
 
 @pytest.fixture(autouse=True)
-def _no_network(monkeypatch):
+def _no_network(monkeypatch, fake_embedding_api):
     monkeypatch.setattr(_m0_llm, "OpenAI", _Quiet)
     monkeypatch.setattr(_m0_embed, "OpenAI", _Quiet)
-    monkeypatch.setattr(_embeddings, "Mem0BridgeEmbedder", _Embedder)
 
 
 @pytest.fixture
@@ -83,11 +61,13 @@ def _seed(view, scope, fillers: int) -> None:
         assert view.add_manual(f"普通的一件小事{i}", scope, metadata={"importance": 3})
     for i in range(REFLECTION_MIN_QUALITY):   # 重逢 top-2 / 反思高质量素材
         assert view.add_manual(f"关键记忆{i}", scope, metadata={"importance": 10})
-    assert view.add_manual("对方提到「面试」", scope, metadata={
-        "type": "time_event", "event_id": "ev-due", "event": "面试", "when_text": "上周", "due_at": "2020-01-01T00:00"})
-    assert view.add_manual("对方提到「体检」", scope, metadata={
-        "type": "time_event", "event_id": "ev-asked", "event": "体检", "when_text": "上月", "due_at": "2020-06-01T00:00"})
-    assert view.add_manual("", scope, metadata={"type": "time_event_asked", "event_id": "ev-asked"})
+    # 两件到期事件，用生产的写入函数写；较晚的「体检」走生产的注入 → 标记流程问过一次
+    scoped = ScopedMemory(view, scope)
+    persist_time_event(scoped, "面试", "2020-01-01T00:00")
+    persist_time_event(scoped, "体检", "2020-06-01T00:00")
+    svc = EventService(scoped)
+    assert "体检" in svc.build_candidate_block(), "前提破了：最晚到期的不是「体检」"
+    svc.mark_asked()
 
 
 @pytest.mark.parametrize("fillers", SIZES)
@@ -109,7 +89,7 @@ def test_R1_every_reader_sees_the_whole_archive(manager, fillers):
     scoped = ScopedMemory(view, scope)
     # 到期事件：找得到没问过的那个；问过的那个不再问
     due = EventService(scoped).get_due_event()
-    assert due is not None and due["event_id"] == "ev-due", f"到期事件读错：{due}"
+    assert due is not None and due["event"] == "面试", f"到期事件读错：{due}"
 
     # 反思：高质量素材都在全量里，够数就触发
     captured = {}

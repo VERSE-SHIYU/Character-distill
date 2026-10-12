@@ -298,7 +298,7 @@ def _create_group(client, store, uid) -> tuple[str, str]:
         "card_ids": cards, "user_persona_type": "stranger", "user_persona_name": "路人"})
     assert r.status_code == 200, (
         f"建群这一步就失败了，后面的断言无从谈起：{r.status_code} {r.text[:200]}")
-    return r.json()["group_id"], cid
+    return r.json()["group"]["id"], cid
 
 
 def _assert_all_engines_know_the_group(group, gid: str, where: str) -> None:
