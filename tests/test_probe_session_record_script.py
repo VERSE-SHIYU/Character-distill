@@ -70,3 +70,40 @@ def test_probe_builds_prompts_without_the_anchor_turns(tmp_path, monkeypatch):
         assert "你喜欢喝什么酒？" in text, "改口之后的对话应当在历史里"
     result = json.loads((tmp_path / "out" / "probe.json").read_text(encoding="utf-8"))
     assert result["score"] == {"with": 1, "without": 0}
+
+
+def test_probe_aborts_when_an_anchor_line_is_still_in_the_prompt(tmp_path, monkeypatch):
+    """种子 / 改口的原话还在发出去的内容里时，这一题测不了「窗口外」，脚本必须中止（返回 3），
+    不能照常打分。"""
+    probe = _load_script()
+    seed = "我叫林小满，苏州人。"
+    turns = [
+        {"turn": 1, "kind": "seed", "user": seed, "reply": "苏州好地方。"},
+        {"turn": 2, "kind": "fill", "user": "再说一遍：" + seed, "reply": "记得。"},   # 原话又出现在历史里
+        {"turn": 3, "kind": "question", "user": "你还记得我叫什么、是哪里人吗？", "reply": ""},
+    ]
+    (tmp_path / "t.json").write_text(json.dumps({"turns": turns}, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "r.json").write_text(json.dumps({"log": []}, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "c.json").write_text(CharacterCard(name="孔乙己", identity="酒客").model_dump_json(),
+                                     encoding="utf-8")
+    calls: list = []
+
+    class _FakeLLM:
+        model = "deepseek-flash"
+        last_usage = None
+
+        def __init__(self, *a, **kw):
+            pass
+
+        def chat(self, *a, **kw):
+            calls.append(a)
+            return "x"
+
+    monkeypatch.setattr(probe, "LLMAdapter", _FakeLLM)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
+    monkeypatch.setattr("sys.argv", ["probe", "--transcript", str(tmp_path / "t.json"),
+                                     "--replay", str(tmp_path / "r.json"),
+                                     "--card-json", str(tmp_path / "c.json"),
+                                     "--out", str(tmp_path / "out")])
+    assert probe.main() == 3 and calls == [], "原话泄露时还在调模型打分"
+

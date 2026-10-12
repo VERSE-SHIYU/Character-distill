@@ -130,6 +130,13 @@ def test_R2_ids_belong_to_one_archive():
     assert out.get(1).active and len(out.active()) == 2 and warns
 
 
+def test_R2b_supersede_stays_within_its_column():
+    """跨栏取代不成立：拿别一栏的条目去取代，按新增处理，旧的仍有效（spec §3.4）。"""
+    base = _one("known", "在上海读书", "读研究生")
+    out, warns = _apply(base, _sup(1, "plans", "下个月去北京面试", "北京面试"))
+    assert out.get(1).active and len(out.active()) == 2 and warns
+
+
 def test_R3_long_column_warns_but_is_injected_whole(caplog):
     """R3：某一栏超线只打 warning，条目完整注入；未超线没有 warning。"""
     short = _one("plans", "下个月去北京面试", "北京面试")

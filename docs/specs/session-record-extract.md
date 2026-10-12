@@ -21,7 +21,7 @@
 
 ## 1. 目标检查（第 1 个提交就带上）
 
-文件：`tests/test_session_record_goal.py`。原有 21 条中的 P 组和 E 组改写，新增 8 条，共 29 条（第四轮修改后；见文末「补充」）。
+文件：`tests/test_session_record_goal.py`。原有 21 条中的 P 组和 E 组改写，新增 9 条，共 30 条（第四轮修改后 29 条，复核补 R2b；见文末「补充」）。
 
 | 检查 | 守什么 | main `9b0052af` 上 | 原型上 |
 |---|---|---|---|
@@ -299,10 +299,13 @@ python scripts/probe_session_record.py --transcript <transcript.json> --replay <
 | `supersedes` 为 null 时也打 warning，或当作取代 | R2 |
 | 示范里换成验收那场的句子 | X1b |
 | 去掉「角色的话不能取代对方说的条目」 | R5b |
+| 允许跨栏取代 | R2b |
+| 探针不核对种子 / 改口原话是否泄露 | `test_probe_aborts_when_an_anchor_line_is_still_in_the_prompt` |
+| 重放判定线任一条失效 | `tests/test_replay_session_record_script.py` |
 
 ## 10. 测试
 
-本地只跑 `tests/test_session_record_goal.py`、`tests/test_probe_session_record_script.py`，加上受影响的 `tests/test_departure_notice.py`、`tests/test_storage_scope_lock.py`，以及 `npm test`。库用 Docker 起的 PG。合并前提是分支 CI 绿。全量由 Claude 在沙箱跑并和 main 对比。
+本地只跑 `tests/test_session_record_goal.py`、`tests/test_probe_session_record_script.py`、`tests/test_replay_session_record_script.py`，加上受影响的 `tests/test_departure_notice.py`、`tests/test_storage_scope_lock.py`，以及 `npm test`。库用 Docker 起的 PG。合并前提是分支 CI 绿。全量由 Claude 在沙箱跑并和 main 对比。
 
 ## 11. 判断清单（发出前逐条对照过读过的行）
 
@@ -367,3 +370,17 @@ python scripts/probe_session_record.py --transcript <transcript.json> --replay <
 |---|---|
 | `apply`：对方自己说的条目，只能由对方自己的话取代；角色的话来取代它就丢掉并打 warning | R5（Infini Memory：同一事实用户说的和 AI 复述的冲突时以用户为准），只在 `apply` 这一处收口。只会让取代更严，不改提示词，所以不用重跑重放：A 没有这种取代；B 只有第 136 轮那一条，现在会被丢掉，#7 保留 |
 | 新增目标检查 R5b | 守住这条规则 |
+
+### 复核 PR #142（10-12，Claude，沙箱；head `9c31d697`，与 main `dc7cd3ca` 合并后）
+
+先说明：这个 PR 的方案和原型是 Claude 写的，复核也是 Claude，不满足「写的和验的分开」（返工经验第 30 条）。下面每项都是可复现的机器结果，Tracy 可以照着重跑。
+
+- 9 个文件和原型逐字节相同。
+- 全量：合并后 `3532 passed, 1 skipped, 0 failed`；main `3523 passed`。差 9 条，正好是新增的检查。
+- 变异 20 个，第一次 17 红、3 存活：
+  - M7「群聊也发抽取调用」：存活但等价。`ctx.session_record is None` 时 `apply` 不会被调用，结果不变，只多一次调用和一行 warning。不补。
+  - M8「允许跨栏取代」：没有检查守住 → 补 R2b。
+  - M20「探针不核对泄露」：没有检查守住 → 补探针中止检查（返回 3、不调模型）。
+  - 另外重放脚本的判定线（`_verdict`）没有任何检查 → 新增 `tests/test_replay_session_record_script.py`：干净日志 6 条全过；每类已知失败各打红对应那条。
+- 补完后重跑 20 个变异：19 红，只剩 M7（等价）。三个测试文件 `34 passed`，ruff 通过。
+
