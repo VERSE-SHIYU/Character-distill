@@ -3,7 +3,7 @@
 # ============================================================
 # 基础镜像锁 digest：浮动 tag 会让上游一更新、代码没改的镜像也变，SZ 部署被迫跨境重下大层
 #（2026-10-12 实发：openresty:alpine 上游变 → nginx 60MB 层重下 24 分钟）。升级走 Dependabot PR。
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS frontend
+FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS frontend
 WORKDIR /build
 COPY web/frontend/package*.json ./
 RUN npm ci --no-audit --no-fund
