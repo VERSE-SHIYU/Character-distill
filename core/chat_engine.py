@@ -551,23 +551,20 @@ class ChatEngine:
         """历史窗口起点的消息下标：从末尾成对攒满 ``MAX_HISTORY`` 为止，返回最早保留消息的下标。
 
         `_build_llm_messages` 与历史摘要触发共用这一处（窗口规则只写一遍，spec §3.2）。
-        历史严格按 user/assistant 成对、以 user 开头，故返回的必是 user 下标（偶数）。
+        成对规则也与摘要共用一处（`history_digest.turn_spans`）：一轮 = 一条 user 配其后紧跟的
+        assistant，角色开场白不算轮。故返回的必是 user 下标 —— 有无开场白决定它是奇是偶。
         """
         budget = self._ctx_engine.MAX_HISTORY
         used = 0
-        i = len(history) - 1
-        while i >= 1:
-            user_msg = history[i - 1]
-            asst_msg = history[i]
-            pair_tok = (
-                count_tokens(user_msg.get("content", ""))
-                + count_tokens(asst_msg.get("content", ""))
-            )
+        start = len(history)
+        for u, a in reversed(digest_protocol.turn_spans(history)):
+            pair_tok = (count_tokens(history[u].get("content", ""))
+                        + count_tokens(history[a].get("content", "")))
             if used + pair_tok > budget:
                 break
             used += pair_tok
-            i -= 2
-        return i + 1
+            start = u
+        return start
 
     def _build_llm_messages(
         self, history: list[dict[str, Any]], current_user_message: str,
@@ -1410,7 +1407,7 @@ class ChatEngine:
         # ── Gate 1: 冷却（距上次沉默足够轮次） ──
         state = _silence_state.get(self._session_id, {})
         last_turn = state.get("last_turn", -999)
-        current_turn = len(self.history) // 2
+        current_turn = sum(1 for m in self.history if m.get("role") == "user")
         if current_turn - last_turn < SILENCE_COOLDOWN_TURNS:
             return ""
 

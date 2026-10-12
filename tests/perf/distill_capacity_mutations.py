@@ -121,11 +121,9 @@ MUTATIONS = [
     # 撞到 R8 / S2：聊天预算改回 len × 0.8
     ('M11 聊天上下文预算改回 len × 0.8（不再按精确计数）',
      TARGET, [("repl", CHAT, [
-         ('            pair_tok = (\n'
-          '                count_tokens(user_msg.get("content", ""))\n'
-          '                + count_tokens(asst_msg.get("content", ""))\n'
-          '            )',
-          '            pair_tok = int(len(user_msg.get("content", "")) * 0.8)'),
+         ('            pair_tok = (count_tokens(history[u].get("content", ""))\n'
+          '                        + count_tokens(history[a].get("content", "")))',
+          '            pair_tok = int(len(history[u].get("content", "")) * 0.8)'),
      ])], "RED"),
     # 撞到 R10 / S2：用量兜底改回按字数除 1.5
     ('M12 用量兜底改回按字数除 1.5（不再按精确计数）',

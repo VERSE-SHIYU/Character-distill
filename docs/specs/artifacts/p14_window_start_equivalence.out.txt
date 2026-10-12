@@ -1,0 +1,2 @@
+histories=12 budgets=58 comparisons=696 mismatches=0
+PASS
