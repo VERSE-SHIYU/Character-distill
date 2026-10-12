@@ -1,0 +1,8 @@
+# 基础镜像（Dockerfile / nginx/Dockerfile 的 FROM 已锁 digest）的升级由此开 PR，人工合并。
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+version: 2
+updates:
+  - package-ecosystem: docker
+    directories: ["/", "/nginx"]
+    schedule:
+      interval: weekly

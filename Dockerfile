@@ -1,7 +1,9 @@
 # ============================================================
 # Stage 1: 前端构建
 # ============================================================
-FROM node:20-alpine AS frontend
+# 基础镜像锁 digest：浮动 tag 会让上游一更新、代码没改的镜像也变，SZ 部署被迫跨境重下大层
+#（2026-10-12 实发：openresty:alpine 上游变 → nginx 60MB 层重下 24 分钟）。升级走 Dependabot PR。
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS frontend
 WORKDIR /build
 COPY web/frontend/package*.json ./
 RUN npm ci --no-audit --no-fund
@@ -11,7 +13,7 @@ RUN npm run build
 # ============================================================
 # Stage 2: 后端运行
 # ============================================================
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 
 # 系统依赖（部分 Python 包编译需要，如 argon2-cffi）
 RUN apt-get update && \
