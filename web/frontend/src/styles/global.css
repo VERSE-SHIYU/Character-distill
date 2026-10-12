@@ -480,10 +480,6 @@ html.theme-midnight::before {
   box-shadow: 0 4px 16px rgba(12, 8, 18, 0.22);
 }
 
-.theme-midnight .market-card-v2:hover,
-.theme-galaxy .market-card-v2:hover {
-  box-shadow: 0 8px 24px rgba(12, 8, 18, 0.28);
-}
 
 /* Midnight — button hover 只给 shadow 不给 scale */
 .theme-midnight .btn-primary:hover,
@@ -1706,14 +1702,7 @@ html.theme-aurora::before {
     pointer-events: auto;
   }
 
-  .main-panel {
-    margin: 0;
-    border-radius: 0;
-  }
 
-  .app-shell.has-sidebar-open .main-panel {
-    margin-left: 0;
-  }
 
   .messages-layout {
     border-radius: 0;
@@ -2022,9 +2011,6 @@ label[for] {
   color: var(--text);
 }
 .page-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   flex-shrink: 0;
 }
 .page-header-back {
@@ -2176,7 +2162,6 @@ label[for] {
 }
 
 .home-empty-icon {
-  font-size: 48px;
   margin-bottom: 14px;
 }
 
@@ -2402,10 +2387,6 @@ label[for] {
   color: var(--pill-text);
 }
 
-.home-no-chars {
-  text-align: center;
-  padding: 20px;
-}
 
 .home-no-chars p {
   font-size: 13px;
@@ -4515,7 +4496,6 @@ label[for] {
 
 
 /* Old chat-topbar styles preserved for reference (unused) */
-.chat-voice-indicator { display: none; }
 .chat-web-search-ctl { display: none; }
 .chat-font-size-ctl { display: none; }
 .chat-font-btn { display: none; }
@@ -6448,8 +6428,6 @@ label[for] {
 
 .btn-sm {
   height: 32px;
-  padding: 0 14px;
-  font-size: 13px;
 }
 
 .btn-ghost-sm {
@@ -6590,17 +6568,7 @@ label[for] {
 }
 
 /* Toggle switch */
-.voice-toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
 
-.voice-toggle-label {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text);
-}
 
 .voice-toggle {
   position: relative;
@@ -7387,23 +7355,8 @@ label[for] {
 
 .modal-textarea {
   width: 100%;
-  padding: 12px 14px;
-  border: 1px solid var(--input-border);
-  border-radius: var(--input-radius);
-  background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(12px) saturate(160%);
-  -webkit-backdrop-filter: blur(12px) saturate(160%);
-  font: 13px/1.5 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-  color: var(--text);
-  outline: none;
-  resize: vertical;
-  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.modal-textarea:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15);
-}
 
 .modal-input::placeholder {
   color: var(--text-dim);
@@ -14071,15 +14024,6 @@ label[for] {
   align-items: center;
   gap: 8px;
 }
-.mine-profile-name {
-  font-size: var(--text-h3);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .mine-edit-icon {
   display: inline-flex;
   align-items: center;
@@ -17855,7 +17799,6 @@ label[for] {
   flex-direction: column;
 }
 .reader-dark .reader-toc-drawer {
-  background: #1a1a1a;
   color: #d4d4d4;
 }
 .reader-toc-drawer.open {
