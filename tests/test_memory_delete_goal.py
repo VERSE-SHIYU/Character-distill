@@ -1,13 +1,11 @@
 """目标检查：永久删除存档 / 卡 / 群 / 书时，它的长期记忆跟着删；别的不受影响。
 
 spec：`docs/specs/memory-delete-cascade.md` §5。真接口 + 真存储（PG，测试库；线上只用 PG）+ 真 mem0 加本地 qdrant；
-embedding 用确定性替身，不调任何模型。每条检查都从用户真正点的那个接口进去。
+embedding 只替换出网那一步（`fake_embedding_api`），不调任何模型。每条检查都从用户真正点的那个接口进去。
 """
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import math
 import os
 import uuid
 
@@ -19,7 +17,6 @@ import mem0.embeddings.openai as _m0_embed  # noqa: E402
 import mem0.llms.openai as _m0_llm  # noqa: E402
 from pwdlib import PasswordHash  # noqa: E402
 
-import core.embeddings as _embeddings  # noqa: E402
 import deps  # noqa: E402
 import server  # noqa: E402
 from core.memory_manager import MemoryManager  # noqa: E402
@@ -31,25 +28,6 @@ from storage.postgres_store import PostgresStore  # noqa: E402
 DIM = 1024
 pytestmark = PG_ENV.skipif("PG 删除清记忆目标检查")
 _PW = PasswordHash.recommended().hash("Pass1234")
-
-
-class _Embedder:
-    def __init__(self, **_kw):
-        pass
-
-    @staticmethod
-    def _vec(text: str) -> list[float]:
-        v = [0.0] * DIM
-        for t in text:
-            v[int(hashlib.md5(t.encode()).hexdigest(), 16) % DIM] += 1.0
-        n = math.sqrt(sum(x * x for x in v)) or 1.0
-        return [x / n for x in v]
-
-    def embed(self, text, memory_action=None):
-        return self._vec(text)
-
-    def embed_batch(self, texts, memory_action="add"):
-        return [self._vec(t) for t in texts]
 
 
 class _Quiet:
@@ -149,10 +127,9 @@ class Env:
 
 
 @pytest.fixture
-def env(tmp_path, monkeypatch):
+def env(tmp_path, monkeypatch, fake_embedding_api):
     monkeypatch.setattr(_m0_llm, "OpenAI", _Quiet)
     monkeypatch.setattr(_m0_embed, "OpenAI", _Quiet)
-    monkeypatch.setattr(_embeddings, "Mem0BridgeEmbedder", _Embedder)
     e = Env(tmp_path, monkeypatch)
     try:
         yield e

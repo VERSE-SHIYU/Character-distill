@@ -90,6 +90,11 @@ class ScopedMemory:
             return False
         return self._view.add_manual(text, self._scope, metadata=metadata)
 
+    def update_metadata(self, memory_id: str, metadata: dict) -> bool:
+        if not self.enabled:
+            return False
+        return self._view.update_metadata(memory_id, metadata, self._scope)
+
     def reflect(self, llm: Any, recent: list[dict], char_name: str, storage: Any = None) -> None:
         if not self.enabled:
             return

@@ -13,52 +13,41 @@ logger = logging.getLogger(__name__)
 class EventService:
     """管理角色对时间事件的感知：哪些到期了、哪些已经问过。
 
+    「问过没有」是事件自己的状态，只存在事件那条记忆的元数据里（``asked``），不另存记录、
+    进程内也不留第二份（spec ``docs/specs/time-event-asked.md``）。事件的身份就是它那条
+    记忆的 id。
+
     状态
     ----
-    _asked_event_ids : set[str]
-        已问过的事件 ID（会话级，避免本轮重复问）。
     _injected_event_id : str
-        本轮注入 prompt 的事件 ID（响应后由 mark_asked 标记为已问）。
+        本轮注入 prompt 的事件 id（响应后由 mark_asked 标记为已问）。
 
     外部依赖
     --------
-    memory : 这个引擎的记忆（``ScopedMemory``：视图 + 归属绑在一起），只读调用
-        ``memory.get_all()`` / 写调用 ``memory.add_manual()``。时间事件据此按存档隔离。
+    memory : 这个引擎的记忆（``ScopedMemory``：视图 + 归属绑在一起），读调用
+        ``memory.get_all()`` / 写调用 ``memory.update_metadata()``。时间事件据此按存档隔离。
     """
+
+    ASKED = "asked"
 
     def __init__(self, memory) -> None:
         self._memory = memory
-        self._asked_event_ids: set[str] = set()
         self._injected_event_id: str = ""
 
     def get_due_event(self) -> dict | None:
-        """扫描记忆，返回第一个到期的未问时间事件（最接近当前时刻的）。"""
-        if not self._memory or not self._memory.enabled:
-            return None
+        """扫描记忆，返回第一个到期且没问过的时间事件（最接近当前时刻的）。
+
+        「没有记忆」由 ``ScopedMemory`` 自己处理（没启用时 ``get_all`` 为空），这里不再判一次。"""
         try:
-            memories = self._memory.get_all()
-            if not memories:
-                return None
-
-            asked_ids = set()
-            for m in memories:
-                meta = m.get("metadata") or {}
-                if isinstance(meta, dict) and meta.get("type") == "time_event_asked":
-                    asked_ids.add(meta.get("event_id", ""))
-
             now = datetime.now()
             best = None
-            for m in memories:
+            for m in self._memory.get_all():
                 meta = m.get("metadata") or {}
-                if not isinstance(meta, dict):
+                if not isinstance(meta, dict) or meta.get("type") != "time_event" or meta.get(self.ASKED):
                     continue
-                if meta.get("type") != "time_event":
-                    continue
-                eid = meta.get("event_id", "")
-                if not eid or eid in asked_ids or eid in self._asked_event_ids:
-                    continue
+                eid = m.get("id", "")
                 due_at_str = meta.get("due_at", "")
-                if not due_at_str:
+                if not eid or not due_at_str:
                     continue
                 try:
                     due_at = datetime.fromisoformat(due_at_str)
@@ -96,18 +85,12 @@ class EventService:
         )
 
     def mark_asked(self) -> None:
-        """将本轮已注入的事件标记为已问（持久化标记）。"""
+        """把本轮已注入的事件标记为已问：写在那件事自己的元数据上。写不进去就如实报失败。"""
         eid = self._injected_event_id
         if not eid:
             return
         self._injected_event_id = ""
-        self._asked_event_ids.add(eid)
-        if self._memory and self._memory.enabled:
-            try:
-                self._memory.add_manual(
-                    "",
-                    metadata={"type": "time_event_asked", "event_id": eid},
-                )
-                print(f"[ChatEngine] Marked event {eid} as asked")
-            except Exception as exc:
-                logger.warning("Mark event asked failed: %s", exc, exc_info=True)
+        if self._memory.update_metadata(eid, {self.ASKED: True}):
+            print(f"[ChatEngine] Marked event {eid} as asked")
+        else:
+            logger.warning("Mark event %s as asked failed; it will be offered again", eid)

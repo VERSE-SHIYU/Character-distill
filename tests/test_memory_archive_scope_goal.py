@@ -21,9 +21,7 @@ G1、G2 覆盖 §3-F2 的全部 8 个读写点：4 个写入点各产生一条�
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
-import math
 import os
 import re
 import uuid
@@ -38,7 +36,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 from pwdlib import PasswordHash  # noqa: E402
 
 import core.concurrency as _concurrency  # noqa: E402
-import core.embeddings as _embeddings  # noqa: E402
 import deps  # noqa: E402
 import mem0.embeddings.openai as _m0_embed  # noqa: E402
 import mem0.llms.openai as _m0_llm  # noqa: E402
@@ -56,32 +53,7 @@ USER = "usr-archive-scope"
 CARD = CharacterCard(name="角色", identity="隔离检查用角色")
 
 
-# ── 替身：embedding / mem0 自带提供方 / 三个模型 ───────────────────────────────
-
-class _CharBagEmbedder:
-    """确定性的字符袋向量：共享字符越多、余弦越高（mem0 的相似度门控才判得动）。
-
-    同形于生产的 ``Mem0BridgeEmbedder``（``embed`` / ``embed_batch``）。用 md5 而非
-    内置 ``hash`` —— 后者受 PYTHONHASHSEED 影响，跨进程不稳。
-    """
-
-    def __init__(self, **_kw):
-        pass
-
-    @staticmethod
-    def _vec(text: str) -> list[float]:
-        toks = list(text) + [text[i:i + 2] for i in range(max(0, len(text) - 1))]
-        v = [0.0] * DIM
-        for t in toks:
-            v[int(hashlib.md5(t.encode()).hexdigest(), 16) % DIM] += 1.0
-        norm = math.sqrt(sum(x * x for x in v)) or 1.0
-        return [x / norm for x in v]
-
-    def embed(self, text: str, memory_action: str | None = None) -> list[float]:
-        return self._vec(text)
-
-    def embed_batch(self, texts: list[str], memory_action: str = "add") -> list[list[float]]:
-        return [self._vec(t) for t in texts]
+# ── 替身：mem0 自带提供方 / 三个模型（embedding 只替换出网那一步，见 conftest.fake_embedding_api）───────────────────────────────
 
 
 class _QuietOpenAI:
@@ -186,10 +158,9 @@ def _eval_reply(tag: str, *, event_index: int) -> str:
 # ── 夹具 ────────────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
-def _no_network(monkeypatch):
+def _no_network(monkeypatch, fake_embedding_api):
     monkeypatch.setattr(_m0_llm, "OpenAI", _QuietOpenAI)
     monkeypatch.setattr(_m0_embed, "OpenAI", _QuietOpenAI)
-    monkeypatch.setattr(_embeddings, "Mem0BridgeEmbedder", _CharBagEmbedder)
 
 
 @pytest.fixture
