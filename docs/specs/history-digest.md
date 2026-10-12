@@ -198,6 +198,7 @@ P13 验收探针（存档 `bc01a19d51ee`，产物 `e2e/scratch/p13-probe/`）产
 - `ChatEngine._window_start` 复用同一个 `turn_spans`（结构锁 D6 要求 `history_digest` 不 import chat_engine，故函数放 `history_digest`、chat_engine 反向引用；chat_engine 早已 import 它）。返回值的**语义不变**（仍是「最早保留消息的下标」，即某个 user 下标）：成对历史上与旧位置实现逐位相同，穷举 12 组历史 × 58 组预算 = **696 次比对、0 不一致**（`artifacts/p14_window_start_equivalence.py` + `.out.txt`）。docstring 一并改正。
 - 另一处同类按位置数轮（`core/chat_engine.py:1411` 沉默冷却的 `current_turn = len(self.history) // 2`）改成按角色计数（`sum(1 for m in … if role == "user")`），**单独一个提交**；两种历史下值都不变，但计数规则自此只剩一种（`:546` 早已是角色计数）。
 - 目标检查 **D8**：历史以角色开场白开头时，每轮都是 `[user, assistant]`、开场白不属于任何一轮；边界「只有开场白、还没有用户发言」返回空。
+- **连带**：`tests/perf/distill_capacity_mutations.py` 的 **M11** 文本锚点随 `_window_start` 改写同步（搜索串 `history[i-1]/[i]` → `history[u]/[a]`，替换串同改）。M11 的红源仍是 R8/S2（`test_chat_context_budget_uses_count_tokens`、`test_s2_count_tokens_is_the_single_token_counter`，本地实测 2 红）。不同步会让 `tests/test_mutation_anchors.py`（静态锚点锁）在 CI 上红。
 
 ### 为什么测试替身没抓到
 
