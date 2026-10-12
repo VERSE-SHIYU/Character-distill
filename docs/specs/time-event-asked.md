@@ -132,3 +132,15 @@
 - 第 2 个提交后：受影响的 10 个测试文件 138 passed。全量 3527 passed、1 failed、1 skipped；main 同环境 3522 passed、1 failed、1 skipped。差的 5 条是 T1–T5；两边唯一的失败都是 `test_evidence_integrity.py::test_code_sha_resolves`，因为沙箱是浅克隆、查不到历史提交，与本改动无关。
 - ruff：改动文件的告警和 main 相同，只多了新测试文件里与其他测试同样写法的 `# noqa: E402`。
 
+
+### 独立复核（10-12 14:27，另开会话，head `344a099e`）
+
+结论「可以合并」。CI：gate、前端 lint+test、sentinel 全过。§8 六条变异全部被拦住，自补 3 条（归属只比第一个键被 T4 拦住；「缺 asked 当已问」可见；「拒绝已带 asked 的记忆」存活，路径不可达）。mem0 源码核对 §2 第 7、8 条成立。三处非阻塞问题，按「发现即修」在本轮修掉：
+
+| # | 问题 | 根因 | 修法 |
+|---|---|---|---|
+| F1 | `get_due_event` 开头残留 `if not self._memory or not self._memory.enabled`，`mark_asked` 没有，两边不一致 | 「没有记忆」已由 `ScopedMemory` 封装（没启用时 `get_all` 为空、`update_metadata` 返回 False），这一行是第二处判断 | 删掉这一行；判断只在 `ScopedMemory` 一处 |
+| F2 | T5 只认 `set`，进程内缓存换成 `dict` / `list` 就能绕过 | 结构锁写死了一种容器 | 改为白名单：实例属性只能是 `_memory`、`_injected_event_id`；另锁 `EventService` 源码里不出现 `.enabled` |
+| F3 | §4.4 写了「标记失败时下一轮还会再问」，没有检查守着 | 判据缺口 | T3 加断言：标记失败后这件事仍是到期未问 |
+
+作者自测（不作为通过依据）：`tests/test_time_event_asked_goal.py` 5 passed；用到 `EventService` 的另两个文件 24 passed。把 F1 的守卫加回去、或加一个 `dict` 缓存，T5 都红。

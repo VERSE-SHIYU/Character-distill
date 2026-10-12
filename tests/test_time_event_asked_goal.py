@@ -105,6 +105,7 @@ def test_T3_failed_mark_is_reported_as_failed(view, monkeypatch, caplog, capsys)
         _ask(a)
     assert "as asked" not in capsys.readouterr().out, "写入失败却打了成功日志"
     assert any(r.levelno >= logging.WARNING for r in caplog.records), "写入失败没有 warning"
+    assert EventService(a).get_due_event() is not None, "写入失败后这件事不再出现：失败被当成了已问（spec §4.4）"
 
 
 def test_T4_another_archive_cannot_mark_it(view):
@@ -123,5 +124,8 @@ def test_T5_asked_state_lives_only_on_the_event():
              if "time_event_asked" in p.read_text(encoding="utf-8")]
     assert not leaks, f"还有另存「已问」记录的代码：{leaks}"
     svc = EventService(ScopedMemory(None, None))
-    assert not [k for k, v in vars(svc).items() if isinstance(v, set)], "EventService 里还有进程内的「已问」集合"
-    assert "add_manual" not in inspect.getsource(EventService), "EventService 还在另写记忆"
+    assert set(vars(svc)) == {"_memory", "_injected_event_id"}, f"EventService 多了进程内状态：{set(vars(svc))}"
+    src = inspect.getsource(EventService)
+    assert "add_manual" not in src, "EventService 还在另写记忆"
+    assert ".enabled" not in src, "「没有记忆」又在 EventService 里判了一次（应只由 ScopedMemory 处理）"
+    assert svc.get_due_event() is None, "没有记忆时应当没有到期事件"

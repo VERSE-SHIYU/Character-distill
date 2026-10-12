@@ -35,9 +35,9 @@ class EventService:
         self._injected_event_id: str = ""
 
     def get_due_event(self) -> dict | None:
-        """扫描记忆，返回第一个到期且没问过的时间事件（最接近当前时刻的）。"""
-        if not self._memory or not self._memory.enabled:
-            return None
+        """扫描记忆，返回第一个到期且没问过的时间事件（最接近当前时刻的）。
+
+        「没有记忆」由 ``ScopedMemory`` 自己处理（没启用时 ``get_all`` 为空），这里不再判一次。"""
         try:
             now = datetime.now()
             best = None
