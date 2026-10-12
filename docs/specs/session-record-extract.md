@@ -517,3 +517,5 @@ Claude 读了三份 `replay.json` 的第 7、21 轮，和两份全量结束时 `
 本轮验证：只跑 4 个受影响文件，55 passed。变异：提示词里删掉 `"moved off"`、或把 `"now Y not X"` 改一字，X1 都红；还原后绿。
 
 提示词改了，按 §7 重跑小重放 1 次、全量重放 2 次、探针 1 次（本地），门槛不变；结果记在下一节。
+
+**PHASE-Tree 引文已对照原文（10-12）**：从 `github.com/MemTensor/PHASE-Tree` 取 commit `0be378f` 的 `src/tree_pipeline/update_session_moment.py`，本文引用的行逐字核过，全部相符：`:68`「You are a character state analyst.」、`:77–79`「Only track what THIS character learned, felt, or committed to — not other speakers.」（原文用 em dash）、`:81–83`「Do NOT fabricate events or emotions not supported by the text.」、`:96`「You MUST write ALL」、`:108` 中文示例、`:114`「Promises or decisions the character made.」、`:132`「Output ONLY a valid JSON object」、`:155`「**你必须用中文撰写所有输出内容。**」、`:281` `temperature=0.0`。此前标「未核实」的两处（`:114`、`:77–79`）至此已核实。
