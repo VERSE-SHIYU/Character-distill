@@ -172,3 +172,48 @@ python -m pytest -q tests/test_history_digest_goal.py tests/test_length_budget.p
 ## 10. 补充（待写）
 
 - 真模型验收（P12 合入、实现完成后）：一场 ≥140 轮长对话，窗口外的情节题（非用户画像题）能答对；本场记录相关判定线不退化；记录每块调用次数与花费。
+
+## 11. P14 修改：取轮改按角色配对（2026-10-12）
+
+### 现象
+
+P13 验收探针（存档 `bc01a19d51ee`，产物 `e2e/scratch/p13-probe/`）产出的 8 块摘要里，第 2、4、5 块把提问方/作答方写反。例：第 4 块写「孔乙己接连问对方……小时候模样」，而第 19–24 轮实际是**用户问、孔乙己答**。角色自己的事（欠掌柜十九个钱、写字、读过书没进学、长衫）被写成了对方的事。这段内容注入给角色，角色会把孔乙己的事当成用户的事用。
+
+### 根因
+
+`pending_turns` 按**位置**取轮（`[[history[2*t], history[2*t+1]] …]`），默认历史以 user 开头；实际历史以**角色开场白**开头。
+
+证据（存档 dump `e2e/scratch/p13-probe/db_dump.json`，本段副本 `e2e/scratch/p14-probe/db_dump.json`）：
+
+- `bc01a19d51ee` 共 **279** 条消息，角色分布 `{char: 140, user: 139}`，**第 0 条 `role=char`（开场白）**，其后 `user/char` 严格交替。
+
+有开场白时，按位置取到的每对变成「角色上一句 + 用户下一句」，整体错位一格；`render_prompt` 再把一对里的第 1 条标成「对方」、第 2 条标成角色名 —— 于是 8 块送进模型的输入**说话人全部标反**，模型照着标签写，摘要就写反了。
+
+`_window_start` 不受影响：它从末尾往前成对保留（末尾是 assistant，往前步步落在 user 上），返回的仍是 user 下标。只是它的 docstring 写成「历史以 user 开头、返回偶数下标」，与线上不符（有开场白时是奇数）。
+
+### 修法（只动取轮逻辑；提示词、存储、调用链不动）
+
+- 抽出 `history_digest.turn_spans(history)`：一轮 = 一条 `user` 消息配它**后面紧跟**的 `assistant` 消息；开场白（前面没有 user）不属于任何一轮，user 后没有 assistant 的半个轮也不算。**取轮规则只此一处**。
+- `pending_turns` 改用它：`turns = [[history[u], history[a]] for u, a in turn_spans(history[:window_start])]`，再减去 `covered_turns()`。窗口外的轮 = **整轮**都落在 `window_start` 之前（不再用 `window_start // 2`）。
+- `ChatEngine._window_start` 复用同一个 `turn_spans`（结构锁 D6 要求 `history_digest` 不 import chat_engine，故函数放 `history_digest`、chat_engine 反向引用；chat_engine 早已 import 它）。返回值的**语义不变**（仍是「最早保留消息的下标」，即某个 user 下标）：成对历史上与旧位置实现逐位相同，穷举 12 组历史 × 58 组预算 = **696 次比对、0 不一致**（`artifacts/p14_window_start_equivalence.py` + `.out.txt`）。docstring 一并改正。
+- 另一处同类按位置数轮（`core/chat_engine.py:1411` 沉默冷却的 `current_turn = len(self.history) // 2`）改成按角色计数（`sum(1 for m in … if role == "user")`），**单独一个提交**；两种历史下值都不变，但计数规则自此只剩一种（`:546` 早已是角色计数）。
+- 目标检查 **D8**：历史以角色开场白开头时，每轮都是 `[user, assistant]`、开场白不属于任何一轮；边界「只有开场白、还没有用户发言」返回空。
+
+### 为什么测试替身没抓到
+
+D1–D6 的测试历史都由 `_flat`/`_turns` 造，一律**从 user 开头、无开场白**。在这种历史里「按位置配对」与「按角色配对」完全等价，旧实现照样全绿。线上存档有开场白，这个形态测试替身没覆盖。
+
+### 保留不改的两处
+
+- `scripts/probe_session_record.py:116` 的 `len(history) // 2`：离线探针脚本、非生产路径；且 `(2t+1)//2 == (2t)//2 == t`，有开场白时数值不变，不构成活 bug。probe 是验收工具，不在本段改动面内。
+- `docs/specs/artifacts/arc_behavior_inject_mutations.py:102` 的变异串 `prior = len(self.history) // 2`：这是**历史记录**（当时 `_window_start` 的旧写法）。保留原文以留痕；它指向的源码早已是角色计数（`:546`），该变异据此失真 —— 改它只会抹掉历史。
+
+### 验收（真模型，8 次调用，< $0.01）
+
+离线用新取轮逻辑把该存档第 1–48 轮（8 块）重写一次（`e2e/scratch/p14-probe/rewrite.py`，产物 `blocks.json`）。逐块三项判定：
+
+1. 谁问、谁答、谁去金陵，方向对不对；
+2. 角色自己的事（欠钱、写字、长衫、读书）有没有被写成对方的事；
+3. 送进模型的每块输入里，每一行的说话人标签是否与原消息的角色一致 —— **第 ③ 项由代码按字节重建断言，不人工看**。
+
+结果：8 块**三项全部通过**（③ 8/8 `labels_match_roles=True`）。
