@@ -411,7 +411,6 @@ class _Engine:
     def __init__(self, traces, stream_pieces=("回", "复")):
         self.history = []
         self.last_traces = traces
-        self.last_summary = ""
         self._last_rag_context = "rag-ctx"
         self._ctx_engine = type("Ctx", (), {"web_search_enabled": False})()
         self.affinity_enabled = True
@@ -610,7 +609,6 @@ class _StubEngine:
 
     def __init__(self):
         self.history: list[dict] = []
-        self.last_summary = ""
         self.user_role = ""
         self._storage = None
 

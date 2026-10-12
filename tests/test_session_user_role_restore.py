@@ -64,7 +64,6 @@ class _StubEngine:
 
     def __init__(self):
         self.history: list[dict] = []
-        self.last_summary = ""
         self.user_role = ""
         self._session_id = ""
 

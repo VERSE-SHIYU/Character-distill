@@ -215,11 +215,6 @@ async def _ensure_session(
     # Reload history from DB (retracted messages filtered by _rebuild_history_from_db)
     db_messages = await storage.get_messages(session_id)
     engine.history = _rebuild_history_from_db(db_messages)
-    # Restore last_summary from DB
-    for m in reversed(db_messages):
-        if m["role"] == "summary":
-            engine.last_summary = m["content"]
-            break
     # Restore affinity + session record from DB（两个恢复路径共用一个入口）
     await restore_engine_state(engine, session_id, storage)
     # 条目整份来自 `new_session_entry`（`_create_session` 登记的就是原 id），
@@ -385,31 +380,6 @@ async def _do_chat(
     report.merge(rep)
     char_msg_id, char_created_at = _msg_fields(char_rows[0] if char_rows else None)
 
-    # Save summary if newly generated
-    engine = session.get("engine")
-    if engine and engine.last_summary:
-        # 读也包进块里：摘要只是个附赠品，读它失败不该把本轮回复打断。
-        pending_summary = ""
-        async with nonfatal("chat", "save summary"):
-            existing_summaries = [
-                m for m in await storage.get_messages(session_id)
-                if m["role"] == "summary"
-            ]
-            last_saved = existing_summaries[-1]["content"] if existing_summaries else ""
-            new_summary = f"历史摘要：{engine.last_summary}"
-            if new_summary != last_saved:
-                pending_summary = new_summary
-        if pending_summary:
-            # 摘要也走队列（写失败会补上），但**不**上报给前端：摘要不在界面上，
-            # 标「未保存」只会让人去找一条看不见的消息。
-            _, rep = await outbox.write(
-                lambda key, text=pending_summary: storage.save_message(
-                    session_id, "summary", text, "", client_key=key,
-                ),
-                ping=ping,
-            )
-            report.merge(rep)
-
     result: dict[str, Any] = {
         "reply": resp, "retracted": retracted, "rag_context": rag_ctx[:200],
         "user_msg_id": user_msg_id, "char_msg_id": char_msg_id,
@@ -420,8 +390,6 @@ async def _do_chat(
         **save_field(char_save, "char_save"),
         **report.as_json(),
     }
-    if engine and engine.last_summary:
-        result["summary"] = engine.last_summary
     return result
 
 
@@ -564,27 +532,6 @@ async def _do_chat_stream(
             report.merge(rep)
             char_msg_id, char_created_at = _msg_fields(char_rows[0] if char_rows else None)
 
-            if engine and engine.last_summary:
-                # 读也包进块里（同 `_do_chat`）：摘要只是附赠品，读它失败不该把本轮打断。
-                pending_summary = ""
-                async with nonfatal("chat", "save summary"):
-                    existing_summaries = [
-                        m for m in await storage.get_messages(session_id)
-                        if m["role"] == "summary"
-                    ]
-                    last_saved = existing_summaries[-1]["content"] if existing_summaries else ""
-                    new_summary = f"历史摘要：{engine.last_summary}"
-                    if new_summary != last_saved:
-                        pending_summary = new_summary
-                if pending_summary:
-                    _, rep = await outbox.write(
-                        lambda key, text=pending_summary: storage.save_message(
-                            session_id, "summary", text, "", client_key=key,
-                        ),
-                        ping=ping,
-                    )
-                    report.merge(rep)
-
             done_payload: dict[str, Any] = {
                 "done": True, "retracted": retracted, "rag_context": rag_context[:200],
                 "user_msg_id": user_msg_id,
@@ -595,8 +542,6 @@ async def _do_chat_stream(
                 **save_field(user_save, "user_save"),
                 **save_field(char_save, "char_save"),
             }
-            if engine and engine.last_summary:
-                done_payload["summary"] = engine.last_summary
             yield terminal_frame(done_payload, report)
 
             # ── Post-done housekeeping (does NOT block UI unlock) ──

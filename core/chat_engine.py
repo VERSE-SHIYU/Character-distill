@@ -226,7 +226,6 @@ class ChatEngine:
         # 侧拼出来的字符串，会被截断；前者是检索层事实）。agent 模式由 _run_agent_phase
         # 写入，非 agent 模式由 _compose_context 写入。消费方：commit 5 的 SSE/前端。
         self.last_traces: list[SourceTrace] = []
-        self.last_summary: str | None = None  # legacy compat for chat.py
         self._ctx_engine = ContextEngine(
             card=self.card,
             arc_view=self.arc_view,

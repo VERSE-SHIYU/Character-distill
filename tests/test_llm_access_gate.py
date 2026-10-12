@@ -430,7 +430,6 @@ class _SessionEngine:
     def __init__(self, llm: LLMAdapter) -> None:
         self._llm = llm
         self.history: list[dict] = []
-        self.last_summary = ""
         self.last_traces: list = []
         self.user_role = ""
         self.affinity_enabled = True

@@ -520,7 +520,6 @@ def _settings_payload(llm: dict, voice: dict, has_key: bool) -> dict[str, Any]:
         "base_url": str(llm.get("base_url", "")),
         "model": default_model(),
         "api_key": "***" if has_key else "",
-        "summary_threshold": int(llm.get("summary_threshold", 50)),
         "gptsovits_url": str(voice.get("gptsovits_url", "http://127.0.0.1:9880")),
         "funasr_url": str(voice.get("funasr_url", "ws://127.0.0.1:10095")),
     }
@@ -541,7 +540,6 @@ class UpdateConfigRequest(BaseModel):
     base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
-    summary_threshold: int | None = None
     gptsovits_url: str | None = None
     funasr_url: str | None = None
 
@@ -562,7 +560,7 @@ async def update_settings_config(
     def _changed(field: str, old: Any, new: Any) -> bool:
         return new is not None and str(new).strip() and str(new).strip() != str(old).strip()
 
-    for field, val in [("base_url", req.base_url), ("model", req.model), ("api_key", req.api_key), ("summary_threshold", req.summary_threshold)]:
+    for field, val in [("base_url", req.base_url), ("model", req.model), ("api_key", req.api_key)]:
         old = llm.get(field, "")
         if val is not None and (not isinstance(val, str) or val.strip()):
             new_val = val.strip() if isinstance(val, str) else val
