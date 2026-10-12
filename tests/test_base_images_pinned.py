@@ -20,3 +20,10 @@ def test_dependabot_watches_both_dockerfile_dirs():
     cfg = yaml.safe_load((_REPO / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
     docker = [u for u in cfg["updates"] if u["package-ecosystem"] == "docker"]
     assert docker and set(docker[0]["directories"]) == {"/", "/nginx"}, docker
+
+
+def test_dependabot_ignores_major_bumps():
+    import yaml
+    cfg = yaml.safe_load((_REPO / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
+    docker = [u for u in cfg["updates"] if u["package-ecosystem"] == "docker"][0]
+    assert any("version-update:semver-major" in r.get("update-types", []) for r in docker.get("ignore", [])), docker
