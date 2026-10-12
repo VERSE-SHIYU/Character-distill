@@ -458,7 +458,8 @@ _TRANSCRIBED = (
     "Only create units for information RELEVANT to future decisions",
     "Do NOT duplicate information already in an existing unit -- check the current state first",
     "Keep content concise -- one clear sentence per unit",
-    'Look ACTIVELY for supersession patterns: "actually", "instead", "no longer", "switched to"',
+    'Look ACTIVELY for supersession patterns: "actually", "instead", "no longer", "switched to", '
+    '"moved off", "cancelled", "replaced X with Y", "now Y not X"',
     "If the turn contains no new state-relevant information, or if the state already captures everything",
     # PHASE-Tree update_session_moment.py:68 / :81 / :96 / :155（commit 0be378f）
     "You are a character state analyst.",

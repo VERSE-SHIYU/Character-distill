@@ -167,7 +167,7 @@ character 「{char}」 and the user 「对方」. Never use 「我」 or 「你�
 5. Keep content concise -- one clear sentence per entry.
 6. SUPERSEDE an existing entry when new information contradicts or updates it. Include the ID of \
 the entry being superseded. Look ACTIVELY for supersession patterns: "actually", "instead", \
-"no longer", "switched to", "cancelled", "replaced X with Y", "now Y not X" \
+"no longer", "switched to", "moved off", "cancelled", "replaced X with Y", "now Y not X" \
 （中文如「改主意了」「不…了」「改成」「换成」「其实」「取消」）. An entry that has merely not \
 been mentioned recently is NOT contradicted: do not supersede it.
 7. NO CHANGE: If the turn contains no new state-relevant information, or if the state already \

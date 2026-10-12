@@ -119,7 +119,7 @@ You are a character state analyst. After each conversation turn, you update the 
 3. Only create entries for information RELEVANT to future decisions.
 4. Do NOT duplicate information already in an existing entry -- check the current state first.
 5. Keep content concise -- one clear sentence per entry.
-6. SUPERSEDE an existing entry when new information contradicts or updates it. Include the ID of the entry being superseded. Look ACTIVELY for supersession patterns: "actually", "instead", "no longer", "switched to", "cancelled", "replaced X with Y", "now Y not X" （中文如「改主意了」「不…了」「改成」「换成」「其实」「取消」）. An entry that has merely not been mentioned recently is NOT contradicted: do not supersede it.
+6. SUPERSEDE an existing entry when new information contradicts or updates it. Include the ID of the entry being superseded. Look ACTIVELY for supersession patterns: "actually", "instead", "no longer", "switched to", "moved off", "cancelled", "replaced X with Y", "now Y not X" （中文如「改主意了」「不…了」「改成」「换成」「其实」「取消」）. An entry that has merely not been mentioned recently is NOT contradicted: do not supersede it.
 7. NO CHANGE: If the turn contains no new state-relevant information, or if the state already captures everything, return an empty list.
 8. **你必须用中文撰写所有输出内容。**
 
@@ -501,3 +501,19 @@ Claude 读了三份 `replay.json` 的第 7、21 轮，和两份全量结束时 `
 - **留给复核核实，不阻塞**：
   1. 两份全量的 `promises` 都是 0 条。整场对话里角色若真答应过什么，这就是漏记；Claude 手上没有整份 transcript，未核实。
   2. 全量 B #11「对方请孔乙己讲故事」，依据是问句「你会不会讲故事？」，算不算请求有歧义，1 条。
+
+### 第七轮修改：第二次独立复核的三处（10-12）
+
+复核结论「改了再合」，三处都是交付物缺陷，代码逻辑不动：
+
+| 问题 | 根因 | 改法 |
+|---|---|---|
+| 规则 6 标「照抄」，却漏了原文的 `"moved off"` | 抄写漏项；X1 只守到 `"switched to"`，后面几项没人守 | 规则 6 补回 `"moved off"`（`core/session_record.py`、本文 §5 原文行同改），现与 StateMem E.1 逐项一致 |
+| X1 的期望句截在 `"switched to"`，之后各项删改不红（复核变异 y7 存活） | 期望句只取了原句前半 | `_TRANSCRIBED` 改为整句，到 `"now Y not X"` 为止 |
+| 「复核 PR #142」一节的全量数字是 `9c31d697` 的，不是交付的 head | 记录没标清对应哪个 head，读的人会当成现状 | 那一节保留（它对 `9c31d697` 成立），交付 head 的数字记在这里 |
+
+交付 head `e0673751` 的数字（复核方取得，未重跑）：与 main `dc7cd3ca` 合并后收集 3542 条，main 3524 条，差 18（本 PR 新增：goal 14、probe 2、replay 2）。CI 只跑分支本身（run `38193372235`）3532 passed —— 分支基于 `9b0052af`，不含 #141 的 10 条，所以比合并后少。
+
+本轮验证：只跑 4 个受影响文件，55 passed。变异：提示词里删掉 `"moved off"`、或把 `"now Y not X"` 改一字，X1 都红；还原后绿。
+
+提示词改了，按 §7 重跑小重放 1 次、全量重放 2 次、探针 1 次（本地），门槛不变；结果记在下一节。
