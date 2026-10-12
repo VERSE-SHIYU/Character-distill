@@ -2,8 +2,9 @@
 
 做法：拿重放得到的本场记录（截到提问之前那一轮），历史只放最后一处种子 / 改口**之后**的对话
 （所以它们一定不在发给模型的消息里——脚本逐题核对），同样的题各问两次：带记录、不带记录。
-提示词由真引擎拼（`ChatEngine._compose_system_prompt` + `_build_llm_messages`，和线上同一条路），
-但不走路由器、不检索长期记忆（``include_dynamic=False``，不调 `search_memory`），也不跑每轮收尾
+提示词由真引擎拼（`ChatEngine._compose_system_prompt` + `_build_llm_messages`）。和线上相比少了
+`_attach_turn_blocks`（`core/chat_engine.py:443`、`:485`：给当前用户消息附时间感知块和做法提醒），
+这一步不含本场记录，不影响结论；也不走路由器、不检索长期记忆（``include_dynamic=False``，不调 `search_memory`），也不跑每轮收尾
 （不评估、不抽取、不入库）—— 只看「本场记录」这一条路。
 
 用法（本地，需 DEEPSEEK_API_KEY；卡片 JSON 从库里导出）::

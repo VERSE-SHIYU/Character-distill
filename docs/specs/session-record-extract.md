@@ -21,7 +21,7 @@
 
 ## 1. 目标检查（第 1 个提交就带上）
 
-文件：`tests/test_session_record_goal.py`。原有 21 条中的 P 组和 E 组改写，新增 9 条，共 30 条（第四轮修改后 29 条，复核补 R2b；见文末「补充」）。
+文件：`tests/test_session_record_goal.py`。原有 21 条中的 P 组和 E 组改写，新增 13 条，共 34 条（第四轮修改后 29 条，复核补 R2b，第五轮补 R5c–R5f 并改写 R5b；见文末「补充」）。
 
 | 检查 | 守什么 | main `9b0052af` 上 | 原型上 |
 |---|---|---|---|
@@ -254,7 +254,7 @@ Claude 另外逐条读 `replay.json` 里的记录，看内容对不对，不只�
 
 - **历史**：只放最后一处种子 / 改口之后、第 1 题之前的对话（第 17–129 轮，11,632 token，在 12,800 的窗口之内）。种子和改口的原话一定不在发出去的内容里，脚本逐题核对，出现了就中止。
 - **记录**：从全量重放的 `replay.json` 还原到第 129 轮结束时。
-- **提示词**：真引擎拼，`_compose_system_prompt(include_dynamic=False)` 加 `_build_llm_messages`，和线上同一条路。但不走路由器、不检索 Mem0，也不跑每轮收尾。
+- **提示词**：真引擎拼，`_compose_system_prompt(include_dynamic=False)` 加 `_build_llm_messages`。和线上相比少了 `_attach_turn_blocks`（`core/chat_engine.py:443`、`:485`，附时间感知块和做法提醒），这一步不含本场记录，不影响结论（第五轮更正，见「补充」）。也不走路由器、不检索 Mem0，不跑每轮收尾。
 - **分两组**：同样 10 题，每题各问两次，一组带记录，一组不带记录。
 - **判定**：
   - 9 道有标准答案的题：带记录 ≥ 8 道答对；不带记录 ≤ 3 道（历史里角色自己反复提过「脚上那伤」，蒙对几道是正常的）。
@@ -302,6 +302,9 @@ python scripts/probe_session_record.py --transcript <transcript.json> --replay <
 | 允许跨栏取代 | R2b |
 | 探针不核对种子 / 改口原话是否泄露 | `test_probe_aborts_when_an_anchor_line_is_still_in_the_prompt` |
 | 重放判定线任一条失效 | `tests/test_replay_session_record_script.py` |
+| 栏不带 `sources`，或来源、轨迹又按栏名写成分支 | R5c、R5d、R5e |
+| 栏定义里又手写来源句，或来源句和 `sources` 不一致 | R5e、R5f |
+| 恢复「角色的话可以取代对方的条目」 | R5b |
 
 ## 10. 测试
 
@@ -384,3 +387,52 @@ python scripts/probe_session_record.py --transcript <transcript.json> --replay <
   - 另外重放脚本的判定线（`_verdict`）没有任何检查 → 新增 `tests/test_replay_session_record_script.py`：干净日志 6 条全过；每类已知失败各打红对应那条。
 - 补完后重跑 20 个变异：19 红，只剩 M7（等价）。三个测试文件 `34 passed`，ruff 通过。
 
+
+### 第五轮修改：P10（10-12）
+
+**问题**：重放 A 第 21 轮记了「对方明日要赶路」，依据是角色自己说的「明日还要赶路呢」，是角色对对方的臆测，记成了对方的计划。根因不是这一条判断写错了，而是**栏的规则散在函数里**：`plans` 栏定义（`core/session_record.py:48–50`，`9c31d697` + r5）写的是「任何一方」，不分来源；来源规则按栏名写死在 `:230`（`col == "known"`）和 `:280`（第四轮的 R5b 分支）；关系栏「只追加、注入成轨迹」也按栏名写死在 `:275`、`:302`。每加一栏、拆一栏都要改好几个函数。
+
+**目标**：角色对对方的臆测不进记录；一栏的全部规则只写在 `COLUMNS` 那一行，函数只读 `Column` 的字段。
+
+**前提与部署约束**
+
+- 不做数据迁移。前提：#139 / #140 未部署（跟踪文档状态总览：「PR #140 已合并、未部署，P1–P5 修好前不部署」），线上没有本场记录。
+- **#140 不能单独部署，必须和 #142 一起部署。** main `dc7cd3ca` 的栏是 `known` / `relation` / `events`（main `core/session_record.py:26–29`）。单独部署 #140 会在线上存下 `events` 条目；#142 起没有 `events` 栏，`render_block` 按 `COLUMNS` 遍历，这些条目会静默不注入。这条约束在 #142 把 `events` 改名时就已成立，不是这一轮引起的。前提一旦被打破，要先补一个 PG 迁移把 `events` 条目按自带的 `source` 改栏（`user` → `requests`，`character` → `promises`），再部署。
+
+**结构自检（改代码之前填；「现在」的行号是 `9c31d697` + r5 上的）**
+
+| 问 | 现在 | 改后 |
+|---|---|---|
+| 同一条规则写了几处？ | 来源：代码 2 处（`:230`、`:280`），提示词里 `known` 定义又写一遍（`:43`「依据只能是对方的原话」）；`plans` 不分来源。轨迹：2 处（`:275`、`:302`） | 每条 1 处：`Column.sources`、`Column.trajectory`。提示词里来源那句由 `_EVIDENCE_RULE[sources]` 生成，栏定义里不再写 |
+| 调用方是否被迫知道不该知道的事？ | `_checked` 认识 `known`；`apply` 认识 `relation`，还要知道哪些栏的条目来自对方（`:280`）；`render_block` 认识 `relation` | `_checked` 读 `column.sources`；`apply` 读 `trajectory`；`render_extraction_prompt` 调 `Column.describe`，`render_block` 调 `Column.render_rows`。模块里除 `COLUMNS` 和示范的 JSON 外不出现栏名。模块外：`scripts/replay_session_record.py:71` 认识 `known`（判定线「填充轮新增「了解」≤3」本来就针对这一栏），不受影响 |
+| 加一种情况要改几处？ | 加一个只收某一方的栏：`COLUMNS` + `_checked` 分支 + 提示词定义里的来源句 + 重新想 `:280`；加一个轨迹栏：`apply` + `render_block` | `COLUMNS` 加一行。出现一种新的来源组合时，`_EVIDENCE_RULE` 加一行 |
+
+**改动**
+
+| 改什么 | 出处 / 理由 |
+|---|---|
+| `Column` 加 `sources: frozenset[str]`（只收谁的话）、`trajectory: bool`（只追加、注入成轨迹），加方法 `describe(who)`（提示词里这一栏的一行）、`render_rows(rows)`（注入块里这一栏的正文） | 栏的规则内聚在 `Column` 上，函数只读字段（见上表） |
+| `_EVIDENCE_RULE`：每种 `sources` 写给模型的那句话（只收对方：「依据只能是对方的原话。」；只收角色：「依据只能是{who}的原话。」；两边都收：不写） | 来源规则代码侧和提示词侧同源，改 `sources` 两侧一起变 |
+| `known`：`sources = {user}`；定义去掉「依据只能是对方的原话」（改由生成），其余不变 | 原 `:230` 的规则搬进数据 |
+| `relation`：`sources = {user, character}`，`trajectory = True`，定义不变 | 原 `:275`、`:302` 的规则搬进数据 |
+| `plans` 拆成 `requests`「对方的计划和请求」，`sources = {user}` | StateMem arXiv 2608.19652v1 附录 E.1（raw.txt `:2072–2073`，p.14–15）原文「From USER statements: explicit requests, preferences, corrections」；本栏取 explicit requests，preferences 和 corrections 归 `known` 和取代。定义括号里照抄「From USER statements: explicit requests」，加「{who}对对方的猜测和叮嘱不记」写明 P10 的反例 |
+| `plans` 拆成 `promises`「{who}答应的事」，`sources = {character}` | PHASE-Tree `update_session_moment.py:114`「**commitments** (list of strings): Promises or decisions the character made.」；只收角色自己的话依据 `:77–79`「Only track what THIS character learned, felt, or committed to — not other speakers.」。定义括号里照抄「Promises or decisions the character made」；原 `plans` 末句「{who}讲自己的经历、看法、习惯，或劝对方做什么，都不记」移到这一栏 |
+| `_checked`：来源不在这一栏的 `sources` 里就丢掉并打 warning，替掉 `:230` | 一条通用规则 |
+| 删掉 `apply` 里 `:280` 的 R5b 分支 | 取代必须同一栏（`:275`），而能被取代的栏（`known` / `requests` / `promises`）都只收一种来源，「角色的话取代对方的条目」在结构上已经不可能 |
+| R5b 改写：对方说的条目，角色的话取代不了；角色答应的事，对方的话也取代不了；各自改口照常取代 | 原 R5b 第三条「角色说的条目谁都能取代」在新结构下不成立（对方的话进不了 `promises`）。行为变化：对方说「下周三来不了」，记成 `requests` 的新条目，角色原来答应的事仍有效，直到角色自己改口 |
+| 示范（`:145–166`）改栏名：例 2 的计划 → `requests`；例 3 的取代（当前状态 `#2 [plans]`）→ `requests`；例 4「老陈答应…」→ `promises`。人物仍是老陈 | X1b 不变 |
+| X1 照抄清单加两句：「From USER statements: explicit requests」「Promises or decisions the character made」 | 守住照抄 |
+| 新增 R5c（角色的话进 `requests` 被丢）、R5d（对方的话进 `promises` 被丢）、R5e（结构锁：本模块所有函数和方法里不出现栏名字面量；`SOURCE_*` 只在 `_source_of` 里；栏定义里不出现「依据只能是」）、R5f（提示词里每栏的来源句和 `sources` 一致） | R5c、R5d 守规则；R5e、R5f 守「只写一处」 |
+| （出处核实情况）上面两行 StateMem 和 PHASE-Tree 的原文、行号照 10-12 交接页抄录，沙箱里没有这两份原文，**本轮未重读，未核实**；本地复核时对照原文核一遍 | 第 7 条 |
+| 探针说明：`scripts/probe_session_record.py:5` 和 §7.2 的「和线上同一条路」改掉 | 不属实：探针少了 `_attach_turn_blocks`（`core/chat_engine.py:443`、`:485`），这一步只给当前用户消息附时间感知块和做法提醒（`:532`），不含本场记录，所以不影响探针结论。探针脚本不重构 |
+| 不改提示词规则 1–8 | — |
+
+**验收（第 1 条：验目标，不只验结构）**
+
+R5c、R5d 只证明「角色的话进不了 `requests`」，这一点代码已经保证。代码挡不住的是：模型把臆测放进 `promises`，例如「孔乙己答应：对方明日要赶路」，依据在角色那句，`promises` 会收。所以 P10 是否修好，只能读重放：
+
+- 两份全量 `replay.json` 第 21 轮：「明日还要赶路呢」这句没有成为任何栏的条目（被丢掉也算，要看 warns 里的原因）。
+- `promises` 栏每一条都是角色本人做出的承诺或决定，主语不是对方。由复核方逐条读，不加文本规则的判定线（那是按字面猜语义，又成了补丁）。
+- 其余门槛不变：小重放 1 次、全量重放连跑 2 次都 6/6；探针带记录 ≥8/9、不带记录 ≤3/9。
+
+**复核（第 14、30 条）**：这一轮的方案和原型都是 Claude 写的。推送之前另开会话做独立复核：先跑目标检查，再自己补变异（放宽、过严两个方向都要有），贴原始输出。作者在沙箱里跑过的变异不作为通过依据。

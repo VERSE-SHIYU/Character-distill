@@ -29,9 +29,9 @@ def _e(id_, col, text, evidence, replaces=None, source="user"):
 def _clean_log():
     return [
         {"turn": 1, "kind": "seed", "new": [_e(1, "known", "对方叫林小满", "我叫林小满")]},
-        {"turn": 2, "kind": "seed", "new": [_e(2, "plans", "对方下月去京城", "我下个月去京城")]},
+        {"turn": 2, "kind": "seed", "new": [_e(2, "requests", "对方下月去京城", "我下个月去京城")]},
         {"turn": 3, "kind": "fill", "new": []},
-        {"turn": 4, "kind": "change", "new": [_e(3, "plans", "对方改去金陵", "改去金陵", replaces=2)]},
+        {"turn": 4, "kind": "change", "new": [_e(3, "requests", "对方改去金陵", "改去金陵", replaces=2)]},
         {"turn": 5, "kind": "question", "new": []},
     ]
 
@@ -60,11 +60,11 @@ def test_each_known_failure_trips_its_line():
     assert not _verdict(log)["每条种子都记到"]
 
     log = _clean_log()
-    log[3]["new"] = [_e(3, "plans", "对方改去金陵", "改去金陵")]           # 改口没用取代
+    log[3]["new"] = [_e(3, "requests", "对方改去金陵", "改去金陵")]           # 改口没用取代
     assert not _verdict(log)["每处改口都用取代完成"]
 
     log = _clean_log()
-    log[3]["new"].append(_e(4, "plans", "对方去金陵", "改去金陵"))          # 取代之外又记一遍（上一场 #14、#15）
+    log[3]["new"].append(_e(4, "requests", "对方去金陵", "改去金陵"))          # 取代之外又记一遍（上一场 #14、#15）
     assert not _verdict(log)["改口那一轮没有重复记"]
 
     log = _clean_log()
@@ -76,5 +76,5 @@ def test_each_known_failure_trips_its_line():
     assert not _verdict(log)["没有独白腔条目"]
 
     log = _clean_log()
-    log[2]["new"] = [_e(10 + i, "plans", "很长的计划" * 40, f"e{i}") for i in range(6)]
+    log[2]["new"] = [_e(10 + i, "requests", "很长的计划" * 40, f"e{i}") for i in range(6)]
     assert not _verdict(log)["注入块 ≤ 768 token"]
