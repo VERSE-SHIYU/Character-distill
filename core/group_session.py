@@ -9,6 +9,7 @@ from typing import Any
 
 from core.chat_engine import ChatEngine
 from core.message_outbox import MessageOutbox
+from core.session_restore import restore_group_engine_state
 from core.tokens import count_tokens
 
 logger = logging.getLogger(__name__)
@@ -130,17 +131,7 @@ class GroupSession:
 
         speaker = self.speaker_name
 
-        # 设置主线程事件循环引用，供 _evaluate_affinity 写 DB 时使用
-        engine._main_loop = asyncio.get_running_loop()
-
-        # 恢复群聊好感
-        if self._storage:
-            try:
-                prev = await self._storage.get_group_affinity(self.id, target_card_id)
-                if prev:
-                    engine.load_affinity(prev)
-            except Exception as exc:
-                logger.warning("Load group affinity failed (card=%s): %s", target_card_id, exc, exc_info=True)
+        await self._restore_members([target_card_id])
 
         # 记录用户消息到群聊历史
         self.group_history.append({
@@ -217,7 +208,7 @@ class GroupSession:
             yield await coro
 
     async def _broadcast_prep(self, message: str, target_card_ids: list[str], auto_mode: bool) -> None:
-        """Shared broadcast preparation: save user message, restore group affinities."""
+        """Shared broadcast preparation: save user message, restore members' state (affinity + record)."""
         speaker = self.speaker_name
 
         if not auto_mode:
@@ -228,24 +219,20 @@ class GroupSession:
                 "speaker_card_id": self.user_persona_card_id if self.user_persona_type == "character" else "",
             })
 
-        _main_loop = asyncio.get_running_loop()
-        if self._storage:
-            for cid in target_card_ids:
-                eng = self.engines.get(cid)
-                if not eng:
-                    continue
-                eng._main_loop = _main_loop
-                try:
-                    prev = await self._storage.get_group_affinity(self.id, cid)
-                    if prev:
-                        eng.load_affinity(prev)
-                except Exception as exc:
-                    logger.warning("Load group affinity failed (card=%s): %s", cid, exc, exc_info=True)
-        else:
-            for cid in target_card_ids:
-                eng = self.engines.get(cid)
-                if eng:
-                    eng._main_loop = _main_loop
+        await self._restore_members(target_card_ids)
+
+    async def _restore_members(self, card_ids: list[str]) -> None:
+        """发消息前，给要说话的人物设主线程事件循环（供评估写 DB），并装回好感和本场记录。
+
+        单发、广播共用这一处；装什么只由 `core.session_restore.restore_group_engine_state` 定。"""
+        main_loop = asyncio.get_running_loop()
+        for cid in card_ids:
+            eng = self.engines.get(cid)
+            if not eng:
+                continue
+            eng._main_loop = main_loop
+            if self._storage:
+                await restore_group_engine_state(eng, self.id, cid, self._storage)
 
     def _pick_must_speak(self, target_card_ids: list[str], auto_mode: bool):
         """选出本轮必须正常说话的角色，避免全员敷衍冷场。"""

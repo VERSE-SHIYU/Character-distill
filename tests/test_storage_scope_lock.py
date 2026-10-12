@@ -46,6 +46,9 @@ UNSCOPED_ALLOWLIST = {
     "core/session_restore.py:restore_engine_state":
         "恢复存档时读本场记录：按 session_id 读，属主校验在调用方完成（两个恢复路径"
         "chat._rebuild_session / history.resume_session 上游已验）；与 read_persisted_affinity 同一理由",
+    "core/session_restore.py:restore_group_engine_state":
+        "群会话发消息前装回群里人物的本场记录：按 (group_id, card_id) 读，属主校验在调用方完成"
+        "（`GroupSession` 只经 `_get_owned_group` 拿到，非属主 404）；与 get_group_affinity 同一处读",
     "core/affinity_service.py:read_persisted_affinity":
         "唯一持久化亲和力读取入口：按 session_id 读，属主校验在调用方完成"
         "（chat.get_affinity 先 get_session_owned；_rebuild_session / resume_session 上游已验）；"

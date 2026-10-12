@@ -1,7 +1,9 @@
-"""恢复一个一对一存档的引擎状态：好感 + 本场记录。
+"""把持久化的引擎状态（好感 + 本场记录）装回引擎：一对一存档一个入口，群里的人物一个入口。
 
-两个恢复路径（`web/routers/chat.py` 自动续聊、`web/routers/history.py` 打开存档）共用这一个
-入口 —— 以前两处各抄一份好感恢复，本场记录不再抄第三份。属主校验在调用方完成。
+- `restore_engine_state`：一对一的两个恢复路径（`web/routers/chat.py` 自动续聊、
+  `web/routers/history.py` 打开存档）共用 —— 以前两处各抄一份好感恢复，本场记录不再抄第三份。
+- `restore_group_engine_state`：群会话发消息前（单发、广播）共用，同一个理由。
+属主校验都在调用方完成。
 """
 
 from __future__ import annotations
@@ -34,3 +36,20 @@ async def restore_engine_state(engine: Any, session_id: str, storage: Any) -> No
         engine.load_session_record(SessionRecord.from_persist(raw))
     except Exception as exc:
         logger.warning("Restore session record failed (non-fatal): %s", exc, exc_info=True)
+
+
+async def restore_group_engine_state(engine: Any, group_id: str, card_id: str, storage: Any) -> None:
+    """把群里一个人物的好感和本场记录装回引擎。各自失败只打 warning，互不拖累。
+
+    好感没评估过（没有那一行）就不装，引擎保持初值 —— 与原先 `GroupSession` 里的写法一致。"""
+    try:
+        prev = await storage.get_group_affinity(group_id, card_id)
+        if prev:
+            engine.load_affinity(prev)
+    except Exception as exc:
+        logger.warning("Load group affinity failed (card=%s): %s", card_id, exc, exc_info=True)
+    try:
+        raw = await storage.load_group_session_record_unscoped(group_id, card_id)
+        engine.load_session_record(SessionRecord.from_persist(raw))
+    except Exception as exc:
+        logger.warning("Restore group session record failed (card=%s): %s", card_id, exc, exc_info=True)
