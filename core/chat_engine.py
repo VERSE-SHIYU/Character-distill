@@ -1408,7 +1408,7 @@ class ChatEngine:
         # ── Gate 1: 冷却（距上次沉默足够轮次） ──
         state = _silence_state.get(self._session_id, {})
         last_turn = state.get("last_turn", -999)
-        current_turn = len(self.history) // 2
+        current_turn = sum(1 for m in self.history if m.get("role") == "user")
         if current_turn - last_turn < SILENCE_COOLDOWN_TURNS:
             return ""
 
