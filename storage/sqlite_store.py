@@ -166,6 +166,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "103_group_member_phases.sql",
     # 104：PG 039 新增表的孪生，同上。
     "104_group_session_records.sql",
+    # 105：PG 040 新增列的孪生，同上。
+    "105_history_digest.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -4512,6 +4514,30 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Save session record failed: {exc}")
             raise StoreError("save_session_record", exc) from exc
+
+    async def save_history_digest(self, session_id: str, digest_json: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE sessions SET history_digest = ? WHERE id = ?",
+                    (digest_json, session_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save history digest failed: {exc}")
+            raise StoreError("save_history_digest", exc) from exc
+
+    async def load_history_digest_unscoped(self, session_id: str) -> str:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT history_digest FROM sessions WHERE id = ?", (session_id,),
+                )
+                row = await cursor.fetchone()
+            return (row[0] or "") if row else ""
+        except Exception as exc:
+            print(f"[SQLiteStore] Load history digest failed: {exc}")
+            raise StoreError("load_history_digest_unscoped", exc) from exc
 
     async def load_session_record_unscoped(self, session_id: str) -> str:
         try:

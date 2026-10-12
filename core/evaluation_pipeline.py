@@ -9,10 +9,11 @@ from __future__ import annotations
 import logging
 
 import time
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
 from core import session_record as record_protocol
+from core import history_digest as digest_protocol
 from core.session_record import SessionRecord
 from core.utils import try_record_usage
 
@@ -39,6 +40,12 @@ class EvalContext:
     departure_notice: str = ""
     # 本场记录（一对一存档，或群里的一个人物）；没有落库身份为 None —— 不抽、不存、提示词不变。
     session_record: SessionRecord | None = None
+    # 历史摘要块（P13，只一对一）：digests=None 表示没有落库身份 —— 不抽、不存。
+    # 窗口起点用引擎的解析器懒算（只在真要抽摘要时才算，规则仍只在 ChatEngine 写一处）。
+    history: list[dict] = field(default_factory=list)
+    resolve_window_start: Callable[[list[dict]], int] | None = None
+    digests: Any = None
+    digest_failures: int = 0
 
 
 @dataclass
@@ -52,6 +59,8 @@ class EvalResult:
     ooc_reason: str = ""
     assertion_confidence: int = 50  # 用户输入可信度，用于记忆写入过滤
     session_record: SessionRecord | None = None  # 应用本轮操作后的本场记录
+    digests: Any = None  # 本轮追加后新的历史摘要块（None = 本轮没动）
+    digest_failures: int = 0  # 历史摘要的连续失败计数（回写引擎）
 
 
 class EvaluationPipeline:
@@ -78,6 +87,7 @@ class EvaluationPipeline:
         """
         result = self._run_affinity(ctx)
         result.session_record = self._run_session_record(ctx)
+        result.digests, result.digest_failures = self._run_history_digest(ctx)
         return result
 
     def _run_affinity(self, ctx: EvalContext) -> EvalResult:
@@ -294,3 +304,54 @@ class EvaluationPipeline:
         except Exception as exc:
             logger.warning("Session record save failed (session=%s group=%s card=%s): %s",
                            ctx.session_id, ctx.group_id, ctx.card_id, exc, exc_info=True)
+
+    # ── SIDE-EFFECT 4: 历史摘要块（P13，只一对一）──────────────────
+
+    def _run_history_digest(self, ctx: EvalContext) -> tuple[Any, int]:
+        """窗口外满一块就单独调一次写摘要；失败只丢本轮、digests 原样。
+
+        返回 ``(新的 digests 或 None, 新的连续失败计数)``：None 表示本轮没动（无落库身份 /
+        窗口外未满一块 / 已达失败上限），调用方保持原值。成功归零、失败加一 —— 连续
+        ``MAX_CONSECUTIVE_FAILURES`` 次失败后本会话不再调用（计数器由 ChatEngine 持有）。
+        """
+        if ctx.digests is None:
+            return None, ctx.digest_failures
+        if ctx.digest_failures >= digest_protocol.MAX_CONSECUTIVE_FAILURES:
+            return None, ctx.digest_failures
+        window_start = ctx.resolve_window_start(ctx.history) if ctx.resolve_window_start else 0
+        block = digest_protocol.next_block(
+            digest_protocol.pending_turns(ctx.history, window_start, ctx.digests))
+        if block is None:
+            return None, ctx.digest_failures
+
+        def call(system: str, user: str) -> str:
+            llm = self._record_llm_for(ctx.llm)
+            reply = llm.chat(system, [{"role": "user", "content": user}])
+            try_record_usage(ctx.storage, llm,
+                             action="chat_history_digest", source="EvaluationPipeline")
+            return reply
+
+        try:
+            digests = digest_protocol.extract(
+                ctx.digests, block, char_name=ctx.card.name, call=call)
+        except Exception as exc:  # 摘要坏了不能拖累别的（本场记录/好感各自独立）
+            logger.warning("History digest failed, digests unchanged (session=%s): %r",
+                           ctx.session_id, exc, exc_info=True)
+            return None, ctx.digest_failures + 1
+        self._persist_history_digest(ctx, digests)
+        return digests, 0
+
+    def _persist_history_digest(self, ctx: EvalContext, digests: Any) -> None:
+        """一对一存存档那一列（群聊本段不涉及）。失败只记 warning —— 内存里已追加，本轮不重试。"""
+        storage = ctx.storage
+        if not storage or not ctx.session_id:
+            return
+        try:
+            from core.scheduling import submit_to_main_loop
+            submit_to_main_loop(
+                storage.save_history_digest(ctx.session_id, digests.to_persist()),
+                timeout=15,
+            )
+        except Exception as exc:
+            logger.warning("History digest save failed (session=%s): %s",
+                           ctx.session_id, exc, exc_info=True)

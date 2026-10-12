@@ -30,6 +30,7 @@ from core.affinity_service import AffinityService, calc_stage
 from core.affinity_rules import MAX_DROP, relational_tier
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext
 from core import session_record as record_protocol
+from core import history_digest as digest_protocol
 from core.session_record import SessionRecord
 
 logger = logging.getLogger(__name__)
@@ -200,6 +201,9 @@ class ChatEngine:
         self._pipeline = EvaluationPipeline()
         # 本场记录（④ 段 1）：只有一对一存档有；群聊引擎（session_id=""）始终为空且不注入
         self._session_record = SessionRecord()
+        # 历史摘要块（P13）：同样只做一对一；窗口外满一块才追加，连续失败到上限就停
+        self._digests = digest_protocol.Digests()
+        self._digest_failures = 0
         self._last_user_msg_at = None
 
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
@@ -544,19 +548,14 @@ class ChatEngine:
             return ""
         return "\n\n【提醒：你遇事的做法】\n" + behavior_lines(self.card.situation_behaviors) + "\n"
 
-    def _build_llm_messages(
-        self, history: list[dict[str, Any]], current_user_message: str,
-    ) -> list[dict[str, Any]]:
-        """从历史 + 当前用户消息构建 messages 数组。
+    def _window_start(self, history: list[dict[str, Any]]) -> int:
+        """历史窗口起点的消息下标：从末尾成对攒满 ``MAX_HISTORY`` 为止，返回最早保留消息的下标。
 
-        按 token 预算从最近往前保留完整轮次（user+assistant 成对截取），
-        保证历史部分以 user 开头、严格交替。末尾追加当前用户消息。
+        `_build_llm_messages` 与历史摘要触发共用这一处（窗口规则只写一遍，spec §3.2）。
+        历史严格按 user/assistant 成对、以 user 开头，故返回的必是 user 下标（偶数）。
         """
         budget = self._ctx_engine.MAX_HISTORY
         used = 0
-
-        # 从末尾按完整轮次（user+assistant 成对）收集
-        collected: list[dict[str, Any]] = []
         i = len(history) - 1
         while i >= 1:
             user_msg = history[i - 1]
@@ -567,19 +566,27 @@ class ChatEngine:
             )
             if used + pair_tok > budget:
                 break
-            # Retracted assistant messages: keep in context with annotation so character still "remembers"
-            if asst_msg.get("retracted"):
-                asst_msg = {
-                    **asst_msg,
-                    "content": f"（你随后撤回了这句话，但你记得说过）{asst_msg.get('content', '')}",
-                }
-            collected.append(asst_msg)
-            collected.append(user_msg)
             used += pair_tok
             i -= 2
+        return i + 1
 
-        # 恢复时间顺序
-        collected.reverse()
+    def _build_llm_messages(
+        self, history: list[dict[str, Any]], current_user_message: str,
+    ) -> list[dict[str, Any]]:
+        """从历史 + 当前用户消息构建 messages 数组。
+
+        按 token 预算从最近往前保留完整轮次（user+assistant 成对截取），
+        保证历史部分以 user 开头、严格交替。末尾追加当前用户消息。
+        """
+        collected: list[dict[str, Any]] = []
+        for msg in history[self._window_start(history):]:
+            # Retracted assistant messages: keep in context with annotation so character still "remembers"
+            if msg.get("role") == "assistant" and msg.get("retracted"):
+                msg = {
+                    **msg,
+                    "content": f"（你随后撤回了这句话，但你记得说过）{msg.get('content', '')}",
+                }
+            collected.append(msg)
 
         # 追加当前用户消息
         collected.append({"role": "user", "content": current_user_message})
@@ -711,6 +718,12 @@ class ChatEngine:
         这里不判一对一：用不用它只由 `_has_session_record` 在使用处判一次（注入、交给评估）。"""
         self._session_record = record
 
+    def load_history_digest(self, digests: digest_protocol.Digests) -> None:
+        """恢复存档时装回持久化的历史摘要块（`core/session_restore.restore_engine_state` 调）。
+
+        同样不判一对一：注入与触发各自在使用处按 `session_id` 判一次。"""
+        self._digests = digests
+
     def ingest_reaction_signals(self, signals: list[dict]) -> None:
         """对外接口：转发给 ReactionService（保持群聊等外部调用不破）。"""
         self._reaction_service.ingest(signals)
@@ -803,10 +816,17 @@ class ChatEngine:
             reaction_appraisal=reaction_appraisal,
             departure_notice=departure_notice,
             session_record=self._session_record if self._has_session_record else None,
+            history=self.history,
+            resolve_window_start=self._window_start,
+            digests=self._digests if self._session_id else None,
+            digest_failures=self._digest_failures,
         )
         result = self._pipeline.run(ctx)
         if result.session_record is not None:
             self._session_record = result.session_record
+        if result.digests is not None:
+            self._digests = result.digests
+        self._digest_failures = result.digest_failures
         self._last_importance = result.importance
         self._last_in_character = result.in_character
         self._last_assertion_confidence = result.assertion_confidence
@@ -1106,7 +1126,8 @@ class ChatEngine:
         in_character < 40 时，【边界感】块移至系统提示物理最末端（最贴近生成位置）。
         其余增强块顺序固定。
         """
-        persona = self._build_affinity_persona_block() + self._build_session_record_block()
+        persona = (self._build_affinity_persona_block() + self._build_session_record_block()
+                   + self._build_history_digest_block())
         cognitive = self._build_cognitive_block()
         events = self._event_service.build_candidate_block()
         relationships = self._build_relationship_block()
@@ -1125,6 +1146,14 @@ class ChatEngine:
         if not self._has_session_record:
             return ""
         return record_protocol.render_block(self._session_record)
+
+    def _build_history_digest_block(self) -> str:
+        """历史摘要块的注入块（放系统提示里、本场记录块旁，故恒在 messages 里的历史窗口之前）。
+
+        只一对一：群聊（`session_id=""`）、空摘要都是空串（spec §3.2 决策二）。"""
+        if not self._session_id:
+            return ""
+        return digest_protocol.render_block(self._digests)
 
     # ── 时间感知构建 ────────────────────────────────────────────
 
