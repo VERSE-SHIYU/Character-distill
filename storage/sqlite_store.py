@@ -164,6 +164,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "102_session_record.sql",
     # 103：PG 038 新增列的孪生，同上。
     "103_group_member_phases.sql",
+    # 104：PG 039 新增表的孪生，同上。
+    "104_group_session_records.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -2534,6 +2536,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute("DELETE FROM group_messages WHERE group_id = ?", (id,))
+                await conn.execute("DELETE FROM group_session_records WHERE group_id = ?", (id,))
                 await conn.execute("DELETE FROM group_sessions WHERE id = ?", (id,))
                 await conn.commit()
         except Exception as exc:
@@ -4521,6 +4524,33 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Load session record failed: {exc}")
             raise StoreError("load_session_record_unscoped", exc) from exc
+
+    async def save_group_session_record(self, group_id: str, card_id: str, record_json: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO group_session_records (group_id, card_id, session_record)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT (group_id, card_id) DO UPDATE SET session_record = excluded.session_record""",
+                    (group_id, card_id, record_json),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save group session record failed: {exc}")
+            raise StoreError("save_group_session_record", exc) from exc
+
+    async def load_group_session_record_unscoped(self, group_id: str, card_id: str) -> str:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT session_record FROM group_session_records WHERE group_id = ? AND card_id = ?",
+                    (group_id, card_id),
+                )
+                row = await cursor.fetchone()
+            return (row[0] or "") if row else ""
+        except Exception as exc:
+            print(f"[SQLiteStore] Load group session record failed: {exc}")
+            raise StoreError("load_group_session_record_unscoped", exc) from exc
 
     async def load_affinity_state_unscoped(self, session_id: str) -> tuple[str, bool]:
         try:
