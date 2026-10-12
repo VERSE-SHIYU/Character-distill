@@ -7,9 +7,9 @@ export default function GroupPhasePicker({ choices, onChange }) {
   return (
     <div className="group-create-card-list">
       {choices.map(({ cardId, card, options, value, avatar }) => (
-        <div key={cardId} className="group-create-row">
+        <div key={cardId} className="group-row">
           <Avatar name={card.name} size={36} src={avatar} />
-          <div className="group-create-card-info">
+          <div className="group-row-info">
             <span className="group-create-card-name">{card.name}</span>
           </div>
           <Select

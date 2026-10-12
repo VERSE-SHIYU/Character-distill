@@ -1397,9 +1397,9 @@ export default function GroupChatPage() {
                               navigateTo('marketCardDetail', { marketCardId: card.id || card.card_id, groupId: currentGroup?.id })
                             }
                             return (
-                              <div key={cardId} className="group-member-item" style={{ cursor: 'pointer' }} onClick={handleMemberClick}>
+                              <div key={cardId} className="group-row group-member-item" onClick={handleMemberClick}>
                                 <Avatar name={card?.name || '?'} size={44} src={cardAvatars[cardId]} />
-                                <div className="group-member-info">
+                                <div className="group-row-info">
                                   <span className="group-member-name">{card?.name || '?'}</span>
                                   {identity && <span className="group-member-identity">{identity}</span>}
                                   {phaseLine && <span className="group-member-identity">{phaseLine}</span>}
@@ -1502,13 +1502,13 @@ export default function GroupChatPage() {
                     return (
                       <div
                         key={cardId}
-                        className={`group-create-row group-create-card${selected ? ' selected' : ''}${blocked ? ' disabled' : ''}`}
+                        className={`group-row group-create-card${selected ? ' selected' : ''}${blocked ? ' disabled' : ''}`}
                         onClick={blocked ? undefined : () => toggleCard(cardId)}
                         aria-disabled={blocked || undefined}
                         title={blocked ? '已选了这个角色的另一个版本' : undefined}
                       >
                         <Avatar name={c.name} size={36} src={cardAvatars[cardId]} />
-                        <div className="group-create-card-info">
+                        <div className="group-row-info">
                           <span className="group-create-card-name">{c.name}</span>
                           {identity && <span className="group-create-card-identity">{identity}</span>}
                         </div>
