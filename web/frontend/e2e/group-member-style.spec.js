@@ -59,11 +59,15 @@ const computed = (loc) => loc.first().evaluate((el) => {
   const s = getComputedStyle(el)
   return {
     padding: s.padding, gap: s.gap, backgroundColor: s.backgroundColor, width: s.width, display: s.display,
-    borderRadius: s.borderRadius, fontSize: s.fontSize, flexGrow: s.flexGrow, minWidth: s.minWidth,
-    borderBottomWidth: s.borderBottomWidth, cursor: s.cursor, fontWeight: s.fontWeight, marginTop: s.marginTop,
-    whiteSpace: s.whiteSpace, styleAttr: el.getAttribute('style'),
+    alignItems: s.alignItems, borderRadius: s.borderRadius, fontSize: s.fontSize, flexGrow: s.flexGrow,
+    minWidth: s.minWidth, borderBottomWidth: s.borderBottomWidth, cursor: s.cursor, fontWeight: s.fontWeight,
+    marginTop: s.marginTop, whiteSpace: s.whiteSpace, styleAttr: el.getAttribute('style'),
   }
 })
+
+// G4：成员条目悬停底色。取值 = head 默认主题下 `rgba(var(--accent-rgb), 0.04)` 的计算值
+// （`--accent-rgb: 123, 97, 255`），在 head 上读出后写死，不再只判「非透明」。
+const HOVER_BG = 'rgba(123, 97, 255, 0.04)'
 
 const expectWidth = (actual, expected) => expect(Math.abs(parseFloat(actual) - expected)).toBeLessThanOrEqual(1)
 
@@ -85,6 +89,8 @@ test.describe('桌面 1280×900', () => {
     expect(it.borderRadius).toBe('6px')
     expect(it.borderBottomWidth).toBe('1px')
     expect(it.cursor).toBe('pointer')
+    expect(it.display, '成员条目应是 flex 行（行布局由 .group-row 提供）').toBe('flex')
+    expect(it.alignItems, '成员条目应垂直居中（行布局由 .group-row 提供）').toBe('center')
     expect(it.styleAttr, '成员条目不应再有内联 style').toBeNull()
 
     // G2 名字
@@ -98,11 +104,26 @@ test.describe('桌面 1280×900', () => {
     expect(identity.marginTop).toBe('2px')
     expect(identity.whiteSpace).toBe('nowrap')
 
-    // G4 悬停：淡底色（不是透明）。background 有 0.15s 过渡，轮询等过渡结束。
+    // G4 悬停：淡底色（不是透明）。background 有 0.15s 过渡，轮询等过渡结束再比具体值。
     expect(it.backgroundColor, '未悬停时应为透明').toBe('rgba(0, 0, 0, 0)')
     await item.hover()
     await expect.poll(async () => (await computed(item)).backgroundColor, { timeout: 3000 })
-      .not.toBe('rgba(0, 0, 0, 0)')
+      .toBe(HOVER_BG)
+
+    // S3 三处 .group-row 消费者同源：建群第 1 步卡片、第 2 步时期行，也必须是同一种行布局
+    await page.locator('.messages-sidebar-header .btn-primary').click()
+    await expect(page.locator('.group-create-card')).toHaveCount(2)
+    const card = await computed(page.locator('.group-create-card').first())
+    expect(card.display, '建群卡片应是 flex 行（行布局由 .group-row 提供）').toBe('flex')
+    expect(card.alignItems).toBe('center')
+
+    await page.locator('.group-create-card', { hasText: '甲' }).click()
+    await page.locator('.group-create-card', { hasText: '乙' }).click()
+    await page.locator('.group-create-modal .modal-actions .btn-primary').click()
+    await expect(page.locator('.modal-label', { hasText: '你以谁的身份参与？' })).toBeVisible()
+    const row = await computed(page.locator('.group-create-section', { hasText: '每个角色的时期' }).locator('.group-row').first())
+    expect(row.display, '时期行应是 flex 行（行布局由 .group-row 提供）').toBe('flex')
+    expect(row.alignItems).toBe('center')
   })
 
   test('G6-desktop 其余布局未变（消息区 / 成员面板 / 建群弹窗）', async ({ page }) => {
@@ -131,7 +152,7 @@ test.describe('桌面 1280×900', () => {
     const card = await computed(page.locator('.group-create-card'))
     expect(card.padding).toBe('8px 10px'); expect(card.gap).toBe('10px')
     expect(card.borderRadius).toBe('6px'); expect(card.fontSize).toBe('14px')
-    const cardInfo = await computed(page.locator('.group-create-card .group-row-info, .group-create-card .group-create-card-info'))
+    const cardInfo = await computed(page.locator('.group-create-card .group-row-info'))
     expect(cardInfo.flexGrow).toBe('1'); expect(cardInfo.minWidth).toBe('0px')
 
     // 第 2 步时期行 + 文字列
@@ -140,10 +161,10 @@ test.describe('桌面 1280×900', () => {
     await page.locator('.group-create-modal .modal-actions .btn-primary').click()
     await expect(page.locator('.modal-label', { hasText: '你以谁的身份参与？' })).toBeVisible()
     const section = page.locator('.group-create-section', { hasText: '每个角色的时期' })
-    const row = await computed(section.locator('.group-row, .group-create-row'))
+    const row = await computed(section.locator('.group-row'))
     expect(row.padding).toBe('8px 10px'); expect(row.gap).toBe('10px')
     expect(row.borderRadius).toBe('6px'); expect(row.fontSize).toBe('14px')
-    const rowInfo = await computed(section.locator('.group-row .group-row-info, .group-create-row .group-create-card-info'))
+    const rowInfo = await computed(section.locator('.group-row .group-row-info'))
     expect(rowInfo.flexGrow).toBe('1'); expect(rowInfo.minWidth).toBe('0px')
   })
 })
@@ -174,7 +195,7 @@ test.describe('手机 390×844', () => {
   })
 })
 
-test('G5 一处定义：死类清空、行布局唯一', async () => {
+test('G5 一处定义：死类清空、行布局唯一、成员条目只写自己那几样', async () => {
   const count = (re) => (CSS.match(re) || []).length
 
   expect(count(/group-chat-layout/g), 'group-chat-layout 应为 0').toBe(0)
@@ -183,15 +204,19 @@ test('G5 一处定义：死类清空、行布局唯一', async () => {
   expect(count(/\.group-row\s*\{/g), '.group-row 规则应恰有 1 条').toBe(1)
   expect(count(/\.group-row-info\s*\{/g), '.group-row-info 规则应恰有 1 条').toBe(1)
 
-  // 布局（display/padding/gap/align-items）只由 .group-row 管，.group-member-item 里不出现
+  // 白名单：以 .group-member-item 结尾的选择器里只允许自己特有的这几样；
+  // 布局（display/padding/gap/align-items/border-radius/font-size/…）只能由 .group-row 管。
+  const ALLOWED = new Set(['border-bottom', 'transition', 'cursor', 'background'])
   const rules = [...CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
   const guarded = []
   for (const [, selectorText, body] of rules) {
     const selectors = selectorText.split(',').map((s) => s.trim())
-    if (!selectors.some((s) => s.endsWith('.group-member-item'))) continue
+    if (!selectors.some((s) => /\.group-member-item(:[a-z-]+)?$/.test(s))) continue
     guarded.push(selectors.join(' , '))
-    for (const prop of ['display', 'padding', 'gap', 'align-items']) {
-      expect(body, `「${selectors.join(', ')}」不应含 ${prop}`).not.toMatch(new RegExp(`(^|[;{\\s])${prop}\\s*:`))
+    for (const decl of body.split(';')) {
+      const prop = decl.split(':')[0].trim()
+      if (!prop) continue
+      expect(ALLOWED.has(prop), `「${selectors.join(', ')}」不允许出现 ${prop}（布局应交给 .group-row）`).toBe(true)
     }
   }
   expect(guarded.length, '应能找到以 .group-member-item 结尾的选择器').toBeGreaterThan(0)

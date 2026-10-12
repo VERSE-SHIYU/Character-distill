@@ -32,7 +32,7 @@
    - `GroupChatPage.jsx:1400`：`style={{ cursor: 'pointer' }}`，条目可点（`onClick={handleMemberClick}`）。
    - 结构：`GroupChatPage.jsx:1400–1416`：`.group-member-item` > `Avatar` + `.group-member-info`（name、identity×2、affinity）+ `.group-member-filter-btn`。`group-member-*` 全仓只在这里用。e2e 用 `.group-member-item`、`.group-member-name`、`.group-member-identity` 定位（`group-arc-phase.spec.js:159、175、194、202`），这些类名都保留。
 3. `group-chat-layout` 自 `0ac7149d`（07-04 群聊换外壳）起不在任何 JSX 里。群聊页根节点是 `GroupChatPage.jsx:864` 的 `"chat-view panel group-chat-page"`。
-4. `global.css` 里以 `.group-chat-layout` 开头的规则共 16 条：`:13290`、`:13306`、`:13314`、`:13324–13325`（一条规则两个选择器）、`:13500`、`:13547`、`:13553`、`:13561`、`:13569`、`:13572`、`:13576`、`:13581`、`:13594`（单独一个 `@media (max-width: 900px)` 块）、`:13597`（单独一个 `@media (max-width: 768px)` 块）、`:18713`（在一个大的 `@media (max-width: 768px)` 块里，块内还有别的规则）。
+4. `global.css` 里含 `.group-chat-layout` 的规则共 16 条（`:13290` 是 `.private-chat.group-chat-layout`，不以 `.group-chat-layout` 开头，按「含」计）：`:13290`、`:13306`、`:13314`、`:13324–13325`（一条规则两个选择器）、`:13500`、`:13547`、`:13553`、`:13561`、`:13569`、`:13572`、`:13576`、`:13581`、`:13594`（单独一个 `@media (max-width: 900px)` 块）、`:13597`（单独一个 `@media (max-width: 768px)` 块）、`:18713`（在一个大的 `@media (max-width: 768px)` 块里，块内还有别的规则）。
 5. 截图（本地 10-12，脚本在仓库外 `temp/css-dead/`）：把 `.group-chat-layout` 换成 `.group-chat-page` 注入后，成员标签变好（Tracy 选定）；消息区变差（手机上头像贴左边缘，桌面多一层底色）。所以成员相关的那 5 条取值保留，其余 11 条删掉。
 6. `Avatar` 的字号由自身 `size` 算（`common/Avatar.jsx:20` `fontSize: size * 0.42`），不受行的 `font-size` 影响。
 
@@ -67,7 +67,7 @@
   - 选择器 `.group-row {`、`.group-row-info {` 各出现 1 次；
   - 在任何以 `.group-member-item` 结尾的选择器里，`display`、`padding`、`gap`、`align-items` 都不出现，也就是布局只由 `.group-row` 管。
 - G6 其余不变：在 main 上先跑一次，读出实际值写成测试常量（不用截图基准，基准图分平台，CI 上对不上）。
-  - 桌面 1280×900、手机 390×844 下，`.private-chat-body`、`.group-chat-messages-area`、`.group-members-panel` 的 `padding`、`gap`、`background-color`、`width`、`display`，等于常量；
+  - 桌面 1280×900、手机 390×844 下，`.private-chat-body`、`.group-chat-messages-area`、`.group-right-member-list` 的 `padding`、`gap`、`background-color`、`width`、`display`，等于常量；
   - 建群弹窗第 1 步的角色卡片、第 2 步的时期行，它们的 `padding`、`gap`、`border-radius`、`font-size`，以及文字列的 `flex-grow`、`min-width`，等于常量。
 
 ## 4. 步骤（每步一个 commit）
@@ -84,3 +84,14 @@
   - 群聊页桌面：成员标签开、关各一张；
   - 群聊页手机一张；
   - 建群弹窗第 1、2 步各一张。
+
+## 6. 补充：独立复核（R1）处理
+
+独立复核给出 S1–S5、T1，处理如下（只动测试与 spec，不动 CSS/JSX）：
+
+- **S1（spec 错）**：G6 原来点名的 `.group-members-panel` 在 JSX 里不存在（全仓 0 命中；被删的死样式打的是同名死选择器）。断言改用真实渲染的容器 **`.group-right-member-list`**（`GroupChatPage.jsx:1384`），量取成员列表而非幽灵元素。§1.4 的计数口径同步改为「含 `.group-chat-layout`」。
+- **S2（判据不全，M7 漏网）**：G5 从「禁止 `display/padding/gap/align-items` 四词」改成**白名单**——以 `.group-member-item` 结尾的选择器只允许 `border-bottom`、`transition`、`cursor`、`background`，出现别的属性即红。补上 `border-radius`/`font-size` 等被漏掉的布局属性。
+- **S3（判据不全，M8 全绿）**：G1 加断言：成员条目、建群第 1 步卡片、第 2 步时期行三处的计算样式都是 `display: flex`、`align-items: center`。原判据只查「成员条目没重声明布局」，没查「共享行布局确实提供了布局」，把 `.group-row` 改成 `display: block` 也不红。
+- **S4（判据过宽）**：G4 不再只判「背景非透明」，改为断言悬停底色的**具体计算值** `rgba(123, 97, 255, 0.04)`（= head 默认主题 `--accent-rgb: 123, 97, 255` 下 `rgba(var(--accent-rgb), 0.04)` 的计算值，读出后写死）。
+- **S5（记录，不改）**：G6 的宽度用硬编码计算值 + ±1px 容差。**e2e 不进 CI**（CI `build.yml` 只跑 `npm test`/vitest），故宽度常量只在本地有效；若日后把 e2e 纳入 CI，需放宽宽度容差或改断相对关系。
+- **T1（测试写法）**：删掉测试里为旧类名留的后备选择器（`.group-create-row`、`.group-create-card-info`），只认 `.group-row` / `.group-row-info`。代价是失去「同一份测试也能在 main 上跑」的能力（G5 的读 CSS 文本断言本就只在 head 上有意义）。
