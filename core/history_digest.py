@@ -70,16 +70,28 @@ class Digests:
             return Digests()
 
 
+def turn_spans(history: list[dict[str, Any]]) -> list[tuple[int, int]]:
+    """历史里每一轮的 ``(user 下标, assistant 下标)``，旧→新。
+
+    一轮 = 一条 user 消息配它**后面紧跟**的 assistant 消息。角色开场白（前面没有 user）
+    不属于任何一轮；user 后没有 assistant 的半个轮也不算。取轮规则只此一处
+    （`ChatEngine._window_start` 也读它）。
+    """
+    return [(i, i + 1) for i, msg in enumerate(history)
+            if msg.get("role") == "user" and i + 1 < len(history)
+            and history[i + 1].get("role") == "assistant"]
+
+
 def pending_turns(history: list[dict[str, Any]], window_start: int,
                   digests: Digests) -> list[list[dict]]:
     """窗口外、尚未摘要的整轮，旧→新；每轮 = ``[user_msg, assistant_msg]``。
 
-    ``window_start`` 是历史窗口起点的消息下标（轮边界、偶数），故窗口外的轮数是
-    ``window_start // 2``；再减去已摘要的 ``covered_turns()``。
+    只有**整轮都落在窗口起点之前**才算窗口外的轮：按角色配对后取窗口起点之前的那些轮
+    （``history[:window_start]`` 末尾不完整的一轮自然被配对丢掉）；再减去已摘要的
+    ``covered_turns()``。
     """
-    outside = window_start // 2
-    return [[history[2 * t], history[2 * t + 1]]
-            for t in range(digests.covered_turns(), outside)]
+    turns = [[history[u], history[a]] for u, a in turn_spans(history[:window_start])]
+    return turns[digests.covered_turns():]
 
 
 def next_block(pending: list[list[dict]]) -> list[list[dict]] | None:
