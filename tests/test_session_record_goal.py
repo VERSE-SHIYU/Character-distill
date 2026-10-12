@@ -577,7 +577,7 @@ class _CountingStore:
 
     def __getattr__(self, name):
         attr = getattr(self._store, name)
-        if name in ("save_affinity_state", "save_session_record"):
+        if name in ("save_affinity_state", "save_session_record", "save_group_session_record"):
             async def counted(*a, **kw):
                 self.calls.append(name)
                 return await attr(*a, **kw)
@@ -647,21 +647,24 @@ async def test_E3_one_turn_saves_affinity_once_and_the_record_once():
 
 
 @_pg
-async def test_E4_group_engines_never_carry_a_record():
-    """群聊引擎：评估提示词里没有本场记录、注入块里没有、也不存。"""
+async def test_E4_group_engines_keep_their_own_record():
+    """群聊引擎（⑤，spec group-session-record.md）：每轮也抽取，存进（群, 人物）那一份，
+    不碰一对一存档。"""
     store = PostgresStore(TEST_DATABASE_URL)
     await store._ensure_initialized()
     try:
         _, cid, a, _ = await _seed(store)
         counting = _CountingStore(store)
         llm = _ScriptLLM(_verdict(), record=_BJ)
-        eng = _engine(counting, llm, cid, group_id=_uid("g"))
-        eng.load_session_record(_one("requests", "下个月去北京面试", "北京面试"))  # 装进去也不用
+        gid = _uid("g")
+        eng = _engine(counting, llm, cid, group_id=gid)
         async with main_loop_registered():
             await asyncio.to_thread(eng.post_stream_process, USER_SAYS, CHAR_SAYS)
-        assert llm.record_calls == [], "群聊不该有抽取调用"
-        assert rec.BLOCK_TITLE not in eng._build_all_enhancements()
-        assert "save_session_record" not in counting.calls
+        assert len(llm.record_calls) == 1, "群聊每轮应有一次抽取调用"
+        assert "北京面试" in eng._build_all_enhancements()
+        assert counting.calls == ["save_group_session_record"], counting.calls
+        assert "北京面试" in await store.load_group_session_record_unscoped(gid, cid)
+        assert await store.load_session_record_unscoped(a) == ""
     finally:
         await store.close()
 
