@@ -792,6 +792,20 @@ class StorageBase(ABC):
         a logged-in request must not call this."""
 
     @abstractmethod
+    async def save_history_digest(self, session_id: str, digest_json: str) -> None:
+        """Persist a one-to-one session's history-digest JSON (`sessions.history_digest`).
+
+        Does **not** touch `updated_at`: that column is the last-chat time the departure
+        notice reads, and saving the digest is not a chat event (same as `save_session_record`)."""
+
+    @abstractmethod
+    async def load_history_digest_unscoped(self, session_id: str) -> str:
+        """Return the session's history-digest JSON ("" when never saved), with no ownership filter.
+
+        Called by the engine restore path (no user context). Anything reachable from
+        a logged-in request must not call this."""
+
+    @abstractmethod
     async def save_group_session_record(self, group_id: str, card_id: str, record_json: str) -> None:
         """Upsert one group member's record JSON (`group_session_records`, keyed by (group, card)).
 

@@ -3780,6 +3780,28 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Load session record failed: {exc}")
             raise StoreError("load_session_record_unscoped", exc) from exc
 
+    async def save_history_digest(self, session_id: str, digest_json: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE sessions SET history_digest = $1 WHERE id = $2",
+                    digest_json, session_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Save history digest failed: {exc}")
+            raise StoreError("save_history_digest", exc) from exc
+
+    async def load_history_digest_unscoped(self, session_id: str) -> str:
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    "SELECT history_digest FROM sessions WHERE id = $1", session_id,
+                )
+            return (row[0] or "") if row else ""
+        except Exception as exc:
+            print(f"[PostgresStore] Load history digest failed: {exc}")
+            raise StoreError("load_history_digest_unscoped", exc) from exc
+
     async def load_affinity_state_unscoped(self, session_id: str) -> tuple[str, bool]:
         try:
             async with await self._connect() as conn:
