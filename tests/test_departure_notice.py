@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.affinity_service import AffinityService
+from core.history_digest import Digests
 from core.session_record import SessionRecord
 from core.chat_engine import (
     ChatEngine, WATCH_GAP_MIN_HOURS, WATCH_GAP_MAX_HOURS,
@@ -56,6 +57,8 @@ class TestGapLogic:
         engine._last_importance = 5
         engine._pipeline = MagicMock()
         engine._session_record = SessionRecord()
+        engine._digests = Digests()
+        engine._digest_failures = 0
         engine._event_service = MagicMock()
         engine._reflection_service = MagicMock()
         engine._ctx_engine = MagicMock()

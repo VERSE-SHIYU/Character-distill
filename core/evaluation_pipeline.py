@@ -10,7 +10,7 @@ import logging
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from core import session_record as record_protocol
 from core import history_digest as digest_protocol
@@ -41,9 +41,9 @@ class EvalContext:
     # 本场记录（一对一存档，或群里的一个人物）；没有落库身份为 None —— 不抽、不存、提示词不变。
     session_record: SessionRecord | None = None
     # 历史摘要块（P13，只一对一）：digests=None 表示没有落库身份 —— 不抽、不存。
-    # history / window_start 交给引擎算好（窗口规则只在 ChatEngine 写一处）。
+    # 窗口起点用引擎的解析器懒算（只在真要抽摘要时才算，规则仍只在 ChatEngine 写一处）。
     history: list[dict] = field(default_factory=list)
-    window_start: int = 0
+    resolve_window_start: Callable[[list[dict]], int] | None = None
     digests: Any = None
     digest_failures: int = 0
 
@@ -318,8 +318,9 @@ class EvaluationPipeline:
             return None, ctx.digest_failures
         if ctx.digest_failures >= digest_protocol.MAX_CONSECUTIVE_FAILURES:
             return None, ctx.digest_failures
+        window_start = ctx.resolve_window_start(ctx.history) if ctx.resolve_window_start else 0
         block = digest_protocol.next_block(
-            digest_protocol.pending_turns(ctx.history, ctx.window_start, ctx.digests))
+            digest_protocol.pending_turns(ctx.history, window_start, ctx.digests))
         if block is None:
             return None, ctx.digest_failures
 

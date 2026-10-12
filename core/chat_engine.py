@@ -558,9 +558,11 @@ class ChatEngine:
         used = 0
         i = len(history) - 1
         while i >= 1:
+            user_msg = history[i - 1]
+            asst_msg = history[i]
             pair_tok = (
-                count_tokens(history[i - 1].get("content", ""))
-                + count_tokens(history[i].get("content", ""))
+                count_tokens(user_msg.get("content", ""))
+                + count_tokens(asst_msg.get("content", ""))
             )
             if used + pair_tok > budget:
                 break
@@ -815,7 +817,7 @@ class ChatEngine:
             departure_notice=departure_notice,
             session_record=self._session_record if self._has_session_record else None,
             history=self.history,
-            window_start=self._window_start(self.history),
+            resolve_window_start=self._window_start,
             digests=self._digests if self._session_id else None,
             digest_failures=self._digest_failures,
         )

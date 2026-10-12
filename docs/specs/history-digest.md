@@ -92,7 +92,7 @@ def extract(digests, turns, *, char_name, call) -> Digests
 
    **已知边界**：`affinity_enabled=False` 时整条评估流水线不跑，摘要随之停 —— 与本场记录一致（它同为流水线的 side-effect），另开 PR 解开。
 
-- 窗口起点只算一处：把 `_build_llm_messages` 里「从末尾成对攒到 budget 为止」的起点抽成 `ChatEngine._window_start(history) -> int`，`_build_llm_messages` 与摘要触发共用（避免窗口规则写两遍）。
+- 窗口起点只算一处：把 `_build_llm_messages` 里「从末尾成对攒到 budget 为止」的起点抽成 `ChatEngine._window_start(history) -> int`，`_build_llm_messages` 与摘要触发共用（避免窗口规则写两遍）。**懒算**：注入给流水线的是解析器 `self._window_start` 本身（`EvalContext.resolve_window_start`），只在真要抽摘要时才算 —— 好感评估每轮都跑，但多数轮没有满一块的窗口外轮；若在组装 `EvalContext` 时就算，会让好感路径每轮都依赖 `_ctx_engine.MAX_HISTORY`（无意义且拖累）。
 - 引擎状态：`self._digests: Digests`、`self._digest_failures: int`；`load_history_digest(digests)` 供恢复用（同 `load_session_record`）；`_build_history_digest_block()` 供注入。
 
 ### 3.3 存储（§9 决策一）
@@ -111,11 +111,12 @@ def extract(digests, turns, *, char_name, call) -> Digests
 |---|---|
 | `core/history_digest.py` | 新增（§3.1） |
 | `core/chat_engine.py` | `_window_start` 抽出并被 `_build_llm_messages` 复用；`_build_history_digest_block`；`_build_all_enhancements` 拼一行；`_post_turn` 触发；`load_history_digest`（恢复用）；失败计数器 |
-| `core/evaluation_pipeline.py` | 新增 `_run_history_digest`（side-effect，与 `_run_session_record` 同写法）；`EvalContext` 加 `history`、`window_start`、`digests` 字段；`EvalResult` 回传新 `digests` |
+| `core/evaluation_pipeline.py` | 新增 `_run_history_digest`（side-effect，与 `_run_session_record` 同写法）；`EvalContext` 加 `history`、`resolve_window_start`（窗口起点解析器，懒算）、`digests` 字段；`EvalResult` 回传新 `digests` |
 | `core/session_restore.py` | `restore_engine_state` 恢复 `history_digest` |
 | `storage/base.py`、`storage/sqlite_store.py`、`storage/postgres_store.py` | `save_history_digest` / `load_history_digest_unscoped` |
 | `storage/migrations_pg/040_history_digest.sql`、`storage/migrations/105_history_digest.sql` | 新列 |
 | `tests/test_history_digest_goal.py` | 新增目标检查（§1） |
+| `tests/test_departure_notice.py` | `_make_engine` 的替身引擎补 `_digests` / `_digest_failures`（真 `__init__` 新增的两项，test 用 `ChatEngine.__new__` 手搭替身） |
 | `tests/test_session_record_goal.py` / 结构锁测试 | 若列集锁测试枚举列，加新列（按实际） |
 
 ## 5. 对账表
