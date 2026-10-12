@@ -519,3 +519,13 @@ Claude 读了三份 `replay.json` 的第 7、21 轮，和两份全量结束时 `
 提示词改了，按 §7 重跑小重放 1 次、全量重放 2 次、探针 1 次（本地），门槛不变；结果记在下一节。
 
 **PHASE-Tree 引文已对照原文（10-12）**：从 `github.com/MemTensor/PHASE-Tree` 取 commit `0be378f` 的 `src/tree_pipeline/update_session_moment.py`，本文引用的行逐字核过，全部相符：`:68`「You are a character state analyst.」、`:77–79`「Only track what THIS character learned, felt, or committed to — not other speakers.」（原文用 em dash）、`:81–83`「Do NOT fabricate events or emotions not supported by the text.」、`:96`「You MUST write ALL」、`:108` 中文示例、`:114`「Promises or decisions the character made.」、`:132`「Output ONLY a valid JSON object」、`:155`「**你必须用中文撰写所有输出内容。**」、`:281` `temperature=0.0`。此前标「未核实」的两处（`:114`、`:77–79`）至此已核实。
+
+### 第七轮验收（10-12 15:10，本地，`d26e962e`）
+
+两个文件 blob 哈希相符。小重放、全量 A、全量 B 都是 6/6（注入块 138、137、146 token）；探针带记录 9/9、不带记录 1/9。第一次跑探针时 Windows 控制台 GBK 编码打印 ✓ 报错退出（只发出 1 次调用），设 `PYTHONIOENCODING=utf-8` 后重跑通过，与代码无关。
+
+- **P11**：三次第 7 轮都记成 `requests`，依据是对方原话「你答应我，等我回来教我下棋，好不好？」；两份全量 `promises` 都是 0 条。小重放措辞为「对方请孔乙己答应等他回来教他下棋」，栏和来源相同。
+- **P10**：第 21 轮三次都没有新条目；A、B 各有一条 warn，模型把「明日还要赶路呢」放进 `requests`，被来源规则丢掉。A 第 109 轮、B 第 91/94/109/129 轮同样被丢。两份最终记录里没有含「赶路」的条目。
+- B #11「对方请孔乙己讲故事」（依据问句「你会不会讲故事？」）与第六轮验收相同，不是本轮带来的变化。
+
+门槛全部满足，提示词补 `"moved off"` 没有带来退化。
