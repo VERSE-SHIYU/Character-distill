@@ -1928,6 +1928,7 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 async with conn.transaction():
                     await conn.execute("DELETE FROM group_messages WHERE group_id = $1", id)
+                    await conn.execute("DELETE FROM group_session_records WHERE group_id = $1", id)
                     await conn.execute("DELETE FROM group_sessions WHERE id = $1", id)
         except Exception as exc:
             print(f"[PostgresStore] Hard delete group session failed: {exc}")
@@ -3792,6 +3793,31 @@ class PostgresStore(StorageBase):
         except Exception as exc:
             print(f"[PostgresStore] Load affinity state failed: {exc}")
             raise StoreError("load_affinity_state_unscoped", exc) from exc
+
+    async def save_group_session_record(self, group_id: str, card_id: str, record_json: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO group_session_records (group_id, card_id, session_record)
+                       VALUES ($1, $2, $3)
+                       ON CONFLICT (group_id, card_id) DO UPDATE SET session_record = EXCLUDED.session_record""",
+                    group_id, card_id, record_json,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Save group session record failed: {exc}")
+            raise StoreError("save_group_session_record", exc) from exc
+
+    async def load_group_session_record_unscoped(self, group_id: str, card_id: str) -> str:
+        try:
+            async with await self._connect() as conn:
+                value = await conn.fetchval(
+                    "SELECT session_record FROM group_session_records WHERE group_id = $1 AND card_id = $2",
+                    group_id, card_id,
+                )
+            return value or ""
+        except Exception as exc:
+            print(f"[PostgresStore] Load group session record failed: {exc}")
+            raise StoreError("load_group_session_record_unscoped", exc) from exc
 
     async def update_group_affinity(
         self, group_id: str, card_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""

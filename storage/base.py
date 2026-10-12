@@ -792,6 +792,20 @@ class StorageBase(ABC):
         a logged-in request must not call this."""
 
     @abstractmethod
+    async def save_group_session_record(self, group_id: str, card_id: str, record_json: str) -> None:
+        """Upsert one group member's record JSON (`group_session_records`, keyed by (group, card)).
+
+        Its own table, not a `group_affinity` column: a `group_affinity` row means "affinity
+        has been evaluated", and the record must not create one."""
+
+    @abstractmethod
+    async def load_group_session_record_unscoped(self, group_id: str, card_id: str) -> str:
+        """Return one group member's record JSON ("" when never saved), with no ownership filter.
+
+        Called by the group engine restore path (no user context). Anything reachable from
+        a logged-in request must not call this."""
+
+    @abstractmethod
     async def load_affinity_state_unscoped(self, session_id: str) -> tuple[str, bool]:
         """Return (state_json, initialized) for a session, with no ownership filter.
 
