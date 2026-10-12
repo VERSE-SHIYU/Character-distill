@@ -90,6 +90,8 @@ def extract(digests, turns, *, char_name, call) -> Digests
 1. **注入**：新增 `_build_history_digest_block()`（同 `_build_session_record_block`），拼进 `_build_all_enhancements` 的 `persona`（`core/chat_engine.py:1109`）：`persona = self._build_affinity_persona_block() + self._build_session_record_block() + self._build_history_digest_block()`。放 system prompt 里、本场记录块旁——因为历史窗口在 messages 数组里，而 spec 要求「不在 `_build_llm_messages` 里写业务逻辑」（§9 决策二）。空 / 群聊 / 无落库身份 → `""`。
 2. **触发**：`_post_turn`（`core/chat_engine.py:593`）里，若有满一块的窗口外轮，**交评估流水线同一套方式**单独调一次：走 `EvaluationPipeline`，一个新增的 side-effect（`_run_history_digest`，与 `_run_session_record` 同一写法：`_record_llm_for` 派生低温适配器 + `try_record_usage` + 自己的 try）。失败只记 warning、本轮不写。连续 `MAX_CONSECUTIVE_FAILURES` 次失败后本会话不再调用（计数器挂在 `ChatEngine`）。
 
+   **已知边界**：`affinity_enabled=False` 时整条评估流水线不跑，摘要随之停 —— 与本场记录一致（它同为流水线的 side-effect），另开 PR 解开。
+
 - 窗口起点只算一处：把 `_build_llm_messages` 里「从末尾成对攒到 budget 为止」的起点抽成 `ChatEngine._window_start(history) -> int`，`_build_llm_messages` 与摘要触发共用（避免窗口规则写两遍）。
 - 引擎状态：`self._digests: Digests`、`self._digest_failures: int`；`load_history_digest(digests)` 供恢复用（同 `load_session_record`）；`_build_history_digest_block()` 供注入。
 
@@ -98,7 +100,7 @@ def extract(digests, turns, *, char_name, call) -> Digests
 `Digests` 存会话行的一列 JSON，与 `session_record` 同一写法（`sessions.history_digest`，`TEXT`，NULL=还没有）：
 
 - 迁移：PG `storage/migrations_pg/040_history_digest.sql` ↔ SQLite `storage/migrations/105_history_digest.sql`（**双端注册**，列集锁要求两侧相等；加入 `storage/sqlite_store.py` 的迁移名单与本端 PG 名单）。
-- 方法：`save_history_digest(session_id, json)` / `load_history_digest_unscoped(session_id)`，`storage/base.py` 起、sqlite + postgres 各实现一份（未实现 `NotImplementedError`，同 session_record）。内存锁 `test_storage_scope_lock` 的名单要带上这两个方法。
+- 方法：`save_history_digest(session_id, json)` / `load_history_digest_unscoped(session_id)`，`storage/base.py` 起、sqlite + postgres 各实现一份（未实现 `NotImplementedError`，同 session_record）。内存锁 `test_storage_scope_lock` **无需改动**：`restore_engine_state` 已在 `UNSCOPED_ALLOWLIST`，且两端都实现这两个方法、无 PG-only 漂移。
 - 恢复：`core/session_restore.py` 里 `restore_engine_state` 加一段（各自 try，失败只 warning），同本场记录。群聊不涉及（本段只做一对一）。
 
 **为什么不复用消息表 role=summary**：见 §9 决策一。
@@ -118,7 +120,7 @@ def extract(digests, turns, *, char_name, call) -> Digests
 
 ## 5. 对账表
 
-变异 → 预期红的测试。**作者发出前在交付的分支上实跑，有存活不发**（SPEC-STANDARD 三）。
+变异 → 预期红的测试。**由独立复核窗口在交付的分支上实跑，有存活不发**（SPEC-STANDARD 三）。
 
 | 变异 | 预期红 |
 |---|---|
@@ -137,10 +139,10 @@ def extract(digests, turns, *, char_name, call) -> Digests
 本地只跑受影响文件：
 
 ```
-python -m pytest -q tests/test_history_digest_goal.py tests/test_session_record_goal.py tests/test_storage_scope_lock.py tests/test_session_restore.py
+python -m pytest -q tests/test_history_digest_goal.py tests/test_length_budget.py tests/test_session_record_goal.py tests/test_storage_scope_lock.py tests/test_storage_contract_shape.py tests/test_migration_dispatch.py
 ```
 
-（受影响文件清单以实现为准补全；存储相关的检查只在 PG 上跑，同 session_record 目标检查。）合并门是分支 CI；合并只做 git。报告里不写本地全量数字。
+（`test_session_restore.py` 不存在 —— 恢复路径实由 `test_session_record_goal.py` 覆盖；聊天窗口与注入由 `test_length_budget.py` 覆盖。存储相关的检查只在 PG 上跑，同 session_record 目标检查。）合并门是分支 CI；合并只做 git。报告里不写本地全量数字。
 
 ## 7. 上线和回滚
 
