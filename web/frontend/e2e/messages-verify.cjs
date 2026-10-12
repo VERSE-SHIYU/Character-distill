@@ -43,7 +43,7 @@ async function mockRoutes(page, convs) {
     if (url.includes('/posts')) return r.fulfill({ json: { posts: [] } })
     return r.fulfill({ json: { author: { id: OTHER.id, username: OTHER.username, nickname: OTHER.nickname, avatar_data: '' }, cards: [], texts: [] } })
   })
-  await page.route('**/api/settings/config', (r) => r.fulfill({ json: { summary_threshold: 50 } }))
+  await page.route('**/api/settings/config', (r) => r.fulfill({ json: {} }))
   await page.route('**/api/auth/me', (r) => r.fulfill({ json: FAKE_USER }))
 
   // ---- DM endpoints ----
