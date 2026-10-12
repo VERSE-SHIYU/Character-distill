@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import copy
 import json
 import pathlib
 import uuid
@@ -117,10 +118,11 @@ def test_D5a_extract_appends_one_block_and_failure_leaves_digests_unchanged():
         raise RuntimeError("digest call failed")
 
     before = _digests("已有的", "更多")
+    snapshot = copy.deepcopy(before)
     for bad in (_boom, lambda s, u: "没有标签"):
         with pytest.raises(Exception):
             hd.extract(before, block, char_name="角色", call=bad)
-        assert before.items == before.items                    # 未变
+        assert before == snapshot                              # 失败不改 digests
 
 
 # ═══ D6：结构锁 ═══════════════════════════════════════════════════════════════
