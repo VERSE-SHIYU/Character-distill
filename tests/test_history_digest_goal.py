@@ -139,6 +139,22 @@ def test_D6_module_does_not_import_chat_engine_or_storage():
     assert not (roots & {"chat_engine", "storage", "web"}), roots
 
 
+# ═══ D8：角色开场白不算一轮（按角色配对，不按位置）═══════════════════════════
+
+def test_D8_opening_line_is_not_a_turn():
+    """历史以角色开场白开头时按角色配对：每轮都是 [user, assistant]，开场白不属于任何一轮。"""
+    opening = {"role": "assistant", "content": "开场白"}
+    history = [opening] + [m for turn in _turns(2) for m in turn]      # 开场白 + 2 轮
+    pending = hd.pending_turns(history, window_start=len(history), digests=hd.Digests())
+    assert [t[0]["content"] for t in pending] == ["u0", "u1"]          # 配的是 user，不是开场白
+    assert all(t[0]["role"] == "user" and t[1]["role"] == "assistant" for t in pending)
+    assert all(opening not in t for t in pending)                      # 开场白不属于任何一轮
+    # 窗口起点落在某轮中间（assistant 下标）时，那一轮不算窗口外
+    assert hd.pending_turns(history, window_start=2, digests=hd.Digests()) == []
+    # 边界：只有开场白、还没有用户发言
+    assert hd.pending_turns([opening], window_start=1, digests=hd.Digests()) == []
+
+
 # ═══ D5b：连续 3 次失败后本会话不再调用（真引擎 + 真 PG）═══════════════════════
 
 _EVAL_SYS = "你是精确的JSON输出器"
