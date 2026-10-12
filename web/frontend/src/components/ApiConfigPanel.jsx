@@ -16,6 +16,11 @@ export default function ApiConfigPanel() {
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
   const [apiForm, setApiForm] = useState({ base_url: '', model: '', api_key: '' })
+  // 模型框里预填的是 `/api/auth/me` 的「解析后模型」（= 用户存过的值 or 系统默认）。
+  // 保存时若无条件回写，就把**当时的默认值**钉进用户配置 —— 默认以后一改，这个账号
+  // 还停在旧模型（2026-10-12 一批账号被钉死 deepseek-v4-pro 就是这么来的）。只在用户
+  // 真改过模型时才提交，否则送空串（后端空串=不改）。base_url 同理会钉，但本轮不动。
+  const [modelEdited, setModelEdited] = useState(false)
   const [provider, setProvider] = useState('deepseek')
   const [showApiKey, setShowApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -165,7 +170,7 @@ export default function ApiConfigPanel() {
                     type="text"
                     className="settings-input"
                     value={apiForm.model}
-                    onChange={(e) => setApiForm((f) => ({ ...f, model: e.target.value }))}
+                    onChange={(e) => { setModelEdited(true); setApiForm((f) => ({ ...f, model: e.target.value })) }}
                   />
                 </label>
                 <p className="settings-hint">
@@ -204,7 +209,7 @@ export default function ApiConfigPanel() {
                   const sentKey = apiForm.api_key === MASKED_KEY ? '' : apiForm.api_key
                   await updateApiConfig({
                     base_url: apiForm.base_url,
-                    model: apiForm.model,
+                    model: modelEdited ? apiForm.model : '',
                     api_key: sentKey,
                   })
                   const hasKey = Boolean(sentKey || hasApiKey)
