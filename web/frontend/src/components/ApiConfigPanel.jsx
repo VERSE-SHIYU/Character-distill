@@ -3,12 +3,16 @@ import { fetchWithTimeout, getMyUsage, updateApiConfig } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import Select from './common/Select'
 import { AlertTriangle, ExternalLink } from './common/Icon'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 import { formatEmbeddingTestError } from '../utils/formatEmbeddingTestError'
 
 const MASKED_KEY = '••••••••'
+// 下拉里「跟随默认」那一项的前端取值 —— 保存时翻译成请求字段 `reset_model: true`，
+// 不是当成一个模型名发出去。具体型号来自 `/api/settings/config` 的 available_models。
+const FOLLOW_DEFAULT = '__default__'
 
 export default function ApiConfigPanel() {
   const popView = useAppStore((s) => s.popView)
@@ -21,6 +25,15 @@ export default function ApiConfigPanel() {
   // 还停在旧模型（2026-10-12 一批账号被钉死 deepseek-v4-pro 就是这么来的）。只在用户
   // 真改过模型时才提交，否则送空串（后端空串=不改）。base_url 同理会钉，但本轮不动。
   const [modelEdited, setModelEdited] = useState(false)
+  // DeepSeek 模式的模型下拉：可选具体型号（来自 available_models）或「跟随默认」。
+  // 与自定义模式的 modelEdited 同源：只在用户真动过下拉时才提交，未动则 model/reset_model
+  // 都不发（不然又把默认值钉死）。currentModel/Source 是**生效中**的模型与它的来源，
+  // 供页面如实显示（保存成功后本地更新，不额外回读）。
+  const [availableModels, setAvailableModels] = useState([])
+  const [modelChoice, setModelChoice] = useState(FOLLOW_DEFAULT)
+  const [modelChoiceEdited, setModelChoiceEdited] = useState(false)
+  const [currentModel, setCurrentModel] = useState('')
+  const [currentModelSource, setCurrentModelSource] = useState('default')
   const [provider, setProvider] = useState('deepseek')
   const [showApiKey, setShowApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -48,6 +61,7 @@ export default function ApiConfigPanel() {
         const sysData = await sysRes.json()
         if (!cancelled) {
           setConfig(sysData)
+          setAvailableModels(sysData.available_models || [])
         }
 
         const meRes = await fetchWithTimeout('/api/auth/me')
@@ -56,7 +70,11 @@ export default function ApiConfigPanel() {
           setHasApiKey(meData.has_api_key)
           const savedBaseUrl = meData.base_url || ''
           const savedModel = meData.model || ''
+          const modelSource = meData.model_source || 'default'
           setProvider(savedBaseUrl.includes('deepseek.com') ? 'deepseek' : 'custom')
+          setCurrentModel(savedModel)
+          setCurrentModelSource(modelSource)
+          setModelChoice(modelSource === 'user' ? savedModel : FOLLOW_DEFAULT)
           setApiForm({
             base_url: savedBaseUrl || 'https://api.deepseek.com',
             model: savedModel || sysData.model,
@@ -78,6 +96,16 @@ export default function ApiConfigPanel() {
   }, [])
 
   const swipeBack = useSwipeBack(popView)
+
+  // DeepSeek 模式下拉的选项：跟随默认 + 后端给的型号。若用户存的是一个不在名单里的
+  // 旧型号，补一项「（当前）」把它如实显示出来 —— 否则 Radix 找不到匹配项会显示空白。
+  const modelOptions = [
+    { value: FOLLOW_DEFAULT, label: config?.model ? `跟随默认（${config.model}）` : '跟随默认' },
+    ...availableModels.map((m) => ({ value: m, label: m })),
+  ]
+  if (currentModelSource === 'user' && currentModel && !availableModels.includes(currentModel)) {
+    modelOptions.push({ value: currentModel, label: `${currentModel}（当前）` })
+  }
 
   return (
     <div className="settings-panel panel" {...swipeBack}>
@@ -124,9 +152,22 @@ export default function ApiConfigPanel() {
               </button>
             </div>
 
-            {/* DeepSeek mode: only api_key */}
+            {/* DeepSeek mode: model picker + api_key */}
             {provider === 'deepseek' && (
               <>
+                <div className="settings-field">
+                  <span className="settings-label">模型</span>
+                  <Select
+                    value={modelChoice}
+                    options={modelOptions}
+                    ariaLabel="模型"
+                    onChange={(v) => { setModelChoiceEdited(true); setModelChoice(v) }}
+                  />
+                </div>
+                <p className="settings-hint">
+                  当前使用：{currentModel}（{currentModelSource === 'user' ? '你指定的' : '跟随系统默认'}）。
+                  pro 比 flash 贵，蒸馏和聊天都按所选模型计费。
+                </p>
                 <label className="settings-field">
                   <span className="settings-label">api_key</span>
                   <div className="settings-api-key-row">
@@ -207,11 +248,25 @@ export default function ApiConfigPanel() {
                 setError(null)
                 try {
                   const sentKey = apiForm.api_key === MASKED_KEY ? '' : apiForm.api_key
-                  await updateApiConfig({
-                    base_url: apiForm.base_url,
-                    model: modelEdited ? apiForm.model : '',
-                    api_key: sentKey,
-                  })
+                  const payload = { base_url: apiForm.base_url, api_key: sentKey }
+                  if (provider === 'deepseek') {
+                    // 只在用户真动过下拉时才带模型信息；否则 model / reset_model 都不发，
+                    // 免得把预填的默认值钉进用户配置（#156 的教训）。
+                    if (modelChoiceEdited) {
+                      if (modelChoice === FOLLOW_DEFAULT) payload.reset_model = true
+                      else payload.model = modelChoice
+                    }
+                  } else {
+                    payload.model = modelEdited ? apiForm.model : ''
+                  }
+                  await updateApiConfig(payload)
+                  if (provider === 'deepseek' && modelChoiceEdited) {
+                    if (modelChoice === FOLLOW_DEFAULT) {
+                      setCurrentModel(config?.model || ''); setCurrentModelSource('default')
+                    } else {
+                      setCurrentModel(modelChoice); setCurrentModelSource('user')
+                    }
+                  }
                   const hasKey = Boolean(sentKey || hasApiKey)
                   setApiForm((f) => ({ ...f, api_key: hasKey ? MASKED_KEY : '' }))
                   setHasApiKey(hasKey)

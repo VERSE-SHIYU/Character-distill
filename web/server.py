@@ -69,7 +69,13 @@ from config_check import validate_config
 from routers.admin import require_admin, router as admin_router
 from cross_border_sync import _cross_border_resync_loop
 from deps import get_config, get_llm, get_storage, reset_llm_and_dependents, _session_cleanup_loop
-from adapters.llm_adapter import default_model, llm_error_payload, llm_error_types, user_facing_error
+from adapters.llm_adapter import (
+    SELECTABLE_MODELS,
+    default_model,
+    llm_error_payload,
+    llm_error_types,
+    user_facing_error,
+)
 from web.llm_gate import install_llm_gate
 from web.demo_gate import install_demo_gate
 from storage.base import StorageBase
@@ -515,10 +521,13 @@ def _settings_payload(llm: dict, voice: dict, has_key: bool) -> dict[str, Any]:
     `llm.get("model", "")`：管理员保存时先落盘再回这个响应，故两者一致；而配置里没写
     模型时，给的是项目默认值而不是空串 —— 空串会让设置页显示一个并不存在的「未设模型」。
     `api_key` 的判定两个接口不同（读还看环境变量），故由调用方算好传进来。
+    `available_models` 是设置页模型下拉的选项 —— 全仓唯一一份定义在
+    `adapters.llm_adapter.SELECTABLE_MODELS`，前端只照它渲染、不再各写一份。
     """
     return {
         "base_url": str(llm.get("base_url", "")),
         "model": default_model(),
+        "available_models": list(SELECTABLE_MODELS),
         "api_key": "***" if has_key else "",
         "gptsovits_url": str(voice.get("gptsovits_url", "http://127.0.0.1:9880")),
         "funasr_url": str(voice.get("funasr_url", "ws://127.0.0.1:10095")),
