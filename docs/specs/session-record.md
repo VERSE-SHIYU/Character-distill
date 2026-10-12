@@ -1,3 +1,5 @@
+> **部分已取代（2026-10-12）**：「抽取并进评估调用」这部分（评估提示词里的说明和字段、从评估回复取操作）已被 `docs/specs/session-record-extract.md` 取代；其余（存储、恢复、注入、R1–R5 校验）仍有效。
+
 # 一对一存档的本场记录（④ 段 1）
 
 放到 `docs/specs/session-record.md`。基线 main `bc3e1dfe`（#139 合并后）。分支 `feat/session-record`，开 PR。

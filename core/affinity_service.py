@@ -210,14 +210,8 @@ class AffinityService:
         user_role: str,
         reaction_appraisal: str,
         departure_notice: str = "",
-        record_rules: str = "",
-        record_fields: str = "",
     ) -> str:
-        """构建情感评估 LLM prompt（纯函数：只读状态，无副作用/IO）。
-
-        `record_rules` / `record_fields`：本场记录的说明和 JSON 字段（`core/session_record`
-        生成），只在一对一时由评估流水线传入；群聊为空，提示词和以前逐字相同。
-        """
+        """构建情感评估 LLM prompt（纯函数：只读状态，无副作用/IO）。"""
         _values = getattr(card, 'values', []) or []
         _traits = getattr(card, 'personality_traits', []) or []
         _tensions = getattr(card, 'inner_tensions', []) or []
@@ -290,8 +284,7 @@ class AffinityService:
             "- 平实陈述自身真实信息（我叫X/我在Y上班/我明天面试）→ 高分（70-100）\n"
             "- 无法判断或介于之间 → 中性（50）\n"
             "- 这是判断「该不该把这句话当事实记进长期记忆」，不是判断好感，也不是判断角色是否出戏\n\n"
-            + record_rules
-            + "输出严格JSON格式（只输出JSON，不要任何其他内容）：\n"
+            "输出严格JSON格式（只输出JSON，不要任何其他内容）：\n"
             "{\n"
             + affinity_protocol.render_json_fields() +
             '  "trust": 0-100整数,\n'
@@ -304,7 +297,6 @@ class AffinityService:
             '  "in_character": 0-100整数,  // 刚才的回复有多符合这张卡片此刻该有的姿态\n'
             '  "ooc_reason": "一句话说明哪里出戏，符合人设则空字符串",\n'
             '  "assertion_confidence": 0-100整数,  // 对方刚才的话作为事实陈述有多可信\n'
-            + record_fields
         )
         return prompt
 
