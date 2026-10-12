@@ -74,7 +74,7 @@ const useAppStore = create((set, get) => {
 
   // 回复流（`sendMessageStream` / `_sendRevokeNotice`）共用的落字段方式：只改 `cid` 对应的
   // 那条气泡，不在当前列表里（会话换了 / 重载了）就一个字符不改。两条流各写一份的话，
-  // 收尾帧那几段（user id / summary / retracted / 语音下标）很容易只改一处、漏另一处。
+  // 收尾帧那几段（user id / retracted / 语音下标）很容易只改一处、漏另一处。
   const patchByCid = (cid, fn) => set((s) => {
     const idx = s.messages.findIndex((m) => m._cid === cid)
     if (idx === -1) return {}
@@ -1461,9 +1461,6 @@ const useAppStore = create((set, get) => {
           role: 'char', content: data.reply, id: data.char_msg_id,
           retracted: data.retracted || false, timestamp: data.char_created_at,
         }), data.char_save))
-        if (data.summary) {
-          msgs.splice(msgs.length - 2, 0, withCid({ role: 'summary', content: data.summary }))
-        }
         // 这一轮里每一次写都会顺带补写队头，读数（flushed/dropped）随响应体一起来 ——
         // 先前的「未保存」据此填回真 id 或翻成「保存失败」。
         return { messages: applyFlushReport(msgs, data), sending: false }
@@ -1508,7 +1505,7 @@ const useAppStore = create((set, get) => {
     let fullReply = ''
 
     // done 与 error 两种帧的**唯一**收尾函数。`err` 有值 = 错误帧：它不带 user_msg_id /
-    // summary / retracted 这些只有成功一轮才有的字段，只走两帧共用的那一段（补写报告 +
+    // retracted 这些只有成功一轮才有的字段，只走两帧共用的那一段（补写报告 +
     // 解锁）。两帧分开写的话，error 那条路会漏掉 `applyFlushReport`。
     //
     // 归属判据是「我还是不是当前那条流」：不是（已被放下 / 已被新流顶替）就什么都不做 ——
@@ -1533,9 +1530,6 @@ const useAppStore = create((set, get) => {
             { ...msgs[idx], id: payload.char_msg_id ?? msgs[idx].id, timestamp: payload.char_created_at },
             payload.char_save,
           )
-        }
-        if (!err && payload.summary && idx >= 1) {
-          msgs.splice(idx - 1, 0, withCid({ role: 'summary', content: payload.summary }))
         }
         if (!err && payload.retracted && idx !== -1) {
           msgs[idx] = { ...msgs[idx], retracted: true }

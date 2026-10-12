@@ -5,7 +5,7 @@ import useIsMobile from '../hooks/useIsMobile'
 import useCanWrite from '../hooks/useCanWrite'
 import { moodCharInterval } from '../utils/moodTypingSpeed'
 import useAppStore from '../store/useAppStore'
-import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart, Zap, Check, Shield, Edit, Close, Clipboard, Clock, ArrowLeft, MessageCircle, MoreHorizontal } from './common/Icon'
+import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart, Zap, Check, Shield, Edit, Close, Clock, ArrowLeft, MessageCircle, MoreHorizontal } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
@@ -696,10 +696,6 @@ function ChatView() {
 
           <div className="chat-messages" ref={listRef} onScroll={handleScroll} data-kbd-lift>
             {messages.map((msg, i) => {
-              if (msg.role === 'summary') {
-                return <SummaryBubble key={msg._cid ?? msg.id} content={msg.content} />
-              }
-
               // Time divider: show if gap from previous message > 5 min
               const prevMsg = i > 0 ? messages[i - 1] : null
               const showTime = prevMsg && msg.timestamp && prevMsg.timestamp
@@ -1133,29 +1129,6 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, saveS
   )
 }
 
-// ---- Summary fold ----
-
-function SummaryBubble({ content }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="chat-summary">
-      <button
-        type="button"
-        className="chat-summary-toggle"
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span className="chat-summary-icon"><Clipboard size={14} /></span>
-        <span>对话摘要</span>
-        <span className="chat-summary-arrow">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && (
-        <div className="chat-summary-body">
-          {content}
-        </div>
-      )}
-    </div>
-  )
-}
 
 
 

@@ -24,7 +24,7 @@ vi.mock('../../store/useAppStore', () => {
 vi.mock('../../api/client', () => ({
   fetchWithTimeout: async (url) => ({
     json: async () => (url === '/api/settings/config'
-      ? { model: 'probe-model', summary_threshold: 50 }
+      ? { model: 'probe-model' }
       : { model: meta.meModel, has_api_key: true, base_url: '' }),
   }),
   getMyUsage: async () => ({}),

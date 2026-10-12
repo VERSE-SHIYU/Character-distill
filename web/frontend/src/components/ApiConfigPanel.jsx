@@ -29,7 +29,6 @@ export default function ApiConfigPanel() {
   const [testResult, setTestResult] = useState(null)
   const [testMsg, setTestMsg] = useState('')
   const [testDetail, setTestDetail] = useState('')
-  const [summaryThreshold, setSummaryThreshold] = useState(50)
   const affinityEnabled = useAppStore((s) => s.affinityEnabled)
   const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
 
@@ -44,7 +43,6 @@ export default function ApiConfigPanel() {
         const sysData = await sysRes.json()
         if (!cancelled) {
           setConfig(sysData)
-          setSummaryThreshold(sysData.summary_threshold ?? 50)
         }
 
         const meRes = await fetchWithTimeout('/api/auth/me')
@@ -372,26 +370,6 @@ export default function ApiConfigPanel() {
             )}
           </>
         )}
-      </section>
-
-      <section className="settings-section">
-        <h2 className="settings-section-title">对话摘要</h2>
-        <p className="settings-hint">
-          对话超过指定轮数后自动压缩历史为摘要，节省上下文
-        </p>
-        <div className="settings-fields">
-          <label className="settings-field">
-            <span className="settings-label">触发阈值（消息条数）</span>
-            <input
-              type="number"
-              className="settings-input"
-              min={10}
-              max={200}
-              value={summaryThreshold}
-              onChange={(e) => setSummaryThreshold(Number(e.target.value))}
-            />
-          </label>
-        </div>
       </section>
 
       <section className="settings-section">
