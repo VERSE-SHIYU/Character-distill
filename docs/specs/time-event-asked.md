@@ -36,6 +36,7 @@
 3. **测试替身替换在错误的位置。** 三个测试文件各自重写了整个 `Mem0BridgeEmbedder`，空串都返回一个全零向量照样入库：`tests/test_memory_read_all_goal.py:34–52`、`tests/test_memory_archive_scope_goal.py:61–84`、`tests/test_memory_delete_goal.py:36–52`。第 2 条的生产逻辑在测试里从没被执行过，G1a 和 R1 替一个生产上不成立的行为作了证。
    - `tests/test_mem0_llm.py:74–81` 也有一个嵌入替身，但它直接赋给裸 mem0 对象的 `embedding_model`（`:141`），测的是 LLM 注入，不经过我们的 `Mem0BridgeEmbedder`。不在本次范围。
 4. **失败被吞掉。** `MemoryView.add_manual` 出错时记 error、返回 `False`（`core/memory_manager.py:492–508`）；`mark_asked` 不看返回值，接着打印「Marked event … as asked」（`core/event_service.py:107–111`）。
+4b. **事件写入也一样。** `_persist_time_event` 不看 `add_manual` 的返回值，写失败照样打「Saved time_event」（`core/evaluation_pipeline.py:194–204`）。
 5. **同一进程里有内存集合挡着。** `_asked_event_ids`（`:31`、`:58`、`:104`）让持久化失败在同一个进程里看不出来，只有重启后才露出。
 6. **一件事有两个 id。** 事件写入时另生成 `event_id = uuid4().hex[:16]` 放进元数据（`core/evaluation_pipeline.py:193–198`）；mem0 本身给每条记忆一个 id（`get_all` 结果的 `id`）。
 7. **mem0 2.0.20 可以只改元数据。** `Memory.update(memory_id, text=None, metadata=...)`（`mem0/memory/main.py:1815–1866`）；`_update_memory`（`:2038–2098`）在 `text` 为 None 时沿用原文本，把元数据合进原 payload（`new_metadata.update(...)`），身份键 `user_id` / `run_id` 不会被改（`_strip_identity_keys`）。
@@ -50,7 +51,7 @@
 |---|---|---|
 | 1 | 「已问过」是事件自己的状态，却被建成另一条记忆：多了一条要向量化的空文本、一条假记忆，读的时候还要跨两类记录拼 | 1、2 |
 | 2 | 同一件事的状态有三份：另存的记录、进程内集合、（以后的）元数据；身份也有两份（`event_id` 和记忆 id） | 5、6 |
-| 3 | 写入结果没人看，失败被报成成功 | 4 |
+| 3 | 写入结果没人看，失败被报成成功 | 4、4b |
 | 4 | 测试替身换在整个嵌入器上，生产的输入契约被替身各自重写了一遍 | 3 |
 
 ## 4. 设计
@@ -70,7 +71,7 @@
 | `core/memory_manager.py` | `MemoryView.update_metadata(memory_id, metadata, scope) -> bool`：先 `get` 核对这条记忆的 `user_id` / `run_id` 与 `scope.filters()` 一致，不一致返回 False 并记 warning；再 `self._mem.update(memory_id=..., metadata=...)`。出错记 warning、返回 False | 1、3 |
 | `core/memory_scope.py` | `ScopedMemory.update_metadata(memory_id, metadata) -> bool`，转给视图（和 `add_manual` 同一个写法） | 1 |
 | `core/event_service.py` | 事件身份改用记忆 id；「问过没有」只看事件元数据 `asked`；删掉 `time_event_asked` 的读写和 `_asked_event_ids`；`mark_asked` 调 `update_metadata(eid, {"asked": True})`，按返回值打成功日志或 warning | 1、2、3 |
-| `core/evaluation_pipeline.py` | `_persist_time_event` 不再生成、写入 `event_id`（身份就是记忆 id）；日志改为打事件和时间 | 2 |
+| `core/evaluation_pipeline.py` | `_persist_time_event` 不再生成、写入 `event_id`（身份就是记忆 id），删掉随之不用的 `uuid` 导入；按 `add_manual` 的返回值打成功日志或 warning | 2、3 |
 | `tests/conftest.py` | 新增夹具 `fake_embedding_api`：只替换 `DashScopeEmbedding._call_api`，返回确定性的字符 + 二元组袋向量（取自 `test_memory_archive_scope_goal.py:73–78` 那一版，余弦能区分相似度）；前后清空嵌入模块的共享缓存 `_SHARED_CACHE`（`core/embeddings.py:151–165`），免得跨测试串 | 4 |
 | `tests/conftest.py` | 新增 `persist_time_event(scoped, event, due_at)`：调生产的 `EvaluationPipeline._persist_time_event` 写事件。测试不手写事件元数据（见 §4.5） | 4 |
 | `tests/test_memory_read_all_goal.py`、`tests/test_memory_archive_scope_goal.py`、`tests/test_memory_delete_goal.py` | 删掉各自的嵌入替身，改为请求 `fake_embedding_api`；R1 的两件事件改用 `persist_time_event` 写，「体检」走生产的注入 → 标记流程问过一次，断言按事件名 | 4 |
@@ -124,3 +125,10 @@
 本地只跑 `tests/test_time_event_asked_goal.py`、`tests/test_memory_read_all_goal.py`、`tests/test_memory_archive_scope_goal.py`、`tests/test_memory_delete_goal.py`、`tests/test_memory_manager.py`、`tests/test_embeddings.py`、`tests/test_departure_notice.py`、`tests/test_user_own_keys.py`，以及 `npm test`。库用 Docker 起的 PG。合并前提是分支 CI 绿和独立复核。
 
 ## 补充
+
+### 原型（10-12，Claude，沙箱；作者自测，不作为通过依据）
+
+- 第 1 个提交（spec + 共享替身 + T1–T5）在 main 代码上：T1–T5、R1（10 个参数）、G1a 共 16 条红，红的原因逐条看过：T1、T2、R1、G1a 是「重启后同一件事又被当成没问过」，日志里是 `Mem0 manual add failed: list index out of range`；T3 是「写入失败却打了成功日志」；T4 是没有 `update_metadata`；T5 是 `core/event_service.py` 还在另存记录。其余受影响测试 110 条绿。
+- 第 2 个提交后：受影响的 10 个测试文件 138 passed。全量 3527 passed、1 failed、1 skipped；main 同环境 3522 passed、1 failed、1 skipped。差的 5 条是 T1–T5；两边唯一的失败都是 `test_evidence_integrity.py::test_code_sha_resolves`，因为沙箱是浅克隆、查不到历史提交，与本改动无关。
+- ruff：改动文件的告警和 main 相同，只多了新测试文件里与其他测试同样写法的 `# noqa: E402`。
+

@@ -529,7 +529,7 @@ def fake_embedding_api(monkeypatch):
     测试和生产对同一个输入的反应一致（spec ``time-event-asked.md`` §4.3）。不要再整个
     替换 ``Mem0BridgeEmbedder``：那会让各个测试各写一份嵌入契约。
     """
-    import core.embeddings as embeddings
+    from core import embeddings
 
     def _call_api(self, texts, *, deadline=None):
         return [_bag_vector(t, self._dimensions) for t in texts]
