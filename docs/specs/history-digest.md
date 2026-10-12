@@ -34,7 +34,7 @@
 |---|---|---|---|
 | 1 | 历史窗口：从最新往前成对保留，攒满 `MAX_HISTORY` 即停，更早的直接不发；无摘要 | `core/chat_engine.py:547–587` `_build_llm_messages`；`core/context_engine.py:242` `MAX_HISTORY = budgets["history"]` | ✅ 与原文一致（实为 547–587） |
 | 2 | 旧摘要是 1584bdd 加、9c40ce3 去的 | `1584bdd6`（2026-05-18）加 role=`summary` + 阈值 40→50；`9c40ce32`（2026-05-20）删掉**生成器**（`summary_threshold` 形参、`_summary_lock`、摘要提示词、`history=[summary_message,…]`），只留字段 | ✅ 实查两提交 |
-| 3 | 残留：`last_summary`（无生成器，只从库里恢复回填）、恢复时跳过 role=summary、`summary_threshold` 引擎不用 | `chat_engine.py:225`；`web/routers/history.py:261–273`、`web/routers/chat.py:216–221`（`_rebuild_history_from_db` 白名单见 `:66–85`）；`config.example.yaml:20`(=100)、`web/server.py:523/565` | ✅ 且**另有读者**：`summary_threshold` 还被 `ApiConfigPanel.jsx:32/47/390`、其单测、7 个 e2e mock、`README.md:544`、`AGENTS.md` 读；`last_summary` 经 `result["summary"]`→`useAppStore.js:1464`→`ChatArea.jsx:699` 渲染成前端气泡 |
+| 3 | 残留：`last_summary`（无生成器，只从库里恢复回填）、恢复时跳过 role=summary、`summary_threshold` 引擎不用 | `chat_engine.py:225`；`web/routers/history.py:261–273`、`web/routers/chat.py:216–221`（`_rebuild_history_from_db` 白名单见 `:66–85`）；`config.example.yaml:20`(=100)、`web/server.py:523/565` | ✅ 且**另有读者**：`summary_threshold` 还被 `ApiConfigPanel.jsx:32/47/390`、其单测、7 个 e2e mock、`README.md:544`、`AGENTS.md` 读；`last_summary` 经 `result["summary"]`→`useAppStore.js:1464`→`ChatArea.jsx:699` 渲染成前端气泡。**2026-10-12 已清理，见 §9 决策四** |
 | 4 | 范本 `session_record.py`：一个模块管全部规则、不做 IO、`call` 由调用方传；单独一次低温调用；失败只丢本轮 | `core/session_record.py`；`core/evaluation_pipeline.py:163–197` `_run_session_record`（`llm.derive(temperature=0.0)` + `try_record_usage`，失败 `return ctx.session_record`） | ✅ 与原文一致 |
 | 5 | 写 role=summary 的现有函数 | **无 summary 专用函数**；有通用 `storage.save_message(session_id, role, content, rag_context, *, client_key=…)`（`storage/base.py:497`），现有 role=`summary` 写走它（`web/routers/chat.py:406–407`、`:581–582`），`get_messages` 已返回 summary 行 | ✅ 判据见 §9 决策一 |
 
@@ -168,6 +168,8 @@ python -m pytest -q tests/test_history_digest_goal.py tests/test_length_budget.p
 **决策三：总量上限 768 token。** 与本场记录注入块同量级（session_record 每栏 `COLUMN_TOKEN_WARN=256`、四栏；验收判定线「139 轮后有效内容 ≤ 768 token」）。常量放模块顶。
 
 **决策四：残留清理（`last_summary` + `summary_threshold`）挪到独立 PR，本段不碰。** S0 查实另有读者（前端气泡 + 设置页字段 + e2e + 文档），范围比 spec 设想的「配置 + 设置接口字段」大；且与摘要块功能无耦合。本段不删。
+
+**（2026-10-12 收口）已由独立分支 `chore/remove-legacy-summary` 清理**：后端属性 / 恢复 / 写摘要 / 设置接口字段、前端气泡与设置项、7 个 e2e mock、`README.md` 配置样例全删。三处数据库（本地 PG、SG、SZ 的 `messages` 表）实查 `role='summary'` 均为 **0 行**，故前端渲染分支一并删除；后端 `_rebuild_history_from_db` 的 user/char 白名单保留（通用过滤，非 summary 专用）。
 
 ## 10. 补充（待写）
 
