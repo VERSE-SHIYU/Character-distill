@@ -24,11 +24,6 @@ describe('收尾帧按自己的气泡落字段（列表末尾有别的消息时�
     streams[0].onDone({ user_msg_id: 11, char_msg_id: 12 }); await flush()
     expect(rows()).toEqual([['user', '你好', 11, false], ['char', '在的', 12, false], ['system', '角色卡已更新', null, false]])
   })
-  it('done 带 summary：摘要插在本轮用户消息之前', async () => {
-    useAppStore.getState().sendMessageStream('你好'); tail()
-    streams[0].onDone({ summary: '前情提要' }); await flush()
-    expect(useAppStore.getState().messages.map((m) => m.role)).toEqual(['summary', 'user', 'char', 'system'])
-  })
   it('done 带 retracted：标在自己的气泡上', async () => {
     useAppStore.getState().sendMessageStream('你好'); streams[0].onToken('后悔了'); tail()
     streams[0].onDone({ retracted: true }); await flush()

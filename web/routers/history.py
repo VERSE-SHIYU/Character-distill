@@ -267,11 +267,6 @@ async def resume_session(
         for m in db_messages
         if m["role"] in ("user", "char")
     ]
-    # Restore last_summary from DB
-    for m in reversed(db_messages):
-        if m["role"] == "summary":
-            engine.last_summary = m["content"]
-            break
 
     # 7.（身份已在构造时经 `session_identity` 注入，不再事后赋值 —— S5）
 

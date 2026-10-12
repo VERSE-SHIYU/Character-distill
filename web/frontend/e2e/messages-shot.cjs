@@ -30,7 +30,7 @@ async function mockRoutes(page, convs) {
   await page.route('**/api/auth/user/*/online', (r) => r.fulfill({ json: { online: true, hidden: false, last_active_at: '2026-08-16T10:30:00' } }))
   await page.route('**/api/market/my/following', (r) => r.fulfill({ json: { following: [] } }))
   await page.route('**/api/market/author**', (r) => r.fulfill({ json: { author: { id: OTHER.id, username: OTHER.username, nickname: OTHER.nickname, avatar_data: '' }, cards: [], texts: [] } }))
-  await page.route('**/api/settings/config', (r) => r.fulfill({ json: { summary_threshold: 50 } }))
+  await page.route('**/api/settings/config', (r) => r.fulfill({ json: {} }))
   await page.route('**/api/auth/me', (r) => r.fulfill({ json: FAKE_USER }))
   await page.route('**/api/messages/conversations', (r) => r.fulfill({ json: { conversations: convs } }))
   await page.route('**/api/messages/read**', (r) => r.fulfill({ json: { ok: true } }))

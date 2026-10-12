@@ -541,7 +541,6 @@ llm:
   model: "deepseek-v4-pro"
   temperature: 0.7
   max_tokens: 4096
-  summary_threshold: 100  # 触发对话摘要的消息轮数
 
 rag:
   chunk_size: 500

@@ -42,7 +42,7 @@ async function mockRoutes(page) {
     if (url.includes('/posts')) return r.fulfill({ json: { posts: [] } })
     return r.fulfill({ json: MAIN_AUTHOR })
   })
-  await page.route('**/api/settings/config', (r) => r.fulfill({ json: { summary_threshold: 50 } }))
+  await page.route('**/api/settings/config', (r) => r.fulfill({ json: {} }))
   await page.route('**/api/auth/me', (r) => r.fulfill({ json: FAKE_USER }))
   await page.route('**/api/auth/usage', (r) => r.fulfill({ json: USAGE }))
 }

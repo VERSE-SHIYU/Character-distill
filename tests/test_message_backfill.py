@@ -224,14 +224,11 @@ def _registrations() -> tuple:
 
 class _Engine:
     """够 `_do_chat` / `_do_chat_stream` 两条路跑完的最小引擎替身。
-
-    `summary` 非空才会走到摘要那一段，故它是参数而不是常量。
     """
 
-    def __init__(self, pieces=("回", "复"), summary: str = ""):
+    def __init__(self, pieces=("回", "复")):
         self.history: list[dict] = []
         self.last_traces: list = []
-        self.last_summary = summary
         self._last_rag_context = ""
         self._ctx_engine = type("Ctx", (), {"web_search_enabled": False})()
         self.affinity_enabled = True
@@ -403,30 +400,6 @@ def test_C1_failed_char_save_is_backfilled_next_round_in_order(flaky, owner):
     assert flushed[key] < done2["user_msg_id"], (
         "补写的那条排到了本轮消息后面 —— 历史顺序反了")
     assert flaky.roles() == ["user", "char", "user", "char"], flaky.wrote
-
-
-def test_C2_summary_queues_behind_an_unpersisted_message(flaky, owner):
-    """摘要走队列：前一条还在队里时，摘要不许先落库。
-
-    改前形态（变异）是「摘要绕过队列直接写」—— 它会在前一条还没落库时抢到更小的行 id，
-    用户刷新后看到的摘要就插到了那条消息前面。
-    """
-    sid = _new_sid()
-    _install_session(flaky, sid, owner, _Engine(summary="新摘要"))
-    client = _client(flaky, owner)
-
-    flaky.fail_roles = {"char"}
-    flaky.ping_ok = False
-    done = _done(_stream(client, sid, "第一句"))
-    assert done["char_save"]["state"] == "pending"
-
-    assert "summary" not in flaky.roles(), (
-        f"前一条还在队里，摘要却先落了库：{flaky.wrote}")
-
-    flaky.fail_roles = set()
-    flaky.ping_ok = True
-    _flush(client, sid)
-    assert flaky.roles() == ["user", "char", "summary"], flaky.wrote
 
 
 def test_C3_revoke_clears_the_queue(flaky, owner):

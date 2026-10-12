@@ -11,7 +11,7 @@ import { SkeletonRow } from './common/Skeleton'
 import { loadCardAvatar } from '../store/db'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
-import { Book, Clipboard, Trash2, ArrowLeft } from './common/Icon'
+import { Book, Trash2, ArrowLeft } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import Select from './common/Select'
 import { formatChatTime } from '../utils/time'
@@ -1013,16 +1013,6 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
         <div className="chat-area history-readonly-chat">
           <div className="chat-messages">
           {messages.map((msg, i) => {
-            if (msg.role === 'summary') {
-              return (
-                <div key={msg.id ?? i} className="chat-summary history-readonly-summary">
-                  <div className="chat-summary-toggle" style={{ cursor: 'default' }}>
-                    <span><Clipboard size={14} /> 对话摘要</span>
-                  </div>
-                  <div className="chat-summary-body">{msg.content}</div>
-                </div>
-              )
-            }
             const isUser = msg.role === 'user'
             const userInitial = (session.user_role || '我').charAt(0)
             return (

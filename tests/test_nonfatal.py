@@ -234,14 +234,11 @@ async def test_try_record_usage_reports_write_failure(monkeypatch, caplog):
 class _Engine:
     """够 `_do_chat` 与 `_do_chat_stream` **两条**路径跑完的最小引擎替身
     （与 test_message_evidence 同形：一份替身服务两条路，接口一变一起滞后）。
-
-    `last_summary` 非空才会走到摘要那一段，故它是参数而不是常量。
     """
 
-    def __init__(self, stream_pieces=("回", "复"), last_summary=""):
+    def __init__(self, stream_pieces=("回", "复")):
         self.history = []
         self.last_traces = []
-        self.last_summary = last_summary
         self._last_rag_context = ""
         self._ctx_engine = type("Ctx", (), {"web_search_enabled": False})()
         self.affinity_enabled = True
@@ -520,34 +517,3 @@ def test_hidden_has_no_user_save_field(monkeypatch):
     user_save, _char_save = _save_pair(done)
     assert user_save is None, "hidden 没有用户消息可存，不该报未保存"
     assert st.saved == ["char"], f"hidden 却写了用户消息：{st.saved}"
-
-
-def test_stream_summary_read_failure_does_not_break_the_turn(monkeypatch, caplog):
-    """摘要那段的**读**失败也不能打断已流完的回复（改前 `get_messages` 裸露在块外）。
-
-    改前形态：读抛在大 try 里 → 正文已整段流给用户，收尾却发 error 帧、没有 done 帧。
-    读没进队列（它不产生行 id），所以仍是一次失败一条日志。
-    """
-    _wire(monkeypatch, last_summary="新摘要")
-    frames = asyncio.run(_drive_stream(_RoleFailingStorage(fail_get_messages=True)))
-
-    _assert_no_error_frame(frames)
-    _done_frame(frames)
-    assert "".join(f.get("token", "") for f in frames) == "回复", "正文没流出来"
-    errs = _errors(caplog.records, "summary read down")
-    assert len(errs) == 1, f"摘要读失败没留下记录，实得 {len(errs)} 条"
-
-
-def test_stream_summary_save_failure_does_not_break_the_turn(monkeypatch, caplog):
-    """摘要**写**失败：不中断、不上屏，但必须留痕（吞掉 ≠ 沉默，本文件的主题）。
-
-    这里**是两条**：队列对「库可达、这一条写不进去」重试一次才判死，两次都留痕。
-    数成一条就会把「重试过」这件事从日志里抹掉。
-    """
-    _wire(monkeypatch, last_summary="新摘要")
-    frames = asyncio.run(_drive_stream(_RoleFailingStorage(fail_role="summary")))
-
-    _assert_no_error_frame(frames)
-    _done_frame(frames)
-    errs = _errors(caplog.records, "summary save down")
-    assert len(errs) == 2, f"摘要写失败（首写 + 重试）应留 2 条，实得 {len(errs)} 条"

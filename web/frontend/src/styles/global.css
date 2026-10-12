@@ -4836,57 +4836,6 @@ label[for] {
   cursor: default;
 }
 
-/* Summary fold */
-.chat-summary {
-  align-self: center;
-  width: 100%;
-  max-width: 480px;
-  margin: 6px 0;
-}
-
-.chat-summary-toggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border: 1px dashed rgba(var(--accent-rgb), 0.25);
-  border-radius: 12px;
-  background: rgba(var(--accent-rgb), 0.06);
-  font: inherit;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: background 0.18s;
-}
-
-.chat-summary-toggle:hover {
-  background: rgba(var(--accent-rgb), 0.12);
-}
-
-.chat-summary-icon {
-  font-size: 14px;
-}
-
-.chat-summary-arrow {
-  margin-left: auto;
-  font-size: 10px;
-}
-
-.chat-summary-body {
-  margin-top: 6px;
-  padding: 12px 14px;
-  border: 1px solid var(--input-border);
-  border-radius: 12px;
-  background: rgba(var(--accent-rgb), 0.04);
-  font-size: 13px;
-  color: var(--text-sec);
-  line-height: 1.7;
-  white-space: pre-wrap;
-  animation: fade-up 0.2s var(--ease-out);
-}
-
 /* Unified composer bar — single source for all chat scenarios.
    safe-area bottom padding written once here (0 on non-notch devices). */
 .composer-bar {
@@ -5523,14 +5472,6 @@ label[for] {
 
 .history-readonly-msg {
   /* use same layout as chat-msg — no extra width restriction */
-}
-
-.history-readonly-summary {
-  max-width: 100%;
-}
-
-.history-readonly-summary .chat-summary-body {
-  display: block;
 }
 
 /* ===== @Mention Dropdown ===== */

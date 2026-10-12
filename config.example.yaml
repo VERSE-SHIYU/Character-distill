@@ -17,7 +17,6 @@ llm:
   # https://api-docs.deepseek.com/zh-cn/updates/
   model: deepseek-flash
   presence_penalty: 0.3  # 防重复，温和不磨平口头禅
-  summary_threshold: 100
   temperature: 0.7
 rag:
   chunk_overlap: 50

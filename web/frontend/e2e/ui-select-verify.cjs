@@ -47,7 +47,7 @@ async function mockRoutes(page, reqs) {
   await page.route('**/api/auth/presence-visibility', (r) => r.fulfill({ json: { presence_visibility: 'all' } }))
   await page.route('**/api/auth/user/*/online', (r) => r.fulfill({ json: { online: true, last_active_at: '' } }))
   await page.route('**/api/market/my/following', (r) => r.fulfill({ json: { following: [] } }))
-  await page.route('**/api/settings/config', (r) => r.fulfill({ json: { summary_threshold: 50 } }))
+  await page.route('**/api/settings/config', (r) => r.fulfill({ json: {} }))
 }
 
 // 主题由 <html> 类名切换（src/utils/theme.js:23 就是这么做的）
