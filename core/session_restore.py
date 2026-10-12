@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from core.affinity_service import read_persisted_affinity
+from core.history_digest import Digests
 from core.session_record import SessionRecord
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,11 @@ async def restore_engine_state(engine: Any, session_id: str, storage: Any) -> No
         engine.load_session_record(SessionRecord.from_persist(raw))
     except Exception as exc:
         logger.warning("Restore session record failed (non-fatal): %s", exc, exc_info=True)
+    try:
+        raw = await storage.load_history_digest_unscoped(session_id)
+        engine.load_history_digest(Digests.from_persist(raw))
+    except Exception as exc:
+        logger.warning("Restore history digest failed (non-fatal): %s", exc, exc_info=True)
 
 
 async def restore_group_engine_state(engine: Any, group_id: str, card_id: str, storage: Any) -> None:
