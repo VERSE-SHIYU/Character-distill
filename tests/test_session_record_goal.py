@@ -530,6 +530,35 @@ def test_X3_examples_keep_each_fact_in_its_speakers_column():
     assert any(c == ["requests"] and "再" in ch for c, (_, ch, _) in zip(cols, examples)), "缺推托的示范"
 
 
+def test_X4_known_definition_keeps_the_facts_a_question_carries():
+    """T1（P12）：known 定义照抄 Mem0 第 4 条两句原文（mem0 b7ad69a prompts.py:584–593，
+    小节 "Extract Incidental Facts, Not Just Requests"）——提问里顺带说出的本人情况要记。"""
+    system, _ = rec.render_extraction_prompt(SessionRecord(), char_name="孔乙己",
+                                             user_message="", assistant_reply="")
+    assert ("When a user asks a question or makes a request, their message often contains "
+            "INCIDENTAL PERSONAL FACTS stated as context.") in system
+    assert ("Do NOT let the request overshadow the facts. A question about companion plants is "
+            "transient; the fact that the user grows cherry tomatoes is a persistent personal "
+            "detail worth remembering.") in system
+
+
+def test_X5_known_definition_is_positive_not_only_negative():
+    """T2（P12）：旧定义只说「不记什么」（「对方提的问题不是关于对方的事实」），已删。"""
+    system, _ = rec.render_extraction_prompt(SessionRecord(), char_name="孔乙己",
+                                             user_message="", assistant_reply="")
+    assert "对方提的问题不是关于对方的事实" not in system
+
+
+def test_X6_examples_show_a_personal_fact_stated_inside_a_question():
+    """T3（P12）：示范里有一例「提问里带出本人情况」（记事实、不记问句），
+    原例 1（纯问句 → 空）仍在。"""
+    examples = _example_outputs()
+    assert any(u.startswith("我都三十了") and [o["col"] for o in ops] == ["known"]
+               for u, _, ops in examples), "缺「提问里带个人事实」的示范"
+    assert any(u == "你平时喜欢喝什么茶？" and ops == [] for u, _, ops in examples), \
+        "原例 1（纯问句 → 空）丢了"
+
+
 def test_X2_third_person_with_names_extraction_and_second_person_only_in_the_block():
     """P2（G2）：抽取提示词里栏名用角色名，没有「他对你」；注入给角色的块才用「你」。"""
     text = _prompt(name="孔乙己")
