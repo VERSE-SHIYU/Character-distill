@@ -71,8 +71,13 @@ class Column:
 # 顺序就是注入块里的顺序。定义的出处见 spec `session-record-extract.md` §3 和「第五轮修改」。
 COLUMNS: tuple[Column, ...] = (
     Column("known", "{who}知道的关于对方的事",
-           "对方明确说出的、关于对方本人的事实：身份、经历、身体状况、明说的喜好、身边的人；"
-           "对方提的问题不是关于对方的事实。",
+           "对方话里透露的对方本人的情况：身份、经历、身体状况、明说的喜好、身边的人。"
+           "对方提问或提请求时，话里顺带透露的本人情况照样记；提问本身是一次性的，不记，"
+           "也不要写成「对方问了{who}……」。"
+           "（原文：When a user asks a question or makes a request, their message often contains "
+           "INCIDENTAL PERSONAL FACTS stated as context. Do NOT let the request overshadow the "
+           "facts. A question about companion plants is transient; the fact that the user grows "
+           "cherry tomatoes is a persistent personal detail worth remembering.）。",
            _USER_ONLY),
     Column("relation", "{who}和对方关系的变化",
            "只在这一轮改变了两人之间的义务、冲突、相互期待或以后能否联系上时才记"
@@ -189,6 +194,11 @@ Current state: （还没有）
 对方：你平时喜欢喝什么茶？
 老陈：龙井吧，清淡。
 Output: {{"{ops}": []}}
+
+Current state: （还没有）
+对方：我都三十了，还不能喝酒吗？
+老陈：喝吧，少喝点。
+Output: {{"{ops}": [{{"col": "known", "text": "对方三十岁。", "evidence": "我都三十了", "{sup}": null}}]}}
 
 Current state: （还没有）
 对方：我在杭州读研究生，下个月要去北京面试。

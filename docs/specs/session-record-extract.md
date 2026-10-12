@@ -108,7 +108,7 @@ def run(self, ctx):
 
 ### 3.3 抽取提示词与出处
 
-渲染出来的提示词（第三轮）：角色名「孔乙己」，当前已有 1 条。
+渲染出来的提示词（第三轮）：角色名「孔乙己」，当前已有 1 条。本节是**第三轮的快照**，此后每轮的提示词改动记在文末对应的「第 N 轮修改」里；读当前提示词以 `core/session_record.py` 为准。第八轮改过 `known` 定义，见文末。
 
 ```
 You are a character state analyst. After each conversation turn, you update the tracked state of one save between the character 「孔乙己」 and the user, who is referred to as 「对方」.
@@ -529,3 +529,33 @@ Claude 读了三份 `replay.json` 的第 7、21 轮，和两份全量结束时 `
 - B #11「对方请孔乙己讲故事」（依据问句「你会不会讲故事？」）与第六轮验收相同，不是本轮带来的变化。
 
 门槛全部满足，提示词补 `"moved off"` 没有带来退化。
+
+### 第八轮修改：P12（10-12）
+
+**问题**：整场 139 轮验收里，填充轮对方随口问孔乙己的 5 句问句（「你会不会唱歌？」等）被记进 `known`，成了「对方问孔乙己……」条目（存档 874916873967 的 #11–#15）。既有规则挡不住，根因不在栏的规则散在函数里（第五轮已内聚到 `COLUMNS`），而在 `known` 的**定义写成了负面**——只说「不记什么」（「对方提的问题不是关于对方的事实」），没说「问句里带出的本人情况要记」；示范里也只有「纯问句 → 空」一例，没有「问句 + 本人情况」的混合例。模型守不住。
+
+**改动**（只动 `core/session_record.py` 的 `COLUMNS` 里 `known` 那一行和示范，加 3 个目标检查）
+
+| 改什么 | 出处 |
+|---|---|
+| `known.definition` 改正面写法，括号里照抄 Mem0 第 4 条两句英文原文（写法同 `relation` / `requests` 的「（原文：…）」） | Mem0 `mem0/configs/prompts.py:584–593`，小节「Extract Incidental Facts, Not Just Requests」（main `b7ad69a`，2026-10-07，已逐字核对） |
+| 示范在例 1 之后加一例：`对方：我都三十了，还不能喝酒吗？／老陈：喝吧，少喝点。` → 只记 `known`「对方三十岁。」 | 照 Mem0 `USER_MEMORY_EXTRACTION_PROMPT` 示范「Me favourite movies are … What are yours?」的形状（问句不记、问句里的事实记）；人物另编，X1b 守 |
+| 新增目标检查 X4（两句英文原文在 system 里）、X5（旧负面句已删）、X6（示范含「我都三十了」一例、原例 1 仍在） | 守住上面两条 |
+
+**不改的**（口径，不是遗漏）
+
+- 不加任何代码门。按问号拦会误杀「我都三十了，还不能喝酒吗？」（它问句里带本人情况，应当记），违反「跟这句话是不是问句无关」的判定标准，已否决。语义判断交给模型，代码只守来源（`_checked`）。
+- 不取 Mem0 的「When in doubt, extract」：记录要占上下文，取「只记以后有用的」（跟踪文档定论 10-12 19:57）。
+- 不改其他栏、不改 `_checked`、不改代码结构。
+
+**渲染后的 `known` 行**（`core/session_record.py`，`{who}` 抽角色名；句末「依据只能是对方的原话。」由 `sources` 生成，不写进定义）：
+
+```
+- known「孔乙己知道的关于对方的事」：对方话里透露的对方本人的情况：身份、经历、身体状况、明说的喜好、身边的人。对方提问或提请求时，话里顺带透露的本人情况照样记；提问本身是一次性的，不记，也不要写成「对方问了孔乙己……」。（原文：When a user asks a question or makes a request, their message often contains INCIDENTAL PERSONAL FACTS stated as context. Do NOT let the request overshadow the facts. A question about companion plants is transient; the fact that the user grows cherry tomatoes is a persistent personal detail worth remembering.）。依据只能是对方的原话。
+```
+
+**验收结果**（10-12，本地，真模型 deepseek-flash，代码 commit `adf06a9f`）
+
+- **全量重放 139 轮，两场都是 6/6**，填充轮 `known` 里含「对方问」的条目 **0 条**（`known` 依据是问句的条目也 0 条）：`acceptance-r9`（出问题的存档 874916873967 本身）注入块 152 token；`acceptance-session-record`（旧一场）185 token。
+- **第 124、129 轮单跑（`e2e/scratch/p12/p12_facts.json` 的 live 输入）仍会出问句条目**：124 第 1 次记出「对方问孔乙己会不会唱歌。」、第 2 次同一输入为 0 条；129 第 1 次记出「对方问孔乙己有没有替自己辩解过。」；replay 变体两轮各 0 条。**原 spec 把「单跑各 1 次」写成判定线是错的**——温度为 0 时同样输入也会波动（跟踪文档 §3.4），单跑一次不能作判据，这条作废。
+- 本次修改的目标是**减少**这类条目，不是根除（跟踪文档定论 10-12 19:57）。全量重放已清零，单跑残留属已知方差。
