@@ -144,7 +144,6 @@
   "src/styles/global.css :: .chat-topbar-more-btn.active",
   "src/styles/global.css :: .chat-topbar-more-btn:hover",
   "src/styles/global.css :: .chat-voice-indicator",
-  "src/styles/global.css :: .chat-voice-indicator",
   "src/styles/global.css :: .chat-web-search-ctl",
   "src/styles/global.css :: .chat-with-history",
   "src/styles/global.css :: .distill-task-item.is-queued",
