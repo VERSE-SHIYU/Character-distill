@@ -87,7 +87,7 @@ COLUMNS: tuple[Column, ...] = (
     Column("promises", "{who}答应的事",
            "{who}自己做出的、还没兑现的承诺或决定"
            "（原文：Promises or decisions the character made）。"
-           "{who}讲自己的经历、看法、习惯，或劝对方做什么，都不记。",
+           "只是推托、没有明确应下的不记；{who}讲自己的经历、看法、习惯，或劝对方做什么，都不记。",
            _CHARACTER_ONLY),
 )
 _COLUMNS_BY_KEY = {c.key: c for c in COLUMNS}
@@ -201,9 +201,14 @@ Current state: #2 [requests] 对方下个月要去北京面试。
 Output: {{"{ops}": [{{"col": "requests", "text": "对方下个月的面试改在上海，不去北京了。", "evidence": "面试改到上海了，不去北京了", "{sup}": 2}}]}}
 
 Current state: （还没有）
-对方：说好了，你教我钓鱼。
+对方：你教我钓鱼吧？
 老陈：行，下周三来。
-Output: {{"{ops}": [{{"col": "promises", "text": "老陈答应下周三教对方钓鱼。", "evidence": "行，下周三来", "{sup}": null}}]}}
+Output: {{"{ops}": [{{"col": "requests", "text": "对方请老陈教他钓鱼。", "evidence": "你教我钓鱼吧", "{sup}": null}}, {{"col": "promises", "text": "老陈答应下周三教对方钓鱼。", "evidence": "行，下周三来", "{sup}": null}}]}}
+
+Current state: （还没有）
+对方：周末陪我去爬山吧？
+老陈：到时候再看吧。
+Output: {{"{ops}": [{{"col": "requests", "text": "对方请老陈周末陪他去爬山。", "evidence": "周末陪我去爬山吧", "{sup}": null}}]}}
 
 Do not return anything from the custom few shot example prompts provided above.
 """

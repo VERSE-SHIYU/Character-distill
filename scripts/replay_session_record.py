@@ -59,7 +59,9 @@ def _replay(turns: list[dict], card_name: str, llm: LLMAdapter) -> tuple[rec.Ses
 def _verdict(record: rec.SessionRecord, log: list[dict]) -> list[tuple[str, bool, str]]:
     def by_kind(kind: str) -> list[dict]:
         return [row for row in log if row["kind"] == kind]
-    seeds_hit = sum(1 for row in by_kind("seed") if row["new"])
+    # 种子是对方说出的事实（spec「重放第 3 次」：8 条依据都是对方那句的原话），所以只算由对方原话
+    # 记下的；只被角色那边记到（如把对方的请求记成「角色答应」）不算。
+    seeds_hit = sum(1 for row in by_kind("seed") if any(e["source"] == rec.SOURCE_USER for e in row["new"]))
     changes = by_kind("change")
     superseded = [row for row in changes if any(e["replaces"] is not None for e in row["new"])]
     def duplicated(row: dict) -> bool:

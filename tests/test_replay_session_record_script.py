@@ -59,6 +59,10 @@ def test_each_known_failure_trips_its_line():
     log[0]["new"] = []                                                    # 种子没记到
     assert not _verdict(log)["每条种子都记到"]
 
+    log = _clean_log()                                                    # 种子只被角色那边记到（10-12 第 7 轮）
+    log[1]["new"] = [_e(2, "promises", "孔乙己答应对方的事", "回来再说", source="character")]
+    assert not _verdict(log)["每条种子都记到"]
+
     log = _clean_log()
     log[3]["new"] = [_e(3, "requests", "对方改去金陵", "改去金陵")]           # 改口没用取代
     assert not _verdict(log)["每处改口都用取代完成"]

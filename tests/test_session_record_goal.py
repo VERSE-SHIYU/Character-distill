@@ -500,6 +500,35 @@ def test_X1b_examples_are_not_taken_from_the_replay_conversation():
         assert leaked not in examples, leaked
 
 
+def _example_outputs() -> list[tuple[str, str, list[dict]]]:
+    """示范里每一例的 (对方那句, 老陈那句, 输出项)。"""
+    system, _ = rec.render_extraction_prompt(SessionRecord(), char_name="孔乙己",
+                                             user_message="", assistant_reply="")
+    lines = system[system.index("## Few shot examples"):].splitlines()
+    out = []
+    for i, ln in enumerate(lines):
+        if ln.startswith("Output: "):
+            ops = json.loads(ln[len("Output: "):])[rec.FIELD_OPS]
+            out.append((lines[i - 2].removeprefix("对方："), lines[i - 1].removeprefix("老陈："), ops))
+    return out
+
+
+def test_X3_examples_keep_each_fact_in_its_speakers_column():
+    """示范自己守规则：每项依据都在它那栏该收的那一边；对方的请求和角色的应允是两件事，分两项记；
+    角色只是推托时不记 promises（10-12 重放第 7 轮：例子只记「老陈答应」，模型就把对方的请求
+    丢了、把推托写成「答应」）。"""
+    by_key = {c.key: c for c in rec.COLUMNS}
+    examples = _example_outputs()
+    for user_line, char_line, ops in examples:
+        for op in ops:
+            side = rec.SOURCE_USER if op["evidence"] in user_line else rec.SOURCE_CHARACTER
+            assert op["evidence"] in (user_line if side == rec.SOURCE_USER else char_line), op
+            assert side in by_key[op["col"]].sources, op
+    cols = [sorted(o["col"] for o in ops) for _, _, ops in examples]
+    assert ["promises", "requests"] in cols, "缺「对方请求 + 角色应允」分两项的示范"
+    assert any(c == ["requests"] and "再" in ch for c, (_, ch, _) in zip(cols, examples)), "缺推托的示范"
+
+
 def test_X2_third_person_with_names_extraction_and_second_person_only_in_the_block():
     """P2（G2）：抽取提示词里栏名用角色名，没有「他对你」；注入给角色的块才用「你」。"""
     text = _prompt(name="孔乙己")
