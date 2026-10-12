@@ -10,7 +10,7 @@
 # 显式 pin：填 build_run_id，锁定到某次 CI 构建的 digest。
 #
 # 所需 GitHub Secrets:
-#   GHCR_TOKEN    — GitHub PAT (read:packages + write:packages)
+#   （GHCR 登录用 job 内的 GITHUB_TOKEN，无需 PAT）
 #   SZ_DEPLOY_KEY — 深圳服务器 SSH 私钥
 #   SG_DEPLOY_KEY — 新加坡服务器 SSH 私钥
 # ============================================================
@@ -170,6 +170,11 @@ jobs:
     needs: resolve-digest
     if: always() && needs.resolve-digest.result == 'success' && (github.event.inputs.target == 'sz-only' || github.event.inputs.target == 'both')
     runs-on: ubuntu-latest
+    # GHCR 登录用本次 job 的 GITHUB_TOKEN（job 结束即失效），不再用长期 PAT：
+    # https://docs.github.com/en/packages/managing-github-packages-using-github-actions-workflows/publishing-and-installing-a-package-with-github-actions
+    permissions:
+      contents: read
+      packages: read
     env:
       APP_DIGEST: ${{ needs.resolve-digest.outputs.app_digest }}
       NGINX_DIGEST: ${{ needs.resolve-digest.outputs.nginx_digest }}
@@ -203,7 +208,7 @@ jobs:
             cd /opt/character-distill
 
             # Login to both registries
-            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u verse-shiyu --password-stdin
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ env.ALIYUN_REGISTRY }} -u "${{ secrets.ACR_USERNAME }}" --password-stdin
 
             # Record current version for rollback
@@ -410,6 +415,11 @@ jobs:
       (github.event.inputs.target == 'both' && needs.deploy-sz.result == 'success')
       )
     runs-on: ubuntu-latest
+    # GHCR 登录用本次 job 的 GITHUB_TOKEN（job 结束即失效），不再用长期 PAT：
+    # https://docs.github.com/en/packages/managing-github-packages-using-github-actions-workflows/publishing-and-installing-a-package-with-github-actions
+    permissions:
+      contents: read
+      packages: read
     env:
       APP_DIGEST: ${{ needs.resolve-digest.outputs.app_digest }}
       NGINX_DIGEST: ${{ needs.resolve-digest.outputs.nginx_digest }}
@@ -438,7 +448,7 @@ jobs:
             set -e
             cd /home/ubuntu/Character-distill
 
-            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u verse-shiyu --password-stdin
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
             PREV_SHA=$(docker inspect --format='{{index .Config.Image}}' character-distill-app-1 2>/dev/null | grep -oE '[a-f0-9]{40}' || echo "")
             echo "Previous version: ${PREV_SHA:-first deploy}"
