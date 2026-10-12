@@ -699,8 +699,11 @@ class ChatEngine:
 
     @property
     def _has_session_record(self) -> bool:
-        """本场记录只属于一对一存档：有存档 id、不在群里。"""
-        return bool(self._session_id) and not self._group_id
+        """有落库身份的引擎都有本场记录：一对一存档（`session_id`），或群里的一个人物（`group_id`）。
+
+        存到哪由评估流水线按 `group_id` 分（`_persist_session_record`），恢复各走
+        `core/session_restore` 里对应的入口；这里只判「有没有」。"""
+        return bool(self._session_id or self._group_id)
 
     def load_session_record(self, record: SessionRecord) -> None:
         """恢复存档时装回持久化的本场记录（`core/session_restore.restore_engine_state` 调）。

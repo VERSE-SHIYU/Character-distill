@@ -37,7 +37,7 @@ class EvalContext:
     llm: Any
     reaction_appraisal: str = ""
     departure_notice: str = ""
-    # 一对一存档的本场记录；群聊（或没有存档）为 None —— 不抽、不存、提示词不变。
+    # 本场记录（一对一存档，或群里的一个人物）；没有落库身份为 None —— 不抽、不存、提示词不变。
     session_record: SessionRecord | None = None
 
 
@@ -51,7 +51,7 @@ class EvalResult:
     in_character: int = 80  # 瞬时信号，不入库，不跨 session
     ooc_reason: str = ""
     assertion_confidence: int = 50  # 用户输入可信度，用于记忆写入过滤
-    session_record: SessionRecord | None = None  # 应用本轮操作后的本场记录（一对一）
+    session_record: SessionRecord | None = None  # 应用本轮操作后的本场记录
 
 
 class EvaluationPipeline:
@@ -73,7 +73,7 @@ class EvaluationPipeline:
         """执行完整管道。
 
         1. 好感评估（`_run_affinity`）：CORE 层 LLM 调用 → JSON 解析 → 状态回写 → 落库
-        2. 本场记录（`_run_session_record`，只在一对一）：**单独一次** LLM 调用 → 校验 → 有变化才落库
+        2. 本场记录（`_run_session_record`）：**单独一次** LLM 调用 → 校验 → 有变化才落库
         两步各是各的失败域：哪一步失败都不影响另一步。
         """
         result = self._run_affinity(ctx)
@@ -158,16 +158,21 @@ class EvaluationPipeline:
             logger.warning("Affinity eval failed session=%s: %s", ctx.session_id, exc, exc_info=True)
             return None
 
-    # ── 本场记录（一对一）─────────────────────────────────────
+    # ── 本场记录 ─────────────────────────────────────────────
 
     def _run_session_record(self, ctx: EvalContext) -> SessionRecord | None:
-        """单独一次抽取调用更新本场记录；有变化才落库。群聊（record 为 None）不调用、不存。
+        """单独一次抽取调用更新本场记录；有变化才落库。record 为 None（没有落库身份）不调用、不存。
+
+        这一轮没有角色回复（群聊点赞路径只评好感，回复是空串）不抽取：本场记录的每条依据都
+        取自这一轮的一问一答，只有用户那句时，抽到的只会是已经记过的旧话。
 
         失败（调用、解析、校验抛错）只丢这一轮的本场记录更新，记录原样返回，好感不受影响。
         重试由适配器自己的预算负责（`LLMAdapter.chat`），这里不再套一层。
         """
         if ctx.session_record is None:
             return None
+        if not ctx.assistant_reply.strip():
+            return ctx.session_record
 
         def call(system: str, user: str) -> str:
             llm = self._record_llm_for(ctx.llm)
@@ -275,14 +280,17 @@ class EvaluationPipeline:
     # ── SIDE-EFFECT 3: 本场记录持久化（只在本轮有变化时）────────────
 
     def _persist_session_record(self, ctx: EvalContext, record: SessionRecord) -> None:
-        if not (ctx.storage and ctx.session_id):
+        """群聊存（群, 人物）那一份，一对一存存档那一份 —— 与 `_persist_affinity` 同一分法。"""
+        storage, raw = ctx.storage, record.to_persist()
+        if not storage or not (ctx.group_id or ctx.session_id):
             return
         try:
             from core.scheduling import submit_to_main_loop
             submit_to_main_loop(
-                ctx.storage.save_session_record(ctx.session_id, record.to_persist()),
+                storage.save_group_session_record(ctx.group_id, ctx.card_id, raw) if ctx.group_id
+                else storage.save_session_record(ctx.session_id, raw),
                 timeout=15,
             )
         except Exception as exc:
-            logger.warning("Session record save failed (session=%s): %s",
-                           ctx.session_id, exc, exc_info=True)
+            logger.warning("Session record save failed (session=%s group=%s card=%s): %s",
+                           ctx.session_id, ctx.group_id, ctx.card_id, exc, exc_info=True)
