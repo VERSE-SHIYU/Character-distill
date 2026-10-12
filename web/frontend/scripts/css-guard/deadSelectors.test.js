@@ -32,13 +32,17 @@ function scanRepo() {
 }
 
 const key = (d) => `${d.file} :: ${d.selector}`
-function multisetDiff(a, b) {
-  const count = new Map()
-  b.forEach((k) => count.set(k, (count.get(k) || 0) + 1))
-  return a.filter((k) => {
-    const n = count.get(k) || 0
+
+// a 里没被 bKeys 配对上的条目：同一 key 在 bKeys 里出现几次就配几次，剩下的原样返回。
+// 返回的是 a 的元素本身（不是 key），所以提示行和 key 列表出自同一次配对。
+function unmatched(a, bKeys, keyOf) {
+  const remain = new Map()
+  for (const k of bKeys) remain.set(k, (remain.get(k) || 0) + 1)
+  return a.filter((item) => {
+    const k = keyOf(item)
+    const n = remain.get(k) || 0
     if (n === 0) return true
-    count.set(k, n - 1)
+    remain.set(k, n - 1)
     return false
   })
 }
@@ -69,10 +73,9 @@ describe('CSS 死选择器（基线模式）', () => {
   const baseline = JSON.parse(fs.readFileSync(BASELINE, 'utf8')).entries
 
   it('没有新写出的死样式', () => {
-    const added = multisetDiff(found.map(key), baseline)
-    const detail = found.filter((d) => added.includes(key(d)))
-      .map((d) => `  ${d.file}:${d.line}  ${d.selector}  （找不到的类：${d.dead.join(' ')}）`)
-    expect(added, [
+    const added = unmatched(found, baseline, key)
+    const detail = added.map((d) => `  ${d.file}:${d.line}  ${d.selector}  （找不到的类：${d.dead.join(' ')}）`)
+    expect(added.map(key), [
       '下面这些样式匹配不到任何元素：选择器里的类名在前端代码里找不到。',
       '修法：删掉这条样式，或者把类名用回组件里。不要把它加进基线。',
       ...detail,
@@ -80,7 +83,7 @@ describe('CSS 死选择器（基线模式）', () => {
   })
 
   it('基线里没有过期的行（只减不增）', () => {
-    const stale = multisetDiff(baseline, found.map(key))
+    const stale = unmatched(baseline, found.map(key), (k) => k)
     expect(stale, [
       '这些行已经不是死样式了（已删除或重新用上），请从 scripts/css-guard/dead-selectors.baseline.json 删掉：',
       ...stale.map((k) => `  ${k}`),
