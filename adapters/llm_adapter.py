@@ -716,6 +716,11 @@ def _extract_content(choice: Any, *, where: str) -> str:
 
 _FALLBACK_MODEL = "deepseek-flash"
 
+#: 设置页模型下拉里可选的**具体**型号 —— 全仓唯一一份，经 `/api/settings/config`
+#: 的 `available_models` 出给前端（前端不再各存一份）。「跟随默认」不是型号、不在此列：
+#: 它是 `reset_model` 请求字段（清空用户存量 → 回到 `default_model()`）。
+SELECTABLE_MODELS: tuple[str, ...] = ("deepseek-flash", "deepseek-v4-pro")
+
 
 def _load_llm_config(config_path: str | Path | None = None) -> dict[str, Any]:
     """读 `llm` 段配置 —— **全仓唯一**一处配置读取（`LLMAdapter.__init__` 与

@@ -170,6 +170,10 @@ class ApiConfigRequest(BaseModel):
     model: str = ""
     embedding_key: str = ""
     embedding_region: str = ""
+    # 「恢复默认模型」用**显式字段**表达，不复用特殊字符串当暗号：空串的 `model` 已经是
+    # 「这次不改」，若再拿某个字面量（如 "default"）表示清空，两个含义会挤在同一格里。
+    # True 时仓储层把存储的 model 清空（NULL），前端据此可把被钉死的用户改回跟随默认。
+    reset_model: bool = False
 
     @field_validator("embedding_region")
     @classmethod
@@ -608,7 +612,11 @@ async def me(
     config = await storage.get_user_api_config(user["id"])
     resp["has_api_key"] = bool(config.get("api_key"))
     resp["base_url"] = config.get("base_url", "https://api.deepseek.com")
-    resp["model"] = config.get("model") or default_model()
+    stored_model = config.get("model")
+    resp["model"] = stored_model or default_model()
+    # `model` 仍是「解析后」的值（用户存量 or 默认），含义不变；`model_source` 把两者的
+    # 来源说开 —— 前端靠它把下拉预选成用户那份还是「跟随默认」，也才能如实显示来源。
+    resp["model_source"] = "user" if stored_model else "default"
     resp["has_embedding_key"] = bool(config.get("embedding_key"))
     resp["embedding_region"] = config.get("embedding_region", "cn")
     resp["avatar_data"] = await storage.get_user_avatar(user["id"])
@@ -665,6 +673,7 @@ async def update_api_config(
         await storage.update_user_api_config(
             user["id"], req.api_key, req.base_url, req.model,
             req.embedding_key, req.embedding_region,
+            reset_model=req.reset_model,
         )
         # 换活会话手里的连接（含清缓存）。换失败**不改写**这次保存的结果：配置已经落库，
         # 下个请求自己会取到新实例（缓存已经清掉了），活会话只是晚一轮生效。

@@ -2701,11 +2701,16 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get user API config failed: {exc}")
             raise
 
-    async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str, embedding_key: str = "", embedding_region: str = "cn") -> None:
+    async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str, embedding_key: str = "", embedding_region: str = "cn", reset_model: bool = False) -> None:
         """Update a user's API config. api_key and embedding_key are encrypted before storage.
 
         Empty fields are never written, so a blank field in the request does not
         overwrite an existing value (applies to api_key, base_url, model, and embedding_key).
+
+        `reset_model=True` is the one way to **clear** the stored model back to "follow the
+        default" —— a blank `model` means "don't touch", so without this there is no way to
+        un-pin a user who was written a concrete model. It writes NULL and wins over a
+        non-empty `model`.
 
         Secrets (api_key, base_url, model) go to user_secrets;
         embedding config (embedding_key, embedding_region) stays on users.
@@ -2728,7 +2733,9 @@ class PostgresStore(StorageBase):
                 secret_parts.append(f"base_url = ${len(secret_params) + 1}")
                 secret_params.append(base_url)
 
-            if model:
+            if reset_model:
+                secret_parts.append("model = NULL")
+            elif model:
                 secret_parts.append(f"model = ${len(secret_params) + 1}")
                 secret_params.append(model)
 

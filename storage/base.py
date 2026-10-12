@@ -682,8 +682,12 @@ class StorageBase(ABC):
         """Get a user's API config (api_key decrypted, base_url, model, embedding_key, embedding_region)."""
 
     @abstractmethod
-    async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str, embedding_key: str = "", embedding_region: str = "cn") -> None:
-        """Update a user's API config. api_key and embedding_key are encrypted before storage."""
+    async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str, embedding_key: str = "", embedding_region: str = "cn", reset_model: bool = False) -> None:
+        """Update a user's API config. api_key and embedding_key are encrypted before storage.
+
+        `reset_model=True` clears the stored model back to "follow the default"
+        (writes NULL) and wins over a non-empty `model`. Empty fields are never written.
+        """
 
     @abstractmethod
     async def delete_user(self, user_id: str) -> dict:
