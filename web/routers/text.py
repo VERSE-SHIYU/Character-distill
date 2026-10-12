@@ -115,10 +115,16 @@ def _file_too_large_message() -> str:
     return f"文件体积超过 {MAX_FILE_BYTES // (1024 * 1024)}MB 上限，请压缩后重试"
 
 
-def _validate_extension(filename: str) -> None:
+def _validate_extension(filename: str) -> str:
+    """校验后缀并返回**规范化（小写）后的白名单值** —— 落盘名要用的就是这个。
+
+    校验与取值同一处：调用点不再自己 `Path(...).suffix`（那会漏掉 `xxx.TXT` 的大写、
+    也拦不住畸形后缀）。不合法直接 400。
+    """
     ext = Path(filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"不支持的文件格式。允许：{', '.join(sorted(ALLOWED_EXTENSIONS))}")
+    return ext
 
 
 @router.post("/upload")
@@ -147,10 +153,14 @@ async def upload_text(
     cleaning_stats = None
 
     if file and file.filename:
-        _validate_extension(file.filename)
+        ext = _validate_extension(file.filename)
         safe_name = Path(file.filename).name  # strip directory traversal
 
-        temp_path = UPLOAD_DIR / f"{uuid.uuid4().hex}_{safe_name}"
+        # 落盘名与用户输入**脱钩**：只用「uuid + 白名单后缀」。原先把完整原文件名拼进去，
+        # 中文名 UTF-8 每字 3 字节，`.txt` 这类原文件名一长就撞上 ext4 单组件 255 字节上限，
+        # `open()` 抛 OSError(ENAMETOOLONG) → 500（2026-10-12 SG 生产实测）。
+        # 真名照旧经 `safe_name` 落进 texts.filename，解析器也按真名后缀选分支，不受影响。
+        temp_path = UPLOAD_DIR / f"{uuid.uuid4().hex}{ext}"
         try:
             total_size = 0
             async with aiofiles.open(temp_path, "wb") as f:
