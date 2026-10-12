@@ -1,0 +1,6 @@
+{
+  "说明": "这些前缀的类由第三方库自己渲染，源码里看不到，不算死。每条写明是哪个库、在哪用。",
+  "libPrefixes": [
+    { "prefix": "adm-", "reason": "antd-mobile 组件自带的类（TabBar 等；用在 MobileTabBar.jsx、ArchiveListModal.jsx、common/ThemeDrawer.jsx）" }
+  ]
+}
