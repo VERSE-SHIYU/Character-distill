@@ -508,7 +508,7 @@ Claude 读了三份 `replay.json` 的第 7、21 轮，和两份全量结束时 `
 
 | 问题 | 根因 | 改法 |
 |---|---|---|
-| 规则 6 标「照抄」，却漏了原文的 `"moved off"` | 抄写漏项；X1 只守到 `"switched to"`，后面几项没人守 | 规则 6 补回 `"moved off"`（`core/session_record.py`、本文 §5 原文行同改），现与 StateMem E.1 逐项一致 |
+| 规则 6 标「照抄」，却漏了原文的 `"moved off"` | 抄写漏项；X1 只守到 `"switched to"`，后面几项没人守 | 规则 6 补回 `"moved off"`（`core/session_record.py`、本文 §3 提示词原文同改），现与 StateMem E.1 逐项一致 |
 | X1 的期望句截在 `"switched to"`，之后各项删改不红（复核变异 y7 存活） | 期望句只取了原句前半 | `_TRANSCRIBED` 改为整句，到 `"now Y not X"` 为止 |
 | 「复核 PR #142」一节的全量数字是 `9c31d697` 的，不是交付的 head | 记录没标清对应哪个 head，读的人会当成现状 | 那一节保留（它对 `9c31d697` 成立），交付 head 的数字记在这里 |
 
