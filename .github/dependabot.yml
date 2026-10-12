@@ -6,3 +6,7 @@ updates:
     directories: ["/", "/nginx"]
     schedule:
       interval: weekly
+    # 只提同一 tag 内的 digest / 补丁更新；跨大版本（如 node 20→26）由人决定何时做，不自动提 PR
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
