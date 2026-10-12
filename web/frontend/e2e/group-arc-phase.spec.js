@@ -102,7 +102,7 @@ test('建群第 2 步：可选卡各一个下拉默认最后阶段，不可选�
   await setup(page)
   await openCreateStep2(page)
 
-  const rows = page.locator('.group-create-section', { hasText: '每个角色的时期' }).locator('.group-create-row')
+  const rows = page.locator('.group-create-section', { hasText: '每个角色的时期' }).locator('.group-row')
   await expect(rows).toHaveCount(2)                                   // 丙 不可选 → 不在列表
   await expect(rows.filter({ hasText: '甲' }).locator('.ui-select')).toContainText('阶段 2 · 热')   // 默认最后阶段
   await expect(rows.filter({ hasText: '乙' }).locator('.ui-select')).toContainText('阶段 2 · 终')
@@ -118,7 +118,7 @@ test('扮演某张卡：它的下拉消失；改回导演：回来', async ({ pa
   await page.locator('.persona-option', { hasText: '扮演已选角色' }).click()
   await page.locator('.persona-sub .persona-char-btn', { hasText: '甲' }).click()
 
-  const rows = page.locator('.group-create-section', { hasText: '每个角色的时期' }).locator('.group-create-row')
+  const rows = page.locator('.group-create-section', { hasText: '每个角色的时期' }).locator('.group-row')
   await expect(rows).toHaveCount(1)                                   // 甲 是扮演的 → 退出列表
   await expect(rows.filter({ hasText: '甲' })).toHaveCount(0)
 
@@ -140,7 +140,7 @@ test('选甲/乙/丙、扮演乙、改甲为阶段 1 → 创建 → 请求体 me
   await page.locator('.persona-option', { hasText: '扮演已选角色' }).click()
   await page.locator('.persona-sub .persona-char-btn', { hasText: '乙' }).click()
 
-  await page.locator('.group-create-row', { hasText: '甲' }).locator('.ui-select').click()
+  await page.locator('.group-row', { hasText: '甲' }).locator('.ui-select').click()
   await page.getByRole('option', { name: '阶段 1 · 冷' }).click()
   await page.locator('.group-create-modal .modal-actions .btn-primary').click()   // 创建群聊
 
@@ -167,7 +167,7 @@ test('成员标签：新建群按 member_phases 显示；旧群无该列 → 最
   await page.locator('.group-create-card', { hasText: '甲' }).click()
   await page.locator('.group-create-card', { hasText: '乙' }).click()
   await page.locator('.group-create-modal .modal-actions .btn-primary').click()
-  await page.locator('.group-create-row', { hasText: '甲' }).locator('.ui-select').click()
+  await page.locator('.group-row', { hasText: '甲' }).locator('.ui-select').click()
   await page.getByRole('option', { name: '阶段 1 · 冷' }).click()
   await page.locator('.group-create-modal .modal-actions .btn-primary').click()
   await openMembers(page)
@@ -202,7 +202,7 @@ test('建群成功直接进群：消息区为空、成员「尚未评估」；�
   await expect(page.locator('.group-right-member-list .group-member-item').filter({ hasText: '甲' })).toHaveCount(0)
 })
 
-// 问题 1：时期行以前借用成员条目类（没内边距、下拉跟着名字长度左右漂），现在用行布局类 group-create-row。
+// 问题 1：时期行以前借用成员条目类（没内边距、下拉跟着名字长度左右漂），现在用行布局类 group-row。
 test('时期行布局：长短名字下拉右边缘对齐、相邻行下拉有间距；时期行不是可点卡片', async ({ page }) => {
   await setup(page, { cards: LONG_SHORT })
   await page.locator('.messages-sidebar-header .btn-primary').click()
@@ -214,7 +214,7 @@ test('时期行布局：长短名字下拉右边缘对齐、相邻行下拉有�
   await page.locator('.group-create-card', { hasText: '阿Q' }).click()
   await page.locator('.group-create-modal .modal-actions .btn-primary').click()
 
-  const rows = page.locator('.group-create-section', { hasText: '每个角色的时期' }).locator('.group-create-row')
+  const rows = page.locator('.group-create-section', { hasText: '每个角色的时期' }).locator('.group-row')
   await expect(rows).toHaveCount(2)
   // 时期行只有行布局、没有卡片交互：cursor 不是 pointer
   await expect(rows.first()).not.toHaveCSS('cursor', 'pointer')
