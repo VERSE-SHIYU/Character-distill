@@ -503,3 +503,53 @@ async def outbox_store():
     async with await s._connect() as conn:
         await conn.execute("DELETE FROM cross_border_outbox")
     await s.close()
+
+
+# ── 嵌入：只替换出网那一步 ─────────────────────────────────────────────────────
+
+def _bag_vector(text: str, dim: int) -> list[float]:
+    """确定性的字符 + 二元组袋向量：共享字符越多、余弦越高（mem0 的相似度门控判得动）。
+    用 md5 而非内置 ``hash`` —— 后者受 PYTHONHASHSEED 影响，跨进程不稳。"""
+    import hashlib
+    import math
+
+    toks = list(text) + [text[i:i + 2] for i in range(max(0, len(text) - 1))]
+    v = [0.0] * dim
+    for t in toks:
+        v[int(hashlib.md5(t.encode()).hexdigest(), 16) % dim] += 1.0
+    norm = math.sqrt(sum(x * x for x in v)) or 1.0
+    return [x / norm for x in v]
+
+
+@pytest.fixture
+def fake_embedding_api(monkeypatch):
+    """嵌入器的唯一测试替身：只替换真正出网的 ``DashScopeEmbedding._call_api``。
+
+    空串过滤、截断、共享缓存、``Mem0BridgeEmbedder.embed`` 取 ``[0]`` 都走生产代码，
+    测试和生产对同一个输入的反应一致（spec ``time-event-asked.md`` §4.3）。不要再整个
+    替换 ``Mem0BridgeEmbedder``：那会让各个测试各写一份嵌入契约。
+    """
+    import core.embeddings as embeddings
+
+    def _call_api(self, texts, *, deadline=None):
+        return [_bag_vector(t, self._dimensions) for t in texts]
+
+    monkeypatch.setattr(embeddings.DashScopeEmbedding, "_call_api", _call_api)
+    with embeddings._SHARED_CACHE_LOCK:
+        embeddings._SHARED_CACHE.clear()
+    yield
+    with embeddings._SHARED_CACHE_LOCK:
+        embeddings._SHARED_CACHE.clear()
+
+
+def persist_time_event(scoped, event: str, due_at: str) -> None:
+    """用生产的写入函数（``EvaluationPipeline._persist_time_event``）写一件时间事件。
+
+    测试不手写事件的元数据：生产写什么格式，测试就是什么格式（spec ``time-event-asked.md``）。"""
+    from types import SimpleNamespace
+
+    from core.evaluation_pipeline import EvaluationPipeline
+
+    EvaluationPipeline._persist_time_event(
+        EvaluationPipeline.__new__(EvaluationPipeline), SimpleNamespace(memory=scoped),
+        {"time_event": {"event": event, "when_text": "之前", "due_at": due_at}})
