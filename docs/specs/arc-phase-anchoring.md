@@ -92,11 +92,17 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
   - 按现有方式按省略号分段；任一段不在全文 → `None`（= 核对不上，与今天口径一致，**不新增顺序要求**，C11）；
   - 否则返回**最长一段**在全文中的全部起点（C12：短段不作位置证据）；
   - `verbatim_in_normalized` 改为 `locate_in_normalized(...) is not None`，**分段与匹配只写一次**，判定结果与改前逐字一致。
+- **`core/quotes.py` 再加一个函数（P15，**锚点专用**）**：`locate_elided_in_normalized(source_norm, quote, paragraphs=None) -> list[int] | None`——锚点含省略号时用它核对：
+  - 按省略号切段（切片在归一化**之前** —— `_DROP_CHARS` 含「…」，先归一化省略号就没了），段长按归一化后字符数；
+  - 短于 `MIN_ELIDED_FRAGMENT_LEN`（10 字）的段**丢掉**；剩下的不足 `MIN_ELIDED_FRAGMENTS`（2 段）→ `None`；
+  - 各段从前往后**依次**找（顺序必须一致）；`paragraphs` 非 `None` 时各段须落在**同一段落**（按换行分段）；
+  - 起点取**首段**位置；任一条件不成立 → `None`（**没标出省略号的删减只剩一段，照样对上不**，不引入任何相似度）。
+  - 下限两个常量的出处：oberst-lab/verifiable-by-construction `eval/citation/verbatim_criteria.json:63-68`（作者称 structural floors）。**引文那条 `locate_in_normalized` 不动** —— 它仍不要求顺序（C11、M16）。
 
 ### 3.2 规则
 
 0. **先后次序**：先做现有的编号合法性过滤（越界编号去掉并 warning，全部不合法则整条撤回——**现有行为不变**，`card_draft.py:82-90`），再对剩下的合法标注做位置检查；兜底（规则 4）退回的是**合法**标注。
-1. **阶段范围**：用 `locate_in_normalized` 找每个锚点的位置（同样取最长段）；阶段 k 的范围是 `[锚点 k 位置, 锚点 k+1 位置)`，阶段 1 锚点为空时从 0 开始，最后一阶段到全文末尾。锚点重复出现时取第一次出现。
+1. **阶段范围**：用 `locate_in_normalized` 找每个锚点的位置（同样取最长段）；锚点含省略号时改用 `locate_elided_in_normalized`（省略号拼接档，§3.1，P15）——**没标出省略号的删减照样核对不上**；阶段 k 的范围是 `[锚点 k 位置, 锚点 k+1 位置)`，阶段 1 锚点为空时从 0 开始，最后一阶段到全文末尾。锚点重复出现时取第一次出现。
 2. **整卡跳过（D7）**：阶段 1 以外的锚点查不到**或为空**、或锚点位置不严格递增 → 整卡不做位置检查，保留模型标注，warning 一条（含卡名与原因）。
 3. **单条标注**：同一阶段若有多段摘录，按阶段合并，任一段通过即该阶段成立。摘录查不到，或最长段在原文出现超过 `MAX_OCCURRENCES` 次 → 该段不作证据；有任一位置落在所标阶段范围内（D6）→ 保留，若位置数 > 1 记「位置不唯一」；否则去掉，每个不成立的（做法, 阶段）各打一条 warning。
 4. **兜底（D5）**：一条做法的标注全部被去掉 → 退回它原来的全部标注，warning。
@@ -106,7 +112,7 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
 
 ### 3.3 提示词（`core/distiller.py`）
 
-- 维度 L：每个阶段加 `anchor`——原文中标志这一阶段开始的一句（10–40 字，逐字照抄）；阶段 1 可留空。
+- 维度 L：每个阶段加 `anchor`——原文中标志这一阶段开始的一句（10–40 字，逐字照抄）；中间要省略时必须用「……」标出，省略号两边各至少 10 个字；阶段 1 可留空。
 - 维度 O：删去 `phases` 与 `source_quote` 两条说明，换成 `occurrences`——这个做法在哪些阶段出现过，每个阶段各给一段**该阶段里**的原文摘录（10–40 字，逐字照抄），写成 `[{"phase": 1, "quote": "…"}]`；维度 L 没有阶段时只写一条，`phase` 填 0。
 - G6 模板（`:259`）与格式说明（`:291`）同步。
 
@@ -123,7 +129,7 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
 | §3.2 规则 / §2.3 依据 / §4.2 调用点 | 守它的测试函数 |
 |---|---|
 | 规则 0（编号合法性过滤） | `test_u10_out_of_range_number_alone_retracts_the_row`、`test_u11_in_range_number_kept_alongside_an_out_of_range_one`、`test_u12_invalid_number_warns` |
-| 规则 1（阶段范围） | `test_u1_phase_ranges_are_half_open`、`test_u1b_anchor_position_belongs_to_the_later_phase_not_the_earlier`、`test_u1c_character_just_before_the_anchor_belongs_to_the_earlier_phase` |
+| 规则 1（阶段范围） | `test_u1_phase_ranges_are_half_open`、`test_u1b_anchor_position_belongs_to_the_later_phase_not_the_earlier`、`test_u1c_character_just_before_the_anchor_belongs_to_the_earlier_phase`、`test_u28_elided_anchor_passes_when_both_fragments_are_long_same_paragraph_in_order`、`test_u29_anchor_with_an_unmarked_deletion_still_fails`、`test_u30_elided_anchor_with_only_one_long_fragment_fails`、`test_u31_elided_anchor_spanning_two_paragraphs_fails`、`test_u32_elided_anchor_with_reversed_fragments_fails`（省略号拼接档 §3.1，P15） |
 | 规则 2（整卡跳过） | `test_u16_missing_anchor_keeps_every_tag_unchecked`、`test_u17_missing_anchor_warns_skip`、`test_u18_reversed_anchors_skip_the_whole_card`、`test_u23_empty_anchor_on_last_phase_skips_the_whole_card`、`test_u24_empty_anchor_on_a_middle_phase_skips_with_its_own_reason` |
 | 规则 3（单条标注） | `test_u7_tag_kept_when_quote_is_in_the_tagged_phase_dropped_when_not`、`test_u8_quote_not_found_is_dropped`、`test_u9_up_to_max_occurrences_is_evidence`、`test_u9b_over_max_occurrences_is_not_evidence`、`test_u19_duplicate_quote_any_hit_keeps_and_all_miss_drops`、`test_u20_phase_absent_when_no_quote_is_in_range`、`test_u27_each_dropped_tag_warns_once` |
 | 规则 4（兜底） | `test_u13_fallback_restores_when_every_tag_was_dropped`、`test_u14_fallback_warns`、`test_u15_partial_drop_does_not_fallback` |
@@ -161,7 +167,7 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
 
 ## 5. 变异清单（「放宽」与「过严」两个方向都要有；执行方实现后跑，Claude 审计时在沙箱复跑）
 
-**本表为发出前快照；实施后以 `tests/perf/arc_phase_anchoring_mutations.py` 与 `_red_lines.json` 为准（M1–M36）。**
+**本表为发出前快照；实施后以 `tests/perf/arc_phase_anchoring_mutations.py` 与 `_red_lines.json` 为准（M1–M43）。**
 
 | 编号 | 方向 | 变异 | 应红 |
 |---|---|---|---|
@@ -416,4 +422,47 @@ tests/test_distiller_routing.py
 - 整本规范化做两次：已写进 §2.2 规模表，作为已知代价。
 - 变异预跑：M1–M18 中，只有涉及现有行为的判据可以在基线上预跑（倒序节选判通过：`0d3d40b0` 实测为 True）；其余变异要等实现后才有代码可跑，审计时在沙箱亲手跑并贴输出。
 - 已定（Shiyu 选 A）：去掉「< 4 字」阈值，改为「最长段出现 > 3 次不作位置证据」，N 依据与样本范围见 §2.2；补 U3 两侧与 M19。
+
+### 9.8 锚点核对加「省略号拼接」档（P15，2026-10-13，分支 `fix/arc-anchoring-elision`）
+
+**根因**：一张卡（阶段 3）的锚点被模型漏抄了原句中间的 9 个字、却**没**用省略号标出该省略。
+核对只按「逐字 / 最长段」比对（`locate_in_normalized`），核对不上即触发 D7 **整卡跳过**，
+于是三个阶段的起点全空、前端阶段选择框不出现。
+
+**依据（照抄 oberst-lab/verifiable-by-construction，不自行改写）**：
+`eval/citation/vccr.py:108-119` 的 `_match_elided` —— 按省略号切开、丢掉短于下限的片段、
+片段数不足下限即判失败、剩下的从前往后依次 find；`eval/citation/verbatim_criteria.json:63-68`
+定 `min_fragment_len=10`、`min_fragments=2`（作者称 structural floors，防「碰巧也匹配得上」的短
+片段）；同一判据另有一条「**没标出省略号的删减，相似度再高也判失败**」。论文在被引用的那一节
+里核对；我们对应的规则是「几个片段必须落在原文的**同一段落**内」（按换行分段）。
+
+**规则**（权威表达在 §3.1 与 §3.2 规则 1）：
+- 锚点**含省略号**时改走 `locate_elided_in_normalized`（`core/quotes.py`，**锚点专用**）：按省略号
+  切段（**切片在归一化之前** —— `_DROP_CHARS` 含「…」，先归一化就切不动）、丢掉短于
+  `MIN_ELIDED_FRAGMENT_LEN`（10）字的段、剩余不足 `MIN_ELIDED_FRAGMENTS`（2）段即判失败、各段
+  从前往后**按序** find、`paragraphs` 非 `None` 时各段须落在**同一段落**；起点取**首段**位置。
+  不引入任何模糊相似度。
+- 锚点**不含省略号**时走原路（`locate_in_normalized`），判定与改前逐字一致（C11/M16 不要求段序）。
+- D7 整卡跳过规则**不变**；删了字又没标省略号的锚点，照样核对不上、照样整卡跳过。
+- 两个下限常量 `MIN_ELIDED_FRAGMENT_LEN` / `MIN_ELIDED_FRAGMENTS` 定义在 `core/quotes.py` 顶部
+  （**只此一处**），注释写明出处。
+- 提示词 `core/distiller.py` 维度 L 的锚点要求改为「逐字照抄；中间要省略时必须用『……』标出，
+  省略号两边各至少 10 个字」。
+
+**测试**：`tests/test_phase_anchoring.py` 新增 `test_u28`–`test_u32`（通过档返正确起点、未标省略号
+的删减失败、只剩 1 段失败、跨段落失败、顺序颠倒失败）。变异 `M40`–`M43` 进
+`tests/perf/arc_phase_anchoring_mutations.py`，各自撞一条新判据。
+
+**偏离声明**（计划外，逐条报明）：
+1. **前提**：任务描述称核对「只做逐字比对」；实测 main 已有的 `locate_in_normalized` 本就按省略号
+   分段（取最长段），并非整串比对。故本档实现为**更严的一档**（对锚点新增顺序 + 同段落 + 下限），
+   原逐字档行为不动。
+2. **范围**：新逻辑**只作用于锚点**（`phase_ranges` 分支），引文那条 `locate_in_normalized` 不改
+   —— 否则会给现有引文核对新增顺序要求，与 C11、M16 冲突。
+3. **测试数据**：任务要求用某生产卡的原句段落作用例；该段落是受版权保护的小说正文，按
+   `corpus-copyright-strip` 规则不入库、不写进测试与文档，改用**同结构形状**的合成数据
+   （`_SRC2` 等），覆盖同一组边界。
+4. **落点**：匹配函数放 `core/quotes.py`（规范化与匹配的**唯一**所在，S2 结构锁），不放进
+   `core/phase_anchoring.py`；段落边界构造 `paragraph_bounds` 与查位置的 `_paragraph_index`
+   同置一处（坐标同源）。
 
