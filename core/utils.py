@@ -10,6 +10,14 @@ from core.scheduling import submit_to_main_loop
 from core.tokens import count_tokens
 
 
+# 用量 dict 里「厂商可能不回」的字段（DeepSeek 专有）。字段名与含义以官方文档为准：
+# https://api-docs.deepseek.com/guides/kv_cache 。别的厂商不回 → 值为 ``None`` →
+# 落库 ``NULL``；**不写 0** —— 0 表示「确实一次没命中」，与「没有这项数据」必须可区分。
+CACHE_HIT_FIELD = "prompt_cache_hit_tokens"
+CACHE_MISS_FIELD = "prompt_cache_miss_tokens"
+CACHE_USAGE_FIELDS = (CACHE_HIT_FIELD, CACHE_MISS_FIELD)
+
+
 def estimate_usage(prompt_text: str, completion_text: str = "") -> dict:
     """真实 usage 不可得时的估算兜底 —— 传**原文**，内部走唯一的 `count_tokens`。
 
@@ -31,6 +39,8 @@ def aggregate_usage(usages: list[dict | None], chunk_count: int) -> dict | None:
     - 分片可能是真实值（成功）也可能是估算值（失败/厂商未回）→ 汇总后
       ``estimated=True`` 的语义是「**含**估算值」而非「全部估算」：聚合天然可能混合，
       整条汇总行按保守侧标注，真实值不会被标成零成本、估算值也不会冒充真实值。
+    - 缓存命中/未命中字段（:data:`CACHE_USAGE_FIELDS`）只在**报了值的分片**上求和；
+      全员没报 → ``None``（落库 NULL），不折成 0。
     - ``chunk_count`` 随载荷一起走，由 :func:`try_record_usage` 落到 `usage_stats.chunk_count`。
       它是本次聚合**调了几次 LLM**，不是文本分片数（续跑命中/重试会让二者不一致）。
     - 全部为空 → ``None``（没有任何可记账的事实，不写零成本假记录）。
@@ -38,12 +48,25 @@ def aggregate_usage(usages: list[dict | None], chunk_count: int) -> dict | None:
     present = [u for u in usages if u]
     if not present:
         return None
-    return {
+    merged = {
         "prompt_tokens": sum(u.get("prompt_tokens", 0) for u in present),
         "completion_tokens": sum(u.get("completion_tokens", 0) for u in present),
         "estimated": any(u.get("estimated", False) for u in present),
         "chunk_count": chunk_count,
     }
+    for name in CACHE_USAGE_FIELDS:
+        merged[name] = _sum_optional(present, name)
+    return merged
+
+
+def _sum_optional(usages: list[dict], name: str) -> int | None:
+    """只在**报了值**的分片上求和；全员没报 → ``None``。
+
+    「没有数据」不能折成 0：折下去会把「含估算值、缓存字段未知」的汇总行伪造成
+    「命中 0」—— 恰好是这两个字段存在的意义（把「没命中」与「没数据」分开）的反面。
+    """
+    values = [u[name] for u in usages if u.get(name) is not None]
+    return sum(values) if values else None
 
 
 def try_record_usage(
@@ -86,10 +109,14 @@ def try_record_usage(
     ct = usage.get("completion_tokens", 0)
     is_est = bool(usage.get("estimated", False))
     chunk_count = usage.get("chunk_count")
+    cache_hit = usage.get(CACHE_HIT_FIELD)
+    cache_miss = usage.get(CACHE_MISS_FIELD)
 
     async def _write() -> None:
         async with nonfatal("usage", f"record usage ({source}/{action})"):
             await storage.record_usage(user_id, action, pt, ct, model,
-                                       is_estimated=is_est, chunk_count=chunk_count)
+                                       is_estimated=is_est, chunk_count=chunk_count,
+                                       prompt_cache_hit_tokens=cache_hit,
+                                       prompt_cache_miss_tokens=cache_miss)
 
     submit_to_main_loop(_write(), wait=False)

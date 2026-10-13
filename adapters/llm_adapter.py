@@ -22,7 +22,9 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI, BadRequestError, OpenAI, Timeout
 
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
-from core.utils import estimate_usage  # 无 usage 时的估算兜底出口（内部走唯一的 count_tokens）
+from core.utils import (  # 估算兜底出口 + 缓存字段名单（唯一来源）
+    CACHE_HIT_FIELD, CACHE_MISS_FIELD, CACHE_USAGE_FIELDS, estimate_usage,
+)
 
 if TYPE_CHECKING:
     from core.concurrency import AdaptiveGate  # 只在注解里出现，适配器不构造闸
@@ -378,7 +380,9 @@ def _infer_finalize(sp, self, result, exc) -> None:
     if exc is None:
         usage = result if isinstance(result, dict) else getattr(self, "last_usage", None)
         if usage:
-            T.set_usage(sp, usage.get("prompt_tokens"), usage.get("completion_tokens"))
+            T.set_usage(sp, usage.get("prompt_tokens"), usage.get("completion_tokens"),
+                        cache_hit_tokens=usage.get(CACHE_HIT_FIELD),
+                        cache_miss_tokens=usage.get(CACHE_MISS_FIELD))
 
 
 def _async_infer_finalize(sp, self, result, exc) -> None:
@@ -388,7 +392,9 @@ def _async_infer_finalize(sp, self, result, exc) -> None:
     T.set_attr(sp, "model", self._model)
     if exc is None and isinstance(result, tuple) and len(result) == 2 and result[1]:
         usage = result[1]
-        T.set_usage(sp, usage.get("prompt_tokens"), usage.get("completion_tokens"))
+        T.set_usage(sp, usage.get("prompt_tokens"), usage.get("completion_tokens"),
+                    cache_hit_tokens=usage.get(CACHE_HIT_FIELD),
+                    cache_miss_tokens=usage.get(CACHE_MISS_FIELD))
 
 
 # ── 供应商方言层（唯一请求选项控制点）─────────────────────────────────
@@ -714,6 +720,27 @@ def _extract_content(choice: Any, *, where: str) -> str:
     return content
 
 
+def _usage_from(raw: Any) -> dict:
+    """厂商 usage 对象 → 统一 usage dict —— **唯一**的取值点，四个入口共用。
+
+    非流式（``chat`` / ``chat_with_tools``）、非流式并发（``async_chat``）、流式
+    （``_stream``）都从这里造同一个形状；谁再造一份就会漏字段（本函数之前四处
+    各写一份，缓存字段因此整批被丢）。
+
+    缓存命中/未命中字段（:data:`core.utils.CACHE_USAGE_FIELDS`）只有 DeepSeek 回；
+    别的厂商不回 → ``getattr`` 得 ``None``（落库 NULL）。厂商回了 0 则原样留 0 ——
+    「确实没命中」与「没有这项数据」是两件事，不能合并。
+    """
+    usage = {
+        "prompt_tokens": raw.prompt_tokens or 0,
+        "completion_tokens": raw.completion_tokens or 0,
+        "estimated": False,  # 厂商真值；估算兜底走 core.utils.estimate_usage（estimated=True）
+    }
+    for name in CACHE_USAGE_FIELDS:
+        usage[name] = getattr(raw, name, None)
+    return usage
+
+
 _FALLBACK_MODEL = "deepseek-flash"
 
 #: 设置页模型下拉里可选的**具体**型号 —— 全仓唯一一份，经 `/api/settings/config`
@@ -976,10 +1003,7 @@ class LLMAdapter:
                     raise RuntimeError("API returned empty choices")
                 content = _extract_content(choices[0], where="chat")
                 if completion.usage:
-                    self.last_usage = {
-                        "prompt_tokens": completion.usage.prompt_tokens or 0,
-                        "completion_tokens": completion.usage.completion_tokens or 0,
-                    }
+                    self.last_usage = _usage_from(completion.usage)
                 return content
             except IncompleteResponseError:
                 raise  # 截断是确定性失败：不烧重试预算（同 ToolsNotSupportedError 形状）
@@ -1056,10 +1080,7 @@ class LLMAdapter:
                     result = _extract_content(choices[0], where="async_chat")
                     usage = None
                     if completion.usage:
-                        usage = {
-                            "prompt_tokens": completion.usage.prompt_tokens or 0,
-                            "completion_tokens": completion.usage.completion_tokens or 0,
-                        }
+                        usage = _usage_from(completion.usage)
                     return result, usage
                 except IncompleteResponseError:
                     raise
@@ -1124,11 +1145,7 @@ class LLMAdapter:
         try:
             for chunk in stream:
                 if chunk.usage:
-                    usage = {
-                        "prompt_tokens": chunk.usage.prompt_tokens or 0,
-                        "completion_tokens": chunk.usage.completion_tokens or 0,
-                        "estimated": False,
-                    }
+                    usage = _usage_from(chunk.usage)
                     self.last_usage = usage
                     # 不 continue：DeepSeek 把终态与 usage 放在**同一个**末 chunk，跳过它
                     # 等于永远读不到 finish_reason（实测 6/6 None，截断从未被识别）。
@@ -1239,10 +1256,7 @@ class LLMAdapter:
                     raise RuntimeError("API returned empty choices")
                 msg = _checked_message(choices[0], where=where)
                 if completion.usage:
-                    self.last_usage = {
-                        "prompt_tokens": completion.usage.prompt_tokens or 0,
-                        "completion_tokens": completion.usage.completion_tokens or 0,
-                    }
+                    self.last_usage = _usage_from(completion.usage)
                 return msg if extract is None else extract(msg)
             except IncompleteResponseError:
                 raise  # 截断：确定性失败，不烧重试预算（同 ToolsNotSupportedError 形状）

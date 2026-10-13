@@ -3397,12 +3397,13 @@ class PostgresStore(StorageBase):
 
     # ---- Usage stats ----
 
-    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False, chunk_count: int | None = None) -> None:
+    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False, chunk_count: int | None = None, prompt_cache_hit_tokens: int | None = None, prompt_cache_miss_tokens: int | None = None) -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO usage_stats (user_id, action, prompt_tokens, completion_tokens, model, is_estimated, chunk_count) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                    "INSERT INTO usage_stats (user_id, action, prompt_tokens, completion_tokens, model, is_estimated, chunk_count, prompt_cache_hit_tokens, prompt_cache_miss_tokens) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                     user_id, action, prompt_tokens, completion_tokens, model, is_estimated, chunk_count,
+                    prompt_cache_hit_tokens, prompt_cache_miss_tokens,
                 )
         except Exception as exc:
             print(f"[PostgresStore] Record usage failed: {exc}")

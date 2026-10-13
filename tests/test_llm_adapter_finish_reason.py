@@ -260,8 +260,10 @@ def test_stream_hands_back_this_calls_usage():
             break
 
     assert pieces == ["a"]
-    assert usage == {"prompt_tokens": 7, "completion_tokens": 404, "estimated": False}, (
-        f"返回值没带出本次用量：{usage!r}")
+    assert usage == {
+        "prompt_tokens": 7, "completion_tokens": 404, "estimated": False,
+        "prompt_cache_hit_tokens": None, "prompt_cache_miss_tokens": None,
+    }, (f"返回值没带出本次用量：{usage!r}")
 
 
 # ── WP4：span 的用量来源与记账同源（流式取返回值） ─────────────────────────────
@@ -347,7 +349,10 @@ def test_s4_stop_terminal_shares_chunk_with_usage(fake_sse, monkeypatch, capsys)
     fake_sse.plan.update(tokens=["a", "b"], usage_shape="same", finish_reason="stop")
 
     assert list(llm.chat_stream_long("sys", _MSGS)) == ["a", "b"]
-    assert llm.last_usage == {"prompt_tokens": 1, "completion_tokens": 2, "estimated": False}
+    assert llm.last_usage == {
+        "prompt_tokens": 1, "completion_tokens": 2, "estimated": False,
+        "prompt_cache_hit_tokens": None, "prompt_cache_miss_tokens": None,
+    }
     out = capsys.readouterr().out
     assert "未识别的 finish_reason" not in out, f"终态在同块上却被当成缺失：{out}"
 

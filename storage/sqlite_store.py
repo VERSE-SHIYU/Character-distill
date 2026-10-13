@@ -168,6 +168,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "104_group_session_records.sql",
     # 105：PG 040 新增列的孪生，同上。
     "105_history_digest.sql",
+    # 106：PG 041 新增列的孪生，同上。
+    "106_usage_cache_tokens.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -4128,12 +4130,13 @@ class SQLiteStore(StorageBase):
 
     # ---- Usage stats ----
 
-    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False, chunk_count: int | None = None) -> None:
+    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False, chunk_count: int | None = None, prompt_cache_hit_tokens: int | None = None, prompt_cache_miss_tokens: int | None = None) -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO usage_stats (user_id, action, prompt_tokens, completion_tokens, model, is_estimated, chunk_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (user_id, action, prompt_tokens, completion_tokens, model, int(is_estimated), chunk_count),
+                    "INSERT INTO usage_stats (user_id, action, prompt_tokens, completion_tokens, model, is_estimated, chunk_count, prompt_cache_hit_tokens, prompt_cache_miss_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, action, prompt_tokens, completion_tokens, model, int(is_estimated), chunk_count,
+                     prompt_cache_hit_tokens, prompt_cache_miss_tokens),
                 )
                 await conn.commit()
         except Exception as exc:
