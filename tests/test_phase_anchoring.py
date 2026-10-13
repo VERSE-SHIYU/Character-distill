@@ -329,6 +329,56 @@ def test_u27_each_dropped_tag_warns_once(caplog):
         "去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录"]
 
 
+# ── 4.1b 省略号拼接档（**锚点专用**，P15）──────────────────────────────
+# 出处：oberst-lab/verifiable-by-construction `eval/citation/vccr.py` 的 `_match_elided`
+# 与 `verbatim_criteria.json`（min_fragment_len=10 / min_fragments=2）。锚点允许模型用「……」
+# 标出省略，但要按省略号切段、逐段核对：段长不足下限的丢掉、剩下的不足两段即失败、必须按序
+# 落在**同一段落**。**没标出省略号的删减，整串对不上，照样失败** —— 不走任何模糊相似度。
+#
+# 源文两段（规范化坐标）：段 1 长 24；段 2 里「次段丙…」@24、「尾段丁…」@42，中间夹着一段
+# 别的话（用于「删字不写省略号」的反例）；「中间乙…」@12 在段 1。全文规范化后 54 字。
+_SRC2 = ("开头甲甲甲甲甲甲甲甲甲甲，中间乙乙乙乙乙乙乙乙乙乙。\n"
+         "次段丙丙丙丙丙丙丙丙丙丙，多余的插入语，尾段丁丁丁丁丁丁丁丁丁丁。")
+_P2_HEAD = "次段丙丙丙丙丙丙丙丙丙丙"      # 段 2，@24，规范化后 12 字
+_P2_TAIL = "尾段丁丁丁丁丁丁丁丁丁丁"      # 段 2，@42，规范化后 12 字
+_P1_MID = "中间乙乙乙乙乙乙乙乙乙乙"      # 段 1，@12，规范化后 12 字
+
+
+def _ranges_for(anchor):
+    """两阶段草稿：阶段 1 空锚点从 0 起，阶段 2 用给定锚点 → (各阶段区间, 跳过原因)。"""
+    ph = phase_anchoring.build_anchors(_phases(2, {2: anchor}), _SRC2)
+    return ph.ranges, ph.reason
+
+
+def test_u28_elided_anchor_passes_when_both_fragments_are_long_same_paragraph_in_order():
+    """「甲……乙」两段都 ≥10 字、同在一段、按序出现 → 通过，起点取**首段**位置（24）。"""
+    assert _ranges_for(_P2_HEAD + "……" + _P2_TAIL) == ([(0, 24), (24, 54)], "")
+
+
+def test_u29_anchor_with_an_unmarked_deletion_still_fails():
+    """删了字却没写省略号 → 整串对不上，仍判失败（不许相似匹配兜底）。"""
+    anchor = _P2_HEAD + _P2_TAIL
+    assert _ranges_for(anchor) == ([], f"阶段 2 锚点核对不上：{anchor}")
+
+
+def test_u30_elided_anchor_with_only_one_long_fragment_fails():
+    """省略号一边不足 10 字（被丢掉），剩下的不足两段 → 失败。"""
+    anchor = _P2_HEAD + "……尾段"
+    assert _ranges_for(anchor) == ([], f"阶段 2 锚点核对不上：{anchor}")
+
+
+def test_u31_elided_anchor_spanning_two_paragraphs_fails():
+    """两段分别在段 1 与段 2 → 不落在同一段落 → 失败。"""
+    anchor = _P1_MID + "……" + _P2_HEAD
+    assert _ranges_for(anchor) == ([], f"阶段 2 锚点核对不上：{anchor}")
+
+
+def test_u32_elided_anchor_with_reversed_fragments_fails():
+    """两段顺序颠倒 → 从前往后依次找时第二段落在首段之前 → 失败。"""
+    anchor = _P2_TAIL + "……" + _P2_HEAD
+    assert _ranges_for(anchor) == ([], f"阶段 2 锚点核对不上：{anchor}")
+
+
 # ── 4.2 调用点矩阵：五个入口各喂同一份草稿 + 原文 ─────────────────────
 
 # 情境一在阶段 1（第 2 条摘录）与阶段 3 都通过；情境二阶段 2 那条错标改挂到阶段 1、阶段 3 通过。
