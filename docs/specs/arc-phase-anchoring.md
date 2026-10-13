@@ -94,10 +94,10 @@ C10. 执行上下文：`web/routers/distill.py:1126` 在 `/run_stream` 的 async
   - `verbatim_in_normalized` 改为 `locate_in_normalized(...) is not None`，**分段与匹配只写一次**，判定结果与改前逐字一致。
 - **`core/quotes.py` 再加一个函数（P15，**锚点专用**）**：`locate_elided_in_normalized(source_norm, quote, paragraphs=None) -> list[int] | None`——锚点含省略号时用它核对：
   - 按省略号切段（切片在归一化**之前** —— `_DROP_CHARS` 含「…」，先归一化省略号就没了），段长按归一化后字符数；
-  - 短于 `MIN_ELIDED_FRAGMENT_LEN`（10 字）的段**丢掉**；剩下的不足 `MIN_ELIDED_FRAGMENTS`（2 段）→ `None`；
+  - 短于 `MIN_ELIDED_FRAGMENT_LEN`（10 字）的段**丢掉**；剩下的不足 `MIN_ELIDED_FRAGMENTS`（2 段）→ `None`；**被丢掉的段其内容不参与核对** —— 如三段锚点「长……短……长」里的短中段被丢后，整条退化成剩余段的拼接核对（与参考实现 `min_fragment_len` 同为 structural floor，属**预期软化**，不是缺陷）；
   - 各段从前往后**依次**找（顺序必须一致）；`paragraphs` 非 `None` 时各段须落在**同一段落**（按换行分段）；
   - 起点取**首段**位置；任一条件不成立 → `None`（**没标出省略号的删减只剩一段，照样对上不**，不引入任何相似度）。
-  - 下限两个常量的出处：oberst-lab/verifiable-by-construction `eval/citation/verbatim_criteria.json:63-68`（作者称 structural floors）。**引文那条 `locate_in_normalized` 不动** —— 它仍不要求顺序（C11、M16）。
+  - 下限两个常量的出处：oberst-lab/verifiable-by-construction `eval/citation/verbatim_criteria.json:63-68`（作者称 structural floors）。**引文那条 `locate_in_normalized` 对外行为不变**（内部改为调用 `_segments`，纯抽取、输入输出不变）—— 它仍不要求顺序（C11、M16）。
 
 ### 3.2 规则
 
@@ -451,14 +451,20 @@ tests/test_distiller_routing.py
 
 **测试**：`tests/test_phase_anchoring.py` 新增 `test_u28`–`test_u32`（通过档返正确起点、未标省略号
 的删减失败、只剩 1 段失败、跨段落失败、顺序颠倒失败）。变异 `M40`–`M43` 进
-`tests/perf/arc_phase_anchoring_mutations.py`，各自撞一条新判据。
+`tests/perf/arc_phase_anchoring_mutations.py`，各自撞一条新判据。另有独立文件
+`tests/test_phase_anchoring_elided.py`（`test_three_segment_anchor_short_middle_is_dropped`）钉住
+§3.1 的预期软化（短中段被丢、内容不参与核对）—— 该文件**刻意不进** `test_phase_anchoring.py`：
+后者是两个变异驱动（arc / card_draft）的覆盖域，往里加判别器会改写入库的 `*_red_lines.json`
+产物（理由见该文件头注）。
 
 **偏离声明**（计划外，逐条报明）：
 1. **前提**：任务描述称核对「只做逐字比对」；实测 main 已有的 `locate_in_normalized` 本就按省略号
-   分段（取最长段），并非整串比对。故本档实现为**更严的一档**（对锚点新增顺序 + 同段落 + 下限），
-   原逐字档行为不动。
-2. **范围**：新逻辑**只作用于锚点**（`phase_ranges` 分支），引文那条 `locate_in_normalized` 不改
-   —— 否则会给现有引文核对新增顺序要求，与 C11、M16 冲突。
+   分段（取最长段），并非整串比对。故本档实现为**更严的一档**（对锚点新增顺序 + 同段落 + 下限）；
+   原逐字档**对外**行为不变 —— `locate_in_normalized` 内部改为调用 `_segments`，属纯抽取/高内聚
+   复用，**输入输出不变**。
+2. **范围**：新逻辑**只作用于锚点**（`phase_ranges` 分支），引文那条 `locate_in_normalized` 的
+   核对口径不改（内部改为调用 `_segments`，纯抽取、输入输出不变）—— 否则会给现有引文核对新增
+   顺序要求，与 C11、M16 冲突。
 3. **测试数据**：任务要求用某生产卡的原句段落作用例；该段落是受版权保护的小说正文，按
    `corpus-copyright-strip` 规则不入库、不写进测试与文档，改用**同结构形状**的合成数据
    （`_SRC2` 等），覆盖同一组边界。
