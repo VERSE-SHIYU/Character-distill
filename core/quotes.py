@@ -149,11 +149,11 @@ def locate_elided_in_normalized(source_norm: str, quote: str,
     starts: list[int] = []
     at = 0
     for s in segs:                                # 从前往后依次找：后段必须落在前段之后
-        j = source_norm.find(s, at)
-        if j < 0:
+        m = re.compile(re.escape(s)).search(source_norm, at)   # S13：坐标模块不用 text.find
+        if m is None:
             return None
-        starts.append(j)
-        at = j + len(s)
+        starts.append(m.start())
+        at = m.end()
     if paragraphs is not None and len({_paragraph_index(paragraphs, x) for x in starts}) > 1:
         return None                               # 两段不在同一段落 → 不是一段连续引文
     return [starts[0]]

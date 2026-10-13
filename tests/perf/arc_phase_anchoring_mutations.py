@@ -205,7 +205,8 @@ MUTATIONS = [
         ("    if paragraphs is not None and len({_paragraph_index(paragraphs, x) for x in starts}) > 1:",
          "    if False:")])], "RED"),
     ('M43 省略号拼接档不管顺序（各段都从零找）', TARGET, [("repl", QUOTES, [
-        ("        j = source_norm.find(s, at)", "        j = source_norm.find(s)")])], "RED"),
+        ("re.compile(re.escape(s)).search(source_norm, at)",
+         "re.compile(re.escape(s)).search(source_norm)")])], "RED"),
 ]
 
 GROUPS = {"M": MUTATIONS}
