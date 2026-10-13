@@ -67,6 +67,22 @@ def normalized_starts(text: str, raw_starts: Sequence[int]) -> list[int]:
 
 _ELLIPSIS = re.compile(r"…+|\.{3,}")
 
+# 省略号拼接核对的结构性下限（**只此一处**）。出处：oberst-lab/verifiable-by-construction
+# `eval/citation/verbatim_criteria.json:63-68` —— `min_fragment_len=10`、`min_fragments=2`，
+# 作者说明这两个数是 structural floors（防的是「碰巧也匹配得上」的短片段）；同一份判据另有
+# 一条「没标出省略号的删减，相似度再高也判失败」。锚点与引文共用这两个数，不各自再定一份。
+MIN_ELIDED_FRAGMENT_LEN = 10
+MIN_ELIDED_FRAGMENTS = 2
+
+
+def _segments(quote: str) -> list[str]:
+    """按省略号切段后各段的规范化结果 —— 两个 locate 共用这一份切片。
+
+    **切片在归一化之前**：`_DROP_CHARS` 含「…」，先归一化省略号就没了、切不动。这条不变式
+    易错且两条 locate 都依赖，只写一处。
+    """
+    return [normalize(p) for p in _ELLIPSIS.split(str(quote))]
+
 
 def locate_in_normalized(source_norm: str, quote: str) -> list[int] | None:
     """`quote` 各段都在 `source_norm` 里时返回**最长一段**的全部起点；任一段缺失返回 None。
@@ -77,11 +93,70 @@ def locate_in_normalized(source_norm: str, quote: str) -> list[int] | None:
     位置只由最长一段定：省略号首段可能极短（「这……下回还清罢」的「这」在《孔乙己》全文出现
     22 次、首次在开篇），拿它定位置正好把要纠正的错放回阶段 1（C12），故取最长段。
     """
-    segs = [s for s in (normalize(p) for p in _ELLIPSIS.split(str(quote))) if s]
+    segs = [s for s in _segments(quote) if s]
     if not segs or not all(s in source_norm for s in segs):
         return None
     longest = max(segs, key=len)
     return [m.start() for m in re.finditer(re.escape(longest), source_norm)]
+
+
+def _paragraph_index(bounds: list[int], pos: int) -> int:
+    """规范化位置 `pos` 落在第几段（`bounds` = 各段起始偏移，按换行分段、升序）。"""
+    lo, hi = 0, len(bounds)
+    while lo < hi:                                # 二分：bounds 升序
+        mid = (lo + hi) // 2
+        if bounds[mid] <= pos:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo - 1
+
+
+def paragraph_bounds(source_text: str, source_norm: str) -> list[int] | None:
+    """各段落起始在**规范化**原文里的偏移（按换行分段）；拼不回整段时 None。
+
+    与 `_paragraph_index` 配对：这里建边界、那里查位置，坐标同源才算得对（只此一份）。
+    逐段规范化长度累加 == 规范化整段长度（`normalized_starts` 记的那条不变式）；对不上
+    （跨行短语被 `t2s` 并字等罕见情形）就不给边界 —— 宁可放宽，不可用错边界。
+    """
+    bounds: list[int] = []
+    acc = 0
+    for para in source_text.split("\n"):
+        bounds.append(acc)
+        acc += len(normalize(para))
+    return bounds if acc == len(source_norm) else None
+
+
+def has_ellipsis(s) -> bool:
+    """这段文字里有没有省略号 —— 有则必须按省略号拼接核对（不许退回整串比对）。"""
+    return _ELLIPSIS.search(str(s)) is not None
+
+
+def locate_elided_in_normalized(source_norm: str, quote: str,
+                                paragraphs: list[int] | None = None) -> list[int] | None:
+    """「甲……乙」式节选按省略号拼接核对，返**首段起点**；任一条不成立返 None。
+
+    与 `locate_in_normalized` 的分工：那条给**引文**用（各段都在即通过、不要求顺序、取最长段
+    定位置，C11/C12）；这条给**阶段锚点**用，判据更严 —— 锚点要标出一段连续的原文，省略号
+    两边的片段必须**按顺序**出现、各自不短于 `MIN_ELIDED_FRAGMENT_LEN` 字、且落在**同一段落**
+    （`paragraphs` 非 None 时按它判，即按换行分段）。段长按归一化后的字符数算。没标出省略号
+    的删减只剩一段，不足 `MIN_ELIDED_FRAGMENTS` 段即 None —— 与「整串对不上」同一条出路，
+    不引入任何相似度。
+    """
+    segs = [s for s in _segments(quote) if len(s) >= MIN_ELIDED_FRAGMENT_LEN]
+    if len(segs) < MIN_ELIDED_FRAGMENTS:
+        return None
+    starts: list[int] = []
+    at = 0
+    for s in segs:                                # 从前往后依次找：后段必须落在前段之后
+        m = re.compile(re.escape(s)).search(source_norm, at)   # S13：坐标模块不用 text.find
+        if m is None:
+            return None
+        starts.append(m.start())
+        at = m.end()
+    if paragraphs is not None and len({_paragraph_index(paragraphs, x) for x in starts}) > 1:
+        return None                               # 两段不在同一段落 → 不是一段连续引文
+    return [starts[0]]
 
 
 def verbatim_in_normalized(source_norm: str, quote: str) -> bool:

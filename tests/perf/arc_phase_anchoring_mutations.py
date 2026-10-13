@@ -195,6 +195,18 @@ MUTATIONS = [
     ('M39 改挂过来的摘录压过所标阶段自己的摘录', TARGET, [("repl", ANCH, [
         ("        phase_quotes.append({t: own.get(t) or moved[t] for t in landed_all})",
          "        phase_quotes.append({t: moved.get(t) or own[t] for t in landed_all})")])], "RED"),
+    # ── P15 省略号拼接档（**锚点专用**）──
+    ('M40 省略号拼接档起点取末段而非首段', TARGET, [("repl", QUOTES, [
+        ("    return [starts[0]]", "    return [starts[-1]]")])], "RED"),
+    ('M41 省略号拼接档不丢短段（段长下限失效）', TARGET, [("repl", QUOTES, [
+        ("    segs = [s for s in _segments(quote) if len(s) >= MIN_ELIDED_FRAGMENT_LEN]",
+         "    segs = [s for s in _segments(quote) if s]")])], "RED"),
+    ('M42 省略号拼接档不管段落（两段可跨段）', TARGET, [("repl", QUOTES, [
+        ("    if paragraphs is not None and len({_paragraph_index(paragraphs, x) for x in starts}) > 1:",
+         "    if False:")])], "RED"),
+    ('M43 省略号拼接档不管顺序（各段都从零找）', TARGET, [("repl", QUOTES, [
+        ("re.compile(re.escape(s)).search(source_norm, at)",
+         "re.compile(re.escape(s)).search(source_norm)")])], "RED"),
 ]
 
 GROUPS = {"M": MUTATIONS}
