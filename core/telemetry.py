@@ -35,6 +35,9 @@ A = {
     "model": "gen_ai.request.model",
     "ptok": "gen_ai.usage.input_tokens",
     "ctok": "gen_ai.usage.output_tokens",
+    # 缓存命中/未命中（DeepSeek 专有，GenAI semconv 尚无对应名 → 落 app.* 命名空间）
+    "cchit": "app.usage.cache_hit_tokens",
+    "cmiss": "app.usage.cache_miss_tokens",
     "err": "error.type",
     "wf": "app.workflow",                 # chat / distill 分链路
     "ttft": "app.ttft_ms",                # SSE 首 token 时延
@@ -187,13 +190,20 @@ class _null_cm:
         return False
 
 
-def set_usage(sp, prompt_tokens: int | None, completion_tokens: int | None) -> None:
+def set_usage(sp, prompt_tokens: int | None, completion_tokens: int | None, *,
+              cache_hit_tokens: int | None = None,
+              cache_miss_tokens: int | None = None) -> None:
+    """往 span 写用量。缓存命中/未命中只有 DeepSeek 回 —— 没数据就不写属性（不写 0）。"""
     if sp is None:
         return
     if prompt_tokens is not None:
         sp.set_attribute("ptok", int(prompt_tokens))
     if completion_tokens is not None:
         sp.set_attribute("ctok", int(completion_tokens))
+    if cache_hit_tokens is not None:
+        sp.set_attribute("cchit", int(cache_hit_tokens))
+    if cache_miss_tokens is not None:
+        sp.set_attribute("cmiss", int(cache_miss_tokens))
 
 
 def set_error(sp, exc: BaseException) -> None:
