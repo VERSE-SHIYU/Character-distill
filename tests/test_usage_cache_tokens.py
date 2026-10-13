@@ -118,7 +118,8 @@ async def _fetch_sqlite(store, user_id: str):
             "FROM usage_stats WHERE user_id = ? AND action = ?",
             (user_id, ACTION),
         )
-        return await cur.fetchone()
+        row = await cur.fetchone()
+        return (row[0], row[1])
 
 
 async def _fetch_pg(store, user_id: str):

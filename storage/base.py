@@ -750,11 +750,15 @@ class StorageBase(ABC):
         """Delete all refresh tokens for a user (logout)."""
 
     @abstractmethod
-    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False, chunk_count: int | None = None) -> None:
+    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False, chunk_count: int | None = None, prompt_cache_hit_tokens: int | None = None, prompt_cache_miss_tokens: int | None = None) -> None:
         """Record a usage stat entry.
 
         ``chunk_count``：本条记录聚合了几次 LLM 调用（Map 阶段按阶段汇总时填）。
         **不是文本分片数** —— 续跑命中/重试会让二者不一致。非聚合记录留 ``None``。
+
+        ``prompt_cache_hit_tokens`` / ``prompt_cache_miss_tokens``：缓存命中/未命中
+        字段（DeepSeek 专有）。别的厂商不回 → ``None`` → 落库 NULL —— **不写 0**：
+        0 表示「确实一次没命中」，与「没有这项数据」必须可区分。
         """
 
     @abstractmethod
