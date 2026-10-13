@@ -144,6 +144,26 @@
         "tests/test_phase_anchoring.py",
         "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=0 ambiguous=0 \" \"unverified_quotes=0 rehung=0 unloca",
         0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(anchor) == ([], f\"阶段 2 锚点核对不上：{anchor}\")",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(anchor) == ([], f\"阶段 2 锚点核对不上：{anchor}\")",
+        1
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(anchor) == ([], f\"阶段 2 锚点核对不上：{anchor}\")",
+        2
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(anchor) == ([], f\"阶段 2 锚点核对不上：{anchor}\")",
+        3
       ]
     ],
     "M5b 去掉锚点「严格递增」检查": [
@@ -523,6 +543,11 @@
         "tests/test_phase_anchoring.py",
         "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
         0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(_P2_HEAD + \"……\" + _P2_TAIL) == ([(0, 24), (24, 54)], \"\")",
+        0
       ]
     ],
     "M21 阶段上界退一（锚点前一字被排除）": [
@@ -588,6 +613,11 @@
       [
         "tests/test_phase_anchoring.py",
         "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(anchor) == ([], f\"阶段 2 锚点核对不上：{anchor}\")",
         0
       ],
       [
@@ -775,6 +805,31 @@
       ],
       [
         "tests/test_phase_anchoring.py",
+        "assert _ranges_for(_P2_HEAD + \"……\" + _P2_TAIL) == ([(0, 24), (24, 54)], \"\")",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(anchor) == ([], f\"阶段 2 锚点核对不上：{anchor}\")",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(anchor) == ([], f\"阶段 2 锚点核对不上：{anchor}\")",
+        1
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(anchor) == ([], f\"阶段 2 锚点核对不上：{anchor}\")",
+        2
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(anchor) == ([], f\"阶段 2 锚点核对不上：{anchor}\")",
+        3
+      ],
+      [
+        "tests/test_phase_anchoring.py",
         "assert (top, [b[\"situation\"] for b in by[0]], [b[\"situation\"] for b in by[1]], [b[\"situation\"] for b in by[2]]",
         0
       ]
@@ -831,6 +886,34 @@
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[_beh(\"两份证据\", quote=\"开头甲\")], [], []])",
         0
+      ]
+    ],
+    "M40 省略号拼接档起点取末段而非首段": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(_P2_HEAD + \"……\" + _P2_TAIL) == ([(0, 24), (24, 54)], \"\")",
+        0
+      ]
+    ],
+    "M41 省略号拼接档不丢短段（段长下限失效）": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(anchor) == ([], f\"阶段 2 锚点核对不上：{anchor}\")",
+        1
+      ]
+    ],
+    "M42 省略号拼接档不管段落（两段可跨段）": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(anchor) == ([], f\"阶段 2 锚点核对不上：{anchor}\")",
+        2
+      ]
+    ],
+    "M43 省略号拼接档不管顺序（各段都从零找）": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _ranges_for(anchor) == ([], f\"阶段 2 锚点核对不上：{anchor}\")",
+        3
       ]
     ]
   },
