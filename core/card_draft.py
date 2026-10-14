@@ -315,12 +315,13 @@ def _cap_slot(slot: list[int], label: str, where: str) -> list[int]:
 def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[dict], list[dict], int, int]:
     """关系草稿 → 存卡关系：**每条态度单独**过位置检查与 `dispatch`，再按关系收回（spec §3.3）。
 
-    态度是状态类：摘录落到哪些阶段就挂到哪些阶段（改挂，同 D1），没有位置证据的进未定位区。
-    每条态度各自是一个检查条目 —— 按关系聚合的话，同一阶段的几条态度会共用位置证据，A 的摘录
-    会把 B 也带走（审计发现 1）。同一阶段挂上多条时，**原本就标在这个阶段**的那条优先，其余按
-    标注顺序取第一条；一个阶段都没赢下的态度进未定位区，`note` 与原标阶段跟着它走。一条态度
-    都不剩的关系按经历类挂最后阶段、态度留空（`placeholder_phase_attitudes`）。顶层 `attitude`
-    取 `top_attitude`。没有 `attitudes` 的关系（旧卡）原样保留。
+    态度只核对、不挪阶段（`Placement.KEEP_TAGGED`）：摘录查到（不超 `MAX_OCCURRENCES`）即认
+    所标阶段，摘录查不到 → 进未定位区。每条态度各自是一个检查条目 —— 按关系聚合的话，同一阶段
+    的几条态度会共用位置证据，A 的摘录会把 B 也带走（审计发现 1）。同一阶段挂上多条时，**原本
+    就标在这个阶段**的那条优先，其余按标注顺序取第一条（撞车落败打一条 WARNING）；一个阶段都没
+    赢下的态度进未定位区，`note` 与原标阶段跟着它走。一条态度都不剩的关系按经历类挂最后阶段、
+    态度留空（`placeholder_phase_attitudes`）。顶层 `attitude` 取 `top_attitude`。没有
+    `attitudes` 的关系（旧卡）原样保留。
     返回 `(关系, 未定位态度, 改挂条数, 挂最后阶段条数)`。
     """
     if not rels:
@@ -330,9 +331,12 @@ def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[d
     items = [DraftMemory(memory=rels[i].target,
                          occurrences=[DraftOccurrence(phase=a.phase, quote=a.quote)])
              for i, a in flat]
+    # 态度只核对、不挪阶段：态度常在后文被回忆复述，摘录位置不等于态度成立时间，
+    # 摘录查到（不超 MAX_OCCURRENCES）即算命中所标阶段（spec A1 / 调查文档第三之二节）。
     res = phase_anchoring.verify(
         items, _valid_number_rows(items, count, "态度"), anchors,
-        kind="态度", label=lambda x: x.memory, name=name)
+        kind="态度", label=lambda x: x.memory, name=name,
+        placement=phase_anchoring.Placement.KEEP_TAGGED)
     # 未定位的态度（`dispatch` 第三项）不在任何格子里，下面自然一个阶段都赢不下 → 进未定位区
     top, slots, _ = dispatch(res.phases, count, unlocated=res.unlocated)
     out: list[dict] = []
@@ -355,6 +359,10 @@ def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[d
             cands = [j for j in mine if j in top or j in slots[t - 1]]
             if cands:
                 winners[t] = next((j for j in cands if flat[j][1].phase == t), cands[0])
+                for j in cands:                   # 同阶段撞车：只采用一条，其余落败
+                    if j != winners[t]:
+                        logger.warning("撞车落败：态度 %r 标在阶段 %d，阶段 %d 采用了另一条",
+                                       r.target, flat[j][1].phase, t)
         won = set(winners.values())
         for j in mine:
             if j not in won:                      # 没有位置证据，或撞车全输 → 未定位区
@@ -454,9 +462,9 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
         "overlay": loose_overlay,
         "attitudes": loose_attitudes,
     }
-    logger.info("[phase_anchoring] card=%s tags=%d dropped=%d ambiguous=%d "
-                "unverified_quotes=%d rehung=%d unlocated=%d to_last=%d "
-                "skipped_card=%s memories_dropped=%d kinds=%s",
+    logger.warning("[phase_anchoring] card=%s tags=%d dropped=%d ambiguous=%d "
+                   "unverified_quotes=%d rehung=%d unlocated=%d to_last=%d "
+                   "skipped_card=%s memories_dropped=%d kinds=%s",
                 draft.name, b.tags, b.dropped, b.ambiguous, b.unverified_quotes,
                 rehung, unlocated, to_last, b.skipped_card, m.dropped,
                 ",".join(f"{k}:{r}/{u}/{t}" for k, (r, u, t) in kinds.items()))

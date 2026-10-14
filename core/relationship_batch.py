@@ -44,7 +44,7 @@ RELATIONSHIP_RULES = (
 _EXACT_TARGET_NOTE = "target 逐字使用上面名单里的写法：不要改名、不要用别称。"
 
 
-def _batch_prompt(prefix: str, name: str, batch: list[str], phases: list[str], *,
+def _batch_prompt(prefix: str, name: str, batch: list[str], phase_note: str, *,
                   material: str = "", exact: bool = False) -> tuple[str, str]:
     """本批的 ``(system, user)``：关系这一步的指令**全部**在这里，调用方只给共享前缀。
 
@@ -52,17 +52,15 @@ def _batch_prompt(prefix: str, name: str, batch: list[str], phases: list[str], *
     - user = 本步自己的请求（点名主角与本批人物）；`material` 非空时（分组路径的分析档案）
       放在请求前面 —— 一次读完路径的素材是正文，已在 prefix 里，这里为空。
 
+    `phase_note` 是**已经渲染好的**阶段列表（`distiller._phase_list_note` —— 全仓唯一写法，
+    本模块不再自己编号、不认识阶段的内部字段）。
+
     不接收调用方的 messages：主调用的用户消息是「生成角色卡 / 输出角色卡」，带进来就和
     「只输出关系数组」冲突（R1，与 B2 同根：本步指令不能有一半是从调用方继承的）。缓存只认
     前缀，user 换成本步自己的不影响命中。
 
     `exact=True` 时多一句「逐字照抄名单里的写法」（补跑那次用）。
     """
-    # 阶段按序号列（「1. 名称；2. 名称」）：`card_draft` 把 `attitudes[].phase` 当 1-based 下标用
-    # （`by_phase[p-1]`），序号必须落在 `phases` 里的**位置**上，不能只数非空项 —— 空阶段让位后
-    # 序号仍要保留它占的位置。
-    named = [(i, p) for i, p in enumerate(phases, 1) if p]
-    stage = "；".join(f"{i}. {p}" for i, p in named) or "（无阶段）"
     people = "、".join(batch)
     exact_line = f"{_EXACT_TARGET_NOTE}\n" if exact else ""
     system = (
@@ -70,7 +68,7 @@ def _batch_prompt(prefix: str, name: str, batch: list[str], phases: list[str], *
         f"## 本步：写「{name}」的人际关系\n"
         f"主角是「{name}」。只产出这几个人物与主角的关系，其余人不要出现：{people}\n"
         f"{exact_line}"
-        f"阶段依次为：{stage}；每条关系按阶段给态度。\n"
+        f"{phase_note}\n每条关系按阶段给态度。\n"
         f"{RELATIONSHIP_RULES}\n"
         "输出 JSON 数组，每个元素含 target / relation / attitude / note，"
         "以及 attitudes: [{phase, attitude, quote, note}]。"
@@ -93,7 +91,7 @@ def _fan_out(batches: list[list[str]], run: Callable[[list[str]], list]) -> list
     return out
 
 
-def batch_relationships(targets: list[str], phases: list[str], *,
+def batch_relationships(targets: list[str], phase_note: str, *,
                         stream_call: Callable[[str, str, list[str]], Any],
                         prefix: str, name: str, material: str = "",
                         batch_size: int = REL_BATCH_SIZE) -> list[dict]:
@@ -129,7 +127,7 @@ def batch_relationships(targets: list[str], phases: list[str], *,
                 found[key] = dict(row)
 
     def _run(batch: list[str], *, exact: bool = False) -> list:
-        system, user = _batch_prompt(prefix, name, batch, phases,
+        system, user = _batch_prompt(prefix, name, batch, phase_note,
                                      material=material, exact=exact)
         return list(stream_call(system, user, batch) or [])
 

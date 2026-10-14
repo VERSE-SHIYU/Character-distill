@@ -13,6 +13,7 @@ spec：`docs/specs/arc-phase-anchoring.md` §3。模型标阶段时，阶段边�
 from __future__ import annotations
 
 import logging
+from enum import Enum
 from typing import NamedTuple
 
 from core.quotes import (has_ellipsis, locate_elided_in_normalized, locate_in_normalized,
@@ -24,6 +25,17 @@ logger = logging.getLogger(__name__)
 # 样本实测（公版《孔乙己》两张卡 14 段摘录）出现次数全部为 1 或 2，3 取样本最大值之上一档；
 # 台词在全书反复出现时（如「我真傻，真的」）会超限 → 走兜底 D5。**全仓只此一处定义**。
 MAX_OCCURRENCES = 3
+
+
+class Placement(Enum):
+    """摘录没落进所标阶段时的落点策略（`verify` 的入参，**枚举只本模块用**）。
+
+    `RELOCATE`：摘录落在哪个阶段就挂哪个（默认 —— 做法、记忆、字段）。`KEEP_TAGGED`：只要
+    摘录能查到（不超 `MAX_OCCURRENCES`）就算命中所标阶段，不改挂（态度专用；原因见
+    `card_draft._convert_relationships` 的注释）。
+    """
+    RELOCATE = "relocate"
+    KEEP_TAGGED = "keep_tagged"
 
 
 class Verification(NamedTuple):
@@ -44,7 +56,8 @@ class Verification(NamedTuple):
     tags: int
     dropped: int
     ambiguous: int
-    unverified_quotes: int
+    unverified_quotes: int        # 摘录查不到的段数（按摘录计）
+    too_frequent: int             # 摘录出现超过 MAX_OCCURRENCES 的段数（与上一条分开计，原因不同）
     rehung: int
     unlocated: list[int]
     starts: list[int] | None
@@ -136,7 +149,7 @@ def build_anchors(phases, source_text: str) -> PhaseAnchors:
 
 def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
            kind: str = "做法", label=_situation_label, name: str = "",
-           warn_skip: bool = True) -> Verification:
+           warn_skip: bool = True, placement: Placement = Placement.RELOCATE) -> Verification:
     """按原文位置定每条条目的阶段 —— **对任意带 `occurrences` 的条目列表**工作。
 
     规则（spec `arc-phase-unlocated.md` §3.1，取代 `arc-phase-anchoring.md` 的规则 3、4）：
@@ -146,13 +159,16 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
     **不退回模型原标注**（原兜底 D5 只在整卡跳过时保留，即规则 2）。经历类「只挂最早」由
     `card_draft.dispatch` 统一处理，这里不分类别。
 
+    `placement` 只管「摘录没落进所标阶段」这一处分支（`KEEP_TAGGED` 时查到即算命中，不改挂；
+    态度专用）。其余规则对两种策略都相同。
+
     `valid_rows`：`card_from_draft` 先做规则 0（编号合法性过滤）后，每条条目剩下的合法阶段编号
     （升序、去重）。`anchors`：`card_from_draft` 开头 `build_anchors` 建一次的上下文。
     """
     n = anchors.n
     if n == 0:                                   # 规则 5：无阶段的卡不做位置检查
         return Verification([[] for _ in items], [{} for _ in items], [{} for _ in items],
-                            False, 0, 0, 0, 0, 0, [], None)
+                            False, 0, 0, 0, 0, 0, 0, [], None)
 
     source_norm = anchors.source_norm
     ranges, reason = anchors.ranges, anchors.reason
@@ -165,7 +181,7 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
     phase_quotes: list[dict[int, str]] = []
     tag_targets: list[dict[int, list[int]]] = []
     unlocated: list[int] = []
-    tags = dropped = ambiguous = unverified = rehung = 0
+    tags = dropped = ambiguous = unverified = too_frequent = rehung = 0
 
     for i, (item, valid) in enumerate(zip(items, valid_rows)):
         by_phase: dict[int, list[str]] = {}
@@ -190,13 +206,20 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
         for p in valid:                          # 计数单位是标注（条目, 阶段），不是摘录
             tags += 1
             hit: set[int] = set()
+            reasons: list[str] = []              # 本标注每段摘录核对不上的原因（写进去掉那行）
             for quote in by_phase.get(p, []):    # 每段摘录各是一份证据
                 loc = locate_in_normalized(source_norm, quote)
-                if loc is None or len(loc) > MAX_OCCURRENCES:
-                    unverified += 1              # 查不到 / 出现太多 → 不作位置证据
+                if loc is None:
+                    unverified += 1              # 查不到 → 不作位置证据
+                    reasons.append(f"查不到：{quote}")
+                    continue
+                if len(loc) > MAX_OCCURRENCES:
+                    too_frequent += 1            # 出现太多（满篇都是，定不了位）→ 不作证据
+                    reasons.append(f"出现 {len(loc)} 次：{quote}")
                     continue
                 landed = sorted({phase_at(ranges, x) for x in loc})
-                if p in landed:                  # 落进所标阶段：只认所标阶段
+                # KEEP_TAGGED：查到即算命中所标阶段（不改挂）；否则落进所标阶段才认（D1）
+                if placement is Placement.KEEP_TAGGED or p in landed:
                     if p not in own and len(loc) > 1:
                         ambiguous += 1           # D6：任意一次命中即通过，记「位置不唯一」
                     own.setdefault(p, quote)
@@ -206,10 +229,10 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
                         moved.setdefault(t, quote)
                     hit.update(landed)
             targets[p] = sorted(hit)
-            if not hit:                          # 去掉的标注各打一条 warning
+            if not hit:                          # 去掉的标注各打一条 warning，写明每段摘录的原因
                 dropped += 1
-                logger.warning("去掉标注：%s %r 在阶段 %d 没有能定位的摘录",
-                               kind, label(item), p)
+                logger.warning("去掉标注：%s %r 在阶段 %d 没有能定位的摘录（%s）",
+                               kind, label(item), p, "；".join(reasons))
             elif targets[p] != [p]:
                 logger.warning("改挂：%s %r 标在阶段 %d，摘录落在阶段 %s",
                                kind, label(item), p, targets[p])
@@ -225,4 +248,4 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
             rehung += 1
 
     return Verification(final, phase_quotes, tag_targets, skipped, tags, dropped, ambiguous,
-                        unverified, rehung, unlocated, starts)
+                        unverified, too_frequent, rehung, unlocated, starts)

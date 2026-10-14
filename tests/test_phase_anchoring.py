@@ -322,11 +322,23 @@ def test_u26_skipped_card_still_counts_its_tags(caplog):
 
 
 def test_u27_each_dropped_tag_warns_once(caplog):
-    """规则 3：去掉的每个标注各打一条 warning（情境 + 阶段号）；通过的不打（§9.5 A3）。"""
+    """规则 3：去掉的每个标注各打一条 warning（情境 + 阶段号 + 每段摘录的原因）；通过的不打。"""
     with caplog.at_level(logging.WARNING, logger="core.phase_anchoring"):
         _card(_COUNT_ROWS)
     assert [r.getMessage() for r in caplog.records if "去掉标注" in r.getMessage()] == [
-        "去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录"]
+        "去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录（查不到：又查无此句）"]
+
+
+_SRC4 = "开头甲甲甲。乙乙乙。乙乙乙。乙乙乙。乙乙乙。结尾丙丙丙。"
+
+
+def test_u27b_too_frequent_quote_warns_with_its_own_reason(caplog):
+    """出现超限与「查不到」分开计、分开写原因（A3）：都是「不作位置证据」，原因不同。"""
+    with caplog.at_level(logging.WARNING, logger="core.phase_anchoring"):
+        _card([_row([_occ(1, "乙乙乙"), _occ(2, "结尾丙丙丙")], "太常见")],
+              src=_SRC4, n=2, anchors={2: "结尾丙丙丙"})
+    assert [r.getMessage() for r in caplog.records if "去掉标注" in r.getMessage()] == [
+        "去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录（出现 4 次：乙乙乙）"]
 
 
 # ── 4.1b 省略号拼接档（**锚点专用**，P15）──────────────────────────────

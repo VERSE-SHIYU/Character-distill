@@ -251,7 +251,12 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录（",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录",
         0
       ],
       [
@@ -470,7 +475,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录（",
         0
       ],
       [
@@ -490,6 +495,11 @@
       [
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录",
         0
       ]
     ],
@@ -572,6 +582,11 @@
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录",
+        0
       ]
     ],
     "M23 分段查不到时当作位置 0（而不是 None）": [
@@ -612,7 +627,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录（",
         0
       ],
       [
@@ -661,7 +676,12 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录（",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录",
         0
       ]
     ],
@@ -800,7 +820,12 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录（",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录",
         0
       ],
       [
@@ -856,7 +881,12 @@
     "M35 删去「去掉标注」的 warning": [
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录\"",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录（",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录",
         0
       ]
     ],

@@ -162,8 +162,8 @@ MUTANTS = [
                        "            reply, truncated = self._chat_accounted(\n"
                        '                system, messages, "关系生成", "distill_relationships")')])], "RED"),
     ("MA20 分批前缀与主调用不同", _u("test_relationship_batch_prefix_passed_verbatim"),
-     [("repl", RB, [("        system, user = _batch_prompt(prefix, name, batch, phases,",
-                     "        system, user = _batch_prompt(prefix[:3], name, batch, phases,")])], "RED"),
+     [("repl", RB, [("        system, user = _batch_prompt(prefix, name, batch, phase_note,",
+                     "        system, user = _batch_prompt(prefix[:3], name, batch, phase_note,")])], "RED"),
     # ── 本轮审计 R1 / R2（Claude 修）──
     ("MC1 分批 user 改回主调用的「生成角色卡」（R1 旧形态）",
      _u("test_r1_batch_user_message_is_the_steps_own_longcontext"),

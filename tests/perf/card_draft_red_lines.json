@@ -94,7 +94,7 @@
     "M7  warning 条件漏掉「无阶段的卡不校验」：0 阶段卡也给每条做法打 warning 并撤回": [
       [
         "tests/test_card_draft.py",
-        "assert not caplog.records",
+        "assert (len(card.situation_behaviors), [r.getMessage() for r in caplog.records if \"[phase_anchoring]\" not in r",
         0
       ]
     ],
@@ -394,7 +394,7 @@
     "M37  无阶段的卡丢掉全部做法（count==0 的直通分支被拆掉）": [
       [
         "tests/test_card_draft.py",
-        "assert len(card.situation_behaviors) == 2",
+        "assert (len(card.situation_behaviors), [r.getMessage() for r in caplog.records if \"[phase_anchoring]\" not in r",
         0
       ]
     ],

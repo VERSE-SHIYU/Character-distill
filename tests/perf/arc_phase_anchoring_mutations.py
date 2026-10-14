@@ -54,7 +54,7 @@ _NOT_SEGS = ("    if not segs or not all(s in source_norm for s in segs):\n"
              "        return None\n")
 
 # 规则 3、4 合并后（spec arc-phase-unlocated §3.1：摘录落在哪就挂哪）的锚点
-_IN_TAGGED = "                if p in landed:                  # 落进所标阶段：只认所标阶段"
+_IN_TAGGED = "                if placement is Placement.KEEP_TAGGED or p in landed:"
 _REHANG = "                    hit.update(landed)"
 _PHASE_AT = "        if lo <= pos < hi:"
 
@@ -120,14 +120,14 @@ MUTATIONS = [
           "        nums = [occ.phase for occ in item.occurrences]\n"
           "        valid = sorted({p for p in nums if 1 <= p <= count})")])], "RED"),
     ('M18 同阶段多段摘录：任一段核对不上就整阶段不成立', TARGET, [("repl", ANCH, [
-        ("                    continue\n                landed = ",
-         "                    break\n                landed = ")])], "RED"),
+        ('                    reasons.append(f"查不到：{quote}")\n                    continue\n',
+         '                    reasons.append(f"查不到：{quote}")\n                    break\n')])], "RED"),
     ('M19a 出现次数判定改 >=（恰好 3 次也不作证据）', TARGET, [("repl", ANCH, [
-        ("                if loc is None or len(loc) > MAX_OCCURRENCES:",
-         "                if loc is None or len(loc) >= MAX_OCCURRENCES:")])], "RED"),
+        ("                if len(loc) > MAX_OCCURRENCES:",
+         "                if len(loc) >= MAX_OCCURRENCES:")])], "RED"),
     ('M19b 删去次数限制', TARGET, [("repl", ANCH, [
-        ("                if loc is None or len(loc) > MAX_OCCURRENCES:",
-         "                if loc is None:")])], "RED"),
+        ("                if len(loc) > MAX_OCCURRENCES:",
+         "                if False:  # 删去次数限制")])], "RED"),
     ('M20 阶段上界整体挪一（含下一阶段首字）', TARGET, [("repl", ANCH, [
         ("    ranges = [(starts[k], starts[k + 1] if k + 1 < n else len(source_norm))",
          "    ranges = [(starts[k], (starts[k + 1] + 1) if k + 1 < n else len(source_norm))")])], "RED"),
@@ -172,8 +172,8 @@ MUTATIONS = [
     ('M32 阶段 1 的空锚点也整卡跳过', TARGET, [("repl", ANCH, [
         ("            if i == 0:\n                starts.append(0)\n                continue\n", "")])], "RED"),
     ('M33 dropped 按摘录计（核对不上的摘录也记一次去掉）', TARGET, [("repl", ANCH, [
-        ("                    unverified += 1              # 查不到 / 出现太多 → 不作位置证据\n",
-         "                    unverified += 1              # 查不到 / 出现太多 → 不作位置证据\n"
+        ("                    unverified += 1              # 查不到 → 不作位置证据\n",
+         "                    unverified += 1              # 查不到 → 不作位置证据\n"
          "                    dropped += 1\n")])], "RED"),
     ('M34 tags 按摘录计', TARGET, [("repl", ANCH, [
         ("            tags += 1\n            hit: set[int] = set()\n", "            hit: set[int] = set()\n"),
@@ -181,8 +181,9 @@ MUTATIONS = [
          "            for quote in by_phase.get(p, []):    # 每段摘录各是一份证据\n"
          "                tags += 1\n")])], "RED"),
     ('M35 删去「去掉标注」的 warning', TARGET, [("repl", ANCH, [
-        ('                logger.warning("去掉标注：%s %r 在阶段 %d 没有能定位的摘录",\n'
-         "                               kind, label(item), p)\n",
+        ('                logger.warning("去掉标注：%s %r 在阶段 %d 没有能定位的摘录（%s）",\n'
+         "                               kind, label(item), p, "
+         '"；".join(reasons))\n',
          "                pass\n")])], "RED"),
     ('M36 整卡跳过时不计 tags', TARGET, [("repl", ANCH, [
         ("            tags += len(valid)                   # 分母照常计（监测比例要用）\n", "")])], "RED"),
