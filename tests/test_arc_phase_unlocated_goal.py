@@ -16,8 +16,9 @@
   它守的是「定位」，不是「规范化」；
 - 预言不模拟 `MAX_OCCURRENCES` 截断与规则 b（摘录多处出现时取哪一处），故 G1 只是**必要
   条件**：挂对了的一定过，过了的不保证是规则要的那一个阶段；
-- 夹具含同一关系两条态度标同一阶段、摘录各落一个阶段的情形（「孩子们」，审计发现 1）——
-  按关系聚合证据的实现会把 A 挂到 B 的阶段，G1 当场红。
+- 态度只核对、不挪阶段（A1）：G1 对态度只要求**有一段**能定位的摘录，不要求落在所标阶段；
+- 夹具含同一关系两条态度标同一阶段的情形（「孩子们」）—— 撞车时只采用第一条、落败者进
+  未定位区（A1），故 G1 对「挂在阶段下的态度」仍按逐条证据核。
 """
 from __future__ import annotations
 
@@ -118,10 +119,17 @@ def _placements():
     return out
 
 
+def _attitude_texts() -> set[str]:
+    return {a["attitude"] for r in _DRAFT["relationships"] for a in r["attitudes"]}
+
+
 def test_g1_every_phase_placement_has_positional_evidence():
-    """挂在阶段 p 的条目，有摘录落在 p；唯一例外是没有任何证据的经历类（挂最后阶段）。"""
+    """挂在阶段 p 的条目，有摘录落在 p；态度只核对、不挪阶段（A1）——只要求**有一段**
+    能定位的摘录；唯一例外是没有任何证据的经历类（挂最后阶段，p == 末阶段）。"""
+    att = _attitude_texts()
     bad = [(p, t) for p, t in _placements()
-           if p not in _quotes_of(t) and not (_quotes_of(t) == set() and p == 2)]
+           if not (_quotes_of(t) if t in att else p in _quotes_of(t))
+           and not (_quotes_of(t) == set() and p == 2)]
     assert bad == []
 
 
@@ -141,7 +149,7 @@ def test_g3_no_projection_carries_unlocated_items():
              + [v for _p, vs in overlay_leaves(loose.overlay) for v in vs])
     dumps = [json.dumps(project_card(_CARD, k)[0].model_dump(), ensure_ascii=False) for k in (1, 2)]
     assert (sorted(texts), [t for t in texts for d in dumps if t in d]) == (
-        ["A编造", "B编造", "T编造"], [])
+        ["A撞车内", "A编造", "B编造", "T编造"], [])
 
 
 def test_g4_guard_reaches_every_text_leaf():
@@ -151,9 +159,43 @@ def test_g4_guard_reaches_every_text_leaf():
 
 
 def test_g0_fixture_really_has_a_same_phase_collision():
-    """夹具自检：「孩子们」两条态度标同一阶段、摘录落点各不相同 —— 否则发现 1 那条 G1 空转。"""
+    """夹具自检：「孩子们」两条态度标同一阶段、摘录落点各不相同 —— 撞车（只留第一条、落败者
+    进未定位区）与「摘录在别处也照挂所标阶段」两条判据才各有红源。"""
     atts = next(r for r in _DRAFT["relationships"] if r["target"] == "孩子们")["attitudes"]
     assert ([a["phase"] for a in atts], [_landing(a["quote"]) for a in atts]) == ([1, 1], [{2}, {1}])
+
+
+# ── PR-A 目标检查（arc-attitude-time-boundary.md）────────────────────────
+# 原文里一句话只出现在更晚的阶段：态度照挂所标阶段（只核对、不挪），做法按位置改挂，
+# 摘录原文没有的态度进未定位区。三条并排，任一条走错都能分辨。
+_LATE = "下回还清罢"                          # 《孔乙己》里只出现在阶段 2（锚点之后）
+_TARGET_DRAFT = {
+    "name": "孔乙己",
+    "character_arc": {"axis": "a", "phases": [
+        {"label": "L1", "state": "s1", "anchor": ""},
+        {"label": "L2", "state": "s2", "anchor": _ANCHOR2}]},
+    "situation_behaviors": [
+        {"situation": "做法错标", "behavior": "b", "occurrences": [_occ(1, _LATE)]}],
+    "relationships": [
+        {"target": "掌柜", "relation": "债主", "attitudes": [
+            {"phase": 1, "attitude": "态度错标", "quote": _LATE},
+            {"phase": 1, "attitude": "态度编造", "quote": _FAKE}]}],
+}
+_TARGET_CARD = card_from_draft(json.loads(json.dumps(_TARGET_DRAFT)), _TEXT)
+
+
+def test_target_check_attitude_kept_at_its_tag_but_behavior_relocated():
+    """同一句标阶段 1：态度留在 1（只核对），做法改挂到摘录所在的阶段 2。"""
+    ph = _TARGET_CARD.character_arc.phases
+    assert ([b.situation for b in ph[0].behaviors], [b.situation for b in ph[1].behaviors],
+            [(pa.phase, pa.attitude) for r in _TARGET_CARD.relationships for pa in r.phase_attitudes]) == (
+        [], ["做法错标"], [(1, "态度错标")])
+
+
+def test_target_check_attitude_without_its_quote_goes_to_unlocated():
+    """摘录原文里没有的态度进未定位区，带上原标阶段。"""
+    assert [(a.attitude, a.phase) for a in _TARGET_CARD.character_arc.unlocated.attitudes] == [
+        ("态度编造", 1)]
 
 
 def test_g0_fixture_really_exercises_rehang_and_unlocated():

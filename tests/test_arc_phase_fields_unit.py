@@ -517,6 +517,11 @@ def test_export_field_names_come_from_registry(monkeypatch):
 
 # ── U16/U17 关系分批 ────────────────────────────────────────────────────
 
+# 关系分批收的是**已渲染好的**阶段说明（A2：写法只在 `distiller._phase_list_note` 一处）；
+# 这一组用例只验切批 / 补跑 / 前缀，故给一段占位文字即可。
+_NOTE = "本角色弧线的阶段（略）。"
+
+
 def test_relationship_batch_splits_and_merges():
     """U16：23 人 → 3 批，每批 ≤10，全部汇总、顺序稳定。
 
@@ -533,7 +538,7 @@ def test_relationship_batch_splits_and_merges():
         calls.append(list(batch))
         return [{"target": t, "relation": "友", "note": ""} for t in batch]
 
-    out = batch_relationships(targets, ["阶段一", "阶段二"],
+    out = batch_relationships(targets, _NOTE,
                               stream_call=fake_call, prefix="前缀", name="主角")
     assert sorted(len(c) for c in calls) == [3, 10, 10]
     assert [r["target"] for r in out] == targets
@@ -547,7 +552,7 @@ def test_relationship_batch_fail_all_on_any_batch():
         raise RuntimeError("batch down")
 
     with pytest.raises(RelationshipBatchError):
-        batch_relationships([f"人{i}" for i in range(12)], ["阶段一"],
+        batch_relationships([f"人{i}" for i in range(12)], _NOTE,
                             stream_call=failing, prefix="前缀", name="主角")
 
 
@@ -561,7 +566,7 @@ def test_relationship_batch_prefix_passed_verbatim():
         seen.append(system)
         return [{"target": t, "relation": "友"} for t in batch]
 
-    batch_relationships(["甲", "乙"], ["阶段一"], stream_call=capture, prefix="SHARED-PREFIX", name="主角")
+    batch_relationships(["甲", "乙"], _NOTE, stream_call=capture, prefix="SHARED-PREFIX", name="主角")
     assert all("SHARED-PREFIX" in p for p in seen)
     assert len(seen) == 1, "没人缺失就不该补跑（前缀判据只需看首批）"
 
@@ -707,7 +712,7 @@ def test_relationship_batch_recovers_missing_once():
         return [{"target": t, "relation": "友"}
                 for t in batch if t != "乙" or len(calls) > 1]
 
-    out = batch_relationships(["甲", "乙", "丙"], ["阶段一"],
+    out = batch_relationships(["甲", "乙", "丙"], _NOTE,
                               stream_call=fake, prefix="P", name="主角")
 
     assert calls[0] == ["甲", "乙", "丙"], "首批不是全体"
@@ -731,7 +736,7 @@ def test_relationship_batch_missing_after_retry_raises():
         return [{"target": t, "relation": "友"} for t in batch if t != "乙"]
 
     with pytest.raises(RelationshipBatchError, match="乙"):
-        batch_relationships(["甲", "乙"], ["阶段一"], stream_call=fake, prefix="P", name="主角")
+        batch_relationships(["甲", "乙"], _NOTE, stream_call=fake, prefix="P", name="主角")
     assert len(calls) == 2, "应只补跑一次就失败"
 
 
@@ -753,7 +758,7 @@ def test_relationship_batch_wrong_name_is_missing_and_extra_dropped():
                     {"target": "宝玉", "relation": "亲人"}]
         return [{"target": t, "relation": "友"} for t in batch]
 
-    out = batch_relationships(["甲", "乙"], ["阶段一"], stream_call=fake, prefix="P", name="主角")
+    out = batch_relationships(["甲", "乙"], _NOTE, stream_call=fake, prefix="P", name="主角")
 
     assert calls == [["甲", "乙"], ["乙"]], "写错名没算缺人（或补跑的不是缺的那个）"
     assert [r["target"] for r in out] == ["甲", "乙"], "名单外的条目混进来了 / 缺人没补齐"
@@ -918,28 +923,46 @@ def test_r2b_rules_pin_first_contact_and_per_phase_note():
 # ── 关系分批：阶段序号口径（R2c，spec 外缺陷）──────────────────────────────
 
 def test_rel_batch_prompt_numbers_phases_by_position():
-    """R2c：阶段在提示词里按序号列（「1. 名称；2. 名称」），序号 = phases 里的位置。
+    """R2c：阶段在提示词里按序号列（「阶段 i·label」），序号 = phases 里的位置。
 
-    `card_draft` 把 `attitudes[].phase` 当 1-based 下标用（`by_phase[p-1]`）。提示词不给序号，
-    模型只能拿阶段名去填，落进 int 字段就整卡校验失败（「强撑体面」被当 phase 的事故）。
+    `card_draft` 把 `attitudes[].phase` 当 1-based 下标用（`by_phase[p-1]`）。阶段列表的编号
+    与写法只由 `distiller._phase_list_note` 渲染一处（A2），关系分批原样收下、不再自己编号。
     """
-    from core.relationship_batch import _batch_prompt
+    from core.distiller import _phase_list_note
 
-    system, _ = _batch_prompt("前缀", "甲", ["乙"], ["初识", "决裂"])
-    assert "1. 初识；2. 决裂" in system
+    note = _phase_list_note([{"label": "初识"}, {"label": "决裂"}])
+    assert "阶段 1·初识" in note and "阶段 2·决裂" in note
 
-    # 序号落在 phases 的位置上：空阶段让位，后面的序号仍保留它占的位置
-    system, _ = _batch_prompt("前缀", "甲", ["乙"], ["初识", "", "决裂"])
-    assert "1. 初识；3. 决裂" in system
+    # 空 label 的阶段仍占位：后面的序号不塌缩
+    note = _phase_list_note([{"label": "初识"}, {"label": ""}, {"label": "决裂"}])
+    assert "阶段 3·决裂" in note
 
 
 def test_rel_batch_prompt_without_phases_marks_none_and_rule_says_zero():
-    """R2c：没有阶段时提示词写「（无阶段）」，口径写明 phase 填 0。"""
-    from core.relationship_batch import RELATIONSHIP_RULES, _batch_prompt
+    """R2c：没有阶段时阶段说明写「本角色没有阶段…phase 填 0」，口径也写明 phase 填 0。"""
+    from core.distiller import _phase_list_note
+    from core.relationship_batch import RELATIONSHIP_RULES
 
-    system, _ = _batch_prompt("前缀", "甲", ["乙"], [])
-    assert "（无阶段）" in system
+    note = _phase_list_note([])
+    assert "本角色没有阶段" in note and "phase 填 0" in note
     assert "没有阶段时填 0" in RELATIONSHIP_RULES
+
+
+def test_phase_list_note_is_the_single_rendering_for_both_paths():
+    """A2：阶段说明全仓只有一种写法 —— 关系分批收的与分组路径渲染的**逐字同一段**。
+
+    两路各自拼一份时，分组路径会多出 / 少去锚点原句，关系分批仍停在旧编号格式（对账表
+    「两路阶段说明同一写法」）。
+    """
+    from core.distiller import _arc_phases, _phase_list_note
+    from core.relationship_batch import _batch_prompt
+
+    phases = [{"label": "初识", "state": "S1", "anchor": "甲甲"},
+              {"label": "决裂", "state": "S2", "anchor": ""}]
+    note = _phase_list_note(_arc_phases({"character_arc": {"phases": phases}}))
+    system, _ = _batch_prompt("前缀", "甲", ["乙"], note)
+    assert note in system
+    assert "起始原句：（从开头起）" in note      # 分组路径由此多出锚点原句（有意）
 
 
 def test_rel_batch_rule4_pins_one_based_range():

@@ -25,7 +25,8 @@ import mutation_framework as framework  # noqa: E402
 
 RB = ROOT / "core" / "relationship_batch.py"
 DRAFT = ROOT / "core" / "card_draft.py"
-TARGETS = (RB, DRAFT)
+DIST = ROOT / "core" / "distiller.py"
+TARGETS = (RB, DRAFT, DIST)
 
 UNIT = "tests/test_arc_phase_fields_unit.py"
 NUMBERED = f"{UNIT}::test_rel_batch_prompt_numbers_phases_by_position"
@@ -36,8 +37,11 @@ SCHEMA = f"{UNIT}::test_draft_schema_phase_stays_integer"
 BOOL_BAD = f"{UNIT}::test_phase_number_bool_is_bad_value_retracts"
 FRAC_BAD = f"{UNIT}::test_phase_number_fraction_is_bad_value_retracts"
 
-_ENUM = "    named = [(i, p) for i, p in enumerate(phases, 1) if p]"
-_JOIN = '    stage = "；".join(f"{i}. {p}" for i, p in named) or "（无阶段）"'
+# 阶段列表的编号渲染已迁到 `distiller._phase_list_note`（arc-attitude-time-boundary A2：写法只一处），
+# MG1/MG2 的靶子随之从 `relationship_batch` 改到这里；两条用例的节点 id 不变。
+_HDR = "  {phase_header(i, p.get('label', ''))} · {p.get('state', '')}"
+_HDR_NO_NUM = "  {p.get('label', '')} · {p.get('state', '')}"
+_ENUM_PH = "              for i, p in enumerate(phases, 1)]"
 _RULE4 = '    "4. phase 填阶段序号（整数 1..n）；没有阶段时填 0。\\n"'
 # `_phase_number` 的兜底两行；MC1/MC2 只动这两行的形状。
 _FALLBACK = '    logger.warning("[card_draft] 阶段编号不是整数，按 0 处理：%r", value)\n    return 0'
@@ -49,10 +53,9 @@ def _m(label: str, target: str, path: pathlib.Path, old: str, new: str):
 
 MUTANTS = [
     # 题目点名的两向：去掉编号 → 红；编号从 0 起（错位一格）→ 红。
-    _m("MG1 去掉阶段编号（退回「名称、名称」）", NUMBERED, RB, _JOIN,
-       '    stage = "、".join(p for _, p in named) or "（无阶段）"'),
-    _m("MG2 阶段编号从 0 起（错位一格）", NUMBERED, RB, _ENUM,
-       "    named = [(i, p) for i, p in enumerate(phases, 0) if p]"),
+    _m("MG1 去掉阶段编号（退回「名称 · state」）", NUMBERED, DIST, _HDR, _HDR_NO_NUM),
+    _m("MG2 阶段编号从 0 起（错位一格）", NUMBERED, DIST, _ENUM_PH,
+       "              for i, p in enumerate(phases, 0)]"),
     # 作者补的第三向：无阶段分支的口径里没有「没有阶段时填 0」时，那条断言要能分辨。
     _m("MG3 口径删掉「没有阶段时填 0」", NO_PHASE, RB, _RULE4,
        '    "4. phase 填阶段序号（整数 1..n）。\\n"'),

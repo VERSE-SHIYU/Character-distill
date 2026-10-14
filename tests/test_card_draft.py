@@ -116,8 +116,10 @@ def test_u4_no_valid_number_retracts_the_row_with_a_warning(caplog, phases):
 def test_u5_card_without_phases_keeps_everything_top_level(caplog):
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
         card = card_from_draft(_draft([_row([1]), _row([])], phases=0), _SRC)
-    assert len(card.situation_behaviors) == 2
-    assert not caplog.records
+    # 汇总行（A3 起是 WARNING）不算问题信号，只排除它看「没有别的不满」
+    assert (len(card.situation_behaviors),
+            [r.getMessage() for r in caplog.records if "[phase_anchoring]" not in r.getMessage()]) == (
+        2, [])
 
 
 @pytest.mark.parametrize("arc", [[], ["起初冷漠", "学会信任"]])

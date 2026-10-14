@@ -473,22 +473,21 @@ def distill_instruction(character_name: str) -> str:
             + DISTILL_PROMPT_AFTER_NAME + schema_str)
 
 
-def _phase_labels(draft: dict) -> list[str]:
-    """草稿里弧线的阶段名（关系分批「阶段依次为…」用）。"""
-    phases = ((draft or {}).get("character_arc") or {}).get("phases") or []
-    return [p.get("label") or f"阶段 {i}" for i, p in enumerate(phases, 1)]
+def _arc_phases(draft: dict) -> list[dict]:
+    """草稿里弧线的阶段列表（草稿原形，键 label / state / anchor）。"""
+    return ((draft or {}).get("character_arc") or {}).get("phases") or []
 
 
-def _phase_list_note(g6: dict) -> str:
-    """依赖组提示词里附上的 G6 阶段列表（编号 · label · state）——按阶段标注的字段用这些编号。
+def _phase_list_note(phases: list[dict]) -> str:
+    """阶段列表的**唯一渲染**（分组路径与关系分批共用）——编号 · label · state · 起始原句。
 
-    G6 没定出阶段（`phases` 空）时退回「没有阶段」的写法，让模型只写一条 phase 0。
+    没有阶段（`phases` 空）时返回「没有阶段」的写法，让模型只写一条 phase 0。
     """
-    phases = ((g6 or {}).get("character_arc") or {}).get("phases") or []
     if not phases:
         return "本角色没有阶段：需要按阶段标注的字段只写一条，phase 填 0。"
     lines = ["本角色弧线的阶段（维度 L 已定，按阶段标注的字段用这些编号）："]
     lines += [f"  {phase_header(i, p.get('label', ''))} · {p.get('state', '')}"
+              f" · 起始原句：{p.get('anchor') or '（从开头起）'}"
               for i, p in enumerate(phases, 1)]
     return "\n".join(lines)
 
@@ -1031,7 +1030,7 @@ class Distiller:
 
         try:
             draft["relationships"] = batch_relationships(
-                targets, _phase_labels(draft), stream_call=_call,
+                targets, _phase_list_note(_arc_phases(draft)), stream_call=_call,
                 prefix=prefix, name=character_name, material=material,
                 batch_size=REL_BATCH_SIZE)
         except RelationshipBatchError as exc:
@@ -2795,7 +2794,7 @@ class Distiller:
             yield {"heartbeat": True}
         for group in PHASE_DEPENDENT_GROUPS:
             C.ctx_thread(_format_one_group, args=(group,),
-                         kwargs={"phase_list_note": _phase_list_note(group_data["G6"])},
+                         kwargs={"phase_list_note": _phase_list_note(_arc_phases(group_data["G6"]))},
                          name=f"format-{group}").start()
 
         while len(group_data) < len(FORMAT_GROUPS):

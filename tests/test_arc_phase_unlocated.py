@@ -271,18 +271,27 @@ def test_t3_motives_without_evidence_goes_to_unlocated_overlay_out_of_prompt():
 
 
 def test_u8_monitor_counts_every_category(caplog):
-    """rehung / unlocated / to_last 汇总做法、字段、记忆、关系四类。"""
+    """rehung / unlocated / to_last 汇总做法、字段、记忆、关系四类；关系不再改挂（A1）。"""
     with caplog.at_level(logging.INFO, logger="core.card_draft"):
         _card(situation_behaviors=[{"situation": "s", "behavior": "b",
                                     "occurrences": [_occ(3, _Q1)]}],          # 做法改挂 1
               values=[_timed("v", _occ(1, _NOWHERE))],                         # 字段未定位 1
               key_memories=[{"memory": "m", "occurrences": [_occ(1, _NOWHERE)]}],  # 挂最后 1
               relationships=[{"target": "甲", "relation": "友", "attitudes": [
-                  {"phase": 2, "attitude": "a", "quote": _Q3}]}])              # 态度改挂 1
+                  {"phase": 2, "attitude": "a", "quote": _Q3}]}])              # 态度只核对、不改挂
     line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
     assert line.split(" rehung=")[1] == (
-        "2 unlocated=1 to_last=1 skipped_card=False memories_dropped=1 "
-        "kinds=做法:1/0/0,字段:0/1/0,记忆:0/0/1,关系:1/0/0")
+        "1 unlocated=1 to_last=1 skipped_card=False memories_dropped=1 "
+        "kinds=做法:1/0/0,字段:0/1/0,记忆:0/0/1,关系:0/0/0")
+
+
+def test_u8b_monitoring_line_is_warning(caplog):
+    """汇总行是 WARNING（A3）：生产 `docker logs` 只收 WARNING 以上，INFO 会看不见。"""
+    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
+        _card(situation_behaviors=[{"situation": "s", "behavior": "b",
+                                    "occurrences": [_occ(3, _Q1)]}])
+    levels = [r.levelno for r in caplog.records if "[phase_anchoring]" in r.getMessage()]
+    assert levels == [logging.WARNING]
 
 
 # ── R：关系态度逐条分发 ──────────────────────────────────────────────
@@ -299,32 +308,38 @@ def _pa(card):
     return [(pa.phase, pa.attitude) for pa in card.relationships[0].phase_attitudes]
 
 
-def test_r1_attitude_is_rehung_to_where_its_quote_lands():
+def test_r1_attitude_keeps_its_tagged_phase_even_when_quote_lands_earlier():
+    """态度只核对、不挪阶段（A1）：摘录在阶段 2、标在阶段 3，仍留在 3（不改挂）。"""
     card = _card(relationships=_rel(_att(3, "疏远", _Q2)))
-    assert (_pa(card), card.relationships[0].attitude) == ([(2, "疏远")], "疏远")
+    assert (_pa(card), card.relationships[0].attitude) == ([(3, "疏远")], "疏远")
 
 
-def test_r2_collision_original_tag_wins_loser_goes_to_unlocated_with_note():
-    card = _card(relationships=_rel(_att(3, "改挂来的", _Q1, note="口径乙"),
-                                    _att(1, "原本在1", _Q1)))
+def test_r2_same_phase_collision_first_wins_loser_goes_to_unlocated_with_note(caplog):
+    """同阶段撞车：只采用第一条，落败的那条进未定位区（note 与原标阶段跟着走），并打 WARNING。"""
+    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
+        card = _card(relationships=_rel(_att(1, "先到", _Q1, note="口径甲"),
+                                        _att(1, "后到", _Q1, note="口径乙")))
+    warns = [r.getMessage() for r in caplog.records if r.getMessage().startswith("撞车落败")]
     assert (_pa(card), [(a.attitude, a.note, a.phase)
-                        for a in card.character_arc.unlocated.attitudes]) == (
-        [(1, "原本在1")], [("改挂来的", "口径乙", 3)])
+                        for a in card.character_arc.unlocated.attitudes], warns) == (
+        [(1, "先到")], [("后到", "口径乙", 1)],
+        ["撞车落败：态度 '甲' 标在阶段 1，阶段 1 采用了另一条"])
 
 
-def test_r3_attitude_that_wins_elsewhere_is_not_unlocated():
+def test_r3_each_attitude_keeps_its_own_tag_when_quote_lands_elsewhere():
+    """摘录在别处也照挂所标阶段：两条各自留在 2 与 1，都不进未定位区。"""
     src = "甲乙丙丁戊己甲乙"                               # 「甲乙」@0（阶段1）、@6（阶段3）
     card = _card(src=src, anchors={2: "丙丁", 3: "戊己"}, relationships=_rel(
         _att(2, "两处落点", "甲乙"), _att(1, "原本在1", "甲乙")))
     assert (_pa(card), card.character_arc.unlocated.attitudes) == (
-        [(1, "原本在1"), (3, "两处落点")], [])
+        [(1, "原本在1"), (2, "两处落点")], [])
 
 
-def test_r7_same_phase_tags_each_attitude_uses_only_its_own_evidence():
-    """两条态度都标阶段 1、摘录各落一个阶段：各自挂到自己的落点，不共用证据（审计发现 1）。"""
-    card = _card(relationships=_rel(_att(1, "证据在2", _Q2), _att(1, "证据在1", _Q1)))
-    assert (_pa(card), card.character_arc.unlocated.attitudes) == (
-        [(1, "证据在1"), (2, "证据在2")], [])
+def test_r7_each_attitude_is_checked_with_only_its_own_evidence():
+    """两条态度都标阶段 1：有证据的留下、无证据的进未定位区 —— 不共用证据（审计发现 1）。"""
+    card = _card(relationships=_rel(_att(1, "有证据", _Q1), _att(1, "无证据", _NOWHERE)))
+    assert (_pa(card), [a.attitude for a in card.character_arc.unlocated.attitudes]) == (
+        [(1, "有证据")], ["无证据"])
 
 
 def test_r4_relationship_without_any_located_attitude_hangs_last_with_empty_attitude():
