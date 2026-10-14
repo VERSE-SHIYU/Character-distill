@@ -297,13 +297,23 @@ async def _do_chat(
     if not msg:
         raise HTTPException(400, "Message cannot be empty")
 
+    # 「上次对话时间」：在本轮任何写库（save_session / save_message）之前读一次会话取 updated_at
+    # —— 那些写都会把 updated_at 刷成现在，读晚了就永远算成「刚刚还在聊」（spec J9 / 补充 1）。
+    # 读失败不致命：时间感知只是增强项，跳过间隔句照常出块（与原先引擎侧的兜底同一口径）。
+    db_s = None
+    try:
+        db_s = await storage.get_session_owned(session_id, user_id)
+    except Exception as exc:
+        logger.warning("Time awareness: session read failed (session_id=%s): %r",
+                       session_id, exc, exc_info=True)
+    last_activity_at = (db_s or {}).get("updated_at")
+
     if user_role:
         session["engine"].user_role = user_role
         # Only persist to DB when the value actually changes
         if session.get("_persisted_user_role") != user_role:
             session["_persisted_user_role"] = user_role
             try:
-                db_s = await storage.get_session_owned(session_id, user_id)
                 if db_s:
                     await storage.save_session(
                         session_id, db_s.get("card_id", ""), user_role, db_s.get("avatar_data", ""), user_id,
@@ -322,7 +332,8 @@ async def _do_chat(
     print(f"[chat] _do_chat session={session_id} history={len(engine.history) if engine else 0} messages")
     async with session["lock"]:
         import time as _t; _t0 = _t.time()
-        resp = await asyncio.to_thread(engine.chat, llm_msg, voice_mode=voice_mode)
+        resp = await asyncio.to_thread(
+            engine.chat, llm_msg, voice_mode=voice_mode, last_activity_at=last_activity_at)
         print(f"[perf] _do_chat total took {_t.time()-_t0:.2f}s")
         rag_ctx = getattr(engine, '_last_rag_context', '') or ''
 
@@ -416,13 +427,23 @@ async def _do_chat_stream(
     if not msg:
         raise HTTPException(400, "Message cannot be empty")
 
+    # 「上次对话时间」：在本轮任何写库（save_session / save_message）之前读一次会话取 updated_at
+    # —— 那些写都会把 updated_at 刷成现在，读晚了就永远算成「刚刚还在聊」（spec J9 / 补充 1）。
+    # 读失败不致命：时间感知只是增强项，跳过间隔句照常出块（与原先引擎侧的兜底同一口径）。
+    db_s = None
+    try:
+        db_s = await storage.get_session_owned(session_id, user_id)
+    except Exception as exc:
+        logger.warning("Time awareness: session read failed (session_id=%s): %r",
+                       session_id, exc, exc_info=True)
+    last_activity_at = (db_s or {}).get("updated_at")
+
     if user_role:
         session["engine"].user_role = user_role
         # Only persist to DB when the value actually changes
         if session.get("_persisted_user_role") != user_role:
             session["_persisted_user_role"] = user_role
             try:
-                db_s = await storage.get_session_owned(session_id, user_id)
                 if db_s:
                     await storage.save_session(
                         session_id, db_s.get("card_id", ""), user_role, db_s.get("avatar_data", ""), user_id,
@@ -484,7 +505,7 @@ async def _do_chat_stream(
             # Prepend quote context for LLM if replying
             llm_msg = f'[引用: "{reply_to_preview}"]\n{msg}' if reply_to_preview else msg
             async with session["lock"]:
-                stream = engine.chat_stream(llm_msg, voice_mode=voice_mode)
+                stream = engine.chat_stream(llm_msg, voice_mode=voice_mode, last_activity_at=last_activity_at)
                 # Drive full stream generation under lock to prevent history interleaving
                 first_piece, done = await asyncio.to_thread(_next_piece, stream)
                 # evidence 帧**必须排在 token 流之前**：驱动首个 next() 时，chat_stream 的

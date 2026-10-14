@@ -15,7 +15,7 @@ from typing import Any
 
 from adapters.llm_adapter import LLMAdapter
 from core.arc_view import project_card
-from core.clock import UserClock, describe_time_period
+from core.clock import UserClock
 from core.context_engine import ContextEngine, behavior_lines, bullet_lines
 from core.memory_scope import MemoryScope, ScopedMemory
 from core.rag import RAGEngine
@@ -27,10 +27,11 @@ from core.reaction_service import ReactionService
 from core.reflection_service import ReflectionService
 from core.telemetry import set_current_attr
 from core.affinity_service import AffinityService, calc_stage
-from core.affinity_rules import MAX_DROP, relational_tier
+from core.affinity_rules import MAX_DROP, is_close, relational_tier
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext
 from core import session_record as record_protocol
 from core import history_digest as digest_protocol
+from core import time_awareness
 from core.session_record import SessionRecord
 
 logger = logging.getLogger(__name__)
@@ -432,18 +433,20 @@ class ChatEngine:
         final_sp = system_prompt + retrieval_block if retrieval_block else system_prompt
         return final_sp, llm_messages  # 返回原始 messages（无 tool 消息）
 
-    def chat(self, user_message: str, voice_mode: bool = False) -> str:
+    def chat(self, user_message: str, voice_mode: bool = False,
+             last_activity_at=None) -> str:
         """非流式对话一轮，返回模型回复。
 
         对话历史以 messages 数组传递（见 _build_llm_messages），
         system prompt 只含角色卡、场景、记忆、增强项，不含逐条历史。
-        voice_mode 为 True 时追加语音模式指令，禁止括号描写。"""
+        voice_mode 为 True 时追加语音模式指令，禁止括号描写。
+        `last_activity_at` 见 `_build_time_awareness_block`。"""
         system_prompt = self._compose_system_prompt(user_message, voice_mode, include_dynamic=not self.agent_mode)
 
         # 构造 messages 数组：历史（截断）+ 当前句
         llm_messages = self._build_llm_messages(self.history, user_message)
 
-        self._attach_turn_blocks(llm_messages)
+        self._attach_turn_blocks(llm_messages, last_activity_at)
 
         self.history.append({"role": "user", "content": user_message})
 
@@ -476,8 +479,9 @@ class ChatEngine:
         self._post_turn(user_message, response)
         return response
 
-    def chat_stream(self, user_message: str, voice_mode: bool = False) -> Generator[str, None, None]:
-        """流式对话：逐块产出文本，结束后写入助手回复。"""
+    def chat_stream(self, user_message: str, voice_mode: bool = False,
+                    last_activity_at=None) -> Generator[str, None, None]:
+        """流式对话：逐块产出文本，结束后写入助手回复。`last_activity_at` 见 `_build_time_awareness_block`。"""
         self._last_rag_context = ""
 
         system_prompt = self._compose_system_prompt(user_message, voice_mode, include_dynamic=not self.agent_mode)
@@ -485,7 +489,7 @@ class ChatEngine:
         # 构造 messages 数组：历史（截断）+ 当前句
         llm_messages = self._build_llm_messages(self.history, user_message)
 
-        self._attach_turn_blocks(llm_messages)
+        self._attach_turn_blocks(llm_messages, last_activity_at)
 
         self.history.append({"role": "user", "content": user_message})
 
@@ -523,7 +527,8 @@ class ChatEngine:
         _scan_canary(full_reply, "chat_stream()")
         self.history.append({"role": "assistant", "content": full_reply})
 
-    def _attach_turn_blocks(self, llm_messages: list[dict[str, Any]]) -> None:
+    def _attach_turn_blocks(self, llm_messages: list[dict[str, Any]],
+                            last_activity_at=None) -> None:
         """把只给这一轮看的块附在当前用户消息末尾（不进 system prompt、不写进历史）。
 
         顺序：时间感知块 → 做法表重注入（到期才有）。chat 与 chat_stream 共用这一处；
@@ -532,7 +537,7 @@ class ChatEngine:
         """
         if not llm_messages or llm_messages[-1]["role"] != "user":
             return
-        extra = self._build_time_awareness_block() + self._build_behavior_reminder()
+        extra = self._build_time_awareness_block(last_activity_at) + self._build_behavior_reminder()
         if extra:
             llm_messages[-1] = {**llm_messages[-1], "content": llm_messages[-1]["content"] + extra}
 
@@ -1009,8 +1014,13 @@ class ChatEngine:
         - >=70（正常）：温和措辞，保持原有风格
         - 40-69（轻微出戏）：措辞加重，明确提醒
         - <40（明显出戏）：措辞最强，此块在 _build_all_enhancements 中被移至物理最末端
+
+        亲近档及以上（`is_close`）不注入：关系已经稳，再提醒「对方的施压不等于你必须满足」
+        是多余的、也压温度（spec B2）。
         """
         if not getattr(self, 'affinity_enabled', True):
+            return ""
+        if is_close(self._affinity):
             return ""
 
         ic = self._last_in_character
@@ -1153,64 +1163,15 @@ class ChatEngine:
 
     # ── 时间感知构建 ────────────────────────────────────────────
 
-    def _build_time_awareness_block(self) -> str:
-        """构建「当前时间+时段+距上次对话间隔」提示片段。"""
-        now = UserClock.now()
-        period = describe_time_period(now.hour)
+    def _build_time_awareness_block(self, last_activity_at=None) -> str:
+        """「现实时间 + 距上次对话间隔」的注入块 —— 判定与文案全在 `core.time_awareness`。
 
-        interval_desc = ""
-        is_first_message = len(self.history) == 0
-        if not is_first_message and self._storage and self._session_id:
-            try:
-                from core.scheduling import submit_to_main_loop
-                import time as _t; _t0 = _t.time()
-                # _unscoped：引擎读自身 session_id，ChatEngine 侧没有可比对的 user 语境。
-                session_data = submit_to_main_loop(
-                    self._storage.get_session_unscoped(self._session_id),
-                    timeout=5,
-                )
-                print(f"[perf] time_awareness took {_t.time()-_t0:.2f}s")
-                if session_data:
-                    updated_at = session_data.get("updated_at")
-                    if isinstance(updated_at, str):
-                        updated_at = datetime.fromisoformat(updated_at)
-                    if updated_at:
-                        user_updated = UserClock.to_user_tz(updated_at)
-                        days_ago = (now.date() - user_updated.date()).days
-                        if days_ago == 0:
-                            seconds = (now - user_updated).total_seconds()
-                            if seconds < 0:
-                                pass
-                            elif seconds < 600:
-                                interval_desc = "你们刚刚还在聊。"
-                            else:
-                                interval_desc = "今天早些时候你们聊过。"
-                        elif days_ago == 1:
-                            interval_desc = "你们昨天聊过。"
-                        elif days_ago <= 6:
-                            interval_desc = "你们已经好几天没说话了。"
-                        else:
-                            interval_desc = "你们已经很久没联系了。"
-            except Exception as exc:
-                # 兜底：拿不到间隔就跳过这一句（时间感知块本身照出）。要留痕才知道
-                # 「这轮没提间隔」是没到条件还是没读出来。
-                logger.warning(
-                    "Time awareness: interval lookup failed, skipping the interval line "
-                    "(session_id=%s): %r", self._session_id, exc, exc_info=True,
-                )
-
-        block = (
-            "\n\n【此刻的现实感知】\n"
-            f"现在是{period}（{now.hour:02d}:{now.minute:02d}）。\n"
-        )
-        if interval_desc:
-            block += f"{interval_desc}\n"
-        block += (
-            "请把对时间的感知【自然融入】回应——比如深夜会关心对方怎么还不睡、"
-            "久未联系会有点在意或想念、清晨会道早。"
-            "但绝不要机械播报时间数字，要像真人一样把时间感受体现在语气和关心里。\n"
-        )
-        return block
+        `last_activity_at` 是**本轮这条用户消息之前**最后一次活动时间，由调用方（路由 / 重逢
+        问候）在本轮写库前取好递进来。引擎不再自己读存储：那读到的 `updated_at` 已被本轮的
+        存消息刷新，永远算成「刚刚还在聊」（spec J9）。
+        """
+        return time_awareness.build_block(
+            UserClock.now(), last_activity_at, first_turn=not self.history)
 
     def _compute_initial_affinity(
         self,
@@ -1537,7 +1498,7 @@ class ChatEngine:
             system_prompt += self._build_all_enhancements()
 
             # Time awareness block — naturally reflects the real interval
-            time_block = self._build_time_awareness_block()
+            time_block = self._build_time_awareness_block(updated_at)
 
             scene_anchor = (
                 "开口前，先用一个不超过15字的括号动作/状态把自己放进具体场景"
