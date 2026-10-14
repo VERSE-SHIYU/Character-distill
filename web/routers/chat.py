@@ -273,6 +273,22 @@ def _msg_fields(rec: dict | None) -> tuple[Any, str]:
     return rec["id"], rec.get("created_at", "")
 
 
+async def _read_session_before_writes(storage: StorageBase, session_id: str,
+                                      user_id: str) -> dict | None:
+    """在本轮任何写库（`save_session` / `save_message`）之前读一次会话。
+
+    那些写都会把 `updated_at` 刷成现在，读晚了「上次对话时间」就永远算成「刚刚还在聊」
+    （spec J9 / 补充 1）。读失败不致命：时间感知只是增强项，跳过间隔句照常出块（与原先引擎
+    侧的兜底同一口径）—— 留一条 WARNING 才知道「这轮没提间隔」是没到条件还是没读出来。
+    """
+    try:
+        return await storage.get_session_owned(session_id, user_id)
+    except Exception as exc:
+        logger.warning("Time awareness: session read failed (session_id=%s): %r",
+                       session_id, exc, exc_info=True)
+        return None
+
+
 async def _do_chat(
     session_id: str,
     message: str,
@@ -297,15 +313,8 @@ async def _do_chat(
     if not msg:
         raise HTTPException(400, "Message cannot be empty")
 
-    # 「上次对话时间」：在本轮任何写库（save_session / save_message）之前读一次会话取 updated_at
-    # —— 那些写都会把 updated_at 刷成现在，读晚了就永远算成「刚刚还在聊」（spec J9 / 补充 1）。
-    # 读失败不致命：时间感知只是增强项，跳过间隔句照常出块（与原先引擎侧的兜底同一口径）。
-    db_s = None
-    try:
-        db_s = await storage.get_session_owned(session_id, user_id)
-    except Exception as exc:
-        logger.warning("Time awareness: session read failed (session_id=%s): %r",
-                       session_id, exc, exc_info=True)
+    # 「上次对话时间」：写库前读会话（见 `_read_session_before_writes`）
+    db_s = await _read_session_before_writes(storage, session_id, user_id)
     last_activity_at = (db_s or {}).get("updated_at")
 
     if user_role:
@@ -427,15 +436,8 @@ async def _do_chat_stream(
     if not msg:
         raise HTTPException(400, "Message cannot be empty")
 
-    # 「上次对话时间」：在本轮任何写库（save_session / save_message）之前读一次会话取 updated_at
-    # —— 那些写都会把 updated_at 刷成现在，读晚了就永远算成「刚刚还在聊」（spec J9 / 补充 1）。
-    # 读失败不致命：时间感知只是增强项，跳过间隔句照常出块（与原先引擎侧的兜底同一口径）。
-    db_s = None
-    try:
-        db_s = await storage.get_session_owned(session_id, user_id)
-    except Exception as exc:
-        logger.warning("Time awareness: session read failed (session_id=%s): %r",
-                       session_id, exc, exc_info=True)
+    # 「上次对话时间」：写库前读会话（见 `_read_session_before_writes`）
+    db_s = await _read_session_before_writes(storage, session_id, user_id)
     last_activity_at = (db_s or {}).get("updated_at")
 
     if user_role:
