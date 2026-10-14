@@ -189,3 +189,5 @@
 - `tests/perf/card_draft_red_lines.json` 因 `test_u5` 断言改写而重生成（`test_lock_coverage` 存的是判据身份：路径+源码片段+序号）。
 - 台账里另外两个 **非 CI** 的 oneoff 变异脚本（`docs/specs/artifacts/fix_rel_batch_phase_numbering_mutations.py` 的 MG1/MG2、`docs/specs/artifacts/arc_phase_fields_mutations.py` 的 MA20）锚点随 A2 改了 `_phase_list_note` / `batch_relationships` 的签名而重定，为记录完整一并改。
 
+**补充 2 追加（2026-10-14，PR #164 审计发现）：** `web/routers/chat.py` 的 `_do_chat` 与 `_do_chat_stream` 各带一份相同的「写库前读会话取 `updated_at`」代码块（读 + `try/except` + WARNING）。已抽成模块内私有 `_read_session_before_writes(storage, session_id, user_id) -> dict | None`，两条路径都调用它，再从返回值取 `db_s` 与 `updated_at`；行为不变，只消除重复。改在 PR-B 分支（`fix/arc-attitude-time-boundary`），本条记在本文件（PR-A 分支）。受影响测试 `tests/test_message_evidence.py` + `tests/test_time_awareness.py` 重跑 **48 passed**。
+
