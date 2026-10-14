@@ -49,8 +49,9 @@ _MERGE = "    proj.situation_behaviors = own + list(proj.situation_behaviors)\n"
 _SECTIONS = '    ("遇事的做法", lambda c: behavior_lines(c.situation_behaviors)),\n'
 _DUE = "    return prior_user_turns > 0 and prior_user_turns % every == 0\n"
 _COUNT = '        prior = sum(1 for m in self.history if m.get("role") == "user")\n'
-_EXTRA = "        extra = self._build_time_awareness_block() + self._build_behavior_reminder()\n"
-_HIST_CHAT = ('        self._attach_turn_blocks(llm_messages)\n\n'
+_EXTRA = ("        extra = self._build_time_awareness_block(last_activity_at)"
+          " + self._build_behavior_reminder()\n")
+_HIST_CHAT = ('        self._attach_turn_blocks(llm_messages, last_activity_at)\n\n'
               '        self.history.append({"role": "user", "content": user_message})\n\n'
               '        # ── 沉默闸门 ──\n'
               '        silence_reply = self._should_stay_silent(user_message)\n'
@@ -101,7 +102,7 @@ MUTANTS = [
     ("M15 计数 把角色消息也算成回合", _t("test_r5_greeting_and_assistant_turns_do_not_count"),
      [("repl", CHAT, [(_COUNT, "        prior = len(self.history) // 2\n")])], "RED"),
     ("M16 顺序 提醒排在时间感知之前", _t("test_r2_due_turn_appends_time_then_reminder"),
-     [("repl", CHAT, [(_EXTRA, "        extra = self._build_behavior_reminder() + self._build_time_awareness_block()\n")])], "RED"),
+     [("repl", CHAT, [(_EXTRA, "        extra = self._build_behavior_reminder() + self._build_time_awareness_block(last_activity_at)\n")])], "RED"),
     ("M17 泄漏 非流式把带提醒的消息写进历史", _t("test_r7_chat_paths_send_reminder_but_history_keeps_raw_message"),
      [("repl", CHAT, [(_HIST_CHAT, _HIST_CHAT.replace(
          '"content": user_message})\n\n        # ── 沉默', '"content": llm_messages[-1]["content"]})\n\n        # ── 沉默'))])], "RED"),

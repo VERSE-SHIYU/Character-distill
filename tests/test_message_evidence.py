@@ -437,10 +437,22 @@ class _Engine:
 class _RecordingStorage:
     def __init__(self):
         self.saved: list[dict] = []
+        # 会话行的替身，形状照生产的 `get_session_owned` 返回（路由本轮只取 `updated_at` /
+        # `card_id`）。存消息把它刷成「现在」—— 替身照生产行为写，好让「写库前读」可测（spec J9）。
+        self.session = {"id": "s1", "card_id": "c1", "user_role": "", "arc_phase": None,
+                        "avatar_data": "", "user_id": "u1", "created_at": "",
+                        "updated_at": "2026-01-01T00:00:00", "deleted_at": None,
+                        "text_id": None, "character_name": "甲"}
+        self._tick = 0
 
     async def save_message(self, session_id, role, content, rag_context, *a, **kw):
+        self._tick += 1
+        self.session["updated_at"] = f"2026-01-01T00:00:{self._tick:02d}"
         self.saved.append({"role": role, "content": content, "evidence": kw.get("evidence")})
         return {"id": len(self.saved), "role": role, "created_at": ""}
+
+    async def get_session_owned(self, session_id, user_id):
+        return dict(self.session)
 
     async def ping(self):
         """库可达 —— 于是消息当场落库、不留队（本文件断言的是「落库了什么」）。"""

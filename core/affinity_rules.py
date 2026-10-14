@@ -63,11 +63,16 @@ class RelationState:
                    pick("reached_close", is_bool))
 
 
+def is_close(affinity: int) -> bool:
+    """好感是否已到亲近档（下界 `CLOSE_FROM`）。「亲近」的判定只此一处，别处引用它。"""
+    return affinity >= CLOSE_FROM
+
+
 def relational_tier(affinity: int, state: RelationState) -> str:
     """三档关系做法取哪一档（R14）：上一轮冲突 → conflict（优先）；≥73 → close；其余 normal。"""
     if state.last_event in NEGATIVE:
         return "conflict"
-    return "close" if affinity >= CLOSE_FROM else "normal"
+    return "close" if is_close(affinity) else "normal"
 
 
 # ── 第一步：规整事件 ────────────────────────────────────────────────────────────
