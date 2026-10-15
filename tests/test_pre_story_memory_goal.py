@@ -19,6 +19,7 @@ P4 标 0+2、摘录落在阶段 2 → 忽略 0 照常核对：挂阶段 2，不�
 P5 标 0 的做法 → 仍按编号非法撤回（只有经历类认 0）
 P6 标 0 的态度 → 仍按编号非法撤回（只有经历类认 0）
 P7 提示词：维度 E 与 G6 重要事项都写明「故事开始前填 0」的口径
+P8 标 0 之外还带越界号（[0, 9]，共 2 个阶段）→ 越界号照旧 warning，整条仍按故事前进顶层
 """
 
 from __future__ import annotations
@@ -126,3 +127,15 @@ def test_p7_prompt_states_pre_story_policy_in_e_and_g6():
     assert ("故事开始之前就发生的经历（如童年、身世），phase 填 0；"
             "故事里发生的，用维度 L 的阶段编号。") in g6, "维度 E 没写「故事开始前填 0」"
     assert "关键记忆发生在故事开始之前的填 0；" in g6, "G6 重要事项没写「故事开始前填 0」"
+
+
+def test_p8_zero_plus_out_of_range_still_warns_and_lands_at_top_level(caplog):
+    """0 之外还带了越界编号（[0, 9]，共 2 个阶段）：越界号照旧 warning，整条仍按故事前进顶层。"""
+    with caplog.at_level(logging.WARNING, logger="core.card_draft"):
+        card = card_from_draft(_phased(key_memories=[
+            {"memory": _PRE, "occurrences": [{"phase": 0, "quote": _Q1},
+                                              {"phase": 9, "quote": _Q2}]}]), _SRC)
+    assert _PRE in card.key_memories, "0 + 越界号的故事前记忆仍该进顶层"
+    assert _PRE not in _mounted_memories(card), "故事前的记忆不该挂到某个阶段"
+    assert any("阶段编号不合法" in r.getMessage() for r in caplog.records), \
+        "0 之外的越界编号该照旧 warning"
