@@ -208,7 +208,7 @@ class _CaptureLLM:
 def _engine(card=None, arc_phase=1, llm=None):
     eng = ChatEngine(llm=llm or _CaptureLLM(), rag=None, card=card or _card(), card_id="c",
                      storage=None, session_id="", is_new_session=False, arc_phase=arc_phase)
-    eng._build_time_awareness_block = lambda *_a, **_k: "\n\n[时间]"
+    eng._build_interval_note = lambda *_a, **_k: "\n\n[时间]"
     return eng
 
 

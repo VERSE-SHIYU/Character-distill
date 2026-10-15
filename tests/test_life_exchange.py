@@ -18,8 +18,7 @@ def _make_engine(stage: str) -> ChatEngine:
     engine = ChatEngine(llm=llm, rag=rag, card=card, storage=None,
                         session_id="test-session", is_new_session=True)
     engine._stage = stage
-    # Mock time awareness to avoid submit_to_main_loop
-    engine._build_time_awareness_block = MagicMock(return_value="")
+    engine._build_interval_note = MagicMock(return_value="")
     return engine
 
 

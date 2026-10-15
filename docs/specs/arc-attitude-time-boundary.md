@@ -191,3 +191,11 @@
 
 **补充 2 追加（2026-10-14，PR #164 审计发现）：** `web/routers/chat.py` 的 `_do_chat` 与 `_do_chat_stream` 各带一份相同的「写库前读会话取 `updated_at`」代码块（读 + `try/except` + WARNING）。已抽成模块内私有 `_read_session_before_writes(storage, session_id, user_id) -> dict | None`，两条路径都调用它，再从返回值取 `db_s` 与 `updated_at`；行为不变，只消除重复。改在 PR-B 分支（`fix/arc-attitude-time-boundary`），本条记在本文件（PR-A 分支）。受影响测试 `tests/test_message_evidence.py` + `tests/test_time_awareness.py` 重跑 **48 passed**。
 
+### 补充 3（2026-10-15，SG 验收不过与修正）
+
+§B1 的门控设计（上文各处）**已被取代**，以 `docs/specs/time-awareness-fix.md` 为准：
+
+- 实测（SG 2026-10-15，14 轮）一轮都没注入时间块：模型手里既没有现实时间，也丢了「对方问起现实时间时才按这里回答」那句——`should_inject` 把整块都关了；且首轮判定用 `first_turn=not self.history`，而开场白已写进 history，新会话第一轮也判成非首轮（P1/P2 见新 spec）。
+- 现在拆成两件事，位置各随其性质：`reality_line(now)` 只讲现在几点，**每轮都进系统提示**（`_build_all_enhancements`，普通聊天 / 重逢问候 / 群聊都过这条路）；`interval_note(now, last_activity_at)` 只在真隔了 ≥ 600 秒时接在当前用户消息末尾。`should_inject` / `build_block` / `first_turn` 删除，`_build_time_awareness_block` 更名 `_build_interval_note`。
+- 因此 **J8、J10 两行作废**，上文里 `_build_time_awareness_block` 的取名理由（J11 括号里那句）随之作废。J11 已无对应登记：该条目在 PR #164 时就已从 `tests/test_storage_scope_lock.py` 的 `UNSCOPED_ALLOWLIST` 移除，改名后也不会悬空。J9（路由写库前取 `updated_at`）、J12（边界块亲近档门）、J13（`CLOSE_FROM`）不受本改动影响，仍然有效。
+

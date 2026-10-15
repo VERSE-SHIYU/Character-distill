@@ -1,8 +1,8 @@
-"""Tests for UserClock timezone abstraction and _build_time_awareness_block regression.
+"""Tests for UserClock timezone abstraction and the reality-line regression.
 
 A. UserClock pure-function correctness (aware-datetime, tz isolation, fallback)
 B. describe_time_period boundary cases
-C. ChatEngine _build_time_awareness_block — prevents regression to server-timezone
+C. ChatEngine reality line (system prompt) — prevents regression to server-timezone
 """
 
 from datetime import datetime, timezone
@@ -161,11 +161,11 @@ class TestDescribeTimePeriod:
         assert describe_time_period(3) == "深夜"
 
 
-# ── C. Regression: _build_time_awareness_block reads the request timezone ────
+# ── C. Regression: the reality line in the system prompt reads the request timezone ────
 
 
-class TestBuildTimeAwarenessBlock:
-    """引擎自己**不再存**时区（缺陷 96 步骤 4）：`_build_time_awareness_block` 读的是
+class TestRealityLineTimezone:
+    """引擎自己**不再存**时区（缺陷 96 步骤 4）：系统提示里的【现实时间】行读的是
     请求入口设的那个上下文。
 
     两条配一对才咬得住：第一条要求它听上下文的（写死默认时区的实现会红），第二条要求
@@ -184,14 +184,14 @@ class TestBuildTimeAwarenessBlock:
 
     def test_hour_follows_the_request_timezone(self):
         set_current_timezone("Australia/Sydney")
-        block = self._make_engine()._build_time_awareness_block()
+        block = self._make_engine()._build_all_enhancements()
         expected_hour = UserClock.now("Australia/Sydney").hour
         assert f"{expected_hour:02d}:" in block, (
             f"Sydney hour {expected_hour:02d} not found in output:\n{block}"
         )
 
     def test_falls_back_to_default_when_request_timezone_unset(self):
-        block = self._make_engine()._build_time_awareness_block()
+        block = self._make_engine()._build_all_enhancements()
         expected_hour = UserClock.now(DEFAULT_TZ).hour
         assert f"{expected_hour:02d}:" in block, (
             f"{DEFAULT_TZ} hour {expected_hour:02d} not found in output:\n{block}"
