@@ -234,7 +234,9 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ("G6",
         'E. 关键记忆（3-5个）：塑造此人的重要经历，全部写进 key_memories。每条给出：\n'
         '   - memory：一句话讲清这段经历（不带人名地名）。\n'
-        '   - occurrences：这段经历在原文里哪些阶段成立，' + _PHASE_EXCERPT_RULE
+        '   - occurrences：这段经历在原文里哪些阶段成立，'
+        '故事开始之前就发生的经历（如童年、身世），phase 填 0；故事里发生的，用维度 L 的阶段编号。'
+        + _PHASE_EXCERPT_RULE
     ),
     ("G5",
         'F. 人际关系：**只出名单**——站在本角色自己的视角，覆盖前置步骤中枚举的角色，'
@@ -377,7 +379,7 @@ _FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
     ("G5", '- relationships 只出【名单】：每个元素是【对象】，只含 target（对方的标准名）；relation/attitude/note/attitudes 由后续步骤生成，不要在这里写'),
     ("G6", '- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state/anchor/boundary_examples'),
     ("G6", '- situation_behaviors / key_memories 的每个元素是【对象】；occurrences 的每个元素是【对象】，含 phase/quote'),
-    ("G6", '- 有阶段时，occurrences 的 phase 用维度 L 的阶段编号（1 起）；没有阶段时只写一条，phase 填 0'),
+    ("G6", '- 有阶段时，occurrences 的 phase 用维度 L 的阶段编号（1 起）；关键记忆发生在故事开始之前的填 0；没有阶段时只写一条，phase 填 0'),
     ("G4", '- 数字字段（openness/conscientiousness 等）输出整数，不要加引号'),
     (None, '- 所有字段必须按此模板输出，不要添加自定义字段'),
 )
