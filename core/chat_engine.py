@@ -440,7 +440,7 @@ class ChatEngine:
         对话历史以 messages 数组传递（见 _build_llm_messages），
         system prompt 只含角色卡、场景、记忆、增强项，不含逐条历史。
         voice_mode 为 True 时追加语音模式指令，禁止括号描写。
-        `last_activity_at` 见 `_build_time_awareness_block`。"""
+        `last_activity_at` 见 `_build_interval_note`。"""
         system_prompt = self._compose_system_prompt(user_message, voice_mode, include_dynamic=not self.agent_mode)
 
         # 构造 messages 数组：历史（截断）+ 当前句
@@ -481,7 +481,7 @@ class ChatEngine:
 
     def chat_stream(self, user_message: str, voice_mode: bool = False,
                     last_activity_at=None) -> Generator[str, None, None]:
-        """流式对话：逐块产出文本，结束后写入助手回复。`last_activity_at` 见 `_build_time_awareness_block`。"""
+        """流式对话：逐块产出文本，结束后写入助手回复。`last_activity_at` 见 `_build_interval_note`。"""
         self._last_rag_context = ""
 
         system_prompt = self._compose_system_prompt(user_message, voice_mode, include_dynamic=not self.agent_mode)
@@ -531,13 +531,13 @@ class ChatEngine:
                             last_activity_at=None) -> None:
         """把只给这一轮看的块附在当前用户消息末尾（不进 system prompt、不写进历史）。
 
-        顺序：时间感知块 → 做法表重注入（到期才有）。chat 与 chat_stream 共用这一处；
+        顺序：间隔句（隔了一段才有）→ 做法表重注入（到期才有）。chat 与 chat_stream 共用这一处；
         agent 路径拿的是同一个 ``llm_messages``，自然带上。须在当前用户消息写进
         ``self.history`` **之前**调用：重注入按此前的用户回合数判定。
         """
         if not llm_messages or llm_messages[-1]["role"] != "user":
             return
-        extra = self._build_time_awareness_block(last_activity_at) + self._build_behavior_reminder()
+        extra = self._build_interval_note(last_activity_at) + self._build_behavior_reminder()
         if extra:
             llm_messages[-1] = {**llm_messages[-1], "content": llm_messages[-1]["content"] + extra}
 
@@ -1141,11 +1141,16 @@ class ChatEngine:
         boundary = self._build_boundary_block()
         catchphrase = self._build_catchphrase_block()
 
+        # 现实时间：每轮都给的背景事实，放系统提示里（不接在用户消息末尾，免得被每轮复述）
+        reality = time_awareness.reality_line(UserClock.now())
+
         if self._last_in_character < 40:
             # 出戏明显：边界块移至最末端，紧贴生成入口
-            return persona + cognitive + events + relationships + life_exchange + boundary + catchphrase
+            return (persona + reality + cognitive + events + relationships + life_exchange
+                    + boundary + catchphrase)
         else:
-            return persona + boundary + cognitive + events + relationships + life_exchange + catchphrase
+            return (persona + reality + boundary + cognitive + events + relationships
+                    + life_exchange + catchphrase)
 
     def _build_session_record_block(self) -> str:
         """本场记录的注入块（动态区，和好感、情绪同一块）。群聊、空记录都是空串。"""
@@ -1163,15 +1168,14 @@ class ChatEngine:
 
     # ── 时间感知构建 ────────────────────────────────────────────
 
-    def _build_time_awareness_block(self, last_activity_at=None) -> str:
-        """「现实时间 + 距上次对话间隔」的注入块 —— 判定与文案全在 `core.time_awareness`。
+    def _build_interval_note(self, last_activity_at=None) -> str:
+        """「距上次对话隔了多久」—— 判定与文案在 `core.time_awareness.interval_note`。
 
         `last_activity_at` 是**本轮这条用户消息之前**最后一次活动时间，由调用方（路由 / 重逢
-        问候）在本轮写库前取好递进来。引擎不再自己读存储：那读到的 `updated_at` 已被本轮的
-        存消息刷新，永远算成「刚刚还在聊」（spec J9）。
+        问候）在本轮写库前取好递进来（spec J9）。现在几点不在这里：那一行每轮都给，由
+        `_build_all_enhancements` 放进系统提示。
         """
-        return time_awareness.build_block(
-            UserClock.now(), last_activity_at, first_turn=not self.history)
+        return time_awareness.interval_note(UserClock.now(), last_activity_at)
 
     def _compute_initial_affinity(
         self,
@@ -1497,8 +1501,8 @@ class ChatEngine:
             )
             system_prompt += self._build_all_enhancements()
 
-            # Time awareness block — naturally reflects the real interval
-            time_block = self._build_time_awareness_block(updated_at)
+            # 间隔句（重逢必然隔了 ≥ 6 小时）；现在几点已在 _build_all_enhancements 的系统提示里
+            time_block = self._build_interval_note(updated_at)
 
             scene_anchor = (
                 "开口前，先用一个不超过15字的括号动作/状态把自己放进具体场景"
@@ -1513,7 +1517,7 @@ class ChatEngine:
 
             instruction = (
                 f"【重逢】对方离开了一段时间，刚刚重新出现在你面前"
-                "（间隔与时段见上方现实感知）。这次由你先开口。"
+                "（间隔见上方，时段见【现实时间】）。这次由你先开口。"
                 "你此刻的心境、你们关系的远近决定这句话的温度"
                 "——想念、揶揄、嗔怪、或淡淡一句都可以。"
                 "间隔和时间藏在语气里，绝不点明数字或「好久不见」这类套话。"

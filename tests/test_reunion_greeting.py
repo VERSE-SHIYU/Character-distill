@@ -43,8 +43,8 @@ def _make_engine(
                 engine.history.append({"role": "assistant", "content": f"resp_{i}"})
 
     # Mock the time awareness block to avoid submit_to_main_loop issues in tests
-    engine._build_time_awareness_block = MagicMock(
-        return_value="【现实感知】你们已经很久没联系了。"
+    engine._build_interval_note = MagicMock(
+        return_value="你们已经很久没联系了。"
     )
 
     return engine

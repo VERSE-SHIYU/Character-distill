@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
-"""时间感知块（spec `arc-attitude-time-boundary.md` §B1）与边界块亲近档门（§B2）。
+"""时间感知（spec `time-awareness-fix.md`，取代 `arc-attitude-time-boundary.md` §B1 的门控）
+与边界块亲近档门（§B2）。
 
-B1：注入判定与文案全在纯模块 `core.time_awareness`；引擎只递事实（现在 / 上次对话时间 /
-是不是首轮），不再自己读存储。B2：亲近档及以上不注入边界块，「亲近」只有 `is_close` 一处定义。
+时间：现实时间行**每轮都在系统提示里**；「隔了多久」只在隔了 ≥ 10 分钟时接在用户消息末尾。
+文案与判定全在纯模块 `core.time_awareness`；引擎只递事实，不读存储。
+替身照生产：首轮 history 里已有开场白（SG 验收 10-15 抓到的坑就是替身首轮 history 为空）。
+B2：亲近档及以上不注入边界块，「亲近」只有 `is_close` 一处定义。
 """
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ from core.affinity_rules import CLOSE_FROM
 from core.chat_engine import ChatEngine
 from core.clock import UserClock, set_current_timezone
 from core.schema import CharacterCard
-from core.time_awareness import INJECT_GAP_SECONDS, build_block, should_inject
+from core.time_awareness import INTERVAL_GAP_SECONDS, interval_note, reality_line
 
 
 class _StubLLM:
@@ -49,95 +52,107 @@ def _utc():
     set_current_timezone("")
 
 
-# ── B1 判定：什么时候注入 ────────────────────────────────────────────────────
+# ── 纯函数：reality_line / interval_note ─────────────────────────────────────
+
+_GREETING = [{"role": "assistant", "content": "喂，云绮，你最好给我个解释！"}]   # 生产首轮已有开场白
+_REALITY = "【现实时间】"
+_STORY = "对话里已写明剧情时间（如「第二天早上」）时以剧情为准；对方问起现实时间时才按这里回答。"
 
 
-class TestShouldInject:
+class TestRealityLine:
     NOW = datetime(2026, 10, 14, 22, 30, tzinfo=timezone.utc)
 
-    def test_first_turn_injects(self):
-        assert should_inject(self.NOW, None, first_turn=True) is True
+    def test_states_period_and_clock(self):
+        assert "【现实时间】现在是夜晚（22:30）。" in reality_line(self.NOW)
 
-    def test_first_turn_injects_even_with_recent_activity(self):
-        recent = self.NOW - timedelta(seconds=5)
-        assert should_inject(self.NOW, recent, first_turn=True) is True
+    def test_has_the_story_time_precedence_sentence_whole(self):
+        assert _STORY in reality_line(self.NOW)
 
-    def test_small_gap_same_period_does_not_inject(self):
-        last = self.NOW - timedelta(seconds=60)
-        assert should_inject(self.NOW, last, first_turn=False) is False
+    def test_has_no_behavior_example(self):
+        line = reality_line(self.NOW)
+        assert "怎么还不睡" not in line and "自然融入" not in line
 
-    def test_gap_of_the_threshold_injects(self):
-        last = self.NOW - timedelta(seconds=INJECT_GAP_SECONDS)
-        assert should_inject(self.NOW, last, first_turn=False) is True
 
-    def test_period_change_injects_even_with_small_gap(self):
+class TestIntervalNote:
+    NOW = datetime(2026, 10, 14, 22, 30, tzinfo=timezone.utc)
+
+    def test_one_minute_gap_says_nothing(self):
+        assert interval_note(self.NOW, self.NOW - timedelta(seconds=60)) == ""
+
+    def test_just_below_the_threshold_says_nothing(self):
+        assert interval_note(self.NOW, self.NOW - timedelta(seconds=INTERVAL_GAP_SECONDS - 1)) == ""
+
+    def test_at_the_threshold_speaks(self):
+        assert "今天早些时候你们聊过。" in interval_note(
+            self.NOW, self.NOW - timedelta(seconds=INTERVAL_GAP_SECONDS))
+
+    def test_period_change_alone_does_not_speak(self):
         now = datetime(2026, 10, 14, 23, 2, tzinfo=timezone.utc)
-        last = datetime(2026, 10, 14, 22, 58, tzinfo=timezone.utc)   # 夜晚 → 深夜
-        assert should_inject(now, last, first_turn=False) is True
+        last = datetime(2026, 10, 14, 22, 58, tzinfo=timezone.utc)   # 夜晚 → 深夜，只隔 4 分钟
+        assert interval_note(now, last) == ""
 
-    def test_missing_activity_injects(self):
-        assert should_inject(self.NOW, None, first_turn=False) is True
+    def test_yesterday(self):
+        assert "你们昨天聊过。" in interval_note(self.NOW, self.NOW - timedelta(days=1))
+
+    def test_missing_activity_says_nothing(self):
+        assert interval_note(self.NOW, None) == ""
 
     def test_isoformat_string_is_accepted(self):
-        last = (self.NOW - timedelta(seconds=60)).isoformat()
-        assert should_inject(self.NOW, last, first_turn=False) is False
+        last = (self.NOW - timedelta(hours=12)).isoformat()
+        assert "今天早些时候你们聊过。" in interval_note(self.NOW, last)
+
+    def test_never_says_just_now(self):
+        assert "刚刚还在聊" not in interval_note(self.NOW, self.NOW - timedelta(seconds=5))
 
 
-# ── B1 渲染：注入块写什么 ────────────────────────────────────────────────────
+# ── 接线：系统提示每轮都有现实时间；用户消息末尾只在隔了一段才有间隔句 ──────
 
 
-class TestBuildBlock:
-    NOW = datetime(2026, 10, 14, 22, 30, tzinfo=timezone.utc)
-
-    def test_block_states_period_and_clock(self):
-        block = build_block(self.NOW, None, first_turn=True)
-        assert "【现实时间】现在是夜晚（22:30）。" in block
-
-    def test_block_states_the_interval_after_a_long_gap(self):
-        block = build_block(self.NOW, self.NOW - timedelta(hours=12), first_turn=False)
-        assert "今天早些时候你们聊过。" in block
-
-    def test_block_has_the_story_time_precedence_line(self):
-        block = build_block(self.NOW, self.NOW - timedelta(hours=12), first_turn=False)
-        assert "对话里已写明剧情时间（如「第二天早上」）时以剧情为准；" in block
-
-    def test_block_has_no_behavior_example(self):
-        block = build_block(self.NOW, self.NOW - timedelta(hours=12), first_turn=False)
-        assert "怎么还不睡" not in block and "自然融入" not in block
-
-    def test_first_turn_block_omits_the_interval_line(self):
-        block = build_block(self.NOW, self.NOW - timedelta(seconds=5), first_turn=True)
-        assert "刚刚还在聊" not in block
-
-    def test_empty_when_not_injected(self):
-        block = build_block(self.NOW, self.NOW - timedelta(seconds=60), first_turn=False)
-        assert block == ""
-
-
-# ── B1 接线：引擎两轮，近间隔同时段第二轮不注入 ─────────────────────────────
+@pytest.fixture
+def _frozen_now(monkeypatch):
+    now = datetime(2026, 10, 14, 22, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(UserClock, "now", staticmethod(lambda tz=None: now))
+    return now
 
 
 class TestEngineWiring:
-    def test_second_turn_one_minute_later_same_period_has_no_block(self, monkeypatch):
-        now = datetime(2026, 10, 14, 22, 30, tzinfo=timezone.utc)
-        monkeypatch.setattr(UserClock, "now", staticmethod(lambda tz=None: now))
+    def test_system_prompt_has_reality_line_one_minute_later(self, _frozen_now):
         eng = _engine()
-        history = [{"role": "user", "content": "在吗"}, {"role": "assistant", "content": "在"}]
-        assert _attached(eng, history, now - timedelta(seconds=60)) == "现在"
+        eng.history = _GREETING + [{"role": "user", "content": "在吗"},
+                                   {"role": "assistant", "content": "在"}]
+        sp = eng._compose_system_prompt("现在几点了")
+        assert "【现实时间】现在是夜晚（22:30）。" in sp and _STORY in sp
 
-    def test_twelve_hours_ago_injects_the_block(self, monkeypatch):
-        now = datetime(2026, 10, 14, 22, 30, tzinfo=timezone.utc)
-        monkeypatch.setattr(UserClock, "now", staticmethod(lambda tz=None: now))
+    def test_first_turn_with_greeting_in_history_has_reality_line(self, _frozen_now):
+        """新会话第一轮：history 里只有开场白，现实时间照样在系统提示里。"""
         eng = _engine()
-        history = [{"role": "user", "content": "在吗"}, {"role": "assistant", "content": "在"}]
-        assert _attached(eng, history, now - timedelta(hours=12)).startswith("现在\n\n【现实时间】")
+        eng.history = list(_GREETING)
+        assert _REALITY in eng._compose_system_prompt("现在几点了")
 
-    def test_first_turn_injects_without_touching_storage(self, monkeypatch):
-        """首轮注入：`last_activity_at` 为空也出块（引擎不再自己读存储）。"""
-        now = datetime(2026, 10, 14, 22, 30, tzinfo=timezone.utc)
-        monkeypatch.setattr(UserClock, "now", staticmethod(lambda tz=None: now))
+    def test_user_message_tail_never_carries_the_reality_line(self, _frozen_now):
         eng = _engine()
-        assert _attached(eng, [], None).startswith("现在\n\n【现实时间】")
+        tail = _attached(eng, _GREETING + [{"role": "user", "content": "在吗"},
+                                           {"role": "assistant", "content": "在"}],
+                         _frozen_now - timedelta(hours=12))
+        assert _REALITY not in tail
+
+    def test_one_minute_later_tail_is_bare(self, _frozen_now):
+        eng = _engine()
+        assert _attached(eng, list(_GREETING), _frozen_now - timedelta(seconds=30)) == "现在"
+
+    def test_twelve_hours_later_tail_has_the_interval(self, _frozen_now):
+        eng = _engine()
+        tail = _attached(eng, _GREETING + [{"role": "user", "content": "在吗"},
+                                           {"role": "assistant", "content": "在"}],
+                         _frozen_now - timedelta(hours=12))
+        assert tail == "现在\n\n今天早些时候你们聊过。\n"
+
+    def test_no_behavior_example_anywhere(self, _frozen_now):
+        eng = _engine()
+        eng.history = list(_GREETING)
+        sp = eng._compose_system_prompt("在吗")
+        tail = _attached(eng, list(_GREETING), _frozen_now - timedelta(hours=12))
+        assert "怎么还不睡" not in sp + tail
 
 
 # ── B1 接线：路由在本轮写库前读会话取 updated_at（spec J9 / 补充 1）────────────
