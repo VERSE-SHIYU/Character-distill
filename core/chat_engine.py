@@ -31,7 +31,7 @@ from core.affinity_rules import MAX_DROP, is_close, relational_tier
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext
 from core import session_record as record_protocol
 from core import history_digest as digest_protocol
-from core import time_awareness
+from core import initial_affinity, time_awareness
 from core.session_record import SessionRecord
 
 logger = logging.getLogger(__name__)
@@ -1182,88 +1182,8 @@ class ChatEngine:
         card: CharacterCard,
         user_role: str,
     ) -> dict[str, Any]:
-        """依据 IOS₁₁ (Scientific Reports 2024) + Trust Revisited (JSPR 2025) 计算初始值。"""
-        user = (user_role or "").strip()
-
-        # 无身份：陌生人（IOS₁₁ 1-2级）
-        if not user:
-            return {
-                "affinity": 15, "trust": 10, "mood": "警觉", "guard": 85,
-                "inner_voice": "谁？不认识。先看看什么情况。",
-                "mood_emoji": "🫥",
-            }
-
-        # 遍历角色卡人际关系列表
-        for rel in (card.relationships or []):
-            target = (rel.target or "").strip()
-            if not target:
-                continue
-            if target != user and not (
-                len(target) >= 2 and len(user) >= 2
-                and (target in user or user in target)
-            ):
-                continue
-            relation = (rel.relation or "").lower()
-            attitude = (rel.attitude or "").lower()
-
-            # 亲密关系（IOS₁₁ 9-10级，Bogardus 1级）
-            _close = ["朋友", "兄弟", "姐妹", "挚友", "搭档", "队友",
-                       "恋人", "情侣", "夫妻", "家人", "亲人",
-                       "父子", "父女", "母子", "母女"]
-            if any(w in relation for w in _close):
-                has_conflict = any(w in attitude for w in ["矛盾", "复杂", "爱恨", "疏远", "冷战"])
-                if has_conflict:
-                    return {
-                        "affinity": 68, "trust": 48, "mood": "紧张", "guard": 62,
-                        "inner_voice": f"又见到{target}了...心里说不上来什么感觉，明明那么熟悉，却好像隔了什么。",
-                        "mood_emoji": "😔",
-                    }
-                return {
-                    "affinity": 82, "trust": 72, "mood": "开心", "guard": 25,
-                    "inner_voice": f"{target}来了，看到{target}心情就会好起来。",
-                    "mood_emoji": "😊",
-                }
-
-            # 对立关系（IOS₁₁ 1级，Bogardus 7级）
-            _hostile = ["敌人", "仇人", "对手", "情敌", "死敌"]
-            if any(w in relation for w in _hostile):
-                return {
-                    "affinity": 10, "trust": 5, "mood": "敌意", "guard": 95,
-                    "inner_voice": f"{target}...看到这个名字就来气。",
-                    "mood_emoji": "😤",
-                }
-
-            # 普通相识（IOS₁₁ 5-6级，Bogardus 3-4级）
-            _acquaintance = ["同学", "同事", "邻居", "认识", "普通", "路人", "同行"]
-            if any(w in relation for w in _acquaintance):
-                return {
-                    "affinity": 50, "trust": 35, "mood": "平静", "guard": 58,
-                    "inner_voice": f"是{target}啊，还行吧，不算陌生也不算多熟。",
-                    "mood_emoji": "🙂",
-                }
-
-            # 兜底
-            return {
-                "affinity": 40, "trust": 28, "mood": "平静", "guard": 60,
-                "inner_voice": f"嗯，{target}来了，好好相处吧。",
-                "mood_emoji": "🙂",
-            }
-
-        # 未匹配关系 → 按 user_role 语义微调
-        _fan_words = ["粉丝", "歌迷", "影迷", "书迷"]
-        if any(w in user for w in _fan_words):
-            return {
-                "affinity": 38, "trust": 15, "mood": "平静", "guard": 68,
-                "inner_voice": f"又一个{user}...客气点就好，保持距离。",
-                "mood_emoji": "🙂",
-            }
-
-        # 完全陌生人（IOS₁₁ 1-2级，Bogardus 6-7级）
-        return {
-            "affinity": 15, "trust": 10, "mood": "警觉", "guard": 85,
-            "inner_voice": "谁？不认识。先看看什么情况。",
-            "mood_emoji": "🫥",
-        }
+        """新会话的初始好感 —— 判定与分档全在 `core.initial_affinity`。"""
+        return initial_affinity.initial_state(card.relationships, user_role)
 
     def get_affinity(self) -> dict[str, Any]:
         return self._affinity_service.get()

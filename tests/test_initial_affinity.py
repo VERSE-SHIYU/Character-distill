@@ -64,6 +64,14 @@ class TestComputeInitialAffinity:
         assert affinity["stage"] != "陌生", affinity
         assert affinity["mood"] != "警觉", affinity
 
+    def test_romance_relations_land_in_the_close_tier(self):
+        """言情卡的关系写法「青梅竹马 / 心上人」「爱人」走亲密档（82），不落兜底 40（SG 验收 2026-10-15）。"""
+        for relation in ("青梅竹马 / 心上人", "心上人", "青梅竹马", "爱人"):
+            card = _make_card(Relationship(target="云绮", relation=relation, attitude="死心塌地"))
+            engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="云绮",
+                                session_id="t", is_new_session=True, storage=None)
+            assert engine.get_affinity()["affinity"] == 82, relation
+
     def test_substring_match(self):
         """target is a substring of user_role → still matches close relationship."""
         card = _make_card(CLOSE_REL)
