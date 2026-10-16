@@ -241,33 +241,26 @@ def _valid_number_rows(items, count: int, kind: str, *, layer: str = "state") ->
 
     `count == 0`（无阶段的卡）不做检查、不 warning。做法、记忆、关系态度共用这一份。
 
-    ``layer == "experience"``（经历类）时 0 是「故事开始前」：只标了 0（或只标了 0 与越界号）
-    的记为 ``pre_story``（合法编号给空，`verify` 走整条撤回那一支、不做位置核对），打一行 info
-    便于人工翻看误标；0 之外的越界号照旧 warning；0 与阶段号并存时忽略 0、其余编号照常核对
-    （模型给了故事内阶段就有位置证据可用）。
+    ``layer == "experience"``（经历类）时 0 是「故事开始前」，三种情形：只标了 0（或 0 与越界号）
+    → 记 ``pre_story``，合法编号给空（`verify` 走整条撤回那一支、不做位置核对）并打一行 info 便于
+    人工翻看误标；0 与阶段号并存 → 忽略 0、其余编号照常核对（模型给了故事内阶段就有位置证据可用）；
+    0 之外的越界号照旧 warning。
     """
     valid_rows: list[list[int]] = []
     pre_story: list[int] = []
     for i, item in enumerate(items):
         nums = [occ.phase for occ in item.occurrences]
+        pre = (layer == "experience" and count and 0 in nums
+               and not any(1 <= p <= count for p in nums))  # 只标了 0（或 0 + 越界号）→ 故事开始前
+        if layer == "experience" and count:
+            nums = [p for p in nums if p]                   # 经历类的 0 不算坏编号
         valid = sorted({p for p in nums if 1 <= p <= count})
-        pre = bool(layer == "experience" and count and 0 in nums and not valid)
-        if layer == "experience" and count and 0 in nums:
-            rest = [p for p in nums if p]          # 忽略 0，其余编号照常核对
-            if not rest:                           # 只标了 0 → 故事开始前，无编号可 warning
-                pre_story.append(i)
-                valid_rows.append([])
-                logger.info("[card_draft] 故事开始前：%s", _row_label(item))
-                continue
-            nums = rest
-        if count and (len(valid) != len(set(nums)) or not valid):
+        if count and (len(valid) != len(set(nums)) or (not valid and not pre)):
             logger.warning("[card_draft] %s的阶段编号不合法（共 %d 个阶段）%s：%s",
                            kind, count, _row_label(item), nums)
-        if pre:                                    # 只标了 0 + 越界号：warning 后仍按故事前处置
+        if pre:
             pre_story.append(i)
-            valid_rows.append([])
             logger.info("[card_draft] 故事开始前：%s", _row_label(item))
-            continue
         valid_rows.append(valid)
     return ValidRows(valid_rows, pre_story)
 

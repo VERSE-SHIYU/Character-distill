@@ -11,6 +11,7 @@
 |---|---|
 | E3：经历类（关键记忆等）标在「故事开始前」的条目，不再被当成编号非法整条丢掉 | E1：底色字段被挪出阶段 1（证据不足，先攒数据） |
 | E2：以后「等你明儿清醒了再说」这类带条件的推托，不再记进「答应的事」 | E2：已经记下的旧承诺不会自动过期（方案 2 的已知代价） |
+| | E3：模型把故事内经历「只标 0」时的提前可见（残余风险，见 PR-E3「不能破的现有原则」） |
 
 ## 设计原则
 
@@ -71,6 +72,19 @@
 | `verify` 改了吗 | 没有（它「不分类别」，docstring `phase_anchoring.py:150-170`） |
 | 以后新增一个经历类字段要改几处 | 0 处：登记表标 `experience`，走通用循环即生效 |
 
+### 不能破的现有原则（逐条核对，PR 描述里贴结果）
+
+| 原则 | 出处 | 本 PR 怎么守 |
+|---|---|---|
+| 永不泄露后续剧情 | `card_draft.py:248` `experience_fallback` | 只有「只标 0」进顶层；0 与阶段号并存时忽略 0，结果同今天 |
+| 分发只此一处 | `card_draft.py:269` `dispatch` docstring | 「故事前 → 顶层」只在 `dispatch` |
+| `verify` 不分类别 | `phase_anchoring.py:150-170` | 不改 `verify` |
+| 共用摘录规则锁 S9 | `distiller.py:183-186` | 不改 `_PHASE_EXCERPT_RULE` |
+| 无阶段的卡 0 合法、进顶层 | `card_draft.py:231-234` | `count == 0` 分支不动 |
+| 做法、态度的 0 撤回 | `tests/test_card_draft.py:107-113`（`test_u4` 含 `[0]`） | 原测试不改、照过 |
+
+已知残余风险（方案 1 自带，不在本 PR 解决）：模型把故事内的经历**只标 0**，会在阶段 1 可见。靠提示词限定「童年、身世」+ 上面那行 info 日志在下次蒸卡时人工核查。
+
 ## PR-E2：带条件的推托不记成承诺
 
 ### 目标检查
@@ -113,9 +127,10 @@ Output: {"record_ops": [{"col": "requests", "text": "对方请老陈今晚陪他
 | 行为 | 守它的测试 | 让它变红的变异 | 触发状态 |
 |---|---|---|---|
 | 经历类 0 → 顶层 | 只标 0 的记忆在顶层 | 经历类也撤回 0 | 记忆标 0 |
-| 0 与阶段号并存 → 忽略 0、其余照常核对 | 标 0+2、摘录落在阶段 2 的记忆挂阶段 2、不在顶层 | 并存时当成只标 0 整条撤回 | 记忆标 0 和 2 |
+| 0 与阶段号并存 → 忽略 0、照常核对 | 标 0+2（摘录在阶段 2）的记忆挂阶段 2、不在顶层 | 并存时也进顶层 | 记忆标 0 和 2 |
+| 只标 0 有日志 | 有「故事开始前」info 行 | 删掉这行日志 | 记忆只标 0 |
 | 非经历类 0 仍撤回 | 标 0 的做法、态度被撤回 | 所有类别都认 0 | 做法标 0 |
-| 只标 0 的故事前条目不做位置核对、直接进顶层 | 只标 0 的记忆在顶层、无「改挂」日志 | 只标 0 的经历也走 `verify` 兜底挂最后阶段 | 记忆标 0 |
+| 只标 0 不做位置核对 | 只标 0、摘录落在阶段 3 的记忆仍在顶层，无「改挂」日志 | 故事前条目照常走 `verify` | 记忆只标 0 |
 | 经历类 0 不 warning | 无「阶段编号不合法」 | 照旧 warning | 记忆标 0 |
 | 提示词 E 维度含新句 | 整句断言 | 删句中任一词 | 渲染 G6 提示 |
 | promises 定义含新句 | 整句断言 | 删句中任一词 | 渲染抽取提示 |
@@ -140,17 +155,12 @@ Output: {"record_ops": [{"col": "requests", "text": "对方请老陈今晚陪他
 
 **S0 判断清单核对。** 基线 `d07bfff0`，上表 J1–J8 逐条打开代码读过、行号与原文全部一致，无一条对不上。
 
-**对账表两处修正（原表两行与「改法」「目标检查」自相矛盾，以后者为准，已改入本表）。**
-
-- 原第 2 行写「0 与阶段号并存 → 顶层」。这与 §改法第 1 条第 2 点「0 与 1..n 并存：忽略 0，其余编号照常走位置核对」及目标检查第 3 条「挂阶段 2，**不进顶层**（不新增泄露面）」直接冲突。按改法/目标检查实现，本表第 2 行改为「忽略 0、其余照常核对」，变异改为「并存时当成只标 0 整条撤回」。
-- 原第 4 行写「标 0+2、摘录落在阶段 3 的记忆仍在顶层」——同上一处冲突，且「不做位置核对」只适用于**只标 0** 的条目（并存时其余编号照常核对）。第 4 行改为「只标 0 的故事前条目不做位置核对、直接进顶层」，标 0+2 的触发归第 2 行。
-
 **实现落点。**
 
 - `core/card_draft.py`：`_valid_number_rows` 增加 `layer` 参数，返回 `ValidRows(valid, pre_story)`（认 0 只在此一处）；`dispatch` 增加 `pre_story` 参数（与 `unlocated` 并列），经历类故事前 → 最终阶段置全覆盖 → 顶层；记忆与通用字段循环两个调用点只传 `layer`、转交 `pre_story`；做法、态度只取 `.valid`；两处过时 docstring（`:50`、`:80`）已改。
 - `core/distiller.py`：维度 E 加一句、G6 重要事项 `:380` 改写；`_PHASE_EXCERPT_RULE` 未动（S9 片段仍恰 1 次）。
-- 目标检查：新增 `tests/test_pre_story_memory_goal.py`（P1–P7，另加 P4b 覆盖「并存时仍走位置核对」）。
+- 目标检查：新增 `tests/test_pre_story_memory_goal.py`（P1–P8；P4b 覆盖「并存时仍走位置核对」，P8 覆盖「[0, 9] 进顶层且对 9 照旧 warning」）。
 
-**未预跑变异**（按 §测试）。但逐条核对了变异锚点在新源码里仍原样命中、各恰一处：`tests/perf/card_draft_mutations.py` 的 M5/M6/M7/M8、M1/M2/M3/M9；`docs/specs/artifacts/arc_phase_unlocated_mutations.py` 里 `dispatch` 的 `unlocated` 块。故本 PR 无需同步任何锚点。
+**未预跑变异**（按 §测试）。但逐条核对了变异锚点在新源码里仍原样命中、各恰一处：`tests/perf/card_draft_mutations.py` 的 M5/M6/M8、M9、M1/M2/M3；`docs/specs/artifacts/arc_phase_unlocated_mutations.py` 里 `dispatch` 的 `unlocated` 块。M7 锚的是 warning 条件行，本轮把它改写成单一路径（`or not valid` → `or (not valid and not pre)`）碰到了该行，已按 §测试「改动若碰到那行，同步锚点」把锚点原文同步成新条件行。
 
-**受影响测试原始输出**：`tests/test_card_draft.py`、`tests/test_phase_anchoring.py`、`tests/test_phase_tagged_goal.py`、`tests/test_arc_phase_unlocated.py`、`tests/test_arc_phase_fields_unit.py`、`tests/test_arc_phase_select.py`、两张锁文件、`tests/test_card_arc_behaviors.py`、`tests/test_lock_coverage.py` 合计 **310 passed**；`tests/test_pre_story_memory_goal.py` **9 passed**。
+**受影响测试原始输出**：`tests/test_card_draft.py`、`tests/test_phase_anchoring.py`、`tests/test_phase_tagged_goal.py`、`tests/test_arc_phase_unlocated.py`、`tests/test_arc_phase_fields_unit.py`、`tests/test_arc_phase_select.py`、两张锁文件、`tests/test_card_arc_behaviors.py`、`tests/test_lock_coverage.py` 合计 **310 passed**；`tests/test_pre_story_memory_goal.py` **10 passed**。

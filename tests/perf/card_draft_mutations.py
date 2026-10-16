@@ -85,8 +85,8 @@ MUTATIONS = [
     # 撞到 [119, 120]
     ('M7  warning 条件漏掉「无阶段的卡不校验」：0 阶段卡也给每条做法打 warning 并撤回',
      TARGET, [("repl", DRAFT, [
-         ('        if count and (len(valid) != len(set(nums)) or not valid):',
-          '        if (len(valid) != len(set(nums)) or not valid):'),
+         ('        if count and (len(valid) != len(set(nums)) or (not valid and not pre)):',
+          '        if (len(valid) != len(set(nums)) or (not valid and not pre)):'),
      ])], "RED"),
     # 撞到 [104, 112]
     ('M8  越界编号被夹到最后一个阶段，而不是撤回',
