@@ -48,6 +48,7 @@ _SAVE_CALL = (
     "            result = await text_manager.save_distilled_card(\n"
     "                req.text_id, card, user_id,\n"
     "                embedding_key=emb.key, embedding_region=emb.region,\n"
+    "                draft=data, character=char_name,\n"
     "            )\n"
 )
 _NOT_SEGS = ("    if not segs or not all(s in source_norm for s in segs):\n"

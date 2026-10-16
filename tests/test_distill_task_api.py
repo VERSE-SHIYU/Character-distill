@@ -306,7 +306,8 @@ def _run_to_card(monkeypatch, store, distiller, *, task_id="tCard", user_id="usr
 
     class _TM:
         async def save_distilled_card(self, text_id, card, user_id, *,
-                                      embedding_key="", embedding_region=""):
+                                      embedding_key="", embedding_region="",
+                                      draft, character):
             saved.append(card)
             return {"card_id": "card_x"}
 

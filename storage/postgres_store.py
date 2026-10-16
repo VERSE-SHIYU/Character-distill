@@ -3810,6 +3810,29 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Load history digest failed: {exc}")
             raise StoreError("load_history_digest_unscoped", exc) from exc
 
+    async def save_card_draft(self, card_id: str, draft_json: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cards SET distill_draft = $1 WHERE id = $2",
+                    draft_json, card_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Save card draft failed: {exc}")
+            raise StoreError("save_card_draft", exc) from exc
+
+    async def load_card_draft_owned(self, card_id: str, user_id: str) -> str:
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    "SELECT distill_draft FROM cards WHERE id = $1 AND user_id = $2",
+                    card_id, user_id,
+                )
+            return (row[0] or "") if row else ""
+        except Exception as exc:
+            print(f"[PostgresStore] Load card draft failed: {exc}")
+            raise StoreError("load_card_draft_owned", exc) from exc
+
     async def load_affinity_state_unscoped(self, session_id: str) -> tuple[str, bool]:
         try:
             async with await self._connect() as conn:

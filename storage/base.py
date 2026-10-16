@@ -814,6 +814,21 @@ class StorageBase(ABC):
         a logged-in request must not call this."""
 
     @abstractmethod
+    async def save_card_draft(self, card_id: str, draft_json: str) -> None:
+        """Persist a card's distillation draft JSON (`cards.distill_draft`).
+
+        The draft is the model's pre-card output, kept so a later card-rule change can re-run
+        `card_from_draft` without re-distilling. Written only by
+        `TextManager.save_distilled_card`; read methods never project this column."""
+
+    @abstractmethod
+    async def load_card_draft_owned(self, card_id: str, user_id: str) -> str:
+        """Return the card's distillation-draft JSON ("" when never saved), owner-filtered.
+
+        Owner filter in SQL (`cards.user_id`). The second-stage rebuild is an owner endpoint,
+        so no `*_unscoped` escape hatch is needed."""
+
+    @abstractmethod
     async def save_group_session_record(self, group_id: str, card_id: str, record_json: str) -> None:
         """Upsert one group member's record JSON (`group_session_records`, keyed by (group, card)).
 

@@ -22,6 +22,7 @@ from core.distiller import Distiller
 from core.length_budget import check_upload
 from core.message_outbox import MessageOutbox
 from core.moderation.card_guard import GuardVerdict, guard_card_obj
+from core.nonfatal import nonfatal
 from core.schema import CharacterCard
 from core.text_failure import TEXT_FAILURE_MESSAGES as _MSG
 from core.utils import try_record_usage
@@ -573,10 +574,15 @@ class TextManager:
     async def save_distilled_card(
         self, text_id: str, card: CharacterCard, user_id: str,
         embedding_key: str = "", embedding_region: str = "",
+        *, draft: dict, character: str,
     ) -> dict[str, Any]:
         """Persist a freshly distilled card and create its chat session.
 
         user_id 必需：读取原文走属主过滤，缺失即 TypeError 而不是静默读到他人文本。
+
+        `draft` / `character` 必填：草稿是本次转卡用的模型产出、`character` 是蒸馏时的角色名，
+        随卡一并存下（E7），供改了转卡规则后免重蒸地重新出卡。只在这里写，产卡通道把入参交
+        下来即可 —— 将来再加一条通道，参数必填逼着它交出草稿。
         """
         # Prompt-injection field guard: neutralize flagged leaves on the card
         # *before* persist, so no injection text ever lands in stored card_json.
@@ -585,6 +591,14 @@ class TextManager:
         result_card = await self._storage.save_card(card_id, text_id, card.name, card.model_dump_json(), user_id)
         # save_card does upsert by text_id+name — on re-distill it returns the existing ID
         actual_card_id = result_card.get("id") or card_id
+
+        # 存草稿（审核前那份 —— 重转时重新过审核）：随卡 upsert，重蒸覆盖同一行。写失败只丢
+        # 「以后免费重转」的机会、不连累落卡（卡已存好），故按 nonfatal 上报而不抛出。
+        async with nonfatal("card_draft", "save card distill draft"):
+            await self._storage.save_card_draft(
+                actual_card_id,
+                json.dumps({"character": character, "draft": draft}, ensure_ascii=False),
+            )
 
         if verdict.error:
             await self._flag_review(

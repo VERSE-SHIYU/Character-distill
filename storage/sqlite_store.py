@@ -170,6 +170,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "105_history_digest.sql",
     # 106：PG 041 新增列的孪生，同上。
     "106_usage_cache_tokens.sql",
+    # 107：PG 042 新增列的孪生，同上。
+    "107_card_distill_draft.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -4548,6 +4550,31 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Load history digest failed: {exc}")
             raise StoreError("load_history_digest_unscoped", exc) from exc
+
+    async def save_card_draft(self, card_id: str, draft_json: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cards SET distill_draft = ? WHERE id = ?",
+                    (draft_json, card_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save card draft failed: {exc}")
+            raise StoreError("save_card_draft", exc) from exc
+
+    async def load_card_draft_owned(self, card_id: str, user_id: str) -> str:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT distill_draft FROM cards WHERE id = ? AND user_id = ?",
+                    (card_id, user_id),
+                )
+                row = await cursor.fetchone()
+            return (row[0] or "") if row else ""
+        except Exception as exc:
+            print(f"[SQLiteStore] Load card draft failed: {exc}")
+            raise StoreError("load_card_draft_owned", exc) from exc
 
     async def load_session_record_unscoped(self, session_id: str) -> str:
         try:

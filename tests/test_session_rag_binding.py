@@ -511,6 +511,9 @@ class _Store:
     async def save_card(self, card_id, text_id, name, card_json, user_id):
         return {"id": "c1"}
 
+    async def save_card_draft(self, *_a, **_kw):
+        return None
+
 
 def _tm(store, sessions, indexing) -> TextManager:
     tm = TextManager(lambda: store, None, _LLM(), sessions,
@@ -570,7 +573,8 @@ def test_r3_save_distilled_card_hands_the_card_its_rag():
     tm = _tm(store, sessions, indexing)
 
     out = asyncio.run(tm.save_distilled_card("t1", CharacterCard(name="魏无羡"), "u1",
-                                             embedding_key=KEY, embedding_region=REGION))
+                                             embedding_key=KEY, embedding_region=REGION,
+                                             draft={}, character="魏无羡"))
 
     assert _engine_rag(sessions, out["session_id"]) == ("rag", "t1", "c1")
 

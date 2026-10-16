@@ -353,6 +353,9 @@ class _Store:
     async def save_session(self, *_a, **_kw):
         return None
 
+    async def save_card_draft(self, *_a, **_kw):
+        return None
+
 
 def _tm(idx: _Idx, store: _Store) -> TextManager:
     tm = TextManager(lambda: store, None, _LLM(), {},
@@ -373,7 +376,8 @@ def _tm(idx: _Idx, store: _Store) -> TextManager:
 
 def _save(tm: TextManager, card: CharacterCard) -> None:
     asyncio.run(tm.save_distilled_card(
-        "t1", card, "u1", embedding_key="k", embedding_region="cn"))
+        "t1", card, "u1", embedding_key="k", embedding_region="cn",
+        draft={}, character="魏无羡"))
 
 
 def test_u15_card_with_positions_schedules_need_positions_and_reposition():
