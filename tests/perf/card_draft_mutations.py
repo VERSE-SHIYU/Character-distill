@@ -279,7 +279,8 @@ MUTATIONS = [
      TARGET, [("repl", ROUTE, [
          ('            result = await text_manager.save_distilled_card(\n                req.text_id, card, user_id,\n',
           '            await text_manager.save_distilled_card(\n                req.text_id, card, user_id,\n'
-          '                embedding_key=emb.key, embedding_region=emb.region,\n            )\n'
+          '                embedding_key=emb.key, embedding_region=emb.region,\n'
+          '                draft=data, character=char_name,\n            )\n'
           '            result = await text_manager.save_distilled_card(\n                req.text_id, card, user_id,\n'),
      ])], "RED"),
     # 撞到 [338]

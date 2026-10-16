@@ -533,7 +533,8 @@ def _anchoring_content_route(monkeypatch, draft):
 
     class _TM:
         async def save_distilled_card(self, text_id, card, user_id, *,
-                                      embedding_key="", embedding_region=""):
+                                      embedding_key="", embedding_region="",
+                                      draft, character):
             threads.append(("save", threading.get_ident()))
             stream_saved.append(card)
             return {"card_id": "card_x"}

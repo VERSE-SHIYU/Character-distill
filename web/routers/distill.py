@@ -577,6 +577,7 @@ def _run_distill_task(
             result = await tm.save_distilled_card(
                 text_id, card, user_id,
                 embedding_key=embedding_key, embedding_region=embedding_region,
+                draft=data, character=name,
             )
             return result
 
@@ -1198,6 +1199,7 @@ async def distill_stream(
             result = await text_manager.save_distilled_card(
                 req.text_id, card, user_id,
                 embedding_key=emb.key, embedding_region=emb.region,
+                draft=data, character=char_name,
             )
         except Exception as exc:
             logger.error("Save card failed: %s", exc, exc_info=True)
