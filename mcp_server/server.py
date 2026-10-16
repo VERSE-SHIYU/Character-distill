@@ -1,8 +1,8 @@
 """标准 MCP server：把 core/agent/tools.py 的三路检索工具暴露为 MCP 工具。
 
 本文件只做协议适配层，不改动任何 core/ 实现：
-- 工具 schema 来自 AgentToolkit.get_schemas()（JSON Schema），deepcopy 后为每个工具注入
-  必填的 card_id —— server 不绑单卡，list_tools 静态暴露 3 个工具
+- 工具 schema 来自 core/agent/tools.py 的 ALL_SCHEMAS（JSON Schema，全量、不看联网开关），
+  deepcopy 后为每个工具注入必填的 card_id —— server 不绑单卡，list_tools 静态暴露 3 个工具
 - call_tool 从 arguments pop 出 card_id，按 card_id 从存储取/建该卡的 toolkit（进程内缓存），
   其余参数原样交给 AgentToolkit.execute()。card_id 缺失/空/查无此卡/card_json 解析失败
   → raise，由 MCP SDK 转协议 isError，绝不吞成空结果
@@ -36,7 +36,7 @@ import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from core.agent.tools import AgentToolkit
+from core.agent.tools import ALL_SCHEMAS, AgentToolkit
 from core.context_engine import ContextEngine  # import 连带 core.rag → chromadb（启动即 fail-fast）
 from core.request_context import system_llm_context
 
@@ -127,6 +127,9 @@ def _make_toolkit(card, rag):
         model=llm_model,
         storage=_get_storage(),
     )
+    # MCP 没有用户会话，也就没有「联网」开关：恒开 —— 与工具表里 web 那一行的可用性
+    # 判据解耦后，这是 MCP 唯一要声明的一件事。
+    ctx.web_search_enabled = True
     return AgentToolkit(ctx, current_mood=os.getenv("MCP_MOOD"))
 
 
@@ -188,13 +191,15 @@ async def _toolkit_for(card_id: str):
 
 
 def _tool_specs() -> list[types.Tool]:
-    """静态工具 schema：AgentToolkit.get_schemas() 深拷贝后注入必填 card_id。
+    """静态工具 schema：``ALL_SCHEMAS`` 深拷贝后注入必填 card_id。
 
-    绝不原位改 get_schemas() 返回对象——card_id 是 MCP 适配层才有的路由参数，
+    用**全量**出口而不是 ``get_schemas()``：那条按用户联网开关过滤，本进程没有用户开关，
+    静态度量出来的 3 个工具是它的事实（也免得 ctx_engine=None 去读开关）。
+    绝不原位改 ``ALL_SCHEMAS`` 里的对象——card_id 是 MCP 适配层才有的路由参数，
     core/agent/tools.py 的干净 schema 要留给 agent 模式（router LLM）原样使用。
     """
     specs = []
-    for entry in AgentToolkit(ctx_engine=None).get_schemas():
+    for entry in ALL_SCHEMAS:
         fn = entry["function"]
         params = copy.deepcopy(fn["parameters"])
         props = params.setdefault("properties", {})

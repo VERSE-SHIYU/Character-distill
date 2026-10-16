@@ -181,17 +181,17 @@ def _scenarios() -> dict[str, tuple[ToolLLM, object]]:
             "search_memory",
         )
         with fake_ddg(DDG_ABSTRACT):
-            run("web_hit", build_ctx(llm=FakeLLM()), "web_search")
+            run("web_hit", build_ctx(llm=FakeLLM(), web=True), "web_search")
         with fake_ddg(DDG_EMPTY):
-            run("web_empty", build_ctx(llm=FakeLLM()), "web_search")
+            run("web_empty", build_ctx(llm=FakeLLM(), web=True), "web_search")
         with fake_ddg(DDG_ABSTRACT):
             run(
                 "web_rewrite_failed",
-                build_ctx(llm=FakeLLM(raise_on_chat=RuntimeError("rate limited"))),
+                build_ctx(llm=FakeLLM(raise_on_chat=RuntimeError("rate limited")), web=True),
                 "web_search",
             )
         with fake_ddg(DDG_ABSTRACT, raise_on_get=RuntimeError("网络挂了")):
-            run("web_failed", build_ctx(llm=FakeLLM()), "web_search")
+            run("web_failed", build_ctx(llm=FakeLLM(), web=True), "web_search")
 
         _CACHE = out
     return _CACHE
@@ -308,7 +308,7 @@ def test_web_rewrite_failure_keeps_hit_status():
     据此改前端，这条会红。
     """
     with fake_ddg(DDG_ABSTRACT):
-        ctx = build_ctx(llm=FakeLLM(raise_on_chat=RuntimeError("rate limited")))
+        ctx = build_ctx(llm=FakeLLM(raise_on_chat=RuntimeError("rate limited")), web=True)
         res = AgentToolkit(ctx).execute("web_search", {"query": QUERY})
 
     assert res.trace.status == "hit"                     # 检索成功（第一阶段真跑通了）
@@ -334,7 +334,7 @@ def test_evidence_accumulation_dedup_and_order():
     两个台账对同一事件的说法必须一致 —— 去重的调用**三处一起不记**，只留 messages。
     """
     with fake_ddg(DDG_ABSTRACT, raise_on_get=RuntimeError("网络挂了")):
-        ctx = build_ctx(rag=make_rag(FakeCollection()), memory=FakeMemory(rows=[]))
+        ctx = build_ctx(rag=make_rag(FakeCollection()), memory=FakeMemory(rows=[]), web=True)
         _llm, res = _run(ctx, [
             [("search_scenes", {"query": "a"}), ("search_memory", {"query": "b"})],
             [("search_scenes", {"query": "a"}), ("web_search", {"query": "c"}),
@@ -531,7 +531,7 @@ def test_eval_set_evidence_survives_to_the_model_visible_prompt():
     covered = {_TOOL2SOURCE[t] for case in cases for t in case["expected_tools"]}
     assert covered == set(counts), f"用例集没覆盖全三源：{covered}"
 
-    ctx = build_ctx(rag=make_rag(FakeCollection()), memory=FakeMemory(), llm=FakeLLM())
+    ctx = build_ctx(rag=make_rag(FakeCollection()), memory=FakeMemory(), llm=FakeLLM(), web=True)
     with fake_ddg(DDG_ABSTRACT):
         for case in cases:
             tools = case["expected_tools"]

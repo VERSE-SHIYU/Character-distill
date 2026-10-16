@@ -269,13 +269,16 @@ def make_trace(source: str, status: str = "hit", text: str = "片段") -> Source
     return SourceTrace(source=source, status=status, items=items)
 
 
-def build_ctx(*, rag=None, memory=None, llm=None, card=None) -> ContextEngine:
+def build_ctx(*, rag=None, memory=None, llm=None, card=None, web=False) -> ContextEngine:
     """装配 ContextEngine —— 三源共用这一个入口。
 
     注入层只收 `ProjectedCard`（DA18），故这里先投影（`None` → 最后阶段，不截断，
     与本组假件无关的那些阶段取舍保持原样）。
+
+    ``web``：联网开关，缺省**关** —— 与生产同源（`core/context_engine.py:235` 恒 False，
+    由路由按用户开关写）。跑 web 用例的显式打开，别让假件比生产宽松。
     """
-    return ContextEngine(
+    ctx = ContextEngine(
         card=project_card(card or make_card(), None)[0],
         rag=rag,
         memory=memory,
@@ -283,3 +286,5 @@ def build_ctx(*, rag=None, memory=None, llm=None, card=None) -> ContextEngine:
         model="deepseek-v4-pro",
         storage=None,
     )
+    ctx.web_search_enabled = web
+    return ctx
