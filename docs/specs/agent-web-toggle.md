@@ -130,11 +130,11 @@ B 的落点：「全部工具」与「这次能用的工具」分开。全部工
 - 变异自测（各打红它该打红的锁，改完文件逐字节还原）：清单不按开关过滤 / 只过滤清单而
   执行仍按全表分发 → 检查 1、3；恒过滤掉 web → 检查 2；构造时缓存清单 → 检查 4；
   MCP 静态列表改走开关过滤（ctx 为 None）→ 检查 5；删掉 MCP 建引擎处那一行 → 检查 6。
-- 结构自检补正：「以后加一个工具改几处」= **3 处**（schema 常量、`_table()` 一行、
-  `ALL_SCHEMAS` 一行），不是原稿的 1 处。工具**名**仍只写在 schema 的 `function.name`
-  一处（`_ToolEntry.name` 现读），重复的只是「有哪几行」。原因：handler 是绑定方法、
-  超时是类属性（`test_agent_loop` 会 monkeypatch `AgentToolkit.WEB_TIMEOUT`），工具表
-  只能实例级构造，而 ctx-free 出口拿不到实例。
+- 结构自检：「以后加一个工具改几处」= **2 处**（schema 常量、`_table()` 一行），不再是
+  原稿的 1 处、也不是初版实现的 3 处。初版把全量清单另手写成一个元组；复核（PR #170，
+  复核方 8 个变异全红）指出 `_table()` 本身不读 ctx（只挂绑定方法、读类属性超时），
+  全量清单现推即可 —— `ALL_SCHEMAS = tuple(e.schema for e in AgentToolkit(None)._table())`，
+  手写元组已删。工具**名**只写在 schema 的 `function.name` 一处（`_ToolEntry.name` 现读）。
 - 面外既存缺陷（只报不改，另行记账）：`mcp_server/server.py:122` 把 `CharacterCard`
   直接喂给只收 `ProjectedCard` 的 `ContextEngine`（`core/arc_view.py:47`）→ MCP 生产
   路径必抛 `TypeError`。故检查 6 传投影卡。

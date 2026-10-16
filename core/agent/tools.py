@@ -127,11 +127,6 @@ _WEB_SCHEMA: dict[str, Any] = {
     },
 }
 
-# 全部工具的 schema（**不看开关、不需要 ctx**）—— MCP 的静态列表用它：MCP 无用户会话，
-# 也就没有用户开关，联网对它恒可执行（工具表里 web 那一行的可用性只管聊天侧）。
-# 与 _table() 的差异只是后者多了 handler/超时（那些绑实例），加工具时两处各加一行。
-ALL_SCHEMAS: tuple[dict[str, Any], ...] = (_SCENE_SCHEMA, _MEMORY_SCHEMA, _WEB_SCHEMA)
-
 
 class _ToolEntry(NamedTuple):
     """工具表的一行：schema + handler + 超时预算 + 来源词汇 + 是否绑联网开关。
@@ -261,3 +256,10 @@ class AgentToolkit:
         return self._finish(
             name, arguments, started, result.trace(), result.block or EMPTY_RESULT
         )
+
+
+# 全部工具的 schema（**不看开关、不需要 ctx**）—— MCP 的静态列表用它：MCP 无用户会话，
+# 也就没有用户开关，联网对它恒可执行（工具表里 web 那一行的可用性只管聊天侧）。
+# 从 `_table()` 现推：它只挂绑定方法和读类属性超时，不读 ctx，故 `ctx_engine=None` 也建得
+# 出来。**有哪几行只在 _table() 里写一次** —— 加工具 = schema 常量 + 表里一行。
+ALL_SCHEMAS: tuple[dict[str, Any], ...] = tuple(e.schema for e in AgentToolkit(None)._table())
