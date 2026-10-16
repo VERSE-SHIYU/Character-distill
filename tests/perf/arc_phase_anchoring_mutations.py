@@ -113,12 +113,10 @@ MUTATIONS = [
          "        return None\n")])], "RED"),
     ('M17 越界编号被夹到末阶段（连同摘录），而不是撤回（spec 原形的等价形态，见模块说明）', TARGET,
      [("repl", DRAFT, [
-         ("        nums = [occ.phase for occ in item.occurrences]\n"
-          "        valid = sorted({p for p in nums if 1 <= p <= count})",
+         ("        nums = [occ.phase for occ in item.occurrences]\n",
           "        for occ in item.occurrences:\n"
           "            occ.phase = min(occ.phase, count)\n"
-          "        nums = [occ.phase for occ in item.occurrences]\n"
-          "        valid = sorted({p for p in nums if 1 <= p <= count})")])], "RED"),
+          "        nums = [occ.phase for occ in item.occurrences]\n")])], "RED"),
     ('M18 同阶段多段摘录：任一段核对不上就整阶段不成立', TARGET, [("repl", ANCH, [
         ('                    reasons.append(f"查不到：{quote}")\n                    continue\n',
          '                    reasons.append(f"查不到：{quote}")\n                    break\n')])], "RED"),
@@ -141,7 +139,7 @@ MUTATIONS = [
          "    if not segs or not all(s in source_norm for s in segs):\n"
          "        return [0]\n")])], "RED"),
     ('M24 删掉非法编号的 warning', TARGET, [("repl", DRAFT, [
-        ("        if count and (len(valid) != len(set(nums)) or not valid):",
+        ("        if count and (len(valid) != len(set(nums)) or (not valid and not pre)):",
          "        if False:")])], "RED"),
     ('M25 核对不上的阶段照挂（没有证据的标注也留下）', TARGET, [("repl", ANCH, [
         ("            targets[p] = sorted(hit)\n",
