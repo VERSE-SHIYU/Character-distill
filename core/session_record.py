@@ -92,7 +92,8 @@ COLUMNS: tuple[Column, ...] = (
     Column("promises", "{who}答应的事",
            "{who}自己做出的、还没兑现的承诺或决定"
            "（原文：Promises or decisions the character made）。"
-           "只是推托、没有明确应下的不记；{who}讲自己的经历、看法、习惯，或劝对方做什么，都不记。",
+           "只是推托、没有明确应下的不记；附条件往后拖、没说具体做什么的，也不记"
+           "（如『等你明儿清醒了再说』『改天再说』）；{who}讲自己的经历、看法、习惯，或劝对方做什么，都不记。",
            _CHARACTER_ONLY),
 )
 _COLUMNS_BY_KEY = {c.key: c for c in COLUMNS}
@@ -219,6 +220,11 @@ Current state: （还没有）
 对方：周末陪我去爬山吧？
 老陈：到时候再看吧。
 Output: {{"{ops}": [{{"col": "requests", "text": "对方请老陈周末陪他去爬山。", "evidence": "周末陪我去爬山吧", "{sup}": null}}]}}
+
+Current state: （还没有）
+对方：今晚陪我看完这部电影吧？
+老陈：等你明天还有空再说吧，到时候一定陪你。
+Output: {{"{ops}": [{{"col": "requests", "text": "对方请老陈今晚陪他看完电影。", "evidence": "今晚陪我看完这部电影吧", "{sup}": null}}]}}
 
 Do not return anything from the custom few shot example prompts provided above.
 """

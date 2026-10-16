@@ -559,6 +559,20 @@ def test_X6_examples_show_a_personal_fact_stated_inside_a_question():
         "原例 1（纯问句 → 空）丢了"
 
 
+def test_X7_conditional_deferral_is_not_recorded_as_a_promise():
+    """E2 目标检查：带条件的推托（只往后拖、没说具体做什么）示范只记 requests，不记 promises。"""
+    defer = [(u, ch, ops) for u, ch, ops in _example_outputs() if u == "今晚陪我看完这部电影吧？"]
+    assert defer and [o["col"] for o in defer[0][2]] == ["requests"], \
+        f"缺「带条件推托只记 requests」的示范：{defer}"
+
+
+def test_X8_promises_definition_excludes_conditional_deferral():
+    """E2 目标检查：promises 栏定义写明「附条件往后拖…也不记」（整句断言）。"""
+    system, _ = rec.render_extraction_prompt(SessionRecord(), char_name="孔乙己",
+                                             user_message="", assistant_reply="")
+    assert "附条件往后拖、没说具体做什么的，也不记（如『等你明儿清醒了再说』『改天再说』）；" in system
+
+
 def test_X2_third_person_with_names_extraction_and_second_person_only_in_the_block():
     """P2（G2）：抽取提示词里栏名用角色名，没有「他对你」；注入给角色的块才用「你」。"""
     text = _prompt(name="孔乙己")
