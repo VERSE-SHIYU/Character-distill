@@ -487,6 +487,49 @@ class TestCardCrud:
 
 
 @_pg
+class TestCardDraft:
+    """`cards.distill_draft`（E7）：随卡一列，属主读，卡片行不投影。
+
+    线上是 PG，所以这一列的行为以这里为准 —— SQLite 侧的同形用例在
+    `tests/test_distill_draft_persist.py`，但「写没写进去」「读有没有按属主过滤」的
+    判据必须两侧各有一条，否则「PG 侧不写入 / 不按属主过滤」的变异没有红源。
+    """
+
+    @staticmethod
+    async def _card(store, owner: str, text_id: str) -> str:
+        cid = f"card_{uuid.uuid4().hex}"
+        await store.save_text(text_id, "src.txt", "source", user_id=owner)
+        await store.save_card(cid, text_id, "张三", json.dumps({"name": "张三"}), user_id=owner)
+        return cid
+
+    async def test_save_and_load_draft(self, store, text_id, user_id):
+        cid = await self._card(store, user_id, text_id)
+        payload = json.dumps({"character": "张三", "draft": {"name": "张三"}}, ensure_ascii=False)
+        await store.save_card_draft(cid, payload)
+        assert await store.load_card_draft_owned(cid, user_id) == payload
+
+    async def test_draft_read_is_owner_scoped(self, store, text_id, user_id):
+        """非属主读别人的草稿必须空 —— 读路径漏掉 `AND user_id` 时这条红。"""
+        cid = await self._card(store, user_id, text_id)
+        await store.save_card_draft(cid, "{}")
+        assert await store.load_card_draft_owned(cid, f"usr_{uuid.uuid4().hex}") == "", \
+            "非属主读到了别人的草稿"
+
+    async def test_absent_draft_reads_empty(self, store, text_id, user_id):
+        cid = await self._card(store, user_id, text_id)
+        assert await store.load_card_draft_owned(cid, user_id) == ""
+
+    async def test_card_rows_do_not_project_the_draft(self, store, text_id, user_id):
+        cid = await self._card(store, user_id, text_id)
+        await store.save_card_draft(cid, "{}")
+        owned = await store.get_card_owned(cid, user_id)
+        unscoped = await store.get_card_unscoped(cid)
+        assert owned is not None and unscoped is not None
+        assert "distill_draft" not in owned, "读卡行带出了草稿列"
+        assert "distill_draft" not in unscoped, "读卡行带出了草稿列"
+
+
+@_pg
 class TestForkCardStandalone:
     """缺陷 78 顺带修好的那条路：fork 一张 public 卡且 `text_id=''`（语义 = 要一张独立卡）。
 

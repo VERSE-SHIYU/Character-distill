@@ -41,6 +41,11 @@ _Q1, _Q3 = "开头甲甲甲", "结尾丙丙丙"
 _DISTILL_NAME = "乙"
 _CARD_NAME = "孔乙己"
 
+# 只在草稿里、绝不进卡的独有串：挂在「标了阶段 9」的做法上（共 2 个阶段，9 越界），
+# 由编号检查（规则 0）把整条撤回。它的引文用**在原文里**的 `_Q1`，故引文核对拦不住它 ——
+# 能把这条删掉的只有编号检查。检查 4 靠它证明「导出没带出草稿」，而不是靠卡里恰好没有。
+_DRAFT_ONLY = "越界阶段才有的独有做法串"
+
 
 def _draft() -> dict:
     """有阶段、有关系的草稿（`CardDraft` 真实形态）。关系不写 relation —— 由
@@ -54,6 +59,8 @@ def _draft() -> dict:
         "situation_behaviors": [
             {"situation": "被人当众取笑", "behavior": "涨红了脸争辩",
              "occurrences": [{"phase": 1, "quote": _Q1}]},
+            {"situation": "标错的阶段", "behavior": _DRAFT_ONLY,
+             "occurrences": [{"phase": 9, "quote": _Q1}]},
         ],
         "relationships": [
             {"target": "我", "attitudes": [
@@ -236,6 +243,20 @@ def test_run_stream_persists_the_draft(monkeypatch, store):
     assert payload["draft"]["name"] == _CARD_NAME
 
 
+def test_other_user_cannot_read_the_draft(monkeypatch, store):
+    """读路径漏掉属主过滤时这条红（SQLite 侧）。"""
+    uid = f"usr_{uuid.uuid4().hex[:8]}"
+    tid = _seed_text(store, uid)
+
+    resp, _ = _run_start(monkeypatch, store, uid, tid)
+    assert resp.status_code == 200, resp.text
+    card_id = _only_card_id(store, tid, uid)
+    assert _load_payload(store, card_id, uid)  # 属主读得到
+
+    assert _run_async(store.load_card_draft_owned(card_id, f"usr_{uuid.uuid4().hex}")) == "", \
+        "非属主读到了别人的草稿"
+
+
 # ── 检查 2：用存下的草稿能还原出同一张卡 ────────────────────────────────────
 
 def test_stored_draft_round_trips_to_the_saved_card(monkeypatch, store):
@@ -247,9 +268,10 @@ def test_stored_draft_round_trips_to_the_saved_card(monkeypatch, store):
     card_id = _only_card_id(store, tid, uid)
 
     payload = _load_payload(store, card_id, uid)
-    # 存的是那次转卡真正用的草稿 → 重跑一遍转卡 + 后置（去重、核引文）应还原同一张卡
-    rebuilt, _ = retract_unverified(card_from_draft(payload["draft"], _SRC), _SRC)
-    rebuilt, _ = dedupe_relationship_targets(rebuilt)
+    # 存的是那次转卡真正用的草稿 → 照 `finalize_card` 的后置顺序（先去重、再核引文）重跑一遍，
+    # 应还原同一张卡
+    rebuilt, _ = dedupe_relationship_targets(card_from_draft(payload["draft"], _SRC))
+    rebuilt, _ = retract_unverified(rebuilt, _SRC)
 
     stored = _run_async(store.get_card_owned(card_id, uid))
     stored_card = CharacterCard.model_validate_json(stored["card_json"])
@@ -299,17 +321,22 @@ def test_draft_never_leaves_the_server(monkeypatch, store):
     resp, _ = _run_start(monkeypatch, store, uid, tid)
     assert resp.status_code == 200, resp.text
     card_id = _only_card_id(store, tid, uid)
-    assert _load_payload(store, card_id, uid)  # 确实存了
+
+    payload = _load_payload(store, card_id, uid)  # 确实存了
+    assert any(b.get("behavior") == _DRAFT_ONLY for b in payload["draft"]["situation_behaviors"]), \
+        "草稿里本该留着那条越界阶段的做法（撤回发生在转卡，不是存草稿）"
 
     owned = _run_async(store.get_card_owned(card_id, uid))
     unscoped = _run_async(store.get_card_unscoped(card_id))
     assert "distill_draft" not in owned, "读卡行带出了草稿列"
     assert "distill_draft" not in unscoped, "读卡行带出了草稿列"
+    # 编号检查撤回了那条越界做法 → 它不在卡里。这条同时也钉住「导出没带出草稿」：
+    # 判别串在卡里必然不出现，若它出现在导出里，只可能是草稿被序列化出去了
+    assert _DRAFT_ONLY not in owned["card_json"], "越界阶段的做法该被编号检查撤回、不该进卡"
 
     export = _build_client(store, uid).get(f"/api/distill/cards/{card_id}/export")
     assert export.status_code == 200, export.text
-    # 草稿里独占的字符串（不在卡 JSON 里）不该出现在导出内容里
-    assert "酒客与伙计" not in export.text, "导出带出了草稿内容"
+    assert _DRAFT_ONLY not in export.text, "导出带出了草稿内容"
 
 
 # ── 检查 5：写草稿失败不连累落卡（对账表「写草稿失败不连累落卡」）─────────────

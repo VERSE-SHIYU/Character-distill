@@ -97,6 +97,9 @@ SSE 通道 `/run_stream` 同样做第 1 条。
 | 重蒸覆盖 | 目标检查 3 | 只在 INSERT 时写草稿 | 同角色蒸两次 |
 | 不出服务端 | 目标检查 4 | 读卡 SELECT 加上该列 | 读卡 / 导出 |
 | 写草稿失败不连累落卡 | 目标检查 5 | 去掉 nonfatal 包裹 | 替身存储写草稿抛错 |
+| 存储层存/读草稿（PG 与 SQLite 各一份实现） | `tests/test_postgres_store.py::TestCardDraft`（4 条）+ `tests/test_distill_draft_persist.py::test_other_user_cannot_read_the_draft` | PG 侧 `save_card_draft` 写成 no-op / 两侧 `load_card_draft_owned` 丢掉属主过滤 | 直接打存储层（不经通道） |
+
+> 上表末行是**复核补**：首轮对账只经通道（`/start`）验，未直接打存储层，于是「PG 不写入」「PG/SQLite 读不按属主过滤」三条变异存活。补的判据直接连真 PG / 真 SQLite 打 `save_card_draft` 与 `load_card_draft_owned`，不经通道。
 
 ## 8. 第 2 段轮廓（下一个 PR，另写 spec，现在不做）
 
@@ -108,6 +111,7 @@ SSE 通道 `/run_stream` 同样做第 1 条。
 
 - 测试替身照生产：替身 `save_distilled_card` 的签名跟着改；替身草稿用 `CardDraft` 真实形态。
 - 新增：上面「目标检查」5 条（含 SSE 通道第 1 条）。
+- 新增（复核补，只加测试）：`tests/test_postgres_store.py::TestCardDraft` 4 条（真 PG）与 `tests/test_distill_draft_persist.py` 的 SQLite 属主反例 1 条，见 §7 末行。
 - 另跑（列外但同改动面）：`tests/test_schema_parity.py`、`tests/test_sqlite_fresh_schema.py`、`tests/test_migration_dispatch.py`、`tests/test_pg_gate.py`（迁移/列集侧的既有门）。
 
 ## 10. 技能
