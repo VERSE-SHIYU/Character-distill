@@ -120,6 +120,14 @@ MUTATIONS = [
         b"  ids=$(grep -oE '^(FAILED|ERROR) [^ ]+' \"$log\" | awk '{print $2}' | head -10 | paste -sd, -)",
         f"{TESTS}::test_t5_failure_summary_lists_failed_tests",
     ),
+    (
+        "M13",
+        "把 Git 注入的 GIT_DIR 原样传给检查",
+        ".githooks/pre-push",
+        b"    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES\n",
+        b"    :\n",
+        f"{TESTS}::test_t9_hook_hides_git_dir_from_the_check",
+    ),
 ]
 
 

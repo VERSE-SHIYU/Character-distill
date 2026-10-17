@@ -35,9 +35,14 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
 done
 
 if [ "$needs_check" = true ]; then
-  if [ -n "${PREFLIGHT_CMD:-}" ]; then
-    bash -c "$PREFLIGHT_CMD"
-  else
-    bash "$(git rev-parse --show-toplevel)/scripts/check.sh"
-  fi
+  # 从 worktree 里 push 时 Git 会给钩子注入 GIT_DIR（指向 worktree 的 gitdir）。若原样传给
+  # 测试，测试里 `git init` 出的临时仓库会落回外层仓库。检查必须在「手敲 shell」的环境里跑。
+  (
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+    if [ -n "${PREFLIGHT_CMD:-}" ]; then
+      bash -c "$PREFLIGHT_CMD"
+    else
+      bash "$(git rev-parse --show-toplevel)/scripts/check.sh"
+    fi
+  )
 fi

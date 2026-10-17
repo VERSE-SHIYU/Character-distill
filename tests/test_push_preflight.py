@@ -207,6 +207,23 @@ def test_t2c_new_branch_uses_merge_base(tmp_path):
     assert code_push.returncode != 0, code_push.stdout + code_push.stderr
 
 
+def test_t9_hook_hides_git_dir_from_the_check(tmp_path):
+    """worktree 里 push 时 Git 会给钩子注入 GIT_DIR；检查拿到它，临时仓库就会落回外层仓库。"""
+    repo = _init_repo(tmp_path)
+    _push_initial(repo)
+    _commit(repo, "core/x.py")
+
+    out = _push(
+        repo, "main",
+        env={
+            "GIT_DIR": (repo / ".git").as_posix(),
+            "PREFLIGHT_CMD": 'test -z "${GIT_DIR:-}"',
+        },
+    )
+
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
 # ---------------------------------------------------------------- T3/T4/T5
 
 
