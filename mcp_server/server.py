@@ -37,6 +37,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from core.agent.tools import ALL_SCHEMAS, AgentToolkit
+from core.arc_view import project_card
 from core.context_engine import ContextEngine  # import 连带 core.rag → chromadb（启动即 fail-fast）
 from core.request_context import system_llm_context
 
@@ -114,13 +115,17 @@ def _make_toolkit(card, rag):
     """按 CharacterCard 构建 ContextEngine + AgentToolkit。构建会 print（ContextEngine
     预算、RAG），调用方需自行包 _stdout_to_stderr。
 
+    **投影**：``ContextEngine`` 只收 ``ProjectedCard``（core/arc_view.py:47）。MCP 没有
+    会话、不选阶段，按最后阶段投影 —— 与开场白 / 苏醒台词 / 市场等无会话处同口径
+    （``project_card(card, None)``）。
+
     **不挂长期记忆**：MCP 是按 card_id 路由的无身份通道，没有存档 id 也没有群 id ——
     长期记忆已按存档隔离（spec §2），这个引擎拿不到归属，故不读也不写（search_memory
     返回空）。要按存档搜记忆得走 web 会话。
     """
     llm, llm_model = _lazy_llm()
     ctx = ContextEngine(
-        card=card,
+        card=project_card(card, None)[0],
         rag=rag,
         memory=None,
         llm=llm,
