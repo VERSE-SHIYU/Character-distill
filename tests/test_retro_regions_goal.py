@@ -12,10 +12,9 @@ import uuid
 
 import pytest
 
-from core.chapters import chapter_at, chapter_norm_starts, chapter_starts
+from core.chapters import chapter_openings, chapter_starts
 from core.retro_cache import resolve_retro_regions
-from core.quotes import normalize, normalized_starts
-from core.retro_regions import RETRO_VERSION, ChapterRange, RetroRegions, detect, parse
+from core.retro_regions import RETRO_VERSION, ChapterRange, RetroRegions, detect, instruction, parse
 from storage.sqlite_store import SQLiteStore
 import test_distill_draft_persist as P
 from test_distill_task_api import _run_async
@@ -39,12 +38,12 @@ _BOOK = "".join(f"第{n}章\n　　{_head(n)}\n　　中间的正文。\n　　{
 _BOOK_CHAPTERS = chapter_starts(_BOOK)
 
 
-def _reply(*ranges: tuple[str, str, str]) -> str:
-    return json.dumps({"ranges": [{"kind": k, "start_quote": a, "end_quote": b, "why": "理由"}
-                                  for k, a, b in ranges]}, ensure_ascii=False)
+def _reply(*ranges) -> str:
+    return json.dumps({"ranges": [{"from": a, "to": b, "kind": k, "why": "理由"} for a, b, k in ranges]},
+                      ensure_ascii=False)
 
 
-_TRUTH_REPLY = _reply(("日记", _head(491), _tail(504)), ("番外", _head(508), _tail(509)))
+_TRUTH_REPLY = _reply((491, 504, "日记"), (508, 509, "番外"))
 
 
 def _covered(regions: RetroRegions) -> set[int]:
@@ -63,34 +62,38 @@ def test_g1b_unusable_headings_give_none(src):
     assert chapter_starts(src) is None
 
 
-# ── 检查 2：章号由引文位置定，与标准答案逐章相等（不漏、也不多） ───────────────
+# ── 检查 2：章号从代码列的目录里选；解析结果与标准答案逐章相等（不漏、也不多） ────
 
 def test_g2_reply_parses_to_exactly_the_retro_chapters():
-    regions = parse(_TRUTH_REPLY, _BOOK, _BOOK_CHAPTERS)
+    regions = parse(_TRUTH_REPLY, _BOOK_CHAPTERS)
     assert regions.status == "marked"
     assert _covered(regions) == _TRUTH_RETRO
 
 
-def test_g2b_chapter_coordinates_match_normalized_starts():
-    norm = normalize(_BOOK)
-    starts = chapter_norm_starts(_BOOK, _BOOK_CHAPTERS, norm)
-    assert starts == normalized_starts(_BOOK, [raw for _, raw in _BOOK_CHAPTERS])
-    assert chapter_at(_BOOK_CHAPTERS, starts, starts[504]) == 505
-    assert chapter_at(_BOOK_CHAPTERS, starts, starts[504] - 1) == 504
+def test_g2b_catalogue_lists_every_chapter_with_its_opening():
+    text = instruction(_BOOK, _BOOK_CHAPTERS)
+    lines = text.split("### 目录\n", 1)[1].split("\n")
+    assert lines == [f"第{n}章：{_head(n)} 中间的正文。 {_tail(n)}"[:len(f"第{n}章：") + 40]
+                     for n in range(1, 510)]
 
 
-# ── 检查 3：引文对不上、不唯一、首尾颠倒、回复不是 JSON → 整本「未标」且不缓存 ────
+def test_g2c_openings_skip_filler_lines():
+    src = "第1章\n　　……\n　　——\n　　【日札八月十五】\n　　今日是中秋。\n第2章\n正文"
+    assert chapter_openings(src, chapter_starts(src)) == [(1, "【日札八月十五】 今日是中秋。"), (2, "正文")]
+
+
+# ── 检查 3：章号不在目录里、首尾颠倒、缺章号、回复不是 JSON → 整本「未标」且不缓存 ────
 
 @pytest.mark.parametrize("reply", [
-    _reply(("日记", "原文里没有这句话", _tail(504))),          # 找不到
-    _reply(("日记", "中间的正文。", _tail(504))),              # 不止一处
-    _reply(("日记", _head(504), _tail(491))),                  # 首尾颠倒
-    _reply(("日记", _head(491), _tail(504)), ("番外", "", _tail(509))),  # 一个范围坏了，整本不用
-    '{"ranges": [{"kind": "日记", "from": 491, "to": 504}]}',  # 只给章号、不给引文
+    _reply((491, 510, "日记")),                          # 末章不在目录里
+    _reply((504, 491, "日记")),                          # 首尾颠倒
+    _reply((491, 504, "日记"), (0, 509, "番外")),         # 一个范围坏了，整本不用
+    '{"ranges": [{"kind": "日记", "start_quote": "今日是中秋。"}]}',  # 没有章号
+    '{"ranges": "491-504"}',
     "我觉得没有",
 ])
-def test_g3_unlocatable_or_malformed_reply_is_unavailable_and_not_final(reply):
-    regions = parse(reply, _BOOK, _BOOK_CHAPTERS)
+def test_g3_bad_range_or_malformed_reply_is_unavailable_and_not_final(reply):
+    regions = parse(reply, _BOOK_CHAPTERS)
     assert regions.status == "unavailable" and regions.final is False
 
 
@@ -111,10 +114,11 @@ def test_g4b_detect_sends_book_prefix_first():
 
     detect("第1章\n甲", prefix="以下是完整的文本内容：\n\n第1章\n甲", call=_call)
     assert seen["system"].startswith("以下是完整的文本内容：\n\n第1章\n甲\n\n## 本步：标出倒叙")
+    assert seen["system"].endswith("### 目录\n第1章：甲")
 
 
 def test_g5_json_round_trip():
-    regions = parse(_TRUTH_REPLY, _BOOK, _BOOK_CHAPTERS)
+    regions = parse(_TRUTH_REPLY, _BOOK_CHAPTERS)
     assert RetroRegions.from_json(regions.to_json()) == regions
 
 

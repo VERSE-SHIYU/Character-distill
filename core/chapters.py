@@ -10,11 +10,9 @@
 from __future__ import annotations
 
 import re
-from bisect import bisect_right
-
-from core.quotes import normalize
 
 _HEADING = re.compile(r"(?m)^[ \t　]*第(\d+)章")
+_FILLER = re.compile(r"[…—\-·.。\s]+")
 
 
 def chapter_starts(source_text: str) -> list[tuple[int, int]] | None:
@@ -26,24 +24,13 @@ def chapter_starts(source_text: str) -> list[tuple[int, int]] | None:
     return hits
 
 
-def chapter_norm_starts(source_text: str, chapters: list[tuple[int, int]],
-                        source_norm: str) -> list[int] | None:
-    """各章起点在**规范化**原文里的偏移（与 ``chapters`` 一一对应）；拼不回整段时 None。
-
-    逐段规范化累加，与 `core.quotes.paragraph_bounds` 同一条不变式：累加长度 == 规范化整段长度，
-    对不上就不给（宁可不用，不可用错坐标）。不用 `normalized_starts`：那条每个起点都重算一遍前缀，
-    509 章 × 百万字太慢。
-    """
+def chapter_openings(source_text: str, chapters: list[tuple[int, int]],
+                     width: int = 40) -> list[tuple[int, str]]:
+    """``[(章号, 本章开头 width 字), …]``：标题行之后的正文开头，跳过只有省略号或破折号的行。"""
     cuts = [raw for _, raw in chapters] + [len(source_text)]
-    acc = len(normalize(source_text[:cuts[0]]))
-    starts: list[int] = []
-    for a, b in zip(cuts, cuts[1:]):
-        starts.append(acc)
-        acc += len(normalize(source_text[a:b]))
-    return starts if acc == len(source_norm) else None
-
-
-def chapter_at(chapters: list[tuple[int, int]], norm_starts: list[int], pos: int) -> int | None:
-    """规范化位置 ``pos`` 所在的章号；在第一章之前返回 None。"""
-    i = bisect_right(norm_starts, pos) - 1
-    return chapters[i][0] if i >= 0 else None
+    out: list[tuple[int, str]] = []
+    for (n, _), a, b in zip(chapters, cuts, cuts[1:]):
+        lines = source_text[a:b].split("\n")[1:]                       # 去掉标题行
+        body = [s for s in (ln.strip() for ln in lines) if s and _FILLER.fullmatch(s) is None]
+        out.append((n, " ".join(body)[:width]))
+    return out
