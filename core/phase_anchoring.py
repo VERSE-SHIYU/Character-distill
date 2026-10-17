@@ -83,7 +83,7 @@ def phase_ranges(phases, source_text: str, source_norm: str,
     """各阶段在规范化原文里的半开区间 `[起, 止)`，以及整卡跳过的原因（空串 = 不跳过）。
 
     阶段 k 的范围是 `[锚点 k 位置, 锚点 k+1 位置)`：锚点取**最长段**在全文的**首次**出现；
-    阶段 1 锚点为空时从 0 开始；最后一阶段到全文末尾。每个锚点的位置由
+    阶段 1 一律从 0 开始，阶段 1 的锚点只用于顺序核对；最后一阶段到全文末尾。每个锚点的位置由
     `quotes.locate_anchor` 给出（逐字 → 规范化 → 省略号拼接，判定顺序只在那一处）。
     以下任一情况返回空表与原因，由调用方整卡跳过（规则 2 / D7）：阶段 1 以外的锚点为空（与
     「查不到」同为不可定位）、锚点核对不上、锚点位置不严格递增。
@@ -104,7 +104,8 @@ def phase_ranges(phases, source_text: str, source_norm: str,
         if b <= a:
             return [], f"锚点位置不严格递增：{a} → {b}"
     n = len(phases)
-    ranges = [(starts[k], starts[k + 1] if k + 1 < n else len(source_norm))
+    bounds = [0, *starts[1:]]          # 阶段 1 一律从全书开头算起；它的锚点只参与顺序核对
+    ranges = [(bounds[k], bounds[k + 1] if k + 1 < n else len(source_norm))
               for k in range(n)]
     return ranges, ""
 
