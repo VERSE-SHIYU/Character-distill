@@ -342,7 +342,6 @@ def test_t7_ci_calls_the_same_entrypoint():
 # ---------------------------------------------------------------- G1/G2/G3
 
 
-@pytest.mark.xfail(strict=True, reason="preflight target not implemented yet")
 def test_g1_hook_runs_preflight_target(tmp_path):
     repo = _init_repo(tmp_path)
     _push_initial(repo)
@@ -364,7 +363,6 @@ def test_g1_hook_runs_preflight_target(tmp_path):
     assert record.read_text(encoding="utf-8").strip() == "preflight"
 
 
-@pytest.mark.xfail(strict=True, reason="preflight target not implemented yet")
 def test_g2_preflight_runs_meta_locks_and_eslint_only(tmp_path):
     bin_dir, fake = _fake_python(tmp_path)
     record = tmp_path / "record"
@@ -407,7 +405,6 @@ def test_g2_preflight_runs_meta_locks_and_eslint_only(tmp_path):
     assert not any(row.startswith("npm|") for row in rows), rows
 
 
-@pytest.mark.xfail(strict=True, reason="preflight target not implemented yet")
 def test_g3_preflight_propagates_meta_lock_failure(tmp_path):
     bin_dir, fake = _fake_python(tmp_path)
     record = tmp_path / "record"

@@ -5,6 +5,16 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
 
+# 预检的元锁清单：只在这里维护；测试不重抄文件名。
+META_LOCKS=(
+  tests/test_lock_coverage.py
+  tests/test_mutation_anchors.py
+  tests/test_mutation_framework.py
+  tests/test_evidence_integrity.py
+  tests/test_evidence_integrity_mutations.py
+  tests/test_ledger_substitution_markers.py
+)
+
 # 解释器解析顺序：PYTHON → 主仓库根的 .venv → python。
 # 不依赖 PATH 上的 pytest：本机 PATH 上可能是别的 venv，它的绿不是本仓的证据。
 resolve_python() {
@@ -28,7 +38,7 @@ resolve_python() {
   printf '%s' python
 }
 
-emit_backend_failure() {
+emit_failure() {
   local log=$1
   if [ -z "${GITHUB_STEP_SUMMARY:-}" ]; then
     return
@@ -49,13 +59,30 @@ run_backend() {
   python=$(resolve_python)
   "$python" -m pytest tests/ -v --tb=short 2>&1 | tee "$log" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    emit_backend_failure "$log"
+    emit_failure "$log"
   fi
   return "$rc"
 }
 
+run_eslint() {
+  ( cd web/frontend && npx eslint . -c eslint.ci.config.js --quiet )
+}
+
 run_frontend() {
-  ( cd web/frontend && npx eslint . -c eslint.ci.config.js --quiet && npm test )
+  run_eslint || return $?
+  ( cd web/frontend && npm test )
+}
+
+run_preflight() {
+  local python rc=0
+  local log=${PYTEST_LOG:-pytest.log}
+  python=$(resolve_python)
+  "$python" -m pytest -q "${META_LOCKS[@]}" 2>&1 | tee "$log" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    emit_failure "$log"
+    return "$rc"
+  fi
+  run_eslint
 }
 
 if [ "$#" -eq 0 ]; then
@@ -70,8 +97,9 @@ for target in "$@"; do
   case "$target" in
     backend) run_backend || rc=$? ;;
     frontend) run_frontend || rc=$? ;;
+    preflight) run_preflight || rc=$? ;;
     *)
-      echo "用法：$0 [backend|frontend]..." >&2
+      echo "用法：$0 [backend|frontend|preflight]..." >&2
       exit 2
       ;;
   esac

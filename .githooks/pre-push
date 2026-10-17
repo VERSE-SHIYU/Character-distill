@@ -42,7 +42,7 @@ if [ "$needs_check" = true ]; then
     if [ -n "${PREFLIGHT_CMD:-}" ]; then
       bash -c "$PREFLIGHT_CMD"
     else
-      bash "$(git rev-parse --show-toplevel)/scripts/check.sh"
+      bash "$(git rev-parse --show-toplevel)/scripts/check.sh" preflight
     fi
   )
 fi

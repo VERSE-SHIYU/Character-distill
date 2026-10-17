@@ -80,8 +80,8 @@ MUTATIONS = [
         "M8",
         "eslint 失败被吞",
         "scripts/check.sh",
-        b"  ( cd web/frontend && npx eslint . -c eslint.ci.config.js --quiet && npm test )",
-        b"  ( cd web/frontend && { npx eslint . -c eslint.ci.config.js --quiet || true; } && npm test )",
+        b"  run_eslint || return $?",
+        b"  run_eslint || true",
         f"{TESTS}::test_t6_frontend_runs_eslint_then_npm_test",
     ),
     (
@@ -127,6 +127,30 @@ MUTATIONS = [
         b"    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES\n",
         b"    :\n",
         f"{TESTS}::test_t9_hook_hides_git_dir_from_the_check",
+    ),
+    (
+        "M14",
+        "钩子改回无参数的 check.sh",
+        ".githooks/pre-push",
+        b'      bash "$(git rev-parse --show-toplevel)/scripts/check.sh" preflight',
+        b'      bash "$(git rev-parse --show-toplevel)/scripts/check.sh"',
+        f"{TESTS}::test_g1_hook_runs_preflight_target",
+    ),
+    (
+        "M15",
+        "preflight 改成跑 tests/",
+        "scripts/check.sh",
+        b'  "$python" -m pytest -q "${META_LOCKS[@]}" 2>&1 | tee "$log" || rc=$?',
+        b'  "$python" -m pytest -q tests/ 2>&1 | tee "$log" || rc=$?',
+        f"{TESTS}::test_g2_preflight_runs_meta_locks_and_eslint_only",
+    ),
+    (
+        "M16",
+        "吞掉元锁退出码",
+        "scripts/check.sh",
+        b'  "$python" -m pytest -q "${META_LOCKS[@]}" 2>&1 | tee "$log" || rc=$?',
+        b'  "$python" -m pytest -q "${META_LOCKS[@]}" 2>&1 | tee "$log" || true',
+        f"{TESTS}::test_g3_preflight_propagates_meta_lock_failure",
     ),
 ]
 
