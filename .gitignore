@@ -281,6 +281,9 @@ web/frontend/verify_minepage.png
 # 根目录 e2e scratch（一次性调查工具；仅根目录，勿吞 web/frontend/e2e 脚本）
 /e2e/
 
+# scripts/check.sh 的输出
+/pytest.log
+
 # 账户数据迁移工具（涉 user_secrets，不进版本库）
 scripts/export_shiyu.py
 scripts/import_shiyu.py

@@ -141,7 +141,7 @@ jobs:
           # 那轮 CI **红了**（运行 `35075782258` 实测 `11 failed`），红得指错地方：报的是症状
           # `.env not found`，不是成因。判据是行为，故上面钉版本 + 断言版本号，这里才敢声明。
           REQUIRE_COMPOSE_TESTS: "1"
-        run: pytest tests/ -v --tb=short
+        run: bash scripts/check.sh backend
 
       - name: 红的时候说清楚这条红意味着什么
         if: failure()
@@ -220,7 +220,7 @@ jobs:
           # 与 gate 同一条理由：哨兵也要真跑门锁，不允许靠「没有 docker」静默跳过 ——
           # 那样哨兵会漏掉一整类上游漂移（compose 自身的行为变化），而它正是为此存在的。
           REQUIRE_COMPOSE_TESTS: "1"
-        run: pytest tests/ -v --tb=short
+        run: bash scripts/check.sh backend
 
       - name: 红的时候说清楚这条红意味着什么
         if: failure()
@@ -254,17 +254,15 @@ jobs:
       # 这条门根本不执行 —— 而分支上最需要的正是「lint 过没过」。拆成独立 job 而不是
       # 塞进 test job：test 的命题是「本仓 Python 回归」（依赖按锁、证据是 pip freeze），
       # 把 node 工具链混进去会污染那条证据；独立 job 还能与 test 并行，不占关键路径。
-      - name: Frontend lint (no-undef gate)
-        run: |
-          npm ci
-          npx eslint . -c eslint.ci.config.js --quiet
+      - name: Install frontend dependencies
+        run: npm ci
         working-directory: web/frontend
 
-      # 单测进这道门：前端上报那条链（配置为空 / 有 DSN / 抛错后 fallback 与上报）只有
-      # vitest 能红，eslint 看不见。放在同一 job 里复用上一步的 node_modules。
-      - name: Frontend unit tests (vitest)
-        run: npm test
-        working-directory: web/frontend
+      # lint 与单测走与本地 pre-push 相同的入口（scripts/check.sh frontend），不在 YAML
+      # 里另写一份命令。单测进这道门：前端上报那条链（配置为空 / 有 DSN / 抛错后 fallback
+      # 与上报）只有 vitest 能红，eslint 看不见。
+      - name: Frontend lint + unit tests
+        run: bash scripts/check.sh frontend
 
   build:
     needs: [test, frontend-lint]
