@@ -17,7 +17,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from adapters.llm_adapter import LLMAdapter
 from core.chat_engine import ChatEngine
-from core.agent.tools import AgentToolkit
+from core.agent.tools import ALL_SCHEMAS
 from core.schema import CharacterCard
 from storage import get_store
 import asyncio
@@ -68,9 +68,10 @@ def main():
         "今天是几月几号？", voice_mode=False, include_dynamic=True,
     )
 
-    # ── 三工具 schema ──
-    toolkit = AgentToolkit(engine._ctx_engine)
-    schemas = toolkit.get_schemas()
+    # ── 三工具 schema（全量出口，不看联网开关）──
+    # 本脚本只把清单交给模型看它会不会调，不执行工具 —— 与 MCP 静态列表同一个出口。
+    # `get_schemas()` 是「这次能用的工具」（#170 起按开关过滤，默认关只剩 2 个）。
+    schemas = list(ALL_SCHEMAS)
 
     # ── 统一 input ──
     question = "今天是几月几号？"
