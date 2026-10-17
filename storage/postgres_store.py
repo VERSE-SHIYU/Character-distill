@@ -3833,6 +3833,29 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Load card draft failed: {exc}")
             raise StoreError("load_card_draft_owned", exc) from exc
 
+    async def save_retro_regions(self, text_id: str, retro_json: str, *, version: int) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE texts SET retro_json = $1, retro_version = $2 WHERE id = $3",
+                    retro_json, version, text_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Save retro regions failed: {exc}")
+            raise StoreError("save_retro_regions", exc) from exc
+
+    async def get_retro_regions_owned(self, text_id: str, user_id: str, *, version: int) -> str:
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    "SELECT retro_json, retro_version FROM texts WHERE id = $1 AND user_id = $2",
+                    text_id, user_id,
+                )
+            return row[0] if row and row[0] and row[1] == version else ""
+        except Exception as exc:
+            print(f"[PostgresStore] Get retro regions failed: {exc}")
+            raise StoreError("get_retro_regions_owned", exc) from exc
+
     async def load_affinity_state_unscoped(self, session_id: str) -> tuple[str, bool]:
         try:
             async with await self._connect() as conn:

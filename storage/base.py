@@ -829,6 +829,19 @@ class StorageBase(ABC):
         so no `*_unscoped` escape hatch is needed."""
 
     @abstractmethod
+    async def save_retro_regions(self, text_id: str, retro_json: str, *, version: int) -> None:
+        """Persist a text's retrospective-region map (`texts.retro_json` / `retro_version`).
+
+        `version` is supplied by the caller (`core.retro_regions.RETRO_VERSION`); the store only
+        stores it. Written only by `core.retro_cache.resolve_retro_regions`."""
+
+    @abstractmethod
+    async def get_retro_regions_owned(self, text_id: str, user_id: str, *, version: int) -> str:
+        """Return the cached map JSON for a text the user owns ("" when none or version differs).
+
+        Owner filter in SQL (`texts.user_id`), same shape as `get_characters_owned`."""
+
+    @abstractmethod
     async def save_group_session_record(self, group_id: str, card_id: str, record_json: str) -> None:
         """Upsert one group member's record JSON (`group_session_records`, keyed by (group, card)).
 

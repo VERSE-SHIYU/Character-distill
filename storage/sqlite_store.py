@@ -172,6 +172,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "106_usage_cache_tokens.sql",
     # 107：PG 042 新增列的孪生，同上。
     "107_card_distill_draft.sql",
+    # 108：PG 043 新增列的孪生，同上。
+    "108_text_retro_regions.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -4575,6 +4577,31 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Load card draft failed: {exc}")
             raise StoreError("load_card_draft_owned", exc) from exc
+
+    async def save_retro_regions(self, text_id: str, retro_json: str, *, version: int) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE texts SET retro_json = ?, retro_version = ? WHERE id = ?",
+                    (retro_json, version, text_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save retro regions failed: {exc}")
+            raise StoreError("save_retro_regions", exc) from exc
+
+    async def get_retro_regions_owned(self, text_id: str, user_id: str, *, version: int) -> str:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT retro_json, retro_version FROM texts WHERE id = ? AND user_id = ?",
+                    (text_id, user_id),
+                )
+                row = await cursor.fetchone()
+            return row[0] if row and row[0] and row[1] == version else ""
+        except Exception as exc:
+            print(f"[SQLiteStore] Get retro regions failed: {exc}")
+            raise StoreError("get_retro_regions_owned", exc) from exc
 
     async def load_session_record_unscoped(self, session_id: str) -> str:
         try:
