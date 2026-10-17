@@ -228,7 +228,8 @@ __marimo__/
 /docker-compose.override.yml
 
 # Claude Code
-.claude/
+.claude/*
+!.claude/rules/
 CLAUDE.md
 
 # Frontend build artifacts
