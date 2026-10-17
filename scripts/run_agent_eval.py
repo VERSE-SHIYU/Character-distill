@@ -153,6 +153,22 @@ async def seed_memories(mem_mgr: Any, card_id: str) -> bool:
 # ── 单条执行 ──
 
 
+def _make_eval_engine(llm: LLMAdapter, card: CharacterCard) -> ChatEngine:
+    """评测引擎：三种模式共用这一处构造（全新引擎，不复用 history）。
+
+    联网开关按路由的写法打开（web/routers/chat.py:335 `engine._ctx_engine.web_search_enabled
+    = web_search`）：评测量的是「工具调用决策」，评测集里的 realtime 用例期望调 web_search
+    （tests/eval/agent_eval_cases.jsonl:31）；#170 之后工具清单按开关过滤，默认关会让这些
+    用例恒调不到。老路径同样看开关（core/context_engine.py:332）。
+    """
+    engine = ChatEngine(
+        llm=llm, rag=None, card=card, card_id=f"eval-{uuid4().hex[:8]}", storage=None,
+        session_id=f"eval-{uuid4().hex[:12]}", is_new_session=True,
+    )
+    engine._ctx_engine.web_search_enabled = True
+    return engine
+
+
 async def run_case(
     case: dict,
     mode: str,
@@ -165,17 +181,7 @@ async def run_case(
     expected = case.get("expected_tools", [])
     keyword = case.get("expected_keyword")
 
-    # 全新 engine（不复用 history）
-    engine = ChatEngine(
-        llm=llm,
-        rag=None,
-        card=card,
-        memory_manager=None,   # eval 中不依赖外部 memory manager
-        card_id=f"eval-{uuid4().hex[:8]}",
-        storage=None,
-        session_id=f"eval-{uuid4().hex[:12]}",
-        is_new_session=True,
-    )
+    engine = _make_eval_engine(llm, card)
     engine.agent_mode = (mode == "agent")
 
     # 装 metrics 采集
@@ -328,10 +334,7 @@ async def _run_legacy(
     expected: list[str], keyword: str | None,
 ) -> CaseResult:
     """Legacy 模式：engine.chat() → 采集 system prompt 指标。"""
-    engine = ChatEngine(
-        llm=llm, rag=None, card=card, card_id=f"eval-{uuid4().hex[:8]}", storage=None,
-        session_id=f"eval-{uuid4().hex[:12]}", is_new_session=True,
-    )
+    engine = _make_eval_engine(llm, card)
     engine.agent_mode = False
 
     metrics = BuildMetrics()
@@ -369,10 +372,7 @@ async def _run_agent(
     expected: list[str], keyword: str | None,
 ) -> CaseResult:
     """Agent 模式：手动 build → AgentLoop → LLM 最终生成，全指标采集。"""
-    engine = ChatEngine(
-        llm=llm, rag=None, card=card, card_id=f"eval-{uuid4().hex[:8]}", storage=None,
-        session_id=f"eval-{uuid4().hex[:12]}", is_new_session=True,
-    )
+    engine = _make_eval_engine(llm, card)
     engine.agent_mode = True
 
     metrics = BuildMetrics()
