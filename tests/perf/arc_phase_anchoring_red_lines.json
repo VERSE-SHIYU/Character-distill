@@ -506,7 +506,7 @@
     "M20 阶段上界整体挪一（含下一阶段首字）": [
       [
         "tests/test_phase_anchoring.py",
-        "assert phase_anchoring.phase_ranges(_phases(3, _A3), normalize(_SRC)) == ( [(0, 5), (5, 10), (10, 15)], \"\")",
+        "assert phase_anchoring.phase_ranges(_phases(3, _A3), _SRC, normalize(_SRC)) == ( [(0, 5), (5, 10), (10, 15)], ",
         0
       ],
       [
@@ -735,7 +735,7 @@
     "M32 阶段 1 的空锚点也整卡跳过": [
       [
         "tests/test_phase_anchoring.py",
-        "assert phase_anchoring.phase_ranges(_phases(3, _A3), normalize(_SRC)) == ( [(0, 5), (5, 10), (10, 15)], \"\")",
+        "assert phase_anchoring.phase_ranges(_phases(3, _A3), _SRC, normalize(_SRC)) == ( [(0, 5), (5, 10), (10, 15)], ",
         0
       ],
       [

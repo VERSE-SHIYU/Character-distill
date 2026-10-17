@@ -76,7 +76,7 @@ def _beh(situation, *, quote, behavior="做法"):
 
 def test_u1_phase_ranges_are_half_open():
     """半开区间 [锚点 k, 锚点 k+1)，锚点取首次出现；阶段 1 空锚点从 0 起，末阶段到全文末尾。"""
-    assert phase_anchoring.phase_ranges(_phases(3, _A3), normalize(_SRC)) == (
+    assert phase_anchoring.phase_ranges(_phases(3, _A3), _SRC, normalize(_SRC)) == (
         [(0, 5), (5, 10), (10, 15)], "")
 
 

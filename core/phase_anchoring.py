@@ -16,8 +16,8 @@ import logging
 from enum import Enum
 from typing import NamedTuple
 
-from core.quotes import (has_ellipsis, locate_elided_in_normalized, locate_in_normalized,
-                         normalize, paragraph_bounds)
+from core.quotes import (has_ellipsis, locate_anchor, locate_in_normalized, normalize,
+                         paragraph_bounds)
 
 logger = logging.getLogger(__name__)
 
@@ -78,14 +78,13 @@ def _first_quotes(by_phase: dict[int, list[str]], phases: list[int]) -> dict[int
     return {p: by_phase[p][0] for p in phases if by_phase.get(p)}
 
 
-def phase_ranges(phases, source_norm: str,
+def phase_ranges(phases, source_text: str, source_norm: str,
                  paragraphs: list[int] | None = None) -> tuple[list[tuple[int, int]], str]:
     """各阶段在规范化原文里的半开区间 `[起, 止)`，以及整卡跳过的原因（空串 = 不跳过）。
 
     阶段 k 的范围是 `[锚点 k 位置, 锚点 k+1 位置)`：锚点取**最长段**在全文的**首次**出现；
-    阶段 1 锚点为空时从 0 开始；最后一阶段到全文末尾。锚点含省略号时走**省略号拼接档**
-    （`locate_elided_in_normalized`，P15）：切段、逐段核对、按序、同一段落，起点取首段；
-    不含省略号的锚点走原路（`locate_in_normalized`，行为不变）。
+    阶段 1 锚点为空时从 0 开始；最后一阶段到全文末尾。每个锚点的位置由
+    `quotes.locate_anchor` 给出（逐字 → 规范化 → 省略号拼接，判定顺序只在那一处）。
     以下任一情况返回空表与原因，由调用方整卡跳过（规则 2 / D7）：阶段 1 以外的锚点为空（与
     「查不到」同为不可定位）、锚点核对不上、锚点位置不严格递增。
     """
@@ -97,10 +96,7 @@ def phase_ranges(phases, source_norm: str,
                 starts.append(0)
                 continue
             return [], f"阶段 {i + 1} 锚点为空"
-        if has_ellipsis(anchor):                     # 省略号拼接档（P15）
-            loc = locate_elided_in_normalized(source_norm, anchor, paragraphs)
-        else:
-            loc = locate_in_normalized(source_norm, anchor)
+        loc = locate_anchor(source_text, source_norm, anchor, paragraphs)
         if loc is None:
             return [], f"阶段 {i + 1} 锚点核对不上：{anchor}"
         starts.append(loc[0])
@@ -143,7 +139,7 @@ def build_anchors(phases, source_text: str) -> PhaseAnchors:
     source_norm = normalize(source_text)
     paragraphs = (paragraph_bounds(source_text, source_norm)
                   if any(has_ellipsis(_anchor_of(p)) for p in phases) else None)
-    ranges, reason = phase_ranges(phases, source_norm, paragraphs)
+    ranges, reason = phase_ranges(phases, source_text, source_norm, paragraphs)
     return PhaseAnchors(len(phases), source_norm, ranges, reason)
 
 
