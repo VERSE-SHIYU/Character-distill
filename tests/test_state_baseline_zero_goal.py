@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -152,9 +153,23 @@ def test_z8_prompt_carries_the_baseline_zero_rule():
     g2 = format_prompt_after("G2")
     g3 = format_prompt_after("G3")
     full = format_prompt_after()
-    assert _BASELINE_ZERO_SENTENCE in g2, "G2 没带「一直如此写 0」的整句"
-    assert _BASELINE_ZERO_SENTENCE in g3, "G3 没带「一直如此写 0」的整句"
+
+    # 维度 B 那一段守 `_PHASE_DESCRIPTION_RULE`；截到下一个维度标号为止，别让别处的同句兜底。
+    b_match = re.search(r"B\. 核心性格.*?(?=\n[A-Z]\. )", g2, re.S)
+    assert b_match, "提示词里找不到维度 B 那一段"
+    assert _BASELINE_ZERO_SENTENCE in b_match.group(0), \
+        "维度 B 那一段没带「一直如此写 0」的整句（描述类规则）"
+
+    # 「重要：」那一段守 `_FORMAT_IMPORTANCE`；只看以对象字段说明开头的那一行。
+    importance_lines = [line for line in g2.splitlines()
+                        if line.startswith('- 写成 [{"value": …')]
+    assert importance_lines, "提示词里找不到「重要：」里的对象字段那一行"
+    assert _BASELINE_ZERO_SENTENCE in importance_lines[0], \
+        "「重要：」那一段没带「一直如此写 0」的整句"
+
+    # 口癖那段守 `_PHASE_VERBATIM_RULE`。
     catchphrase_part = g3.split("口癖按阶段给，", 1)[1].split("用词水平是稳定项", 1)[0]
     assert _BASELINE_ZERO_SENTENCE in catchphrase_part, "口癖那段没带「一直如此写 0」的整句"
+
     assert "从头到尾都成立时标全部阶段" not in full, "旧句「标全部阶段」还在"
     assert "全阶段都成立时把每个阶段都标上" not in full, "旧句「把每个阶段都标上」还在"

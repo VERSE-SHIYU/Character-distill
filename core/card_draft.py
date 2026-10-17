@@ -439,7 +439,8 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
         _valid_number_rows(draft.situation_behaviors, count, "做法",
                            layer=REGISTRY["situation_behaviors"].layer).valid,
         anchors, kind="做法", name=draft.name)
-    m_rows = _valid_number_rows(draft.key_memories, count, "记忆", layer="experience")
+    m_rows = _valid_number_rows(draft.key_memories, count, "记忆",
+                                layer=REGISTRY["key_memories"].layer)
     m = phase_anchoring.verify(
         draft.key_memories, m_rows.valid,
         anchors, kind="记忆", name=draft.name,

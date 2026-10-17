@@ -184,3 +184,8 @@ $ grep -rn "全阶段都成立\|标全部阶段\|确实成立的阶段\|从头�
 ## 交付
 
 一个 PR，英文标题、描述、commit。不写部署步骤。不调真模型、不花钱。
+
+## 复核补充（10-17）
+
+- **Z8 收紧为各段分开断言**：原来只在 G2/G3 整组里搜整句，同一句在描述类、原话类、重要事项三处都出现，删掉任一处的 `+ _BASELINE_ZERO_RULE` 仍能在别处命中 —— 复核的 M5/M6 两个变异因此没被抓到。现在维度 B 段（守 `_PHASE_DESCRIPTION_RULE`）、「重要：」对象字段行（守 `_FORMAT_IMPORTANCE`）、口癖段（守 `_PHASE_VERBATIM_RULE`）各断言一次；两个变异分别删描述类规则、重要事项之后 Z8 都变红。
+- **记忆调用点改取登记表**：`core/card_draft.py` 的 `key_memories` 调用点原来写死 `layer="experience"`，与另外三个调用点（态度、做法、通用字段）从 `REGISTRY[...].layer` 取不是同一种写法；改成 `layer=REGISTRY["key_memories"].layer`，加一种认 0 的类别时只看登记表。
