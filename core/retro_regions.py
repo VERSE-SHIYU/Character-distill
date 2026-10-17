@@ -33,6 +33,7 @@ from typing import Callable
 
 from core.chapters import chapter_openings, chapter_starts
 from core.llm_json import extract_json
+from core.quotes import normalized_starts
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,27 @@ class RetroRegions:
         d = json.loads(text)
         return cls(d["status"], tuple(ChapterRange(a, b, k) for a, b, k in d["ranges"]),
                    d.get("reason", ""), True)
+
+    def spans(self, source_text: str) -> list[tuple[int, int, str]]:
+        """回忆区在**规范化**原文里的半开区间 ``[(起, 止, 标签), …]`` —— 位置核对用的形态。
+
+        区间从首章标题起、到末章的下一章标题止（末章是最后一章则到全文末尾）。未标、或章节
+        标题与标注时对不上（原文变了）→ 空表，位置核对行为同没有回忆区。
+        """
+        if self.status != "marked" or not self.ranges:
+            return []
+        chapters = chapter_starts(source_text)
+        index = {n: i for i, (n, _) in enumerate(chapters or [])}
+        if chapters is None or any(r.first not in index or r.last not in index for r in self.ranges):
+            logger.warning("[retro] 原文章节与回忆区对不上，本次按未标处理：%s", self.summary())
+            return []
+        raw = [(chapters[index[r.first]][1],
+                chapters[index[r.last] + 1][1] if index[r.last] + 1 < len(chapters)
+                else len(source_text),
+                f"第{r.first}–{r.last}章{r.kind}") for r in self.ranges]
+        points = sorted({x for a, b, _ in raw for x in (a, b)})
+        norm = dict(zip(points, normalized_starts(source_text, points)))
+        return [(norm[a], norm[b], label) for a, b, label in raw]
 
     def summary(self) -> str:
         if self.status != "marked":

@@ -702,14 +702,14 @@
     "M28 distiller 多出一处 card_from_draft 调用（调用点计数变 4）": [
       [
         "tests/test_phase_anchoring.py",
-        "assert (counts, two_args) == ({\"core/distiller.py\": 3, \"web/routers/distill.py\": 2}, True)",
+        "assert (counts, well_formed) == ({\"core/distiller.py\": 3, \"web/routers/distill.py\": 2}, True)",
         0
       ]
     ],
     "M29 某一调用点只传一个参数（丢掉原文）": [
       [
         "tests/test_phase_anchoring.py",
-        "assert (counts, two_args) == ({\"core/distiller.py\": 3, \"web/routers/distill.py\": 2}, True)",
+        "assert (counts, well_formed) == ({\"core/distiller.py\": 3, \"web/routers/distill.py\": 2}, True)",
         0
       ]
     ],

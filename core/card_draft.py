@@ -29,6 +29,7 @@ from pydantic import (
 from core import phase_anchoring
 from core.card_layers import REGISTRY, get_path, set_path
 from core.fingerprint import content_fingerprint
+from core.retro_regions import RetroRegions
 from core.schema import (
     FORMAT_GROUPS,
     ArcAxis,
@@ -417,7 +418,7 @@ def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[d
     return out, loose, res.rehung, to_last
 
 
-def card_from_draft(data: Any, source_text: str) -> CharacterCard:
+def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions) -> CharacterCard:
     """模型输出（草稿）→ 存卡。形态不对抛 `pydantic.ValidationError`，由调用方按各自口径上屏。
 
     先做阶段编号合法性过滤（越界、空 → 对不上的撤回、打 warning，一条的编号全部作废就整条
@@ -428,11 +429,16 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
     经历类只挂最早阶段；所有阶段都成立 → 顶层，没有阶段的卡全部放顶层、不做位置检查。关系态度
     同样过一遍检查。最后写
     `ArcPhase.start`（整卡跳过时不写）与 `CharacterArc.source_fingerprint`。`source_text` 必填。
+
+    `retro` 必填：这本书的回忆区（倒叙章节，`core.retro_regions`）。回忆区里的位置不作位置证据、
+    锚点落进回忆区整卡跳过（`phase_anchoring`）。不识别回忆区的入口显式传 `NOT_DETECTED`，
+    行为同没有回忆区 —— 必填是为了让生产入口不会悄悄漏传。
     """
     draft = CardDraft.model_validate(data)
     phases = draft.character_arc.phases
     count = len(phases)
-    anchors = phase_anchoring.build_anchors(phases, source_text)   # 整本原文只归一化这一次
+    anchors = phase_anchoring.build_anchors(                       # 整本原文只归一化这一次
+        phases, source_text, retro=retro.spans(source_text) if phases else ())
 
     b = phase_anchoring.verify(
         draft.situation_behaviors,

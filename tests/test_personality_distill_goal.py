@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.arc_view import project_card
 from core.card_draft import card_from_draft
+from core.retro_regions import NOT_DETECTED
 from core.card_layers import REGISTRY
 from core.card_quotes import retract_unverified
 from core.chat_engine import ChatEngine
@@ -89,7 +90,7 @@ def _draft(**over):
 
 
 def _card(draft=None):
-    card = card_from_draft(draft or _draft(), _SRC)
+    card = card_from_draft(draft or _draft(), _SRC, retro=NOT_DETECTED)
     card, _ = retract_unverified(card, _SRC)
     return card
 

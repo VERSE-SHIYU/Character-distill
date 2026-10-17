@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.arc_view import project_card
 from core.card_draft import card_from_draft
+from core.retro_regions import NOT_DETECTED
 from core.chat_engine import ChatEngine
 
 _SRC = "开头甲甲甲。中间乙乙乙。结尾丙丙丙。"
@@ -71,7 +72,7 @@ def _card():
             },
         },
     }
-    return card_from_draft(draft, _SRC)
+    return card_from_draft(draft, _SRC, retro=NOT_DETECTED)
 
 
 def test_i0_fixture_is_as_described():
@@ -143,7 +144,7 @@ def test_i5_default_phase_chat_uses_the_cards_own_relational_mode():
 
 
 def test_i6_scalar_value_with_evidence_at_k_beats_inherited():
-    card = card_from_draft(_draft_for_i6([_timed(_CLOSE_P1, 1), _timed(_CLOSE_ALL, 1, 2, 3)]), _SRC)
+    card = card_from_draft(_draft_for_i6([_timed(_CLOSE_P1, 1), _timed(_CLOSE_ALL, 1, 2, 3)]), _SRC, retro=NOT_DETECTED)
     assert card.psyche.relational_modes.close == _CLOSE_ALL, "夹具前提不成立：全程值没进顶层"
     proj1, _ = project_card(card, 1)
     proj3, _ = project_card(card, 3)

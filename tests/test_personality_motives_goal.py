@@ -29,6 +29,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.card_draft import card_from_draft
+from core.retro_regions import NOT_DETECTED
 from core.chat_engine import ChatEngine
 
 _SRC = "开头甲甲甲。中间乙乙乙。结尾丙丙丙。"
@@ -61,7 +62,7 @@ def _card(motives=None, behaviors=True):
                                  "occurrences": [{"phase": 1, "quote": _Q1}, {"phase": 2, "quote": _Q2}]}]
         if behaviors else [],
     }
-    return card_from_draft(draft, _SRC)
+    return card_from_draft(draft, _SRC, retro=NOT_DETECTED)
 
 
 class _RecLLM:

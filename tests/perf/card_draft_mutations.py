@@ -177,7 +177,7 @@ MUTATIONS = [
     # 撞到 [68]
     ('M20  distiller 同步入口（distill）退回 CharacterCard.model_validate（不经 card_from_draft）',
      TARGET, [("repl", DIST, [
-         ('            return card_from_draft(data, text)\n'
+         ('            return card_from_draft(data, text, retro=NOT_DETECTED)\n'
           '        except ValidationError as exc:\n'
           '            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n'
           '            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n'
@@ -191,7 +191,7 @@ MUTATIONS = [
     # 撞到 [68]
     ('M21  distiller 长文同步入口（distill_incremental 长文分支）退回 model_validate',
      TARGET, [("repl", DIST, [
-         ('            return card_from_draft(data, text)\n'
+         ('            return card_from_draft(data, text, retro=NOT_DETECTED)\n'
           '        except ValidationError as exc:\n'
           '            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n'
           '            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n'
@@ -205,7 +205,7 @@ MUTATIONS = [
     # 撞到 [68]
     ('M22  distiller 分片同步入口（distill_incremental 最终格式化）退回 model_validate',
      TARGET, [("repl", DIST, [
-         ('            card = card_from_draft(data, text)',
+         ('            card = card_from_draft(data, text, retro=NOT_DETECTED)',
           '            card = CharacterCard.model_validate(data)'),
      ])], "RED"),
     # 撞到 [232]
@@ -248,18 +248,18 @@ MUTATIONS = [
     ('M28  分组流式在 distiller 里就转成卡，交出的不再是草稿（occurrences 已丢）',
      TARGET, [("repl", DIST, [
          ('        yield json.dumps(draft.model_dump(), ensure_ascii=False)',
-          '        yield json.dumps(card_from_draft(merged, text).model_dump(), ensure_ascii=False)'),
+          '        yield json.dumps(card_from_draft(merged, text, retro=NOT_DETECTED).model_dump(), ensure_ascii=False)'),
      ])], "RED"),
     # 撞到 [68, 69]
     ('M29  路由 R1（/start 后台任务）退回 CharacterCard.model_validate',
      TARGET, [("repl", ROUTE, [
-         ('            card = card_from_draft(data, content)',
+         ('            card = card_from_draft(data, content, retro=retro)',
           '            card = CharacterCard.model_validate(data)'),
      ])], "RED"),
     # 撞到 [68, 69]
     ('M30  路由 R2（/run_stream）退回 CharacterCard.model_validate',
      TARGET, [("repl", ROUTE, [
-         ('            card = await asyncio.to_thread(card_from_draft, data, content)',
+         ('            card = await asyncio.to_thread(card_from_draft, data, content, retro=retro)',
           '            card = CharacterCard.model_validate(data)'),
      ])], "RED"),
     # 撞到 [304]

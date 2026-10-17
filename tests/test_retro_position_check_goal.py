@@ -21,7 +21,7 @@ from core.card_draft import card_from_draft
 from core.retro_regions import NOT_DETECTED, ChapterRange, RetroRegions
 from storage.sqlite_store import SQLiteStore
 import test_distill_draft_persist as P
-from web.routers import distill as D
+from routers import distill as D          # 与 test_distill_draft_persist 同一个模块对象
 
 _SRC = ("第1章\n开头甲甲甲甲甲。旧事丁丁丁丁丁。\n"
         "第2章\n中间乙乙乙乙乙。\n"
@@ -56,7 +56,6 @@ def _phase_of(card, situation):
 
 # ── 1 / 4：回忆区里的证据保留模型标注；未标时同今天（被改挂） ──────────────────────
 
-@pytest.mark.xfail(strict=True, reason="PR-4 未实现")
 def test_g1_quote_in_retro_keeps_the_tagged_phase():
     d = _draft(_beh("日札里的", 1, _IN_DIARY), _beh("正文里的", 2, "结尾丙丙丙丙丙"))
     assert (_phase_of(card_from_draft(d, _SRC, retro=_RETRO), "日札里的"),
@@ -65,7 +64,6 @@ def test_g1_quote_in_retro_keeps_the_tagged_phase():
 
 # ── 2：回忆区内外都出现，只用回忆区外的位置 ────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="PR-4 未实现")
 def test_g2_quote_inside_and_outside_uses_only_the_outside_position():
     d = _draft(_beh("两处都有", 2, _BOTH), _beh("正文里的", 2, "结尾丙丙丙丙丙"))
     assert (_phase_of(card_from_draft(d, _SRC, retro=_RETRO), "两处都有"),
@@ -74,7 +72,6 @@ def test_g2_quote_inside_and_outside_uses_only_the_outside_position():
 
 # ── 3：锚点落在回忆区 → 整卡跳过，原因写明回忆区 ─────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="PR-4 未实现")
 def test_g3_anchor_in_retro_skips_the_card_and_names_the_region(caplog):
     d = _draft(_beh("正文里的", 2, "结尾丙丙丙丙丙"), anchor2="中间己己己己己")
     with caplog.at_level(logging.WARNING):
@@ -86,7 +83,6 @@ def test_g3_anchor_in_retro_skips_the_card_and_names_the_region(caplog):
 
 # ── 5：转卡必须拿到回忆区；两个蒸馏入口把 PR-3 的结果交给它 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="PR-4 未实现")
 def test_g5_card_from_draft_requires_retro():
     with pytest.raises(TypeError):
         card_from_draft(_draft(), _SRC)
@@ -115,7 +111,6 @@ def _spy(monkeypatch):
     return seen
 
 
-@pytest.mark.xfail(strict=True, reason="PR-4 未实现")
 def test_g5b_start_passes_the_resolved_regions(monkeypatch, store):
     seen = _spy(monkeypatch)
     uid = f"usr_{uuid.uuid4().hex[:8]}"
@@ -124,7 +119,6 @@ def test_g5b_start_passes_the_resolved_regions(monkeypatch, store):
     assert (resp.status_code, seen) == (200, [_RETRO])
 
 
-@pytest.mark.xfail(strict=True, reason="PR-4 未实现")
 def test_g5c_run_stream_passes_the_resolved_regions(monkeypatch, store):
     seen = _spy(monkeypatch)
     uid = f"usr_{uuid.uuid4().hex[:8]}"

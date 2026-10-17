@@ -14,6 +14,7 @@
 里的后续断言永远进不了红源，会被元锁记成「没有任何变异撞到」的死判据。故凡是要判断多件事
 的，都并成一条元组/结构相等的断言 —— 任一分量变坏，这条断言就红。
 """
+import ast
 import json
 import logging
 import re
@@ -22,6 +23,7 @@ from pathlib import Path
 
 from core import phase_anchoring
 from core.card_draft import DraftBehavior, card_from_draft
+from core.retro_regions import NOT_DETECTED
 from core.quotes import locate_in_normalized, normalize, verbatim_in_normalized
 from core.schema import SituationBehavior
 
@@ -58,7 +60,7 @@ _A3 = {2: _Q2, 3: _Q3}          # 阶段 1 锚点留空 → 从 0 开始
 
 
 def _card(behaviors, src=_SRC, n=3, anchors=_A3):
-    return card_from_draft(_draft(behaviors, n=n, anchors=anchors), src)
+    return card_from_draft(_draft(behaviors, n=n, anchors=anchors), src, retro=NOT_DETECTED)
 
 
 def _placement(card):
@@ -514,9 +516,9 @@ def _anchoring_content_route(monkeypatch, draft):
     threads: list[tuple[str, int]] = []
     real_cfd = D.card_from_draft
 
-    def _spy(data, content):
+    def _spy(data, content, *, retro):
         threads.append(("draft", threading.get_ident()))
-        return real_cfd(data, content)
+        return real_cfd(data, content, retro=retro)
 
     monkeypatch.setattr(D, "card_from_draft", _spy)
 
@@ -574,22 +576,31 @@ def _code_lines(path: Path):
         yield no, line.split("#", 1)[0]
 
 
-def test_s1_card_from_draft_has_five_production_callers_each_with_two_args():
-    calls: dict[str, list[str]] = {}
+def _card_from_draft_calls(tree):
+    """`card_from_draft(…)` 与 `to_thread(card_from_draft, …)` 两种调用形态 → (位置参数个数, 关键字名集合)。"""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        fname = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
+        if fname == "card_from_draft":
+            yield len(node.args), {k.arg for k in node.keywords}
+        elif (fname == "to_thread" and node.args and isinstance(node.args[0], ast.Name)
+              and node.args[0].id == "card_from_draft"):
+            yield len(node.args) - 1, {k.arg for k in node.keywords}
+
+
+def test_s1_card_from_draft_has_five_production_callers_each_with_source_and_retro():
+    """生产调用点只此五处，每处都传草稿 + 原文两个位置参数和 `retro`（回忆区，PR-4）。"""
+    shapes: dict[str, list[tuple[int, frozenset]]] = {}
     for root in ("core", "web"):
         for path in (REPO / root).rglob("*.py"):
-            for _, code in _code_lines(path):
-                # 覆盖直接调用 `card_from_draft(` 与 `to_thread(card_from_draft, …)` 两种形态；
-                # import 行（`from … import card_from_draft, …`）与 def 行排除。
-                if (re.search(r"card_from_draft\s*[(,]", code)
-                        and not re.search(r"\bdef\s", code)
-                        and not re.match(r"\s*(from|import)\b", code)):
-                    rel = path.relative_to(REPO).as_posix()
-                    calls.setdefault(rel, []).append(code.strip())
-    counts = {k: len(v) for k, v in calls.items()}
-    two_args = all("," in line.split("card_from_draft", 1)[1] for lines in calls.values()
-                   for line in lines)
-    assert (counts, two_args) == ({"core/distiller.py": 3, "web/routers/distill.py": 2}, True)
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for argc, kws in _card_from_draft_calls(tree):
+                shapes.setdefault(path.relative_to(REPO).as_posix(), []).append((argc, frozenset(kws)))
+    counts = {k: len(v) for k, v in shapes.items()}
+    well_formed = all(shape == (2, frozenset({"retro"})) for v in shapes.values() for shape in v)
+    assert (counts, well_formed) == ({"core/distiller.py": 3, "web/routers/distill.py": 2}, True)
 
 
 def test_s2_normalized_match_is_written_once():

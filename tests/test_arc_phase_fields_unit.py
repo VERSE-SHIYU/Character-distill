@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from core.card_layers import set_path
 from core.schema import ArcPhase, CharacterArc, CharacterCard, PhaseAttitude, Relationship
+from core.retro_regions import NOT_DETECTED
 
 
 # ── 造卡助手 ────────────────────────────────────────────────────────────
@@ -337,7 +338,7 @@ def test_scalar_same_phase_second_dropped_not_promoted():
             {"value": "早期谨慎", "occurrences": [{"phase": 1, "quote": "开头甲甲甲"}]},
             {"value": "重复条目", "occurrences": [{"phase": 1, "quote": "开头甲甲甲"}]}],
     }
-    card = card_from_draft(data, src)
+    card = card_from_draft(data, src, retro=NOT_DETECTED)
     assert card.decision_style == ""
     assert card.character_arc.phases[0].overlay.get("decision_style") == "早期谨慎"
 
@@ -357,7 +358,7 @@ def test_scalar_multi_phase_lands_in_each_phase():
             {"phase": 2, "quote": "中间乙乙乙"},
             {"phase": 3, "quote": "结尾丙丙丙"}]}],
     }
-    card = card_from_draft(data, src)
+    card = card_from_draft(data, src, retro=NOT_DETECTED)
     assert card.decision_style == ""
     assert card.character_arc.phases[1].overlay.get("decision_style") == "中期起果断"
     assert card.character_arc.phases[2].overlay.get("decision_style") == "中期起果断"
@@ -413,7 +414,7 @@ def test_timed_draft_fields_convert_to_overlay_and_top():
                             "occurrences": [{"phase": 1, "quote": "开头甲甲甲"},
                                             {"phase": 2, "quote": "中间乙乙乙"}]}],
     }
-    card = card_from_draft(data, src)
+    card = card_from_draft(data, src, retro=NOT_DETECTED)
     assert card.personality_traits == ["全程都这样"]
     assert card.decision_style == "一辈子都谨慎"
     assert card.character_arc.phases[0].overlay.get("personality_traits") is None
@@ -623,7 +624,7 @@ def test_anchors_built_once_per_card(monkeypatch):
         "relationships": [{"target": "乙", "relation": "熟人", "attitudes": [
             {"phase": 2, "attitude": "熟", "quote": "中间乙乙乙"}]}],
     }
-    card = card_from_draft(data, src)
+    card = card_from_draft(data, src, retro=NOT_DETECTED)
     assert card.name == "甲"          # 先证位置核对确实跑过（不是提前 return）
     assert calls == 1
 
@@ -687,7 +688,7 @@ def test_relationship_note_flows_from_draft_to_projection():
                 {"phase": 1, "attitude": "平淡", "quote": "开头甲甲甲", "note": "普通同学"},
                 {"phase": 2, "attitude": "亲密", "quote": "中间乙乙乙", "note": "生死之交"}]}],
     }
-    card = card_from_draft(data, src)
+    card = card_from_draft(data, src, retro=NOT_DETECTED)
     notes = {p.phase: p.note for p in card.relationships[0].phase_attitudes}
     assert notes == {1: "普通同学", 2: "生死之交"}, "草稿的按阶段 note 没落进 phase_attitudes"
     assert project_card(card, 1)[0].relationships[0].note == "普通同学"
@@ -1021,7 +1022,7 @@ def test_bad_phase_number_on_occurrence_retracts_row_not_whole_card(caplog):
         {"situation": "另", "behavior": "c",
          "occurrences": [{"phase": 1, "quote": "开头甲甲甲"}]}])
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
-        card = card_from_draft(data, _PHASE_SRC)
+        card = card_from_draft(data, _PHASE_SRC, retro=NOT_DETECTED)
     assert [b.situation for b in card.character_arc.phases[0].behaviors] == ["另"], \
         "同卡另一条没照常落到阶段 1"
     assert all(b.situation != "好" for p in card.character_arc.phases for b in p.behaviors)
@@ -1039,7 +1040,7 @@ def test_bad_phase_number_on_attitude_retracts_row_not_whole_card(caplog):
         "attitudes": [{"phase": _BAD_PHASE, "attitude": "阶段态度", "note": "口径",
                        "quote": "开头甲甲甲"}]}])
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
-        card = card_from_draft(data, _PHASE_SRC)
+        card = card_from_draft(data, _PHASE_SRC, retro=NOT_DETECTED)
     assert card.relationships[0].target == "乙", "关系本身不该消失"
     loose = card.character_arc.unlocated.attitudes
     assert any(a.attitude == "阶段态度" for a in loose), "坏阶段的态度没进未定位区"
@@ -1058,8 +1059,8 @@ def test_phase_number_accepts_string_and_int_like_before():
                             "attitudes": [{"phase": phase_att, "attitude": "阶段态度",
                                            "note": "口径", "quote": "开头甲甲甲"}]}])
 
-    as_str = card_from_draft(_mk("2", "1"), _PHASE_SRC).model_dump()
-    as_int = card_from_draft(_mk(2, 1), _PHASE_SRC).model_dump()
+    as_str = card_from_draft(_mk("2", "1"), _PHASE_SRC, retro=NOT_DETECTED).model_dump()
+    as_int = card_from_draft(_mk(2, 1), _PHASE_SRC, retro=NOT_DETECTED).model_dump()
     assert as_str == as_int
 
 
@@ -1081,7 +1082,7 @@ def test_phase_number_bool_is_bad_value_retracts(caplog):
     from core.card_draft import card_from_draft
 
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
-        card = card_from_draft(_bad_value_draft(True), _PHASE_SRC)
+        card = card_from_draft(_bad_value_draft(True), _PHASE_SRC, retro=NOT_DETECTED)
     assert [b.situation for b in card.character_arc.phases[0].behaviors] == ["另"], \
         "同卡另一条没照常落到阶段 1"
     assert all(b.situation != "好" for p in card.character_arc.phases for b in p.behaviors)
@@ -1095,7 +1096,7 @@ def test_phase_number_fraction_is_bad_value_retracts(caplog):
     from core.card_draft import card_from_draft
 
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
-        card = card_from_draft(_bad_value_draft(2.5), _PHASE_SRC)
+        card = card_from_draft(_bad_value_draft(2.5), _PHASE_SRC, retro=NOT_DETECTED)
     assert [b.situation for b in card.character_arc.phases[0].behaviors] == ["另"]
     assert all(b.situation != "好" for p in card.character_arc.phases for b in p.behaviors)
     assert all(b.situation != "好" for b in card.situation_behaviors)
@@ -1112,8 +1113,8 @@ def test_phase_number_integral_float_lands_like_int():
             {"situation": "讨酒", "behavior": "排出九文大钱",
              "occurrences": [{"phase": phase, "quote": "中间乙乙乙"}]}])
 
-    assert card_from_draft(_mk(2.0), _PHASE_SRC).model_dump() == \
-        card_from_draft(_mk(2), _PHASE_SRC).model_dump()
+    assert card_from_draft(_mk(2.0), _PHASE_SRC, retro=NOT_DETECTED).model_dump() == \
+        card_from_draft(_mk(2), _PHASE_SRC, retro=NOT_DETECTED).model_dump()
 
 
 # ── 审计待办 R3 / R4（Claude 修）─────────────────────────────────────────
