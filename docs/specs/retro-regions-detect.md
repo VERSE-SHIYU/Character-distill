@@ -86,3 +86,5 @@
 **验收**：`e2e/retro_ranges_probe.py`（直接调分支上的 `retro_regions.detect`，只注入模型调用），两次都逐章相等才合并；没过不合并、不进 PR-4。g2 用同章数的替身书检验解析（原文不入库，不能把真实回复写进单测）。
 
 **本地超时**：本地上传 3.5MB 请求体时 `chat_stream_long` 建连预算（7s/8s）会 WriteTimeout，需 `LLM_STREAM_ATTEMPT_S=120 LLM_STREAM_DEADLINE_S=180`。主蒸馏调用同一函数、同一预算，生产上一直能过，属本地网络；不在本 PR 改。
+
+**第四轮实测（d74d106a，Tracy 本地，10-18）：2/2 逐章相等。** 两次都解析为「第 491–504 章日记、第 508–509 章番外」，漏 0、多 0。用量：prompt 834,347 token（目录约 1.7 万 token；run2 缓存命中 834,176），completion 225 / 174 token（第三轮引文版 654–748）。
