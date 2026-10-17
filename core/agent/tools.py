@@ -68,20 +68,94 @@ class ToolResult:
         )
 
 
+# ── 工具表（唯一一张） ─────────────────────────────────────────
+# 每个工具一行，行里带 schema / handler / 超时 / 来源 / 「现在可不可用」。清单
+# （``get_schemas``）与执行（``execute``）都从这张表取，不再各写一份工具名。
+#
+# 工具名只写在 schema 的 ``function.name`` 里（``_ToolEntry.name`` 现读），不另抄。
+_SCENE_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "search_scenes",
+        "description": "检索角色原著中与当前话题相关的场景片段。当对话涉及角色的过去经历、原著情节、与其他角色的关系时调用。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词，用中文描述当前话题涉及的角色经历或情节。",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+_MEMORY_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "search_memory",
+        "description": "检索你（角色）与对方过往交流的长期记忆。当对方提及之前聊过的事、共同经历、或你需要回忆对方的偏好/信息时调用。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词，用中文描述你想回忆的过往对话内容或对方信息。",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+_WEB_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": "搜索现实世界的实时信息。仅当对话明确需要角色不可能内在知晓的现实时事/事实时调用。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词，用中文描述你想查的现实信息。",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+
 class _ToolEntry(NamedTuple):
-    """工具分发表的一行：handler + 超时预算 + 该工具对应的来源词汇。
+    """工具表的一行：schema + handler + 超时预算 + 来源词汇 + 是否绑联网开关。
 
     ``source`` 在这里而非从工具名解析：超时/异常路径压根没有 RetrievalResult 可投影，
     得就地合成 SourceTrace，而合成需要知道来源。让工具名 → 来源的映射只此一份（本表），
     比在两条失败路径里各写一次好。
+
+    ``needs_web`` 为真表示这一行只在 ``ctx.web_search_enabled`` 打开时可用；其余恒可用。
     """
+    schema: dict[str, Any]
     handler: Callable[[str], "RetrievalResult"]
     timeout: int
     source: EvidenceKind
+    needs_web: bool = False
+
+    @property
+    def name(self) -> str:
+        """工具名只在 schema 的 ``function.name`` 里写一次，本表不抄第二份。"""
+        return self.schema["function"]["name"]
 
 
 class AgentToolkit:
-    """把 ContextEngine 的三路检索注册为 OpenAI function-calling 工具。"""
+    """把 ContextEngine 的三路检索注册为 OpenAI function-calling 工具。
+
+    工具与执行同出一张表（``_table``）：给模型的清单去掉「这次不能用的」，
+    执行也只在同一份里找 handler —— 于是不可用的工具对两侧一起消失（走「未知工具」出口）。
+    现在受开关管辖的只有 ``web_search``（``ctx.web_search_enabled``，缺省关）。
+    """
 
     SCENE_TIMEOUT = 5
     MEMORY_TIMEOUT = 5
@@ -91,60 +165,22 @@ class AgentToolkit:
         self._ctx = ctx_engine
         self.current_mood = current_mood
 
+    def _table(self) -> tuple[_ToolEntry, ...]:
+        """三路工具的**唯一**一张表：schema / handler / 超时 / 来源 / 可用性各一行。"""
+        return (
+            _ToolEntry(_SCENE_SCHEMA, self._call_search_scenes, self.SCENE_TIMEOUT, "scene"),
+            _ToolEntry(_MEMORY_SCHEMA, self._call_search_memory, self.MEMORY_TIMEOUT, "memory"),
+            _ToolEntry(_WEB_SCHEMA, self._call_web_search, self.WEB_TIMEOUT, "web", needs_web=True),
+        )
+
+    def _available(self) -> tuple[_ToolEntry, ...]:
+        """这一次能用的工具 —— **每次现读**开关（构造时定死的话，中途改开关清单不跟）。"""
+        if self._ctx.web_search_enabled:
+            return self._table()
+        return tuple(e for e in self._table() if not e.needs_web)
+
     def get_schemas(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_scenes",
-                    "description": "检索角色原著中与当前话题相关的场景片段。当对话涉及角色的过去经历、原著情节、与其他角色的关系时调用。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "搜索关键词，用中文描述当前话题涉及的角色经历或情节。",
-                            }
-                        },
-                        "required": ["query"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_memory",
-                    "description": "检索你（角色）与对方过往交流的长期记忆。当对方提及之前聊过的事、共同经历、或你需要回忆对方的偏好/信息时调用。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "搜索关键词，用中文描述你想回忆的过往对话内容或对方信息。",
-                            }
-                        },
-                        "required": ["query"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "description": "搜索现实世界的实时信息。仅当对话明确需要角色不可能内在知晓的现实时事/事实时调用。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "搜索关键词，用中文描述你想查的现实信息。",
-                            }
-                        },
-                        "required": ["query"],
-                    },
-                },
-            },
-        ]
+        return [e.schema for e in self._available()]
 
     def _call_search_scenes(self, query: str) -> "RetrievalResult":
         return self._ctx._retrieve_scenes_ex(query)
@@ -175,14 +211,10 @@ class AgentToolkit:
     def execute(self, name: str, arguments: dict) -> ToolResult:
         started = time.monotonic()
 
-        dispatch = {
-            "search_scenes": _ToolEntry(self._call_search_scenes, self.SCENE_TIMEOUT, "scene"),
-            "search_memory": _ToolEntry(self._call_search_memory, self.MEMORY_TIMEOUT, "memory"),
-            "web_search": _ToolEntry(self._call_web_search, self.WEB_TIMEOUT, "web"),
-        }
-
-        entry = dispatch.get(name)
+        entry = next((e for e in self._available() if e.name == name), None)
         if entry is None:
+            # 不可用的工具（联网关时的 web_search）对执行侧就是「不存在」—— 与没听过的
+            # 名字走同一个出口，模型拿到同一句话，不会以为自己调到了什么。
             return self._finish(name, arguments, started, None, f"未知工具: {name}")
 
         query = arguments.get("query", "")
@@ -224,3 +256,10 @@ class AgentToolkit:
         return self._finish(
             name, arguments, started, result.trace(), result.block or EMPTY_RESULT
         )
+
+
+# 全部工具的 schema（**不看开关、不需要 ctx**）—— MCP 的静态列表用它：MCP 无用户会话，
+# 也就没有用户开关，联网对它恒可执行（工具表里 web 那一行的可用性只管聊天侧）。
+# 从 `_table()` 现推：它只挂绑定方法和读类属性超时，不读 ctx，故 `ctx_engine=None` 也建得
+# 出来。**有哪几行只在 _table() 里写一次** —— 加工具 = schema 常量 + 表里一行。
+ALL_SCHEMAS: tuple[dict[str, Any], ...] = tuple(e.schema for e in AgentToolkit(None)._table())

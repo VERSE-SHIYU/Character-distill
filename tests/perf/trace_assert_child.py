@@ -273,6 +273,9 @@ def assert_agent_skeleton() -> None:
 
     class _StubCtx:
         """离线 ctx 替身：三路检索直接返回固定 block，无网络（工具层走 ``_ex`` 出口）。"""
+        # 联网开关打开：本探针验的正是 web_search 的 execute_tool span（_StubLLM 第一轮就调它）；
+        # 生产里开关在 ContextEngine 上（core/context_engine.py:235），替身照生产带上这一项。
+        web_search_enabled = True
         def _retrieve_scenes_ex(self, query: str):
             return _hit("scene", "（stub 场景）")
         def _retrieve_memories_ex(self, query: str, current_mood: str | None = None):

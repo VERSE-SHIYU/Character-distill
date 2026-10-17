@@ -112,9 +112,13 @@ class FakeCtxEngine:
     只实现 ``_ex`` 三个出口 —— 真 ContextEngine 的 ``_retrieve_scenes`` 等字符串出口
     就只是 ``_ex(...).block``，工具层走的是 ``_ex``。假件补一份字符串出口等于给已经
     没有调用方的接口续命。
+
+    ``web_search_enabled`` 缺省**关** —— 与生产同源（`core/context_engine.py:235`）。
+    要用 web 那一行工具的用例显式打开，别让假件比生产宽松。
     """
 
     def __init__(self) -> None:
+        self.web_search_enabled = False
         self.scenes_result = ""
         self.scenes_sleep = 0.0
         self.scenes_exception: Exception | None = None
@@ -354,6 +358,7 @@ def test_toolkit_timeout_and_exception(monkeypatch):
     monkeypatch.setattr(AgentToolkit, "SCENE_TIMEOUT", 1)
 
     ctx = FakeCtxEngine()
+    ctx.web_search_enabled = True          # 这一条验的正是 web 工具的执行路径
     ctx.web_sleep = 5.0   # exceeds 1s timeout
     ctx.scenes_exception = ValueError("scene retrieval exploded")
 
