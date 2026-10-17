@@ -52,4 +52,26 @@ describe('exportCard token 续期', () => {
     expect(fetchMock.mock.calls[2][1].headers.Authorization).toBe('Bearer new-token')
     expect(downloads).toEqual(['角色甲.json'])
   })
+
+  it('blob URL 延迟 1 秒释放，不在点击后立即释放', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      fetchMock.mockResolvedValueOnce(new Response('{"name":"角色甲"}', {
+        status: 200,
+        headers: { 'Content-Disposition': "attachment; filename*=UTF-8''a.json" },
+      }))
+
+      await exportCard('card1')
+
+      expect(downloads).toEqual(['a.json'])
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(999)
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(1)
+      expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1)
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:export')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

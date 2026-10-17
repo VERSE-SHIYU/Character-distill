@@ -70,6 +70,7 @@
 - **目标检查**：`src/api/__tests__/exportCard.test.js` —— 401 → 刷新 → 重试成功 → 触发下载。
   裸 fetch 时红（fetch 只调 1 次），改用 `fetchWithTimeout` 后绿。
 - **变异**：把 `fetchWithTimeout` 改回裸 `fetch` → 该检查变红。
+- **补充（2026-10-17）**：延迟 1 秒释放 blob URL 由 `exportCard.test.js` 第 2 条守住；变异「立即释放 / 不释放 / 改成 5 秒」均变红。
 
 ## 已知风险（本 PR 不处理）
 
