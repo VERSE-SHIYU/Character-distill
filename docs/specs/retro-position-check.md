@@ -44,6 +44,10 @@
 
 剩下 8 条改挂的摘录都在回忆区外（构造保证：`verify` 只用回忆区外的位置改挂）。
 
-## 4. 已知边界
+## 4. CI 红一次（f0a5bec3）
+
+gate 红：`test_security_authz.py::test_15` 得 429 而非 404。根因：`limiter` 是进程级单例，`/run_stream` 限 16/hour、全量跑时所有文件共用「testclient」一个桶；本 PR 的 g5c 多调一次就超限。本 PR 照 `test_text_upload_filename.py` 的现成做法在目标检查文件里前后各 `limiter.reset()`。沙箱全量 3727 passed、1 skipped。**根上的问题**（桶跨文件共享，下一个加 `/run_stream` 测试的人会再撞）不在本 PR 范围，报 Tracy 定是否另开 PR 在 `tests/conftest.py` 统一隔离。
+
+## 5. 已知边界
 
 同 PR-3：分组路径、无「第N章」标题的书、章内回忆（第 399 章）都按未标处理。

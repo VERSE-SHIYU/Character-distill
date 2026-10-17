@@ -21,6 +21,7 @@ from core.card_draft import card_from_draft
 from core.retro_regions import NOT_DETECTED, ChapterRange, RetroRegions
 from storage.sqlite_store import SQLiteStore
 import test_distill_draft_persist as P
+from limiter import limiter
 from routers import distill as D          # 与 test_distill_draft_persist 同一个模块对象
 
 _SRC = ("第1章\n开头甲甲甲甲甲。旧事丁丁丁丁丁。\n"
@@ -91,6 +92,16 @@ def test_g5_card_from_draft_requires_retro():
 class _Stub(P._DraftStub):
     def detect_retro_regions(self, content):
         return _RETRO
+
+
+@pytest.fixture(autouse=True)
+def _isolate_rate_limiter():
+    """`limiter` 是进程级单例，`/run_stream` 限 16/hour、按 client IP 记；全量跑时各文件的
+    请求共用「testclient」一个桶，本文件再多一次就把后面的 test_security_authz 顶成 429。
+    前后各清一次（同 `test_text_upload_filename.py`）。"""
+    limiter.reset()
+    yield
+    limiter.reset()
 
 
 @pytest.fixture
