@@ -25,6 +25,7 @@ from adapters.llm_adapter import LLMAdapter, user_facing_error
 from core.arc_view import project_card, valid_phase
 from core.card_out import CARD_CONFLICT, card_revision, out_card
 from core.character_roster import aliases_for, resolve_characters, target_character_name
+from core.retro_cache import resolve_retro_regions
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core import examples_pending
 from core.embeddings import EMBEDDING_KEY_REQUIRED
@@ -412,6 +413,10 @@ def _run_distill_task(
         if not name:
             name = target_character_name(chars)
         aliases = aliases_for(chars, name)
+        # 回忆区（书的属性，按书缓存）：本段只算、不用 —— 位置核对里怎么用见后续 PR。
+        # 标不了不挡蒸馏，失败口径在 resolve_retro_regions 里。
+        submit_to_main_loop(
+            resolve_retro_regions(get_storage(), distiller, text_id, user_id, content))
 
         _set_task(task_id, {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
 
@@ -1117,6 +1122,9 @@ async def distill_stream(
             logger.error("Identify failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
+
+        # 回忆区：同 /start 后台任务，只算、不用；标不了不挡蒸馏。
+        await resolve_retro_regions(storage, distiller, req.text_id, user_id, content)
 
         # Incremental distillation with aliases for broader chunk matching
         full = ""

@@ -58,6 +58,8 @@ from core.roster_aggregate import (
 )
 from core.card_draft import CardDraft, card_from_draft, draft_schema
 from core.card_layers import REGISTRY
+from core import retro_regions
+from core.retro_regions import RetroRegions
 from core.relationship_batch import (
     REL_BATCH_SIZE,
     RelationshipBatchError,
@@ -719,6 +721,8 @@ class Distiller:
     #: 分片数 ≥ MIN_SPEAK_CHUNKS 且非泛称」判定；全书判定输出改 `merge` / `impersonal`
     #: 两键、取 5 次独立采样的多数票。
     IDENTIFY_VERSION = 4
+    # 回忆区回复只是几行章号范围 + 理由（实测 331–748 token），给足余量。
+    RETRO_MAX_TOKENS = 1024
 
     #: 全书判定的独立采样次数：同一输入、同一提示词下单次调用的例外清单随采样大幅
     #: 漂移（实测两次交集很小），故按 self-consistency（Wang et al., ICLR 2023）取多数票。
@@ -1045,6 +1049,22 @@ class Distiller:
         except RelationshipBatchError as exc:
             print(f"关系分批失败：{exc}")
             raise DistillError("蒸馏失败：关系生成失败，请重试", str(exc)) from exc
+
+    def detect_retro_regions(self, text: str) -> RetroRegions:
+        """标这本书的回忆区（`core.retro_regions`）。整书前缀与主调用同源（`book_prefix`），
+        命中缓存；只有一次读完的书才能标 —— 分组路径的整书不在同一个前缀里，直接「未标」。"""
+        if not self._takes_one_pass(text):
+            return RetroRegions.unavailable("分组路径：整本书不在同一个前缀里", final=True)
+
+        def _call(system: str, user: str) -> str:
+            reply, truncated = self._collect_stream(
+                system, [{"role": "user", "content": user}], "回忆区识别", "distill_retro",
+                max_tokens=self.RETRO_MAX_TOKENS)
+            if truncated:
+                raise DistillError("回忆区识别输出被截断", "distill_retro truncated")
+            return reply
+
+        return retro_regions.detect(text, prefix=book_prefix(text), call=_call)
 
     def fill_relationships(self, draft: dict[str, Any], text: str,
                            character_name: str) -> None:
