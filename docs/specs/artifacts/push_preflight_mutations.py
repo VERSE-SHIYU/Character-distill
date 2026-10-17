@@ -152,6 +152,14 @@ MUTATIONS = [
         b'  "$python" -m pytest -q "${META_LOCKS[@]}" 2>&1 | tee "$log" || true',
         f"{TESTS}::test_g3_preflight_propagates_meta_lock_failure",
     ),
+    (
+        "M17",
+        "preflight 吞掉 eslint 失败",
+        "scripts/check.sh",
+        b"  run_eslint\n}",
+        b"  run_eslint || true\n}",
+        f"{TESTS}::test_g4_preflight_propagates_eslint_failure",
+    ),
 ]
 
 

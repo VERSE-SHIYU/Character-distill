@@ -423,6 +423,20 @@ def test_g3_preflight_propagates_meta_lock_failure(tmp_path):
     assert out.returncode == 1, out.stdout + out.stderr
 
 
+def test_g4_preflight_propagates_eslint_failure(tmp_path):
+    bin_dir, fake = _fake_python(tmp_path)
+    record = tmp_path / "record"
+    _write_exec(bin_dir / "npx", "#!/usr/bin/env bash\nexit 1\n")
+
+    out = _check(
+        tmp_path, "preflight",
+        env={"PYTHON": fake.as_posix(), "FAKE_RECORD": record.as_posix()},
+        bin_dir=bin_dir,
+    )
+
+    assert out.returncode == 1, out.stdout + out.stderr
+
+
 # --------------------------------------------------------------------------- T8
 
 
