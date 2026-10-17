@@ -146,6 +146,8 @@ def _fake_python(tmp_path: Path) -> tuple[Path, Path]:
 def _check(tmp_path: Path, *args: str, env: dict | None = None, bin_dir: Path | None = None):
     merged = {
         **_GIT_ISOLATION,
+        # 全量跑测试时外层的 check.sh 也在写仓库根的 pytest.log，内层必须换路径。
+        "PYTEST_LOG": (tmp_path / "inner-pytest.log").as_posix(),
         **({"PATH": _prepend_path(bin_dir)} if bin_dir else {}),
         **(env or {}),
     }

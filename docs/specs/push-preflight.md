@@ -95,4 +95,5 @@ T7 是唯一读文件的测试，它判的是「CI 不另写一份实现」这�
 - **新增 `.gitignore` 的 `/pytest.log`**：spec §2 未列，但 `check.sh` 的产物落在仓库根，不 ignore 会污染每次本地运行的工作区。属已声明偏离。
 - **新增 `docs/specs/artifacts/push_preflight_mutations.py`**：11 条变异的产数脚本入库（仓规「证据产物必须入库」）。spec §2「不新增其他文件」按此口径理解为不新增业务源文件。
 - **A3 实跑发现并修复（2026-10-17）**：CI 日志里 `grep: pytest.log: binary file matches` —— 真实 pytest 输出含 NUL，grep 默认把日志当二进制、不输出匹配行，导致摘要与 `::error` 都没写。修复：两处 grep 加 `-a`。T5 增加 `FAKE_BINARY` 让假解释器输出 NUL，复现该形态（不加 `-a` 时 T5 实测红，摘要内容是 `Binary file pytest.log matches`）；变异表新增 M12（去掉 `-a`），总数 11 → 12。
+- **A3 复跑又发现一处（同日修复）**：全量跑时 `test_push_preflight` 的 T3–T5 会在仓库根再调 `check.sh`，内层 `tee pytest.log` 截断了外层正在写的同一文件，摘要里混进了假解释器的 `tests/a.py::t1`。修复：`check.sh` 的日志路径改为 `${PYTEST_LOG:-pytest.log}`，测试的 `_check` 把内层日志指到临时目录。另：CI 的 `::error` 注解在该 step 已有 11 条失败注解后被 GitHub 丢弃（日志里仍可见 `##[error]<ids>`），A3 以 step summary 为准。
 

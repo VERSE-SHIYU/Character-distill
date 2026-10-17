@@ -104,8 +104,8 @@ MUTATIONS = [
         "M11",
         "解释器改回裸 pytest",
         "scripts/check.sh",
-        b'  "$python" -m pytest tests/ -v --tb=short 2>&1 | tee pytest.log || rc=$?',
-        b"  pytest tests/ -v --tb=short 2>&1 | tee pytest.log || rc=$?",
+        b'  "$python" -m pytest tests/ -v --tb=short 2>&1 | tee "$log" || rc=$?',
+        b'  pytest tests/ -v --tb=short 2>&1 | tee "$log" || rc=$?',
         f"{TESTS}::test_t3_backend_uses_same_pytest_invocation_and_declares_pg",
     ),
     (

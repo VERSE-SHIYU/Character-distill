@@ -44,10 +44,12 @@ run_backend() {
   export REQUIRE_PG_TESTS=1
   export REQUIRE_COMPOSE_TESTS=1
   local python rc=0
+  # 可覆盖：本仓全量跑测试时，测试内部也会调 check.sh，默认路径会互相截断。
+  local log=${PYTEST_LOG:-pytest.log}
   python=$(resolve_python)
-  "$python" -m pytest tests/ -v --tb=short 2>&1 | tee pytest.log || rc=$?
+  "$python" -m pytest tests/ -v --tb=short 2>&1 | tee "$log" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    emit_backend_failure pytest.log
+    emit_backend_failure "$log"
   fi
   return "$rc"
 }
