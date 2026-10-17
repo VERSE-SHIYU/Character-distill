@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import useAppStore from '../store/useAppStore'
-import { getAuthHeaders, fetchWithTimeout } from '../api/client'
+import { getAuthHeaders, fetchWithTimeout, exportCard } from '../api/client'
 import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
@@ -921,21 +921,7 @@ function CardDetail({ card, textId, goBack }) {
         <button
           type="button"
           className="btn-secondary card-export-btn"
-          onClick={async () => {
-            try {
-              const res = await fetchWithTimeout(`/api/cards/${card.id}/export`)
-              const blob = await res.blob()
-              const url = URL.createObjectURL(blob)
-              const a = document.createElement('a')
-              a.href = url
-              document.body.appendChild(a)
-              a.click()
-              a.remove()
-              URL.revokeObjectURL(url)
-            } catch (err) {
-              console.error('Export card failed:', err)
-            }
-          }}
+          onClick={() => exportCard(card.id).catch(err => setError('导出失败：' + err.message))}
         >
           <><Download size={14} /> 导出角色卡</>
         </button>
