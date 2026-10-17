@@ -53,3 +53,10 @@ def test_g5_anchor_without_ellipsis_is_unchanged():
     norm = normalize(_SRC)
     for q in ("中间乙乙乙乙乙乙乙乙乙乙", "后来丙丙丙丙丙丙丙丙丙丙", "原文里没有的一句话"):
         assert quotes.locate_anchor(_SRC, norm, q) == locate_in_normalized(norm, q)
+
+
+def test_g6_marked_ellipsis_over_contiguous_text_is_not_whole_string_matched():
+    """不放宽：标了省略号、原文其实连着（中间只隔标点）的锚点，不能因为规范化删掉「…」和标点
+    就整串命中 —— 含省略号的锚点不走规范化整句档（spec §3 设计决定 2），照旧按切段核对：
+    后段「中间」不足 10 字被丢、只剩 1 段 → None。"""
+    assert _at(_SRC, "开头甲甲甲甲甲甲甲甲甲甲……中间") is None

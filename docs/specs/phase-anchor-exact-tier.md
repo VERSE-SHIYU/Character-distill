@@ -192,3 +192,38 @@ AssertionError: tests/perf/arc_phase_anchoring_mutations.py 的产物里这些�
   全部符合预期。产物已写：tests/perf/arc_phase_anchoring_red_lines.json
 real	2m37.822s
 ```
+
+---
+
+## 补充 1：PR #175 审计（2026-10-17，Claude，head 65bb4a46）
+
+**结论：实现与 spec 一致，可以合并；补一条测试后再合。** 问题出在 spec 本身（我写的），不是实现偏离。
+
+目标检查先跑：5 passed；真数据 996/996、谢凛羽跳过原因为「锚点位置不严格递增：949671 → 916341」；受影响测试 + 锁覆盖 490 passed；变异驱动在 PR head 上重跑「全部符合预期」，产物不变。
+
+逐文件：
+
+| 文件 | 结论 |
+|---|---|
+| core/quotes.py | 与原型逐行一致 |
+| core/phase_anchoring.py | 与原型逐行一致；`locate_in_normalized` import 保留 |
+| tests/test_phase_anchoring.py | 只改 test_u1 一行，与原型一致 |
+| tests/perf/arc_phase_anchoring_red_lines.json | 与原型重生成结果一致；PR head 上重跑驱动后无变化 |
+| tests/test_phase_anchor_exact_tier_goal.py | 与原型一致；缺一条，见下 |
+| docs/specs/phase-anchor-exact-tier.md | 与交付版逐字一致 |
+| docs/specs/arc-phase-anchoring.md | §9.8 末尾加一行，符合 §0 要求 |
+
+审计方自补变异（只动 `locate_anchor`，跑目标检查）：
+
+| 变异 | 方向 | 结果 |
+|---|---|---|
+| 去掉逐字档 | 过严 | 红 g1、g2 |
+| 逐字档返回原文坐标、不换算 | 过严 | 红 g1、g2 |
+| 含省略号也走规范化整句（替换切段） | 过宽 | 红 g3 |
+| 切段下限降成 1 段 | 过宽 | 红 g3 |
+| **含省略号先试规范化整句（删「…」后整串命中）** | 过宽 | **全绿，存活** |
+| 不含省略号也先走逐字 | 等价 | 全绿（逐字 ⊂ 规范化，结果相同，属等价变异） |
+
+**问题**：§3 设计决定 2「含省略号的锚点不走规范化整句档」没有任何测试守住。根因：目标检查只写了「原文没有的删减」（g3），没写「标了省略号、原文其实连着、只隔标点」这一种，而规范化整句档恰好会放过它。
+
+**修法**：在 `tests/test_phase_anchor_exact_tier_goal.py` 末尾加 g6（`pr175-audit-g6.diff`）。已验证：PR head 上 6 passed；对上面那条存活变异，g6 变红；锁覆盖 37 passed（新文件不在变异覆盖域内）。
