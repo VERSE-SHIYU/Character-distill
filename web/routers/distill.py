@@ -413,9 +413,9 @@ def _run_distill_task(
         if not name:
             name = target_character_name(chars)
         aliases = aliases_for(chars, name)
-        # 回忆区（书的属性，按书缓存）：本段只算、不用 —— 位置核对里怎么用见后续 PR。
+        # 回忆区（书的属性，按书缓存）：转卡时交给位置核对（倒叙章节里的位置不作阶段证据）。
         # 标不了不挡蒸馏，失败口径在 resolve_retro_regions 里。
-        submit_to_main_loop(
+        retro = submit_to_main_loop(
             resolve_retro_regions(get_storage(), distiller, text_id, user_id, content))
 
         _set_task(task_id, {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
@@ -548,7 +548,7 @@ def _run_distill_task(
 
         try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
-            card = card_from_draft(data, content)
+            card = card_from_draft(data, content, retro=retro)
         except Exception as exc:
             # ValidationError 的 str() 带字段名与输入值（可能含原文片段），只进日志
             logger.error("Card validation failed for %s: %s", name, exc, exc_info=True)
@@ -1123,8 +1123,8 @@ async def distill_stream(
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
 
-        # 回忆区：同 /start 后台任务，只算、不用；标不了不挡蒸馏。
-        await resolve_retro_regions(storage, distiller, req.text_id, user_id, content)
+        # 回忆区：同 /start 后台任务，转卡时交给位置核对；标不了不挡蒸馏（按未标核对）。
+        retro = await resolve_retro_regions(storage, distiller, req.text_id, user_id, content)
 
         # Incremental distillation with aliases for broader chunk matching
         full = ""
@@ -1184,7 +1184,7 @@ async def distill_stream(
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
             # 位置检查要 normalize 整本原文（约 0.3s CPU），本生成器跑在事件循环线程上 ——
             # 同步跑会堵住它，故挪进 to_thread。
-            card = await asyncio.to_thread(card_from_draft, data, content)
+            card = await asyncio.to_thread(card_from_draft, data, content, retro=retro)
         except Exception as exc:
             logger.error("Card validation failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': '蒸馏失败：数据校验错误，请重试'}, ensure_ascii=False, default=str)}\n\n"

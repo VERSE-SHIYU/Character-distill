@@ -28,6 +28,7 @@ from pathlib import Path
 
 from core.arc_view import project_card
 from core.card_draft import card_from_draft
+from core.retro_regions import NOT_DETECTED
 from core.card_layers import get_path, overlay_leaves
 from core.moderation.card_guard import neutralize_one
 from core.moderation.card_text import iter_texts
@@ -78,7 +79,7 @@ _DRAFT = {
     ],
 }
 
-_CARD = card_from_draft(json.loads(json.dumps(_DRAFT)), _TEXT)
+_CARD = card_from_draft(json.loads(json.dumps(_DRAFT)), _TEXT, retro=NOT_DETECTED)
 _NORM = normalize(_TEXT)
 _START2 = _NORM.find(normalize(_ANCHOR2))
 
@@ -181,7 +182,7 @@ _TARGET_DRAFT = {
             {"phase": 1, "attitude": "态度错标", "quote": _LATE},
             {"phase": 1, "attitude": "态度编造", "quote": _FAKE}]}],
 }
-_TARGET_CARD = card_from_draft(json.loads(json.dumps(_TARGET_DRAFT)), _TEXT)
+_TARGET_CARD = card_from_draft(json.loads(json.dumps(_TARGET_DRAFT)), _TEXT, retro=NOT_DETECTED)
 
 
 def test_target_check_attitude_kept_at_its_tag_but_behavior_relocated():

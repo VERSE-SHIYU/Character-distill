@@ -30,6 +30,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.card_draft import card_from_draft, draft_schema
+from core.retro_regions import NOT_DETECTED
 
 _SRC = "开头甲甲甲。中间乙乙乙。"
 _Q1, _Q2 = "开头甲甲甲", "中间乙乙乙"
@@ -63,7 +64,7 @@ def test_k0_fixture_sentences_are_distinct():
 
 
 def test_k1_occurrence_without_phase_drops_only_that_row():
-    card = card_from_draft(_phased(situation_behaviors=_behaviors({"quote": _Q1})), _SRC)
+    card = card_from_draft(_phased(situation_behaviors=_behaviors({"quote": _Q1})), _SRC, retro=NOT_DETECTED)
     top, per, loose = _all_behaviors(card)
     assert _LOST not in top + per + loose, "漏写阶段号的那一条不该落到任何地方"
     assert _KEPT in per, "同卡另一条没照常落阶段"
@@ -73,7 +74,7 @@ def test_k2_attitude_without_phase_drops_only_that_attitude():
     rel = {"target": "掌柜", "relation": "主顾", "attitudes": [
         {"attitude": "漏号的态度", "quote": _Q1},
         {"phase": 2, "attitude": "第二阶段的态度", "quote": _Q2}]}
-    card = card_from_draft(_phased(relationships=[rel]), _SRC)
+    card = card_from_draft(_phased(relationships=[rel]), _SRC, retro=NOT_DETECTED)
     atts = [pa.attitude for r in card.relationships for pa in r.phase_attitudes]
     assert "第二阶段的态度" in atts, "同一关系的另一条态度没照常落阶段"
     assert "漏号的态度" not in atts
@@ -81,14 +82,14 @@ def test_k2_attitude_without_phase_drops_only_that_attitude():
 
 def test_k3_missing_phase_is_warned(caplog):
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
-        card_from_draft(_phased(situation_behaviors=_behaviors({"quote": _Q1})), _SRC)
+        card_from_draft(_phased(situation_behaviors=_behaviors({"quote": _Q1})), _SRC, retro=NOT_DETECTED)
     assert any("缺阶段编号" in r.getMessage() for r in caplog.records), "漏写阶段号没有 warning"
 
 
 def test_k4_unphased_card_keeps_row_at_top():
     draft = {"name": "孔乙己", "situation_behaviors": [
         {"situation": "讨酒", "behavior": _LOST, "occurrences": [{"quote": _Q1}]}]}
-    card = card_from_draft(draft, _SRC)
+    card = card_from_draft(draft, _SRC, retro=NOT_DETECTED)
     assert _LOST in [b.behavior for b in card.situation_behaviors], "无阶段的卡，漏号应按 0 进顶层"
 
 
