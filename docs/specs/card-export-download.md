@@ -60,6 +60,23 @@
 | 改动 | `@tdd` | 先写目标检查再改 |
 | 交付 | `@verification-before-completion` | 贴测试原始输出与 CI 结果 |
 
+## 合并前补修（2026-10-17，debug R1）
+
+- **R1 回归**：旧按钮走 `fetchWithTimeout`，401 会刷新 token 再重试；`exportCard` 用的是裸
+  `fetch`，access token（30 分钟）过期后导出直接失败，而页面其他按钮都能静默续期。
+- **改法**：`client.js` 的 `exportCard` 改用 `fetchWithTimeout`（它已在 `!ok` 时抛带 detail 的
+  `AppError`，手写 ok 判断删除）；blob URL 改为延迟 1 秒释放（与 `DistillWorkbench` 一致）。
+  「我的」页与详情页共用这一处，两个页面同时修好。
+- **目标检查**：`src/api/__tests__/exportCard.test.js` —— 401 → 刷新 → 重试成功 → 触发下载。
+  裸 fetch 时红（fetch 只调 1 次），改用 `fetchWithTimeout` 后绿。
+- **变异**：把 `fetchWithTimeout` 改回裸 `fetch` → 该检查变红。
+
+## 已知风险（本 PR 不处理）
+
+- **R2**：旧接口 `web/routers/card.py:68` 对 `card_json` 解析失败有容错；新接口
+  `distill.py` 先跑 `CharacterCard.model_validate_json`，旧格式/不合规卡片会 500。
+  「我的」页早已暴露，线上未发现不合规卡片，记录不处理。
+
 ## 交付
 
 一个 PR，英文标题、描述、commit。不写部署步骤。

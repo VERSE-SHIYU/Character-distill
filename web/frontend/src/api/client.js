@@ -427,14 +427,7 @@ export function updateApiConfig(body) {
 }
 
 export async function exportCard(cardId, format = 'raw') {
-  const res = await fetch(`/api/distill/cards/${cardId}/export?format=${format}`, {
-    headers: getAuthHeaders(),
-  })
-  if (!res.ok) {
-    let detail = `HTTP ${res.status}`
-    try { const b = await res.json(); if (b.detail) detail = b.detail } catch {}
-    throw new Error(detail)
-  }
+  const res = await fetchWithTimeout(`/api/distill/cards/${cardId}/export?format=${format}`)
   // Get filename from Content-Disposition or fallback
   const cd = res.headers.get('Content-Disposition') || ''
   const match = cd.match(/filename\*?=UTF-8''(.+?)(?:;|$)/) || cd.match(/filename=(.+?)(?:;|$)/)
@@ -447,7 +440,7 @@ export async function exportCard(cardId, format = 'raw') {
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 export function globalSearch(q) {
