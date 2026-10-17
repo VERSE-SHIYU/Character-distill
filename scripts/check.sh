@@ -33,9 +33,10 @@ emit_backend_failure() {
   if [ -z "${GITHUB_STEP_SUMMARY:-}" ]; then
     return
   fi
-  grep -E '^(FAILED|ERROR)' "$log" >> "$GITHUB_STEP_SUMMARY" || true
+  # -a：pytest 输出可能含 NUL，grep 默认会把日志当二进制、只回一句 "Binary file ... matches"。
+  grep -aE '^(FAILED|ERROR)' "$log" >> "$GITHUB_STEP_SUMMARY" || true
   local ids
-  ids=$(grep -oE '^(FAILED|ERROR) [^ ]+' "$log" | awk '{print $2}' | head -10 | paste -sd, -)
+  ids=$(grep -aoE '^(FAILED|ERROR) [^ ]+' "$log" | awk '{print $2}' | head -10 | paste -sd, -)
   echo "::error title=失败的测试::${ids}"
 }
 

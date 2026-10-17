@@ -108,6 +108,18 @@ MUTATIONS = [
         b"  pytest tests/ -v --tb=short 2>&1 | tee pytest.log || rc=$?",
         f"{TESTS}::test_t3_backend_uses_same_pytest_invocation_and_declares_pg",
     ),
+    (
+        "M12",
+        "grep 把含 NUL 的日志当二进制（去掉 -a）",
+        "scripts/check.sh",
+        b"  grep -aE '^(FAILED|ERROR)' \"$log\" >> \"$GITHUB_STEP_SUMMARY\" || true\n"
+        b"  local ids\n"
+        b"  ids=$(grep -aoE '^(FAILED|ERROR) [^ ]+' \"$log\" | awk '{print $2}' | head -10 | paste -sd, -)",
+        b"  grep -E '^(FAILED|ERROR)' \"$log\" >> \"$GITHUB_STEP_SUMMARY\" || true\n"
+        b"  local ids\n"
+        b"  ids=$(grep -oE '^(FAILED|ERROR) [^ ]+' \"$log\" | awk '{print $2}' | head -10 | paste -sd, -)",
+        f"{TESTS}::test_t5_failure_summary_lists_failed_tests",
+    ),
 ]
 
 

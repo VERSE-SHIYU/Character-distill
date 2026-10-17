@@ -94,4 +94,5 @@ T7 是唯一读文件的测试，它判的是「CI 不另写一份实现」这�
 - **解释器解析（Shiyu 裁定）**：`scripts/check.sh` 不依赖 PATH 上的 `pytest`（本机 PATH 上是 Hermes venv，不是本仓证据）。顺序：① 环境变量 `PYTHON`；② 用 `git rev-parse --path-format=absolute --git-common-dir` 定位主仓库根，Windows 用 `.venv/Scripts/python.exe`，否则 `.venv/bin/python`；③ 都没有则 `python`（CI）。调用统一为 `"$PYTHON" -m pytest tests/ -v --tb=short`。T3 改为用 `PYTHON` 指向假解释器断言 argv；新增 M11「解释器改回裸 pytest」。
 - **新增 `.gitignore` 的 `/pytest.log`**：spec §2 未列，但 `check.sh` 的产物落在仓库根，不 ignore 会污染每次本地运行的工作区。属已声明偏离。
 - **新增 `docs/specs/artifacts/push_preflight_mutations.py`**：11 条变异的产数脚本入库（仓规「证据产物必须入库」）。spec §2「不新增其他文件」按此口径理解为不新增业务源文件。
+- **A3 实跑发现并修复（2026-10-17）**：CI 日志里 `grep: pytest.log: binary file matches` —— 真实 pytest 输出含 NUL，grep 默认把日志当二进制、不输出匹配行，导致摘要与 `::error` 都没写。修复：两处 grep 加 `-a`。T5 增加 `FAKE_BINARY` 让假解释器输出 NUL，复现该形态（不加 `-a` 时 T5 实测红，摘要内容是 `Binary file pytest.log matches`）；变异表新增 M12（去掉 `-a`），总数 11 → 12。
 

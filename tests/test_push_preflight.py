@@ -132,6 +132,8 @@ def _fake_python(tmp_path: Path) -> tuple[Path, Path]:
             printf '%s' "${REQUIRE_PG_TESTS:-}" > "$FAKE_RECORD/pg"
             printf '%s' "${REQUIRE_COMPOSE_TESTS:-}" > "$FAKE_RECORD/compose"
             if [ -n "${FAKE_STDOUT:-}" ]; then printf '%s\\n' "$FAKE_STDOUT"; fi
+            # 真实 pytest 输出会被某些用例写入 NUL，grep 默认把这种日志当二进制、不输出匹配行。
+            if [ -n "${FAKE_BINARY:-}" ]; then printf 'BINARY\\000MARK\\n'; fi
             exit "${FAKE_EXIT:-0}"
             """
         ),
@@ -249,6 +251,7 @@ def test_t5_failure_summary_lists_failed_tests(tmp_path):
             "FAKE_RECORD": record.as_posix(),
             "FAKE_EXIT": "1",
             "FAKE_STDOUT": "FAILED tests/a.py::t1 - AssertionError",
+            "FAKE_BINARY": "1",
             "GITHUB_STEP_SUMMARY": summary.as_posix(),
         },
         bin_dir=bin_dir,
