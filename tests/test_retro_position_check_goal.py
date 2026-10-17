@@ -85,7 +85,7 @@ def test_g3_anchor_in_retro_skips_the_card_and_names_the_region(caplog):
 # ── 5：转卡必须拿到回忆区；两个蒸馏入口把 PR-3 的结果交给它 ─────────────────────────
 
 def test_g5_card_from_draft_requires_retro():
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="required keyword-only argument: .retro."):
         card_from_draft(_draft(), _SRC)
 
 
