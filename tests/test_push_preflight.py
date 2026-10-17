@@ -339,6 +339,96 @@ def test_t7_ci_calls_the_same_entrypoint():
 # --------------------------------------------------------------------------- T8
 
 
+# ---------------------------------------------------------------- G1/G2/G3
+
+
+@pytest.mark.xfail(strict=True, reason="preflight target not implemented yet")
+def test_g1_hook_runs_preflight_target(tmp_path):
+    repo = _init_repo(tmp_path)
+    _push_initial(repo)
+    _commit(repo, "core/x.py")
+
+    record = tmp_path / "hook-args"
+    _write_exec(
+        repo / "scripts" / "check.sh",
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$*" > "$HOOK_RECORD"\n',
+    )
+
+    out = _run(
+        ["git", "push", "origin", "main"],
+        repo,
+        env={"PREFLIGHT_CMD": "", "HOOK_RECORD": record.as_posix(), **_GIT_ISOLATION},
+    )
+
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert record.read_text(encoding="utf-8").strip() == "preflight"
+
+
+@pytest.mark.xfail(strict=True, reason="preflight target not implemented yet")
+def test_g2_preflight_runs_meta_locks_and_eslint_only(tmp_path):
+    bin_dir, fake = _fake_python(tmp_path)
+    record = tmp_path / "record"
+    calls = tmp_path / "calls"
+    for name, exit_var in (("npx", "FAKE_NPX_EXIT"), ("npm", "FAKE_NPM_EXIT")):
+        _write_exec(
+            bin_dir / name,
+            textwrap.dedent(
+                f"""\
+                #!/usr/bin/env bash
+                printf '%s|%s|%s\\n' '{name}' "$PWD" "$*" >> "$FAKE_CALLS"
+                exit "${{{exit_var}:-0}}"
+                """
+            ),
+        )
+
+    out = _check(
+        tmp_path, "preflight",
+        env={
+            "PYTHON": fake.as_posix(),
+            "FAKE_RECORD": record.as_posix(),
+            "FAKE_CALLS": calls.as_posix(),
+        },
+        bin_dir=bin_dir,
+    )
+
+    assert out.returncode == 0, out.stdout + out.stderr
+    argv = (record / "argv").read_text(encoding="utf-8").splitlines()
+    paths = [arg for arg in argv if arg.startswith("tests/")]
+    assert paths, argv
+    for path in paths:
+        assert path != "tests/"
+        assert path.startswith("tests/test_") and path.endswith(".py")
+        assert "/" not in path[len("tests/"):], path
+        assert (_REPO / path).is_file(), path
+
+    rows = calls.read_text(encoding="utf-8").splitlines()
+    assert rows and rows[0].startswith("npx|")
+    assert rows[0].endswith("eslint . -c eslint.ci.config.js --quiet")
+    assert not any(row.startswith("npm|") for row in rows), rows
+
+
+@pytest.mark.xfail(strict=True, reason="preflight target not implemented yet")
+def test_g3_preflight_propagates_meta_lock_failure(tmp_path):
+    bin_dir, fake = _fake_python(tmp_path)
+    record = tmp_path / "record"
+    _write_exec(bin_dir / "npx", "#!/usr/bin/env bash\nexit 0\n")
+
+    out = _check(
+        tmp_path, "preflight",
+        env={
+            "PYTHON": fake.as_posix(),
+            "FAKE_RECORD": record.as_posix(),
+            "FAKE_EXIT": "1",
+        },
+        bin_dir=bin_dir,
+    )
+
+    assert out.returncode == 1, out.stdout + out.stderr
+
+
+# --------------------------------------------------------------------------- T8
+
+
 def test_t8_xfail_strict_makes_xpass_fail(tmp_path):
     work = tmp_path / "xfail"
     work.mkdir()
