@@ -5,7 +5,7 @@
 ## 0. 这一步做什么、不做什么
 
 - **做**：每本书蒸馏时，把它的回忆区（日记 / 书信 / 番外 / 整章回忆的章节范围）标出来，按书存一份；同一本书再蒸就直接读缓存，不再调模型。
-- **不做**：位置核对还不用它（锚点、证据句照旧），那是 PR-4。本 PR 上线后行为唯一的变化是：每本书第一次蒸馏多一次小调用（整书前缀命中缓存，按缓存价估算不到 ¥0.05），日志多一行 `[retro]`。
+- **不做**：位置核对还不用它（锚点、证据句照旧），那是 PR-4。本 PR 上线后行为唯一的变化是：每本书第一次蒸馏多一次调用，日志多一行 `[retro]`。费用口径：首次蒸馏时它是第一个发整书前缀的请求，按全价输入计（冷缓存）；它在主蒸馏之前同步跑完（`/start` 里 `submit_to_main_loop` 默认 `wait=True`，`/run_stream` 里 `await`），主调用随后才发同一前缀、命中缓存。所以相对今天净多出的是「一次缓存价的整书输入 + 不到 1024 token 输出」；DeepSeek 的缓存是尽力而为，没命中时最坏多一次全价整书输入。冷缓存实测待首次真蒸馏时从 `[retro]` 用量行读出。
 - 依据：共享文档「方案 1」（Tracy 已定）；提示词就是 10-17 小重放实测那一版（2 次，日札和番外一章没漏）。
 
 ## 1. 目标检查（`tests/test_retro_regions_goal.py`，diff 里已有；main 上因缺模块而全红，原型上 19 passed）
@@ -15,7 +15,7 @@
 | g1 / g1b | 只认行首「第N章」；没有标题、章号重复、不递增 → None（不猜） |
 | g2 | 两次真实回复解析后，第 491–504、508–509 章一章不漏 |
 | g3 / g3b | 章号对不上原文、首尾颠倒的范围丢掉；回复不是 JSON → 「未标」且不缓存 |
-| g4 / g4b | 没有章节标题就不调模型；请求以整书前缀开头（与蒸馏主调用同一个 `book_prefix`，命中缓存） |
+| g4 / g4b | 没有章节标题就不调模型；请求以整书前缀开头（与蒸馏主调用同一个 `book_prefix`，后发的那个命中缓存） |
 | g5 | JSON 存取来回一致 |
 | g6–g6e | 按书缓存：第二次不调模型；版本不符重算；非属主读不到；偶发失败不缓存；调用抛错不往外抛 |
 | g7 / g7b | 真 `/start`、真 `/run_stream`：回忆区被算出并落库，卡照常落库 |
@@ -48,7 +48,7 @@
 - **S0**：逐条核对 §3 的行号和代码。有一条对不上就停下报告。
 - 本地只跑：
   1. `python -m pytest -q tests/test_retro_regions_goal.py`（应 19 passed）
-  2. `python -m pytest -q tests/test_character_roster.py tests/test_distill_draft_persist.py tests/test_distill_task_api.py tests/test_distill_usage_accounting.py tests/test_distiller_routing.py tests/test_domain_exception_exit.py tests/test_identify_failure_channels.py tests/test_migration_dispatch.py tests/test_postgres_store.py tests/test_schema_parity.py tests/test_sqlite_fresh_schema.py tests/test_storage.py tests/test_storage_contract_shape.py tests/test_storage_scope_lock.py tests/test_store_commit_contract.py tests/test_store_connect_lock.py tests/test_store_failure_visibility.py tests/test_usage_accounting_lock.py tests/test_usage_cache_tokens.py tests/test_phase_anchoring.py tests/test_lock_coverage.py`（原型上与 §1 合计 3716 passed、1 skipped）
+  2. `python -m pytest -q tests/test_character_roster.py tests/test_distill_draft_persist.py tests/test_distill_task_api.py tests/test_distill_usage_accounting.py tests/test_distiller_routing.py tests/test_domain_exception_exit.py tests/test_identify_failure_channels.py tests/test_migration_dispatch.py tests/test_postgres_store.py tests/test_schema_parity.py tests/test_sqlite_fresh_schema.py tests/test_storage.py tests/test_storage_contract_shape.py tests/test_storage_scope_lock.py tests/test_store_commit_contract.py tests/test_store_connect_lock.py tests/test_store_failure_visibility.py tests/test_usage_accounting_lock.py tests/test_usage_cache_tokens.py tests/test_phase_anchoring.py tests/test_lock_coverage.py`（审计实测 847 passed、1 skipped；原 spec 写的 3716 是错的）
   3. `npm test`
 
 ## 5. 判断清单（每条都读过代码或跑过）
@@ -56,7 +56,7 @@
 | # | 判断 | 依据 |
 |---|---|---|
 | 1 | 提示词与小重放那版逐字相同 | 沙箱比对 `retro_ranges_probe.INSTRUCTION == RETRO_INSTRUCTION` 为 True，`RETRO_USER` 也相同 |
-| 2 | 请求前缀与蒸馏主调用一致，会命中缓存 | g4b；真原文上 `system.startswith(book_prefix(src))` 为 True |
+| 2 | 请求前缀与蒸馏主调用一致；首次蒸馏时回忆区调用先发、冷缓存，主调用随后命中 | g4b；真原文上 `system.startswith(book_prefix(src))` 为 True |
 | 3 | 真原文认出 509 章，第 491 章起点 1135490 | 沙箱在原文 3335472a438b 上跑 `chapter_starts` |
 | 4 | 现有蒸馏替身没有 `detect_retro_regions` 也不会挂 | `resolve_retro_regions` 兜住异常；g7c；原有路由测试全过 |
 | 5 | 不碰变异驱动的靶子行 | `card_from_draft` 两处调用、`save_distilled_card` 未改；`test_lock_coverage.py` 全过 |
@@ -64,3 +64,9 @@
 ## 6. 已知边界
 
 分组路径（超长书）和没有「第N章」标题的书得到「未标」，行为同今天；章内夹的回忆（如第 399 章告白）这次管不到。
+
+## 7. 审计更正（10-17，PR #179 审计）
+
+- §4 测试数字原写 3716，实为 847 passed、1 skipped（21 个文件）。
+- 「命中缓存」原写法不对首次蒸馏成立，已按 §0 改正。
+- 第 505–507 章多标（两次小重放分别多标 [505,506,507]、[505]）：本 PR 只存不用，不影响；PR-4 使用前必须先处理。
