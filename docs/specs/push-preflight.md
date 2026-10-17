@@ -2,6 +2,7 @@
 
 > 规矩见 `docs/specs/SPEC-STANDARD.md`。基线：main `6a55b8d6`（2026-10-17）。
 > 背景与依据：共享文档「工程流程强化」https://claude.ai/code/artifact/cc6847fb-22cf-47e0-bcca-ee64b405c727
+> **2026-10-17 改口径**：推送前不再跑全量，只跑预检（6 个元锁 + 前端 eslint）；以文末「改口径补充」为准，与之冲突的 §0–§4 条目作废。
 > 先进 plan mode 报计划，Shiyu 确认后执行。不改任何业务代码（`core/` `web/` `storage/` `adapters/` 不动）。
 
 ## 0. 为什么做（一段话）
@@ -98,3 +99,59 @@ T7 是唯一读文件的测试，它判的是「CI 不另写一份实现」这�
 - **A3 复跑又发现一处（同日修复）**：全量跑时 `test_push_preflight` 的 T3–T5 会在仓库根再调 `check.sh`，内层 `tee pytest.log` 截断了外层正在写的同一文件，摘要里混进了假解释器的 `tests/a.py::t1`。修复：`check.sh` 的日志路径改为 `${PYTEST_LOG:-pytest.log}`，测试的 `_check` 把内层日志指到临时目录。另：CI 的 `::error` 注解在该 step 已有 11 条失败注解后被 GitHub 丢弃（日志里仍可见 `##[error]<ids>`），A3 以 step summary 为准。
 - **A1 复跑发现钩子环境泄漏（同日修复）**：从 `.claude/worktrees/<名字>` 里 push 时，Git 会给 pre-push 钩子注入 `GIT_DIR`（指向该 worktree 的 gitdir）。T1–T2c 因此把临时仓库的 `git init`/`remote add` 落到外层仓库，红在 `remote origin already exists` —— 钩子跑全量的环境与手敲 shell 不同，同口径的前提被破坏。修复：钩子在跑检查前用子 shell `unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES`。新增 T9（钩子必须对检查隐藏 `GIT_DIR`）与 M13（去掉 unset → T9 红）；变异总数 12 → 13。spec §3 的测试表只列到 T8，T9 与 M13 属执行中的已声明新增。
 
+
+### 2026-10-17 改口径补充（Shiyu 已拍板；本节优先于 §0–§4）
+
+**为什么改**：本机推送前跑全量要约 24 分钟（A4 实测；CI 7.6 分钟），不可接受。根因是 3672 条串行 + Windows 平台开销，无单一热点（Linux 复现 `--durations=0`：最慢文件 `test_usage_accounting_lock` 占 9.4%）。依据与调查过程见共享文档「工程流程强化」。
+
+**新口径**
+
+| 层 | 跑什么 | 依据 |
+|---|---|---|
+| pre-push | `scripts/check.sh preflight` = 6 个元锁 + 前端 eslint | 回放：09-24 起 59 次可回放的 CI 红里，6 个元锁会红 17 次；Linux 单次约 3 秒 |
+| CI gate | 全量（不变，仍 `check.sh backend` / `frontend`） | — |
+| protect-main | gate 设为必需检查（Shiyu 在 GitHub 设置，不在本 PR） | 现 ruleset 只有 deletion / non_fast_forward / pull_request，无必需检查（API 实读） |
+
+6 个元锁：`tests/test_lock_coverage.py`、`tests/test_mutation_anchors.py`、`tests/test_mutation_framework.py`、`tests/test_evidence_integrity.py`、`tests/test_evidence_integrity_mutations.py`、`tests/test_ledger_substitution_markers.py`（@3b022889 均存在）。
+
+**已查实的约束（@ `feat/push-preflight` 3b022889，S0 逐条复核，不成立就停）**
+
+| # | 事实 | 坐标 |
+|---|---|---|
+| P1 | 钩子默认执行无参数的 `check.sh`（= backend + frontend 全量） | `.githooks/pre-push:45`；`scripts/check.sh:61-66` |
+| P2 | `check.sh` 的目标只有 `backend`、`frontend`，其他参数退出 2 | `scripts/check.sh:69-77` |
+| P3 | `run_frontend` = `npx eslint . -c eslint.ci.config.js --quiet && npm test` | `scripts/check.sh:57-59` |
+| P4 | `conftest` 会话开始即连测试库，连不上整场 `pytest.exit`——任何 pytest 调用（含只跑元锁）都要求测试库已启动 | `tests/conftest.py:70-84` |
+| P5 | SPEC-STANDARD 第 3 条与修订记录写的是「推送前由钩子跑全量」「32/52」 | `docs/specs/SPEC-STANDARD.md:19`、`:61` |
+| P6 | AGENTS.md 推送前预检一行写的是「钩子里的 `REQUIRE_PG_TESTS=1`」与全量口径 | `AGENTS.md:55` |
+| P7 | T7 只断言 CI 调 `check.sh backend` / `check.sh frontend`，不涉及钩子 | `tests/test_push_preflight.py:323-333` |
+
+未核实（执行方实测写进报告即可，不停）：本机 `preflight` 实际耗时；本机 eslint 单独耗时。
+
+**改动（只改这些）**
+
+1. `scripts/check.sh` 新增目标 `preflight`：用解析出的解释器跑上面 6 个文件（`-q`），再跑前端 eslint（与 `run_frontend` 的 eslint 同一条命令，抽成一处供两者复用）。**元锁清单只写在 `check.sh` 一处**。不导出 `REQUIRE_PG_TESTS` / `REQUIRE_COMPOSE_TESTS`（元锁不需要）。失败摘要逻辑与 backend 共用。
+2. `.githooks/pre-push`：默认命令改为 `check.sh preflight`。文档放行、`GIT_DIR` 清理、`PREFLIGHT_CMD` 覆盖不动。
+3. `docs/specs/SPEC-STANDARD.md` 第 3 条改为「中途只跑受影响文件 + `npm test`；推送前钩子跑预检（`scripts/check.sh preflight`：元锁 + eslint）；全量只在 CI；合并前提是分支 CI 绿……」，验收列改为「钩子输出」；`:61` 修订记录改正数字为「59 次可回放的 CI 红中元锁会红 17 次」并写明改口径原因（本机全量 24 分钟）。
+4. `AGENTS.md:55` 同步：推送前跑预检；测试库仍须先起（P4）；去掉全量口径的描述。
+
+不新增文件、不改 `conftest`、不改 CI。
+
+**目标检查（先写，`xfail(strict=True)`，第一个提交带上）**
+
+- G1 推送范围含代码改动、且未设 `PREFLIGHT_CMD` 时，钩子调用的是 `check.sh preflight`，不是无参数全量（怎么记录调用由执行方按现有测试写法决定）。
+- G2 `check.sh preflight` 交给解释器的参数里：每个测试路径都是存在的 `tests/test_*.py` 文件、不含裸 `tests/`、个数 ≥ 1；随后调用了 eslint；且**不调用** `npm test`。不在测试里重抄 6 个文件名（清单只此一处）。
+- G3 元锁失败（假解释器退出 1）→ `check.sh preflight` 非零。
+
+实现后摘掉 xfail。变异：M14 钩子改回无参数 `check.sh` → G1 红；M15 `preflight` 改成跑 `tests/` → G2 红；M16 吞掉元锁退出码 → G3 红。加进 `docs/specs/artifacts/push_preflight_mutations.py`，与原 13 条一起实跑，贴输出。
+
+**本地只跑**：`tests/test_push_preflight.py`、`tests/test_line_endings.py`，以及一次 `bash scripts/check.sh preflight`（报耗时）。**不跑全量**，不做真推送的红绿验收。
+
+**验收（替换 §4 的 A1、A4）**
+
+- A1' 本地 `bash scripts/check.sh preflight` 全绿，报实际耗时；超过 5 分钟先停下报告。
+- A2' 推送本分支一次，钩子跑的是预检（终端可见 6 个元锁 + eslint），报钩子耗时。
+- A5 分支 CI 全绿（gate 仍跑全量）。
+- A2、A3 已于首版验收通过，不重做。
+
+**预算**：整段 30 分钟以内；超出先停下报告当前进度，不继续。
