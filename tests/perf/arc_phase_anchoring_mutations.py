@@ -128,8 +128,8 @@ MUTATIONS = [
         ("                if len(loc) > MAX_OCCURRENCES:",
          "                if False:  # 删去次数限制")])], "RED"),
     ('M20 阶段上界整体挪一（含下一阶段首字）', TARGET, [("repl", ANCH, [
-        ("    ranges = [(starts[k], starts[k + 1] if k + 1 < n else len(source_norm))",
-         "    ranges = [(starts[k], (starts[k + 1] + 1) if k + 1 < n else len(source_norm))")])], "RED"),
+        ("    ranges = [(bounds[k], bounds[k + 1] if k + 1 < n else len(source_norm))",
+         "    ranges = [(bounds[k], (bounds[k + 1] + 1) if k + 1 < n else len(source_norm))")])], "RED"),
     ('M21 阶段上界退一（锚点前一字被排除）', TARGET, [("repl", ANCH, [
         (_PHASE_AT, "        if lo <= pos < hi - 1:")])], "RED"),
     ('M22 位置只取次匹配的第一处（单一命中）', TARGET, [("repl", QUOTES, [
