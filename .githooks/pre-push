@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# pre-push：推送范围全是 docs/ 或 *.md 时放行，否则跑与 CI 同一个检查入口。
+set -euo pipefail
+
+zero=0000000000000000000000000000000000000000
+needs_check=false
+
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  if [ "$local_sha" = "$zero" ]; then
+    continue
+  fi
+  if [ "$remote_sha" = "$zero" ]; then
+    # 新分支：以 origin/main 的 merge-base 为起点；取不到就保守跑检查。
+    base=$(git merge-base origin/main "$local_sha" 2>/dev/null) || base=""
+  else
+    base=$remote_sha
+  fi
+  if [ -z "$base" ]; then
+    needs_check=true
+    break
+  fi
+  changes=$(git diff --name-only "$base" "$local_sha") || {
+    needs_check=true
+    break
+  }
+  while IFS= read -r path; do
+    case "$path" in
+      docs/*|*.md) ;;
+      *)
+        needs_check=true
+        break 2
+        ;;
+    esac
+  done <<< "$changes"
+done
+
+if [ "$needs_check" = true ]; then
+  # 从 worktree 里 push 时 Git 会给钩子注入 GIT_DIR（指向 worktree 的 gitdir）。若原样传给
+  # 测试，测试里 `git init` 出的临时仓库会落回外层仓库。检查必须在「手敲 shell」的环境里跑。
+  (
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+    if [ -n "${PREFLIGHT_CMD:-}" ]; then
+      bash -c "$PREFLIGHT_CMD"
+    else
+      bash "$(git rev-parse --show-toplevel)/scripts/check.sh" preflight
+    fi
+  )
+fi
