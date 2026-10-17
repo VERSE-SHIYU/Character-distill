@@ -18,15 +18,12 @@ from storage.sqlite_store import SQLiteStore
 import test_distill_draft_persist as P
 from test_distill_task_api import _run_async
 
-# 2026-10-17 小重放的两次真实回复（deepseek-flash，谢凛羽原文 3335472a438b，第 1–509 章）
-_REAL_REPLY_1 = ('{"ranges": [{"from": 491, "to": 502, "kind": "日记", "why": "日札"}, '
-                 '{"from": 503, "to": 505, "kind": "日记", "why": "日札"}, '
-                 '{"from": 506, "to": 507, "kind": "番外", "why": "番外"}, '
-                 '{"from": 508, "to": 509, "kind": "番外", "why": "番外"}]}')
-_REAL_REPLY_2 = ('{"ranges": [{"from": 491, "to": 498, "kind": "日记", "why": "日札"}, '
-                 '{"from": 499, "to": 502, "kind": "日记", "why": "日札"}, '
-                 '{"from": 503, "to": 505, "kind": "日记", "why": "日札"}, '
-                 '{"from": 508, "to": 509, "kind": "番外", "why": "番外"}]}')
+# 谢凛羽原文 3335472a438b（第 1–509 章）的标准答案，Claude 逐章核过：第 491–504 章日札（123 篇，
+# 记的是正文里早已写过的日子）、第 508–509 章番外（云钺童年）是倒叙；第 490 章「正文完」，
+# 第 505–507 章是结局之后的番外（第 507 章末「番外：误认为有孕篇（完）」），时间接在正文之后，不是倒叙。
+# 按时间口径的提示词实测回复，取到后加进这里（见 docs/specs/retro-regions-detect.md §7）。
+_TRUTH_REPLY = ('{"ranges": [{"from": 491, "to": 504, "kind": "日记", "why": "日札补记正文里的日子"}, '
+                '{"from": 508, "to": 509, "kind": "番外", "why": "云钺童年"}]}')
 _TRUTH_RETRO = set(range(491, 505)) | {508, 509}
 _CHAPTERS_509 = [(n, n * 100) for n in range(1, 510)]
 
@@ -47,13 +44,12 @@ def test_g1b_unusable_headings_give_none(src):
     assert chapter_starts(src) is None
 
 
-# ── 检查 2：真实回复解析后，日札与番外一章不漏 ─────────────────────────────────
+# ── 检查 2：回复解析后的章节集合与标准答案逐章相等（不漏、也不多） ─────────────
 
-@pytest.mark.parametrize("reply", [_REAL_REPLY_1, _REAL_REPLY_2])
-def test_g2_real_replies_cover_every_retro_chapter(reply):
-    regions = parse(reply, _CHAPTERS_509)
+def test_g2_reply_parses_to_exactly_the_retro_chapters():
+    regions = parse(_TRUTH_REPLY, _CHAPTERS_509)
     assert regions.status == "marked"
-    assert _TRUTH_RETRO <= _covered(regions)
+    assert _covered(regions) == _TRUTH_RETRO
 
 
 # ── 检查 3：对不上原文的范围丢掉；回复不是 JSON 不缓存 ─────────────────────────
@@ -86,11 +82,11 @@ def test_g4b_detect_sends_book_prefix_first():
         return '{"ranges": []}'
 
     detect("第1章\n甲", prefix="以下是完整的文本内容：\n\n第1章\n甲", call=_call)
-    assert seen["system"].startswith("以下是完整的文本内容：\n\n第1章\n甲\n\n## 本步：标出不是")
+    assert seen["system"].startswith("以下是完整的文本内容：\n\n第1章\n甲\n\n## 本步：标出倒叙")
 
 
 def test_g5_json_round_trip():
-    regions = parse(_REAL_REPLY_2, _CHAPTERS_509)
+    regions = parse(_TRUTH_REPLY, _CHAPTERS_509)
     assert RetroRegions.from_json(regions.to_json()) == regions
 
 
