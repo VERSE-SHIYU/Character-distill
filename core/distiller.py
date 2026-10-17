@@ -194,18 +194,24 @@ _EVIDENCE_EXAMPLE = '（「原话」）'
 # 状态类字段的取值示例：描述类写「结论（「原话」）」，原话类（`card_quotes.VERBATIM_FIELDS`）只写原话本身。
 _DESC_VALUE = '结论' + _EVIDENCE_EXAMPLE
 _VERBATIM_VALUE = '原文里的原话，逐字照抄'
+# 「一直成立的底色标 0、后来才有的标阶段」只定义一次：描述类、原话类、重要事项三处都引用它，
+# 别各写一份措辞（锁 S4 数它）。
+_BASELINE_ZERO_RULE = (
+    '从头到尾一直如此的（此人的底色），只写一条，phase 填 0；'
+    '故事里因某人某事才出现或改变的（如对某人的称呼），不填 0，标出它确实成立的阶段。'
+)
 # 状态类字段（性格、价值观、说话方式、雷点软肋…）的写法：描述随阶段变，故一条描述附它在
 # 哪些阶段成立的摘录。只定义一次：各处引用它，别复制这句（锁 S4 数它）。
 _PHASE_DESCRIPTION_RULE = (
     '取值按阶段给，写成 {"value": "' + _DESC_VALUE + '", "occurrences": '
-    '[{"phase": 1, "quote": "该阶段原文摘录"}]} —— 一条取值只写一次，'
-    '标出它确实成立的阶段；从头到尾都成立时标全部阶段。'
+    '[{"phase": 1, "quote": "该阶段原文摘录"}]} —— 一条取值只写一次；'
+    + _BASELINE_ZERO_RULE
 )
 # 原话类字段（口癖…）的写法：整个值就是原文本身，不加描述、括号与引号。只定义一次（锁 S4 数它）。
 _PHASE_VERBATIM_RULE = (
     '取值就是原话本身：写成 {"value": "' + _VERBATIM_VALUE + '", "occurrences": '
     '[{"phase": 1, "quote": "该阶段原文摘录"}]}，value 里不加描述、括号和引号；'
-    '一条取值只写一次，标出它确实成立的阶段。'
+    '一条取值只写一次；' + _BASELINE_ZERO_RULE
 )
 # 稳定类字段（出身、身份、用词层次、禁忌词…）的写法：不随阶段变，只写一次，不附依据。
 _STABLE_FIELD_RULE = (
@@ -375,7 +381,8 @@ _FORMAT_IMPORTANCE_HEADING = '重要：'
 _FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
     ("G4", '- psyche 是必需嵌套对象，triggers / soft_spots / warming_conditions / relational_modes / agreeableness_facets 都放在 psyche 内部，不在顶层'),
     (None, '- 数组字段的元素形态按模板来：模板里写成【一句字符串】的，就输出一句字符串，不要改成对象'),
-    (None, '- 写成 [{"value": …, "occurrences": […"phase"/"quote"…]}] 的字段，元素是【对象】；occurrences 的 phase 用维度 L 的阶段编号（1 起），全阶段都成立时把每个阶段都标上'),
+    (None, '- 写成 [{"value": …, "occurrences": […"phase"/"quote"…]}] 的字段，元素是【对象】；'
+           'occurrences 的 phase 用维度 L 的阶段编号（1 起）；' + _BASELINE_ZERO_RULE),
     ("G5", '- relationships 只出【名单】：每个元素是【对象】，只含 target（对方的标准名）；relation/attitude/note/attitudes 由后续步骤生成，不要在这里写'),
     ("G6", '- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state/anchor/boundary_examples'),
     ("G6", '- situation_behaviors / key_memories 的每个元素是【对象】；occurrences 的每个元素是【对象】，含 phase/quote'),

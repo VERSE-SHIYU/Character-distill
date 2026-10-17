@@ -47,9 +47,9 @@ logger = logging.getLogger(__name__)
 def _phase_number(value: Any) -> int:
     """阶段号：能转成整数的照转（``"2"`` → 2）；转不成、或小数非整，打一条 warning 写明原值，按 0。
 
-    0 是「无阶段」哨兵：有阶段的卡里由规则 0（`_valid_number_rows`）当不合法撤回（经历类除外 ——
-    那里的 0 是「故事开始前」，进顶层）。这样模型写坏的阶段号只连累那一条，不再让 pydantic 在整
-    卡校验处把整张卡炸掉。**只此一处**，调用点不写兜底。
+    0 是「无阶段」哨兵：有阶段的卡里由规则 0（`_valid_number_rows`）当不合法撤回（状态类、经历类
+    除外 —— 那里的 0 分别是「全程」「故事开始前」，进顶层）。这样模型写坏的阶段号只连累那一条，
+    不再让 pydantic 在整卡校验处把整张卡炸掉。**只此一处**，调用点不写兜底。
     """
     if not isinstance(value, bool):                       # bool 是 int 子类，但阶段号写布尔是坏值
         try:
@@ -78,8 +78,9 @@ def _phase_stays_required(schema: dict, cls) -> None:
 class PhaseTagged(BaseModel):
     """带阶段号的草稿条目：阶段号的全部规则只在这一处（类型、缺省、发给模型的形态）。
 
-    缺 `phase` 键按 0 处理，交给规则 0（`_valid_number_rows`）撤回那一条（经历类除外 —— 那里的 0
-    是「故事开始前」）；`phase` 仍列在发给模型的结构里、仍是必填，模型看到的契约不变。
+    缺 `phase` 键按 0 处理，交给规则 0（`_valid_number_rows`）撤回那一条（状态类、经历类除外 ——
+    那里的 0 分别是「全程」「故事开始前」）；`phase` 仍列在发给模型的结构里、仍是必填，模型看到
+    的契约不变。
     """
     model_config = ConfigDict(json_schema_extra=_phase_stays_required)
     phase: PhaseNumber = 0
@@ -105,9 +106,9 @@ class DraftBehavior(BehaviorCore):
 class DraftTimed(BaseModel):
     """状态/经历类字段在草稿里的形态：一条取值 + 它在**哪些阶段**成立的原文摘录。
 
-    每条取值只写一次，由 `card_from_draft` 按登记表的类别分发：覆盖全部阶段 → 卡片顶层，
-    否则挂到标了的阶段（经历类只挂最早阶段）。形态由登记表统一派生（`_derive_draft_model`），
-    不逐字段手写。
+    每条取值只写一次，由 `card_from_draft` 按登记表的类别分发：覆盖全部阶段、或只标了 0
+    （状态类「全程」/ 经历类「故事开始前」）→ 卡片顶层，否则挂到标了的阶段（经历类只挂最早
+    阶段）。形态由登记表统一派生（`_derive_draft_model`），不逐字段手写。
     """
     value: str = ""
     occurrences: list[DraftOccurrence] = []
@@ -230,39 +231,45 @@ def _row_label(item) -> str:
 
 
 class ValidRows(NamedTuple):
-    """规则 0 的结果：每条的合法编号 + 经历类里「只标了 0」的条目序号（故事开始前）。"""
+    """规则 0 的结果：每条的合法编号 + 「只标了 0」的条目序号（状态类全程 / 经历类故事开始前）。"""
 
     valid: list[list[int]]
-    pre_story: list[int]
+    zero_only: list[int]
 
 
-def _valid_number_rows(items, count: int, kind: str, *, layer: str = "state") -> ValidRows:
+#: 认 0 的类别 → 0 的含义。加一种认 0 的类别只改这一行；做法、态度（``custom``）不在这里。
+_ZERO_MEANINGS = {"experience": "故事开始前", "state": "全程"}
+
+
+def _valid_number_rows(items, count: int, kind: str, *, layer: str) -> ValidRows:
     """规则 0：每条条目的合法阶段编号（升序、去重）。越界/空的编号被撤回并 warning 一条。
 
-    `count == 0`（无阶段的卡）不做检查、不 warning。做法、记忆、关系态度共用这一份。
+    `count == 0`（无阶段的卡）不做检查、不 warning。状态类、经历类、做法、记忆、关系态度共用
+    这一份；认不认 0 看 `layer`，调用方传登记表的类别，不在这里写字段名。
 
-    ``layer == "experience"``（经历类）时 0 是「故事开始前」，三种情形：只标了 0（或 0 与越界号）
-    → 记 ``pre_story``，合法编号给空（`verify` 走整条撤回那一支、不做位置核对）并打一行 info 便于
-    人工翻看误标；0 与阶段号并存 → 忽略 0、其余编号照常核对（模型给了故事内阶段就有位置证据可用）；
-    0 之外的越界号照旧 warning。
+    ``layer`` 在 `_ZERO_MEANINGS` 里（状态类 / 经历类）时 0 表示「一直成立」（全程 / 故事开始前），
+    三种情形：只标了 0（或 0 与越界号）→ 记 ``zero_only``，合法编号给空（`verify` 走整条撤回那一支、
+    不做位置核对）并打一行 info 便于人工翻看误标；0 与阶段号并存 → 忽略 0、其余编号照常核对（模型
+    给了故事内阶段就有位置证据可用）；0 之外的越界号照旧 warning。其他类别（做法、关系态度）标 0
+    照旧按坏编号撤回。
     """
     valid_rows: list[list[int]] = []
-    pre_story: list[int] = []
+    zero_only: list[int] = []
     for i, item in enumerate(items):
         nums = [occ.phase for occ in item.occurrences]
-        pre = (layer == "experience" and count and 0 in nums
-               and not any(1 <= p <= count for p in nums))  # 只标了 0（或 0 + 越界号）→ 故事开始前
-        if layer == "experience" and count:
-            nums = [p for p in nums if p]                   # 经历类的 0 不算坏编号
+        pre = (layer in _ZERO_MEANINGS and count and 0 in nums
+               and not any(1 <= p <= count for p in nums))  # 只标了 0（或 0 + 越界号）→ 顶层
+        if layer in _ZERO_MEANINGS and count:
+            nums = [p for p in nums if p]                   # 认 0 的类别，0 不算坏编号
         valid = sorted({p for p in nums if 1 <= p <= count})
         if count and (len(valid) != len(set(nums)) or (not valid and not pre)):
             logger.warning("[card_draft] %s的阶段编号不合法（共 %d 个阶段）%s：%s",
                            kind, count, _row_label(item), nums)
         if pre:
-            pre_story.append(i)
-            logger.info("[card_draft] 故事开始前：%s", _row_label(item))
+            zero_only.append(i)
+            logger.info("[card_draft] %s：%s", _ZERO_MEANINGS[layer], _row_label(item))
         valid_rows.append(valid)
-    return ValidRows(valid_rows, pre_story)
+    return ValidRows(valid_rows, zero_only)
 
 
 def experience_fallback(count: int) -> list[int]:
@@ -287,7 +294,7 @@ def _layer_phases(final_phases: list[list[int]], count: int, layer: str) -> list
 def dispatch(final_phases: list[list[int]], count: int, *,
              layer: str = "state", kind: str = "list",
              label: str = "", unlocated: list[int] = (),
-             pre_story: list[int] = ()) -> tuple[list[int], list[list[int]], list[int]]:
+             zero_only: list[int] = ()) -> tuple[list[int], list[list[int]], list[int]]:
     """按最终阶段把条目分发到顶层、各阶段与未定位区 —— 分发只此一处（S6 / B1）。
 
     `layer` 决定「挂到哪些阶段」：``state``（默认，做法走这条）→ 每个最终阶段都挂；
@@ -298,9 +305,9 @@ def dispatch(final_phases: list[list[int]], count: int, *,
     处置（spec §3.2）：``experience`` → 挂最后阶段（时间不明放最后，永不泄露后续剧情）；
     ``state`` → 不进任何阶段，序号原样交回第三项，由调用方放进未定位区。
 
-    `pre_story`（经历类「故事开始前」的序号）的最终阶段置为全部阶段，由顶层判据
-    `len(final) == count` 进顶层；`state` 类不会产出它。这条路径上不做位置核对（故事前的经历
-    在原文里多半是后文回忆，摘录位置定不了时间）。
+    `zero_only`（状态类「全程」/ 经历类「故事开始前」的序号）的最终阶段置为全部阶段，由顶层
+    判据 `len(final) == count` 进顶层。这条路径上不做位置核对（一直成立的底色多半摘录不在
+    阶段 1，故事前的经历在原文里多半是后文回忆，位置都定不了时间）。
 
     `kind` 决定「一个格子放几条」（登记表说了算）：``list`` → 全放；``scalar`` → 顶层与
     每个阶段都只留第一条，其余丢弃 + warning（单值字段一个格子存不下两条）。
@@ -309,7 +316,7 @@ def dispatch(final_phases: list[list[int]], count: int, *,
     **`by_phase[` 只在这里出现**。
     """
     final_phases = [list(f) for f in final_phases]
-    for i in pre_story:                          # 故事开始前 → 覆盖全部阶段（顶层判据见下）
+    for i in zero_only:                          # 只标了 0 → 覆盖全部阶段（顶层判据见下）
         final_phases[i] = list(range(1, count + 1))
     loose: list[int] = []
     for i in unlocated:
@@ -362,7 +369,8 @@ def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[d
     # 态度只核对、不挪阶段：态度常在后文被回忆复述，摘录位置不等于态度成立时间，
     # 摘录查到（不超 MAX_OCCURRENCES）即算命中所标阶段（spec A1 / 调查文档第三之二节）。
     res = phase_anchoring.verify(
-        items, _valid_number_rows(items, count, "态度").valid, anchors,
+        items, _valid_number_rows(items, count, "态度",
+                                  layer=REGISTRY["relationships"].layer).valid, anchors,
         kind="态度", label=lambda x: x.memory, name=name,
         placement=phase_anchoring.Placement.KEEP_TAGGED)
     # 未定位的态度（`dispatch` 第三项）不在任何格子里，下面自然一个阶段都赢不下 → 进未定位区
@@ -428,7 +436,8 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
 
     b = phase_anchoring.verify(
         draft.situation_behaviors,
-        _valid_number_rows(draft.situation_behaviors, count, "做法").valid,
+        _valid_number_rows(draft.situation_behaviors, count, "做法",
+                           layer=REGISTRY["situation_behaviors"].layer).valid,
         anchors, kind="做法", name=draft.name)
     m_rows = _valid_number_rows(draft.key_memories, count, "记忆", layer="experience")
     m = phase_anchoring.verify(
@@ -437,7 +446,7 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
         warn_skip=not draft.situation_behaviors)   # 卡的跳过警告由第一类有内容的条目打一次
     b_top, b_slots, b_loose = dispatch(b.phases, count, unlocated=b.unlocated)
     m_top, m_slots, _ = dispatch(m.phases, count, layer="experience",
-                                 unlocated=m.unlocated, pre_story=m_rows.pre_story)
+                                 unlocated=m.unlocated, zero_only=m_rows.zero_only)
     # 监测按四类分别计（改挂 / 进未定位区 / 挂最后阶段），日志行里再给汇总（spec §3.7）
     kinds = {"做法": [b.rehung, len(b_loose), 0], "字段": [0, 0, 0],
              "记忆": [m.rehung, 0, len(m.unlocated)], "关系": [0, 0, 0]}
@@ -454,7 +463,7 @@ def card_from_draft(data: Any, source_text: str) -> CharacterCard:
         # 列表与单值走同一个循环：`kind` 在 `dispatch` 里决定格子容量（scalar 每格只留第一条），
         # 这里只按 `kind` 决定取值形态（list → 列表，scalar → 单值）。
         top, slots, loose = dispatch(res.phases, count, layer=spec.layer, kind=spec.kind,
-                                     label=path, unlocated=res.unlocated, pre_story=vr.pre_story)
+                                     label=path, unlocated=res.unlocated, zero_only=vr.zero_only)
         f = kinds["字段"]
         f[0] += res.rehung
         f[1] += len(loose)
