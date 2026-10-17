@@ -100,6 +100,11 @@ class RetroRegions:
         return "、".join(f"第{r.first}–{r.last}章{r.kind}" for r in self.ranges) or "无"
 
 
+# 不识别回忆区的入口（`Distiller.distill` / `distill_incremental` 这类没有书级缓存的库入口、
+# 测试）显式传它：位置核对行为与没有回忆区时完全相同。生产的两个蒸馏入口传 PR-3 算出的结果。
+NOT_DETECTED = RetroRegions.unavailable("本入口不识别回忆区", final=False)
+
+
 def instruction(source_text: str, chapters: list[tuple[int, int]]) -> str:
     """本步指令 + 代码列的全书目录（每章一行：「第N章：开头几十个字」）。"""
     return RETRO_INSTRUCTION + "\n".join(f"第{n}章：{head}"
