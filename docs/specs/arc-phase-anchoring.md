@@ -472,3 +472,5 @@ tests/test_distiller_routing.py
    `core/phase_anchoring.py`；段落边界构造 `paragraph_bounds` 与查位置的 `_paragraph_index`
    同置一处（坐标同源）。
 
+含省略号的锚点先逐字整句比对，见 `docs/specs/phase-anchor-exact-tier.md`。
+

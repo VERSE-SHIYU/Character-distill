@@ -128,7 +128,7 @@ def paragraph_bounds(source_text: str, source_norm: str) -> list[int] | None:
 
 
 def has_ellipsis(s) -> bool:
-    """这段文字里有没有省略号 —— 有则必须按省略号拼接核对（不许退回整串比对）。"""
+    """这段文字里有没有省略号（「……」或「...」）。"""
     return _ELLIPSIS.search(str(s)) is not None
 
 
@@ -157,6 +157,31 @@ def locate_elided_in_normalized(source_norm: str, quote: str,
     if paragraphs is not None and len({_paragraph_index(paragraphs, x) for x in starts}) > 1:
         return None                               # 两段不在同一段落 → 不是一段连续引文
     return [starts[0]]
+
+
+def locate_anchor(source_text: str, source_norm: str, anchor: str,
+                  paragraphs: list[int] | None = None) -> list[int] | None:
+    """阶段锚点在**规范化**原文里的位置；对不上返回 None。锚点定位的唯一入口。
+
+    判定顺序照参考实现 oberst-lab/verifiable-by-construction `eval/citation/vccr.py`
+    `_classify`（判据 `verbatim_criteria.json` v4 的 `tiers._order`：exact → normalized →
+    elided，取第一个对得上的）：
+
+    1. 逐字：锚点原样是 `source_text` 的子串 → 取首次出现，换算成规范化坐标。原文自带
+       「……」的句子在这一档就通过（D7-a）。
+    2. 不含省略号：规范化后整句比对（`locate_in_normalized`，行为与改前一致）。这一档包含
+       第 1 档，故不含省略号的锚点不必先走第 1 档。
+    3. 含省略号且逐字对不上：省略号是模型标出的删减，按 `locate_elided_in_normalized` 切段核对。
+
+    含省略号的锚点不走第 2 档：本仓 `normalize` 会删掉「…」（`_DROP_CHARS`），而参考实现
+    的规范化不删省略号；让它走第 2 档等于放过「标了省略号、实际没删」的锚点，与参考实现不同。
+    """
+    if not has_ellipsis(anchor):
+        return locate_in_normalized(source_norm, anchor)
+    m = re.compile(re.escape(anchor)).search(source_text)   # S13：坐标模块不用 text.find
+    if m is not None:
+        return normalized_starts(source_text, [m.start()])
+    return locate_elided_in_normalized(source_norm, anchor, paragraphs)
 
 
 def verbatim_in_normalized(source_norm: str, quote: str) -> bool:
