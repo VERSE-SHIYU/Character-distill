@@ -14,6 +14,13 @@
 整书前缀也由调用方给 —— 与 `core/relationship_batch.py` 同一形状。回忆区是**书的属性**，
 按书缓存见 `core/retro_cache.py`。
 
+**章号由代码定，不由模型数**：模型对每个范围只给首章、末章各一句原文，代码逐字定位
+（`core.quotes.locate_anchor`，与阶段锚点同一个入口）再换算成章号。按时间口径的提示词实测
+（PR #179 探针 run1）仍把第 505 章并进第 503–504 章的日札 —— 80 万 token 的上下文里数章号、
+找边界不可靠；这与阶段锚点「模型给原文、代码核位置」是同一个分工（oberst-lab/
+verifiable-by-construction，arXiv 2609.15964）。引文对不上或不唯一，整个结果判「未标」、
+不缓存：丢掉一个范围就是漏标。
+
 漏标与多标都有害：漏标让倒叙内容被当成当下；多标让该章里的正确锚点被当成失败。
 """
 from __future__ import annotations
@@ -23,8 +30,9 @@ import logging
 from dataclasses import dataclass
 from typing import Callable
 
-from core.chapters import chapter_starts
+from core.chapters import chapter_at, chapter_norm_starts, chapter_starts
 from core.llm_json import extract_json
+from core.quotes import locate_anchor, normalize, paragraph_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +47,13 @@ RETRO_INSTRUCTION = (
     "整章都在回忆过去。\n"
     "不算：时间接在前面正文之后的章节，即使标着番外（例如结局之后的日常）；正常往下写、"
     "只夹了几句回忆的章节。\n"
-    "章节号用正文里「第N章」的 N。每个范围写明类别（日记 / 书信 / 番外 / 回忆），理由写清这些章"
-    "写的是什么时候的事、为什么早于前面的正文。\n"
+    "相邻、同类的章节合成一个范围。每个范围给两句原文定位，章号由程序按原文位置算，不用你写：\n"
+    "- start_quote：范围第一章开头附近的一句；\n"
+    "- end_quote：范围最后一章结尾附近的一句。\n"
+    "两句都逐字照抄原文，不改字、不加省略号，各挑一句在全书里只出现一次的完整句子。"
+    "再写明类别（日记 / 书信 / 番外 / 回忆），理由写清这些章写的是什么时候的事、为什么早于前面的正文。\n"
     "只输出 JSON，不要别的文字：\n"
-    '{"ranges": [{"from": 起始章号, "to": 结束章号, "kind": "类别", "why": "理由"}]}\n'
+    '{"ranges": [{"kind": "类别", "start_quote": "原文", "end_quote": "原文", "why": "理由"}]}\n'
     "没有这类章节就输出 {\"ranges\": []}。"
 )
 RETRO_USER = "请列出倒叙的章节范围，只输出 JSON。"
@@ -89,9 +100,28 @@ class RetroRegions:
         return "、".join(f"第{r.first}–{r.last}章{r.kind}" for r in self.ranges) or "无"
 
 
-def parse(reply: str, chapters: list[tuple[int, int]]) -> RetroRegions:
-    """模型回复 → 回忆区。章号不在原文里、或首尾颠倒的范围丢掉并 warning；回复不是要的
-    JSON → 偶发失败（不缓存）。"""
+class _Unlocatable(ValueError):
+    """一句定位引文在原文里找不到、或不止一处。"""
+
+
+def _chapter_of(quote: object, *, source_text: str, source_norm: str,
+                paragraphs: list[int] | None, chapters: list[tuple[int, int]],
+                norm_starts: list[int]) -> int:
+    if not isinstance(quote, str) or not quote.strip():
+        raise _Unlocatable(f"引文为空：{quote!r}")
+    locs = locate_anchor(source_text, source_norm, quote, paragraphs)
+    if not locs or len(locs) != 1:
+        raise _Unlocatable(f"引文{'找不到' if not locs else f'出现 {len(locs)} 处'}：{quote[:30]}")
+    chapter = chapter_at(chapters, norm_starts, locs[0])
+    if chapter is None:
+        raise _Unlocatable(f"引文在第一章之前：{quote[:30]}")
+    return chapter
+
+
+def parse(reply: str, source_text: str, chapters: list[tuple[int, int]]) -> RetroRegions:
+    """模型回复 → 回忆区。每个范围的首末章由两句引文在原文里的位置定；任一范围引文对不上、
+    不唯一、或首尾颠倒 → 整个结果「未标」且不缓存（丢掉一个范围就是漏标）。回复不是要的
+    JSON 同样不缓存。"""
     try:
         data = json.loads(extract_json(reply))
         rows = data["ranges"]
@@ -99,18 +129,26 @@ def parse(reply: str, chapters: list[tuple[int, int]]) -> RetroRegions:
             raise TypeError("ranges 不是数组")
     except (ValueError, KeyError, TypeError) as exc:
         return RetroRegions.unavailable(f"回复格式不对：{exc}", final=False)
-    known = {n for n, _ in chapters}
+    source_norm = normalize(source_text)
+    norm_starts = chapter_norm_starts(source_text, chapters, source_norm)
+    if norm_starts is None:
+        return RetroRegions.unavailable("章节起点换不到规范化坐标", final=True)
+    where = dict(source_text=source_text, source_norm=source_norm,
+                 paragraphs=paragraph_bounds(source_text, source_norm),
+                 chapters=chapters, norm_starts=norm_starts)
     kept: list[ChapterRange] = []
     for row in rows:
         try:
-            first, last, kind = int(row["from"]), int(row["to"]), str(row.get("kind", ""))
-        except (KeyError, TypeError, ValueError):
-            logger.warning("[retro] 丢掉格式不对的范围：%r", row)
-            continue
-        if first > last or first not in known or last not in known:
-            logger.warning("[retro] 丢掉章号对不上原文的范围：第%s–%s章", first, last)
-            continue
-        kept.append(ChapterRange(first, last, kind))
+            if not isinstance(row, dict):
+                raise _Unlocatable(f"范围格式不对：{row!r}")
+            first = _chapter_of(row.get("start_quote"), **where)
+            last = _chapter_of(row.get("end_quote"), **where)
+            if first > last:
+                raise _Unlocatable(f"首章 {first} 在末章 {last} 之后")
+        except _Unlocatable as exc:
+            logger.warning("[retro] 范围定位失败，整本判未标：%s", exc)
+            return RetroRegions.unavailable(f"范围定位失败：{exc}", final=False)
+        kept.append(ChapterRange(first, last, str(row.get("kind", ""))))
     return RetroRegions("marked", tuple(sorted(kept, key=lambda r: r.first)))
 
 
@@ -120,4 +158,4 @@ def detect(source_text: str, *, prefix: str,
     chapters = chapter_starts(source_text)
     if chapters is None:
         return RetroRegions.unavailable("原文没有可用的「第N章」标题", final=True)
-    return parse(call(f"{prefix}\n\n{RETRO_INSTRUCTION}", RETRO_USER), chapters)
+    return parse(call(f"{prefix}\n\n{RETRO_INSTRUCTION}", RETRO_USER), source_text, chapters)

@@ -7,12 +7,14 @@
 """
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
 
-from core.chapters import chapter_starts
+from core.chapters import chapter_at, chapter_norm_starts, chapter_starts
 from core.retro_cache import resolve_retro_regions
+from core.quotes import normalize, normalized_starts
 from core.retro_regions import RETRO_VERSION, ChapterRange, RetroRegions, detect, parse
 from storage.sqlite_store import SQLiteStore
 import test_distill_draft_persist as P
@@ -21,11 +23,28 @@ from test_distill_task_api import _run_async
 # 谢凛羽原文 3335472a438b（第 1–509 章）的标准答案，Claude 逐章核过：第 491–504 章日札（123 篇，
 # 记的是正文里早已写过的日子）、第 508–509 章番外（云钺童年）是倒叙；第 490 章「正文完」，
 # 第 505–507 章是结局之后的番外（第 507 章末「番外：误认为有孕篇（完）」），时间接在正文之后，不是倒叙。
-# 按时间口径的提示词实测回复，取到后加进这里（见 docs/specs/retro-regions-detect.md §7）。
-_TRUTH_REPLY = ('{"ranges": [{"from": 491, "to": 504, "kind": "日记", "why": "日札补记正文里的日子"}, '
-                '{"from": 508, "to": 509, "kind": "番外", "why": "云钺童年"}]}')
+# 原文不入库，这里用同章数的替身书检验解析口径；真模型实测记在 docs/specs/retro-regions-detect.md §7。
 _TRUTH_RETRO = set(range(491, 505)) | {508, 509}
-_CHAPTERS_509 = [(n, n * 100) for n in range(1, 510)]
+
+
+def _head(n: int) -> str:
+    return f"这是第{n}章开头独有的一句话。"
+
+
+def _tail(n: int) -> str:
+    return f"这是第{n}章结尾独有的一句话。"
+
+
+_BOOK = "".join(f"第{n}章\n　　{_head(n)}\n　　中间的正文。\n　　{_tail(n)}\n" for n in range(1, 510))
+_BOOK_CHAPTERS = chapter_starts(_BOOK)
+
+
+def _reply(*ranges: tuple[str, str, str]) -> str:
+    return json.dumps({"ranges": [{"kind": k, "start_quote": a, "end_quote": b, "why": "理由"}
+                                  for k, a, b in ranges]}, ensure_ascii=False)
+
+
+_TRUTH_REPLY = _reply(("日记", _head(491), _tail(504)), ("番外", _head(508), _tail(509)))
 
 
 def _covered(regions: RetroRegions) -> set[int]:
@@ -44,25 +63,34 @@ def test_g1b_unusable_headings_give_none(src):
     assert chapter_starts(src) is None
 
 
-# ── 检查 2：回复解析后的章节集合与标准答案逐章相等（不漏、也不多） ─────────────
+# ── 检查 2：章号由引文位置定，与标准答案逐章相等（不漏、也不多） ───────────────
 
 def test_g2_reply_parses_to_exactly_the_retro_chapters():
-    regions = parse(_TRUTH_REPLY, _CHAPTERS_509)
+    regions = parse(_TRUTH_REPLY, _BOOK, _BOOK_CHAPTERS)
     assert regions.status == "marked"
     assert _covered(regions) == _TRUTH_RETRO
 
 
-# ── 检查 3：对不上原文的范围丢掉；回复不是 JSON 不缓存 ─────────────────────────
+def test_g2b_chapter_coordinates_match_normalized_starts():
+    norm = normalize(_BOOK)
+    starts = chapter_norm_starts(_BOOK, _BOOK_CHAPTERS, norm)
+    assert starts == normalized_starts(_BOOK, [raw for _, raw in _BOOK_CHAPTERS])
+    assert chapter_at(_BOOK_CHAPTERS, starts, starts[504]) == 505
+    assert chapter_at(_BOOK_CHAPTERS, starts, starts[504] - 1) == 504
 
-def test_g3_ranges_outside_the_book_or_reversed_are_dropped():
-    reply = ('{"ranges": [{"from": 3, "to": 2, "kind": "日记"}, {"from": 8, "to": 9, "kind": "番外"},'
-             ' {"from": 1, "to": 2, "kind": "日记"}]}')
-    regions = parse(reply, [(1, 0), (2, 10), (3, 20)])
-    assert regions.ranges == (ChapterRange(1, 2, "日记"),)
 
+# ── 检查 3：引文对不上、不唯一、首尾颠倒、回复不是 JSON → 整本「未标」且不缓存 ────
 
-def test_g3b_malformed_reply_is_not_final():
-    regions = parse("我觉得没有", [(1, 0)])
+@pytest.mark.parametrize("reply", [
+    _reply(("日记", "原文里没有这句话", _tail(504))),          # 找不到
+    _reply(("日记", "中间的正文。", _tail(504))),              # 不止一处
+    _reply(("日记", _head(504), _tail(491))),                  # 首尾颠倒
+    _reply(("日记", _head(491), _tail(504)), ("番外", "", _tail(509))),  # 一个范围坏了，整本不用
+    '{"ranges": [{"kind": "日记", "from": 491, "to": 504}]}',  # 只给章号、不给引文
+    "我觉得没有",
+])
+def test_g3_unlocatable_or_malformed_reply_is_unavailable_and_not_final(reply):
+    regions = parse(reply, _BOOK, _BOOK_CHAPTERS)
     assert regions.status == "unavailable" and regions.final is False
 
 
@@ -86,7 +114,7 @@ def test_g4b_detect_sends_book_prefix_first():
 
 
 def test_g5_json_round_trip():
-    regions = parse(_TRUTH_REPLY, _CHAPTERS_509)
+    regions = parse(_TRUTH_REPLY, _BOOK, _BOOK_CHAPTERS)
     assert RetroRegions.from_json(regions.to_json()) == regions
 
 

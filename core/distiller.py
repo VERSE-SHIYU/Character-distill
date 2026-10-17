@@ -721,8 +721,8 @@ class Distiller:
     #: 分片数 ≥ MIN_SPEAK_CHUNKS 且非泛称」判定；全书判定输出改 `merge` / `impersonal`
     #: 两键、取 5 次独立采样的多数票。
     IDENTIFY_VERSION = 4
-    # 回忆区回复只是几行章号范围（实测 185–196 token），给足余量即可。
-    RETRO_MAX_TOKENS = 1024
+    # 回忆区回复：每个范围两句定位引文 + 一句理由（章号口径实测 331–453 token），留一倍余量。
+    RETRO_MAX_TOKENS = 2048
 
     #: 全书判定的独立采样次数：同一输入、同一提示词下单次调用的例外清单随采样大幅
     #: 漂移（实测两次交集很小），故按 self-consistency（Wang et al., ICLR 2023）取多数票。
