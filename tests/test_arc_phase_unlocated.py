@@ -283,7 +283,7 @@ def test_u8_monitor_counts_every_category(caplog):
     line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
     assert line.split(" rehung=")[1] == (
         "1 unlocated=1 to_last=1 skipped_card=False memories_dropped=1 "
-        "kinds=做法:1/0/0,字段:0/1/0,记忆:0/0/1,关系:0/0/0")
+        "kinds=做法:1/0/0,字段:0/1/0,记忆:0/0/1,关系:0/0/0 retro=未标（本入口不识别回忆区）")
 
 
 def test_u8b_monitoring_line_is_warning(caplog):

@@ -439,6 +439,7 @@ def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions) -> Char
     count = len(phases)
     anchors = phase_anchoring.build_anchors(                       # 整本原文只归一化这一次
         phases, source_text, retro=retro.spans(source_text) if phases else ())
+    phase_anchoring.log_skip(phases, source_text, anchors, draft.name)   # 整卡跳过只在这里打一次
 
     b = phase_anchoring.verify(
         draft.situation_behaviors,
@@ -449,8 +450,7 @@ def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions) -> Char
                                 layer=REGISTRY["key_memories"].layer)
     m = phase_anchoring.verify(
         draft.key_memories, m_rows.valid,
-        anchors, kind="记忆", name=draft.name,
-        warn_skip=not draft.situation_behaviors)   # 卡的跳过警告由第一类有内容的条目打一次
+        anchors, kind="记忆", name=draft.name)
     b_top, b_slots, b_loose = dispatch(b.phases, count, unlocated=b.unlocated)
     m_top, m_slots, _ = dispatch(m.phases, count, layer="experience",
                                  unlocated=m.unlocated, zero_only=m_rows.zero_only)
@@ -466,7 +466,7 @@ def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions) -> Char
         vr = _valid_number_rows(rows, count, path, layer=spec.layer)
         res = phase_anchoring.verify(
             rows, vr.valid, anchors,
-            kind=path, label=lambda x: x.value, name=draft.name, warn_skip=False)
+            kind=path, label=lambda x: x.value, name=draft.name)
         # 列表与单值走同一个循环：`kind` 在 `dispatch` 里决定格子容量（scalar 每格只留第一条），
         # 这里只按 `kind` 决定取值形态（list → 列表，scalar → 单值）。
         top, slots, loose = dispatch(res.phases, count, layer=spec.layer, kind=spec.kind,
@@ -510,10 +510,10 @@ def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions) -> Char
     }
     logger.warning("[phase_anchoring] card=%s tags=%d dropped=%d ambiguous=%d "
                    "unverified_quotes=%d rehung=%d unlocated=%d to_last=%d "
-                   "skipped_card=%s memories_dropped=%d kinds=%s",
+                   "skipped_card=%s memories_dropped=%d kinds=%s retro=%s",
                 draft.name, b.tags, b.dropped, b.ambiguous, b.unverified_quotes,
                 rehung, unlocated, to_last, b.skipped_card, m.dropped,
-                ",".join(f"{k}:{r}/{u}/{t}" for k, (r, u, t) in kinds.items()))
+                ",".join(f"{k}:{r}/{u}/{t}" for k, (r, u, t) in kinds.items()), retro.summary())
 
     for idx, phase in enumerate(card["character_arc"]["phases"]):
         phase["behaviors"] = [

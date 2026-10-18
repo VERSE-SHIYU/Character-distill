@@ -24,7 +24,7 @@ import pytest
 from chromadb.errors import NotFoundError
 
 import core.indexing_service as IS
-from core.quotes import normalize, normalized_starts
+from core.quotes import normalize, normalized_starts, raw_offsets
 from core.rag import RAGEngine, positions_metadata
 from core.scene_indexer import SceneIndexer
 from core.schema import CharacterCard, RetrievalWindow
@@ -59,6 +59,29 @@ def test_u5_prefix_consistency_under_segmentation():
         acc += len(normalize(text[bounds[i - 1]:bounds[i]]))
         assert starts[i] == acc
     assert acc == len(normalize(text))
+
+
+# ══ U28 raw_offsets：规范化坐标换回原文坐标（只给日志用） ══════════════════════
+
+def test_u28_raw_offsets_round_trips_every_normalized_position():
+    """每个规范化位置都换回产出它的那个原文字符（不是只对得上长度）。"""
+    text = "开头甲甲甲。中间乙乙。\n\n结尾：丙丙！"
+    norm = normalize(text)
+    positions = list(range(len(norm)))
+    raw = raw_offsets(text, norm, positions)
+    assert ([text[r] for r in raw], [len(normalize(text[:r])) for r in raw]) == (
+        list(norm), positions)
+
+
+def test_u28_raw_offsets_gives_none_when_paragraph_bounds_fail():
+    """逐行规范化拼不回整段（跨行短语被并字等罕见情形）→ 全部 None，不拿错边界凑答案。"""
+    assert raw_offsets("甲。\n乙", "与原文对不上的整段", [0, 1]) == [None, None]
+
+
+def test_u28_raw_offsets_gives_none_outside_the_normalized_text():
+    text = "甲。乙"
+    norm = normalize(text)
+    assert raw_offsets(text, norm, [-1, 0, 1, 2]) == [None, 0, 2, None]
 
 
 # ══ U16b 切分给出精确起点 ═══════════════════════════════════════════════════

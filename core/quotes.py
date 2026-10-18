@@ -127,6 +127,38 @@ def paragraph_bounds(source_text: str, source_norm: str) -> list[int] | None:
     return bounds if acc == len(source_norm) else None
 
 
+def raw_offsets(source_text: str, source_norm: str, positions: Sequence[int]) -> list[int | None]:
+    """规范化坐标 → 原文坐标（`normalized_starts` 的反方向）；换不回的位置给 None。
+
+    按段落换算：段落边界取 `paragraph_bounds`（同一条累加不变式），段内二分找第一个使
+    `normalize(段[:j])` 长度超过段内偏移的 j。边界拼不回整段时全部 None —— 宁可不给，不给错的。
+    只给日志与诊断用（整卡跳过时说明锚点在原文哪里），核对本身不走这条路。
+    """
+    bounds = paragraph_bounds(source_text, source_norm)
+    if bounds is None:
+        return [None for _ in positions]
+    lines = source_text.split("\n")
+    line_starts = [0]
+    for line in lines[:-1]:
+        line_starts.append(line_starts[-1] + len(line) + 1)
+    out: list[int | None] = []
+    for pos in positions:
+        if not 0 <= pos < len(source_norm):
+            out.append(None)
+            continue
+        i = _paragraph_index(bounds, pos)
+        line, p = lines[i], pos - bounds[i]
+        lo, hi = 0, len(line)
+        while lo < hi:                            # 二分：前缀规范化长度随 j 单调不减
+            mid = (lo + hi) // 2
+            if len(normalize(line[:mid])) > p:
+                hi = mid
+            else:
+                lo = mid + 1
+        out.append(line_starts[i] + lo - 1)
+    return out
+
+
 def has_ellipsis(s) -> bool:
     """这段文字里有没有省略号（「……」或「...」）。"""
     return _ELLIPSIS.search(str(s)) is not None
