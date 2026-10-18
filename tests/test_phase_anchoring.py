@@ -278,7 +278,7 @@ def test_u22_monitoring_line_reports_counts(caplog):
     line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
     assert line == ("[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 "
                     "unverified_quotes=1 rehung=1 unlocated=1 to_last=0 "
-                    "skipped_card=False memories_dropped=0 kinds=做法:1/1/0,字段:0/0/0,记忆:0/0/0,关系:0/0/0")
+                    "skipped_card=False memories_dropped=0 kinds=做法:1/1/0,字段:0/0/0,记忆:0/0/0,关系:0/0/0 retro=未标（本入口不识别回忆区）")
 
 
 def test_u23_empty_anchor_on_last_phase_skips_the_whole_card():
@@ -295,7 +295,7 @@ def test_u24_empty_anchor_on_a_middle_phase_skips_with_its_own_reason(caplog):
     """中间阶段锚点为空 → 整卡跳过，原因写「锚点为空」，不是碰巧撞上递增检查（§9.5 A1）。"""
     with caplog.at_level(logging.WARNING, logger="core.phase_anchoring"):
         _card([_row([_occ(3, _Q3)], "x")], anchors={2: "", 3: _Q3})
-    assert [r.getMessage() for r in caplog.records if "跳过" in r.getMessage()] == [
+    assert [r.getMessage() for r in caplog.records if "整卡跳过位置检查" in r.getMessage()] == [
         "整卡跳过位置检查（阶段 2 锚点为空）：角色"]
 
 
@@ -310,7 +310,7 @@ def test_u25_monitoring_counts_tags_not_quotes(caplog):
     line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
     assert line == ("[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 "
                     "unverified_quotes=2 rehung=0 unlocated=0 to_last=0 "
-                    "skipped_card=False memories_dropped=0 kinds=做法:0/0/0,字段:0/0/0,记忆:0/0/0,关系:0/0/0")
+                    "skipped_card=False memories_dropped=0 kinds=做法:0/0/0,字段:0/0/0,记忆:0/0/0,关系:0/0/0 retro=未标（本入口不识别回忆区）")
 
 
 def test_u26_skipped_card_still_counts_its_tags(caplog):
@@ -320,7 +320,7 @@ def test_u26_skipped_card_still_counts_its_tags(caplog):
     line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
     assert line == ("[phase_anchoring] card=角色 tags=2 dropped=0 ambiguous=0 "
                     "unverified_quotes=0 rehung=0 unlocated=0 to_last=0 "
-                    "skipped_card=True memories_dropped=0 kinds=做法:0/0/0,字段:0/0/0,记忆:0/0/0,关系:0/0/0")
+                    "skipped_card=True memories_dropped=0 kinds=做法:0/0/0,字段:0/0/0,记忆:0/0/0,关系:0/0/0 retro=未标（本入口不识别回忆区）")
 
 
 def test_u27_each_dropped_tag_warns_once(caplog):

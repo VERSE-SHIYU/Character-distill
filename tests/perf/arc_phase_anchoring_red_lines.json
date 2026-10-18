@@ -728,7 +728,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"跳过\" in r.getMessage()] == [ \"整卡跳过位置检查（阶段 2 锚点为空）：角色\"]",
+        "assert [r.getMessage() for r in caplog.records if \"整卡跳过位置检查\" in r.getMessage()] == [ \"整卡跳过位置检查（阶段 2 锚点为空）：角色\"]",
         0
       ]
     ],
@@ -810,7 +810,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"跳过\" in r.getMessage()] == [ \"整卡跳过位置检查（阶段 2 锚点为空）：角色\"]",
+        "assert [r.getMessage() for r in caplog.records if \"整卡跳过位置检查\" in r.getMessage()] == [ \"整卡跳过位置检查（阶段 2 锚点为空）：角色\"]",
         0
       ],
       [

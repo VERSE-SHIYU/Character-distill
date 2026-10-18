@@ -16,8 +16,11 @@ import logging
 from enum import Enum
 from typing import NamedTuple, Sequence
 
+import bisect
+
+from core.chapters import chapter_starts
 from core.quotes import (has_ellipsis, locate_anchor, locate_in_normalized, normalize,
-                         paragraph_bounds)
+                         paragraph_bounds, raw_offsets)
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +135,8 @@ class PhaseAnchors(NamedTuple):
     """位置核对的上下文：规范化原文 + 各阶段区间 + 整卡跳过的原因 —— **一张卡建一次**。
 
     每个字段各建一次，就是每个字段各归一化一遍整本书（效率 #1）。`reason` 非空即整卡跳过
-    （规则 2 / D7），那条 warning 由 `verify` 打 —— 这里不打，免得同一原因打多次。
+    （规则 2 / D7），那条 warning 与逐阶段明细由 `log_skip` 打，`card_from_draft` 每张卡调一次
+    —— `verify` 不打，免得四类条目各打一遍。
     """
     n: int
     source_norm: str
@@ -158,9 +162,53 @@ def build_anchors(phases, source_text: str, *,
     return PhaseAnchors(len(phases), source_norm, ranges, reason, tuple(retro))
 
 
+# 整卡跳过明细里「前文」取多少字（原文字符）。章内回忆（如祈灼第 383 章「他曾以为……」）
+# 靠锚点前的叙述能认出来；60 字约两三句，够看出是不是回忆语气。
+_BEFORE_CHARS = 60
+
+
+def log_skip(phases, source_text: str, anchors: PhaseAnchors, name: str) -> None:
+    """整卡跳过位置检查时打日志：一行原因 + 每个阶段一行明细。**每张卡只调一次**。
+
+    明细逐阶段**各自**定位锚点（`phase_ranges` 遇到第一处不对就停，看不到其余阶段）：
+    阶段号、label、锚点原句、查没查到、第几章、规范化位置、在不在回忆区（哪一段）、
+    锚点前 `_BEFORE_CHARS` 字原文（换行记作「⏎」）。不跳过时什么都不打。
+    """
+    if not anchors.reason:
+        return
+    logger.warning("整卡跳过位置检查（%s）：%s", anchors.reason, name)
+    paragraphs = paragraph_bounds(source_text, anchors.source_norm)
+    locs = [locate_anchor(source_text, anchors.source_norm, a, paragraphs) if a else None
+            for a in map(_anchor_of, phases)]
+    found = [loc[0] for loc in locs if loc is not None]
+    raw = iter(raw_offsets(source_text, anchors.source_norm, found))
+    chapters = chapter_starts(source_text)
+    cuts = [r for _, r in chapters or []]
+    for k, (phase, loc) in enumerate(zip(phases, locs), 1):
+        anchor = _anchor_of(phase)
+        label = phase.get("label", "") if isinstance(phase, dict) else getattr(phase, "label", "")
+        head = f"整卡跳过明细（{name}）阶段 {k}「{label}」锚点「{anchor}」→ "
+        if not anchor:
+            logger.warning("%s锚点为空%s", head, "（阶段 1 从全书开头算起）" if k == 1 else "")
+            continue
+        if loc is None:
+            logger.warning("%s原文查不到", head)
+            continue
+        pos, r = loc[0], next(raw)
+        if r is None:
+            where, before = "章号未知", anchors.source_norm[max(0, pos - _BEFORE_CHARS):pos]
+        else:
+            i = bisect.bisect_right(cuts, r) - 1
+            where = f"第{chapters[i][0]}章" if i >= 0 else ("无章节标题" if not cuts else "首章之前")
+            before = source_text[max(0, r - _BEFORE_CHARS):r].replace("\n", "⏎")
+        region = _region_of(anchors.retro, pos)
+        inside = "不在回忆区" if region is None else f"在回忆区（{region}）"
+        logger.warning("%s%s，规范化位置 %d，%s；前文：%s", head, where, pos, inside, before)
+
+
 def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
            kind: str = "做法", label=_situation_label, name: str = "",
-           warn_skip: bool = True, placement: Placement = Placement.RELOCATE) -> Verification:
+           placement: Placement = Placement.RELOCATE) -> Verification:
     """按原文位置定每条条目的阶段 —— **对任意带 `occurrences` 的条目列表**工作。
 
     规则（spec `arc-phase-unlocated.md` §3.1，取代 `arc-phase-anchoring.md` 的规则 3、4）：
@@ -189,8 +237,6 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
     ranges, reason = anchors.ranges, anchors.reason
     skipped = bool(reason)
     starts = None if skipped else [r[0] for r in ranges]
-    if skipped and items and warn_skip:          # 规则 2：保留模型标注，warning 一条
-        logger.warning("整卡跳过位置检查（%s）：%s", reason, name)
 
     final: list[list[int]] = []
     phase_quotes: list[dict[int, str]] = []
