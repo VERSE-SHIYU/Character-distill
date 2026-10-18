@@ -30,6 +30,8 @@
 - `phase_anchoring.log_skip(phases, source_text, anchors, name)`：打一行原因，再逐阶段打明细。
   - 由 `card_from_draft` 在 `build_anchors` 之后调一次。
   - `verify` 不再打这条日志，`warn_skip` 参数删掉。
+  - 与旧代码的差异：只要整卡跳过就打，**卡上一条条目都没有也打**；旧代码只在至少一类
+    条目有内容时才打（`verify` 内的 `items` 非空守卫）。差别仅限日志，核对与成卡不变。
   - 明细里每个阶段的锚点**各自**定位：`phase_ranges` 遇到第一处不对就停，单靠它看不到其余阶段。
   - 定位复用 `quotes.locate_anchor`，与核对同一条路。
 - `quotes.raw_offsets`：规范化坐标换回原文坐标（`normalized_starts` 的反方向）。
@@ -41,6 +43,9 @@
 ## 4. 验证
 
 - 目标检查 5 条：先以 xfail strict 提交，4 条按预期的原因失败（g5 是守卫，原本就过）；实现后 5/5 通过。
+- `raw_offsets` 另有独立单元测试（`test_arc_positions` u28：逐位置换回原文坐标、边界拼不
+  回整段给 None、越界给 None）；`log_skip` 的换算失败路径（`raw_offsets` 给 None →
+  「章号未知」、前文退回规范化文字）由 `test_anchor_skip_diagnostics_goal` g6 锁住。
 - 期望值订正（判据未改）：
   - g2「前文」的期望字面是我手写错的：只写了本章那一段，实际按判据取 60 字，会跨章。现在改成从原文切出这 60 字作比较对象，判据「前文 = 锚点前 60 字原文」没变。
   - g3 原来用「第2章」判章号，可这三个字也出现在前文里，所以改成判「→ 第2章」。

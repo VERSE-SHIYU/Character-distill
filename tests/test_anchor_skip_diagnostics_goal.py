@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 
 from core.card_draft import card_from_draft
+from core.quotes import normalize
 from core.retro_regions import NOT_DETECTED, ChapterRange, RetroRegions
 
 
@@ -90,3 +91,17 @@ def test_g4_summary_line_names_the_retro_regions(caplog):
 def test_g5_no_detail_lines_when_not_skipped(caplog):
     msgs = _messages(caplog, _RETRO, _draft("中间乙乙乙乙乙"))
     assert [m for m in msgs if "整卡跳过" in m] == []
+
+
+def test_g6_raw_conversion_failure_falls_back_to_unknown_chapter(caplog, monkeypatch):
+    """换不回原文坐标（`raw_offsets` 给 None）→ 章号写「章号未知」，前文退回规范化文字。"""
+    monkeypatch.setattr("core.phase_anchoring.raw_offsets", lambda *a: [None] * len(a[2]))
+    msgs = _messages(caplog, _RETRO, _draft("中间己己己己己"))
+    detail = [m for m in msgs if m.startswith("整卡跳过明细")]
+    norm = normalize(_SRC)
+    assert ([m.split("；前文：")[0].rsplit("→ ", 1)[-1] for m in detail],
+            [m.split("；前文：")[1] for m in detail]) == (
+        ["章号未知，规范化位置 3，不在回忆区",
+         "章号未知，规范化位置 58，在回忆区（第4–4章日记）",
+         "章号未知，规范化位置 30，不在回忆区"],
+        [norm[max(0, p - 60):p] for p in (3, 58, 30)])
