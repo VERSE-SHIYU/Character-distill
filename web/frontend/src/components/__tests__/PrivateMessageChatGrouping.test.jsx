@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, waitFor } from '@testing-library/react'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -81,7 +81,14 @@ const msg = (id, content, minsAgo, over = {}) => {
 }
 
 beforeEach(() => {
+  // 只假 Date：msg() 依赖 Date.now()；假 setTimeout 会让 waitFor 卡住
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(2026, 5, 15, 12, 0, 0))
   setServerMsgs([])
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('PrivateMessageChat 消息分组（同发送者 <5min 合并）', () => {
