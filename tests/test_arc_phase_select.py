@@ -19,6 +19,7 @@ import uuid
 from pathlib import Path
 
 from core.card_draft import card_from_draft
+from core.retro_regions import NOT_DETECTED
 from core.chat_engine import ChatEngine
 from core.export import export_tavern_json
 from core.schema import FORMAT_GROUPS, POST_FORMAT_FIELDS, CharacterCard, RetrievalWindow
@@ -64,7 +65,7 @@ def test_u8_memories_dispatched_by_phase_with_starts_and_fingerprint():
         _mem("只在早期", (1, _Q1)),
         _mem("只在后来", (2, _Q3)),
     ])
-    card = card_from_draft(draft, _SRC)
+    card = card_from_draft(draft, _SRC, retro=NOT_DETECTED)
 
     assert card.key_memories == ["全程都有的事"], "全程成立的记忆没留在顶层"
     assert [p.overlay.get("key_memories") for p in card.character_arc.phases] == [
@@ -77,7 +78,7 @@ def test_u8_memories_dispatched_by_phase_with_starts_and_fingerprint():
 def test_u8_skipped_card_writes_no_starts():
     draft = _mem_draft([_mem("只在早期", (1, _Q1))])
     draft["character_arc"]["phases"][1]["anchor"] = "查不到的锚点"
-    card = card_from_draft(draft, _SRC)
+    card = card_from_draft(draft, _SRC, retro=NOT_DETECTED)
     assert [p.start for p in card.character_arc.phases] == [None, None], (
         "整卡跳过位置检查时仍写了起点")
 
@@ -144,7 +145,7 @@ def test_u16_export_includes_phase_memories():
         _mem("全程都有的事", (1, _Q1), (2, _Q3)),
         _mem("只在早期", (1, _Q1)),
         _mem("只在后来", (2, _Q3)),
-    ]), _SRC)
+    ]), _SRC, retro=NOT_DETECTED)
     blob = export_tavern_json(card)
     assert "只在早期" in blob and "只在后来" in blob, "阶段记忆没进导出"
     assert "死要面子" in blob or "不再分辩" in blob, "阶段记忆没标出所属阶段"

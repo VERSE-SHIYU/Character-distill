@@ -59,7 +59,7 @@ from core.roster_aggregate import (
 from core.card_draft import CardDraft, card_from_draft, draft_schema
 from core.card_layers import REGISTRY
 from core import retro_regions
-from core.retro_regions import RetroRegions
+from core.retro_regions import NOT_DETECTED, RetroRegions
 from core.relationship_batch import (
     REL_BATCH_SIZE,
     RelationshipBatchError,
@@ -1734,7 +1734,7 @@ class Distiller:
         self._relationships_batched(data, prefix=book_prefix(text),
                                     character_name=character_name, material="")
         try:
-            return card_from_draft(data, text)
+            return card_from_draft(data, text, retro=NOT_DETECTED)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
@@ -1838,7 +1838,7 @@ class Distiller:
         self._relationships_batched(data, prefix=book_prefix(text),
                                     character_name=character_name, material="")
         try:
-            return card_from_draft(data, text)
+            return card_from_draft(data, text, retro=NOT_DETECTED)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
@@ -2489,7 +2489,7 @@ class Distiller:
             data, prefix=format_prompt_shared(character_name), character_name=character_name,
             material=profile_draft)
         try:
-            card = card_from_draft(data, text)
+            card = card_from_draft(data, text, retro=NOT_DETECTED)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc

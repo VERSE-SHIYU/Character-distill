@@ -31,6 +31,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.card_draft import card_from_draft
+from core.retro_regions import NOT_DETECTED
 
 _SRC = "开头甲甲甲。中间乙乙乙。"
 _Q1, _Q2 = "开头甲甲甲", "中间乙乙乙"
@@ -57,7 +58,7 @@ def test_p0_fixture_sentences_are_distinct():
 
 def test_p1_memory_tagged_zero_only_lands_at_top_level():
     card = card_from_draft(_phased(key_memories=[
-        {"memory": _PRE, "occurrences": [{"phase": 0, "quote": _Q1}]}]), _SRC)
+        {"memory": _PRE, "occurrences": [{"phase": 0, "quote": _Q1}]}]), _SRC, retro=NOT_DETECTED)
     assert _PRE in card.key_memories, "只标 0 的经历类记忆没进顶层（故事里的经历要一直在场）"
     assert _PRE not in _mounted_memories(card), "故事前的记忆不该挂到某个阶段"
 
@@ -65,7 +66,7 @@ def test_p1_memory_tagged_zero_only_lands_at_top_level():
 def test_p2_memory_tagged_zero_only_is_not_warned(caplog):
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
         card_from_draft(_phased(key_memories=[
-            {"memory": _PRE, "occurrences": [{"phase": 0, "quote": _Q1}]}]), _SRC)
+            {"memory": _PRE, "occurrences": [{"phase": 0, "quote": _Q1}]}]), _SRC, retro=NOT_DETECTED)
     assert not any("阶段编号不合法" in r.getMessage() for r in caplog.records), \
         "故事前的经历被打成了编号非法"
 
@@ -73,7 +74,7 @@ def test_p2_memory_tagged_zero_only_is_not_warned(caplog):
 def test_p3_memory_tagged_zero_only_is_logged_as_pre_story(caplog):
     with caplog.at_level(logging.INFO, logger="core.card_draft"):
         card_from_draft(_phased(key_memories=[
-            {"memory": _PRE, "occurrences": [{"phase": 0, "quote": _Q1}]}]), _SRC)
+            {"memory": _PRE, "occurrences": [{"phase": 0, "quote": _Q1}]}]), _SRC, retro=NOT_DETECTED)
     assert any("故事开始前" in r.getMessage() and _PRE in r.getMessage()
                for r in caplog.records), "没有 info 日志写明「故事开始前」+ 条目文字"
 
@@ -82,7 +83,7 @@ def test_p4_zero_coexisting_with_phase_two_hangs_phase_two_not_top(caplog):
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
         card = card_from_draft(_phased(key_memories=[
             {"memory": _PRE, "occurrences": [{"phase": 0, "quote": _Q1},
-                                              {"phase": 2, "quote": _Q2}]}]), _SRC)
+                                              {"phase": 2, "quote": _Q2}]}]), _SRC, retro=NOT_DETECTED)
     assert _PRE not in card.key_memories, "0 与阶段号并存时不该进顶层（不新增泄露面）"
     assert _PRE in _mounted_memories(card), "0 与阶段号并存时没按阶段号照常核对挂上"
     assert not any("阶段编号不合法" in r.getMessage() for r in caplog.records), \
@@ -93,7 +94,7 @@ def test_p4b_zero_coexisting_still_goes_through_position_check():
     """0 与阶段号并存时其余编号照常走 `verify`：摘录落在别的阶段就改挂过去，不进顶层。"""
     card = card_from_draft(_phased(key_memories=[
         {"memory": _PRE, "occurrences": [{"phase": 0, "quote": _Q1},
-                                          {"phase": 1, "quote": _Q2}]}]), _SRC)
+                                          {"phase": 1, "quote": _Q2}]}]), _SRC, retro=NOT_DETECTED)
     assert _PRE not in card.key_memories, "并存时不该进顶层"
     phase2 = card.character_arc.phases[1]
     assert _PRE in (phase2.overlay or {}).get("key_memories", []), \
@@ -104,7 +105,7 @@ def test_p5_behavior_tagged_zero_is_still_retracted(caplog):
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
         card = card_from_draft(_phased(situation_behaviors=[
             {"situation": "讨酒", "behavior": _SHOWN,
-             "occurrences": [{"phase": 0, "quote": _Q1}]}]), _SRC)
+             "occurrences": [{"phase": 0, "quote": _Q1}]}]), _SRC, retro=NOT_DETECTED)
     top = [b.behavior for b in card.situation_behaviors]
     per = [b.behavior for p in card.character_arc.phases for b in p.behaviors]
     assert _SHOWN not in top + per, "标 0 的做法该撤回（只有经历类认 0）"
@@ -116,7 +117,7 @@ def test_p6_attitude_tagged_zero_is_still_retracted(caplog):
     rel = {"target": "掌柜", "relation": "主顾",
            "attitudes": [{"attitude": _SHOWN, "quote": _Q1}]}
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
-        card = card_from_draft(_phased(relationships=[rel]), _SRC)
+        card = card_from_draft(_phased(relationships=[rel]), _SRC, retro=NOT_DETECTED)
     atts = [pa.attitude for r in card.relationships for pa in r.phase_attitudes]
     assert _SHOWN not in atts, "标 0 的态度该撤回（只有经历类认 0）"
 
@@ -134,7 +135,7 @@ def test_p8_zero_plus_out_of_range_still_warns_and_lands_at_top_level(caplog):
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
         card = card_from_draft(_phased(key_memories=[
             {"memory": _PRE, "occurrences": [{"phase": 0, "quote": _Q1},
-                                              {"phase": 9, "quote": _Q2}]}]), _SRC)
+                                              {"phase": 9, "quote": _Q2}]}]), _SRC, retro=NOT_DETECTED)
     assert _PRE in card.key_memories, "0 + 越界号的故事前记忆仍该进顶层"
     assert _PRE not in _mounted_memories(card), "故事前的记忆不该挂到某个阶段"
     assert any("阶段编号不合法" in r.getMessage() for r in caplog.records), \

@@ -20,6 +20,7 @@ import pytest
 from pydantic import ValidationError
 
 from core.card_draft import CardDraft, card_from_draft, draft_schema
+from core.retro_regions import NOT_DETECTED
 import deps
 from core.distiller import DistillError, Distiller, format_prompt_after
 from routers import distill as D
@@ -85,13 +86,13 @@ def _row(phases, situation="s"):
 # ── 4.1 单元 ──────────────────────────────────────────────────────────
 
 def test_u1_tagged_in_every_phase_goes_top_level():
-    card = card_from_draft(_draft([_row([1, 2])]), _SRC)
+    card = card_from_draft(_draft([_row([1, 2])]), _SRC, retro=NOT_DETECTED)
     assert len(card.situation_behaviors) == 1
     assert all(p.behaviors == [] for p in card.character_arc.phases)
 
 
 def test_u2_tagged_in_some_phases_goes_under_them_in_order():
-    card = card_from_draft(_draft([_row([2], "x"), _row([2], "y")], phases=3), _SRC)
+    card = card_from_draft(_draft([_row([2], "x"), _row([2], "y")], phases=3), _SRC, retro=NOT_DETECTED)
     assert card.situation_behaviors == []
     assert [b.situation for b in card.character_arc.phases[1].behaviors] == ["x", "y"]
     assert card.character_arc.phases[0].behaviors == card.character_arc.phases[2].behaviors == []
@@ -99,7 +100,7 @@ def test_u2_tagged_in_some_phases_goes_under_them_in_order():
 
 def test_u3_out_of_range_numbers_are_dropped_with_a_warning(caplog):
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
-        card = card_from_draft(_draft([_row([1, 9])]), _SRC)
+        card = card_from_draft(_draft([_row([1, 9])]), _SRC, retro=NOT_DETECTED)
     assert [len(p.behaviors) for p in card.character_arc.phases] == [1, 0]
     assert sum("阶段编号不合法" in r.getMessage() for r in caplog.records) == 1
 
@@ -107,7 +108,7 @@ def test_u3_out_of_range_numbers_are_dropped_with_a_warning(caplog):
 @pytest.mark.parametrize("phases", [[], [0], [3, 9]])
 def test_u4_no_valid_number_retracts_the_row_with_a_warning(caplog, phases):
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
-        card = card_from_draft(_draft([_row(phases)]), _SRC)
+        card = card_from_draft(_draft([_row(phases)]), _SRC, retro=NOT_DETECTED)
     assert card.situation_behaviors == []
     assert all(p.behaviors == [] for p in card.character_arc.phases)
     assert sum("阶段编号不合法" in r.getMessage() for r in caplog.records) == 1
@@ -115,7 +116,7 @@ def test_u4_no_valid_number_retracts_the_row_with_a_warning(caplog, phases):
 
 def test_u5_card_without_phases_keeps_everything_top_level(caplog):
     with caplog.at_level(logging.WARNING, logger="core.card_draft"):
-        card = card_from_draft(_draft([_row([1]), _row([])], phases=0), _SRC)
+        card = card_from_draft(_draft([_row([1]), _row([])], phases=0), _SRC, retro=NOT_DETECTED)
     # 汇总行（A3 起是 WARNING）不算问题信号，只排除它看「没有别的不满」
     assert (len(card.situation_behaviors),
             [r.getMessage() for r in caplog.records if "[phase_anchoring]" not in r.getMessage()]) == (
@@ -124,13 +125,13 @@ def test_u5_card_without_phases_keeps_everything_top_level(caplog):
 
 @pytest.mark.parametrize("arc", [[], ["起初冷漠", "学会信任"]])
 def test_u6_legacy_arc_shapes_still_convert(arc):
-    card = card_from_draft({"name": "x", "character_arc": arc}, "")
+    card = card_from_draft({"name": "x", "character_arc": arc}, "", retro=NOT_DETECTED)
     assert [p.state for p in card.character_arc.phases] == arc
 
 
 def test_u7_wrong_shape_raises_validation_error():
     with pytest.raises(ValidationError):
-        card_from_draft({"name": "x", "situation_behaviors": "不是列表"}, "")
+        card_from_draft({"name": "x", "situation_behaviors": "不是列表"}, "", retro=NOT_DETECTED)
 
 
 def test_u8_schema_sent_to_the_model_is_the_draft():
@@ -169,7 +170,7 @@ def test_t2_facets_stay_objects_in_g4():
 
 
 def test_u9_stored_card_has_no_phase_tags_and_round_trips():
-    dump = card_from_draft(KONG_DRAFT, _SRC).model_dump()
+    dump = card_from_draft(KONG_DRAFT, _SRC, retro=NOT_DETECTED).model_dump()
     rows = dump["situation_behaviors"] + [b for p in dump["character_arc"]["phases"] for b in p["behaviors"]]
     assert rows and not any("occurrences" in b for b in rows) and not any(
         "anchor" in p for p in dump["character_arc"]["phases"])  # 存卡不带草稿字段
@@ -177,7 +178,7 @@ def test_u9_stored_card_has_no_phase_tags_and_round_trips():
 
 
 def test_kong_draft_converts_to_kong_card():
-    _assert_kong(card_from_draft(KONG_DRAFT, _SRC))
+    _assert_kong(card_from_draft(KONG_DRAFT, _SRC, retro=NOT_DETECTED))
 
 
 # ── 4.2 调用点矩阵：distiller 五个入口 ────────────────────────────────
@@ -256,7 +257,7 @@ class TestEntries:
         d._llm.chat_stream_long = _stream
         out = "".join(p for p in d.distill_incremental_stream(_TEXT, "AB") if isinstance(p, str))
         assert json.loads(out) == KONG_DRAFT          # 原样交出草稿，occurrences 未被转换
-        _assert_kong(card_from_draft(json.loads(out), _SRC))
+        _assert_kong(card_from_draft(json.loads(out), _SRC, retro=NOT_DETECTED))
 
     @staticmethod
     def _grouped(monkeypatch, draft):
@@ -282,7 +283,7 @@ class TestEntries:
         draft = json.loads(out[0])
         assert draft["situation_behaviors"] == KONG_DRAFT["situation_behaviors"]
         assert CardDraft.model_validate(draft)
-        _assert_kong(card_from_draft(draft, _SRC))
+        _assert_kong(card_from_draft(draft, _SRC, retro=NOT_DETECTED))
 
         bad = self._grouped(monkeypatch, _BAD)
         assert not [p for p in bad if isinstance(p, str)]
@@ -402,7 +403,7 @@ async def test_p1_converted_card_round_trips_through_postgres():
     store = PostgresStore(TEST_DATABASE_URL)
     await store._ensure_initialized()
     try:
-        card = card_from_draft(KONG_DRAFT, _SRC)
+        card = card_from_draft(KONG_DRAFT, _SRC, retro=NOT_DETECTED)
         tag = uuid.uuid4().hex[:12]
         user = await store.create_user(f"u_{tag}", f"n_{tag}", "x")
         text = await store.save_text(f"t_{tag}", "f.txt", "正文", user_id=user["id"])

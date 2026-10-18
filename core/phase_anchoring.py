@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import NamedTuple
+from typing import NamedTuple, Sequence
 
 from core.quotes import (has_ellipsis, locate_anchor, locate_in_normalized, normalize,
                          paragraph_bounds)
@@ -78,15 +78,22 @@ def _first_quotes(by_phase: dict[int, list[str]], phases: list[int]) -> dict[int
     return {p: by_phase[p][0] for p in phases if by_phase.get(p)}
 
 
+def _region_of(retro: Sequence[tuple[int, int, str]], pos: int) -> str | None:
+    """规范化位置 `pos` 落在哪个回忆区（返回其标签）；不在任何回忆区返回 None。"""
+    return next((label for lo, hi, label in retro if lo <= pos < hi), None)
+
+
 def phase_ranges(phases, source_text: str, source_norm: str,
-                 paragraphs: list[int] | None = None) -> tuple[list[tuple[int, int]], str]:
+                 paragraphs: list[int] | None = None,
+                 retro: Sequence[tuple[int, int, str]] = ()) -> tuple[list[tuple[int, int]], str]:
     """各阶段在规范化原文里的半开区间 `[起, 止)`，以及整卡跳过的原因（空串 = 不跳过）。
 
     阶段 k 的范围是 `[锚点 k 位置, 锚点 k+1 位置)`：锚点取**最长段**在全文的**首次**出现；
     阶段 1 一律从 0 开始，阶段 1 的锚点只用于顺序核对；最后一阶段到全文末尾。每个锚点的位置由
     `quotes.locate_anchor` 给出（逐字 → 规范化 → 省略号拼接，判定顺序只在那一处）。
     以下任一情况返回空表与原因，由调用方整卡跳过（规则 2 / D7）：阶段 1 以外的锚点为空（与
-    「查不到」同为不可定位）、锚点核对不上、锚点位置不严格递增。
+    「查不到」同为不可定位）、锚点核对不上、锚点落在回忆区（`retro`，倒叙章节里的位置不是
+    故事时间，拿它分阶段必错）、锚点位置不严格递增。
     """
     starts: list[int] = []
     for i, phase in enumerate(phases):
@@ -99,6 +106,9 @@ def phase_ranges(phases, source_text: str, source_norm: str,
         loc = locate_anchor(source_text, source_norm, anchor, paragraphs)
         if loc is None:
             return [], f"阶段 {i + 1} 锚点核对不上：{anchor}"
+        region = _region_of(retro, loc[0])
+        if region is not None:
+            return [], f"阶段 {i + 1} 锚点落在回忆区（{region}）：{anchor}"
         starts.append(loc[0])
     for a, b in zip(starts, starts[1:]):
         if b <= a:
@@ -128,10 +138,14 @@ class PhaseAnchors(NamedTuple):
     source_norm: str
     ranges: list[tuple[int, int]]
     reason: str
+    retro: Sequence[tuple[int, int, str]] = ()   # 回忆区（规范化区间 + 标签），见 `verify`
 
 
-def build_anchors(phases, source_text: str) -> PhaseAnchors:
+def build_anchors(phases, source_text: str, *,
+                  retro: Sequence[tuple[int, int, str]] = ()) -> PhaseAnchors:
     """按草稿的阶段与原文建一次上下文。无阶段的卡不归一化（规则 5：整卡不做位置检查）。
+
+    `retro`：回忆区在规范化原文里的区间（`RetroRegions.spans` 给出；空 = 没有回忆区，行为同前）。
 
     段落边界只在**有省略号锚点**时才算（多一趟切分；无省略号的卡零开销）。
     """
@@ -140,8 +154,8 @@ def build_anchors(phases, source_text: str) -> PhaseAnchors:
     source_norm = normalize(source_text)
     paragraphs = (paragraph_bounds(source_text, source_norm)
                   if any(has_ellipsis(_anchor_of(p)) for p in phases) else None)
-    ranges, reason = phase_ranges(phases, source_text, source_norm, paragraphs)
-    return PhaseAnchors(len(phases), source_norm, ranges, reason)
+    ranges, reason = phase_ranges(phases, source_text, source_norm, paragraphs, retro)
+    return PhaseAnchors(len(phases), source_norm, ranges, reason, tuple(retro))
 
 
 def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
@@ -155,6 +169,10 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
     `MAX_OCCURRENCES` 次 → 不作证据。一条条目所有标注都没有证据 → 记入 `unlocated`，
     **不退回模型原标注**（原兜底 D5 只在整卡跳过时保留，即规则 2）。经历类「只挂最早」由
     `card_draft.dispatch` 统一处理，这里不分类别。
+
+    **回忆区**（`anchors.retro`）：摘录在回忆区里的出现位置不作位置证据（倒叙章节的位置不是
+    故事时间）。回忆区内外都有 → 只用回忆区外的位置；只在回忆区里 → 保留模型标的阶段（查得到、
+    又没有可用的位置证据，模型的标注是唯一依据）。
 
     `placement` 只管「摘录没落进所标阶段」这一处分支（`KEEP_TAGGED` 时查到即算命中，不改挂；
     态度专用）。其余规则对两种策略都相同。
@@ -210,13 +228,15 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
                     unverified += 1              # 查不到 → 不作位置证据
                     reasons.append(f"查不到：{quote}")
                     continue
+                loc = [x for x in loc if _region_of(anchors.retro, x) is None]   # 回忆区里的出现不算位置
                 if len(loc) > MAX_OCCURRENCES:
                     too_frequent += 1            # 出现太多（满篇都是，定不了位）→ 不作证据
                     reasons.append(f"出现 {len(loc)} 次：{quote}")
                     continue
                 landed = sorted({phase_at(ranges, x) for x in loc})
+                # 只在回忆区里（`loc` 已空）：查得到、却没有位置证据 → 保留模型标注；
                 # KEEP_TAGGED：查到即算命中所标阶段（不改挂）；否则落进所标阶段才认（D1）
-                if placement is Placement.KEEP_TAGGED or p in landed:
+                if not loc or placement is Placement.KEEP_TAGGED or p in landed:
                     if p not in own and len(loc) > 1:
                         ambiguous += 1           # D6：任意一次命中即通过，记「位置不唯一」
                     own.setdefault(p, quote)

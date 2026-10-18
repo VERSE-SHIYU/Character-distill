@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.arc_view import project_card
 from core.card_draft import card_from_draft
+from core.retro_regions import NOT_DETECTED
 from core.card_layers import get_path
 
 _SRC = "开头甲甲甲。中间乙乙乙。结尾丙丙丙。"
@@ -82,7 +83,7 @@ def _all_mounted(card, path):
 
 def test_z1_state_zero_only_lands_at_top_and_is_visible_from_phase_one():
     card = card_from_draft(_draft(personality_traits=[
-        _timed(_BASELINE, 0, quote=_Q[3])]), _SRC)
+        _timed(_BASELINE, 0, quote=_Q[3])]), _SRC, retro=NOT_DETECTED)
     assert card.personality_traits == [_BASELINE], "只标 0 的性格没进顶层"
     assert _BASELINE not in _all_mounted(card, "personality_traits"), \
         "一直成立的底色不该挂到某个阶段格"
@@ -92,7 +93,7 @@ def test_z1_state_zero_only_lands_at_top_and_is_visible_from_phase_one():
 
 def test_z2_zero_skips_position_check():
     card = card_from_draft(_draft(personality_traits=[
-        _timed(_BASELINE, 0, quote=_MISSING_QUOTE)]), _SRC)
+        _timed(_BASELINE, 0, quote=_MISSING_QUOTE)]), _SRC, retro=NOT_DETECTED)
     assert card.personality_traits == [_BASELINE], "0 不做位置核对，查不到摘录也该进顶层"
     assert _BASELINE not in _all_mounted(card, "personality_traits")
     proj, _ = project_card(card, 1)
@@ -102,7 +103,7 @@ def test_z2_zero_skips_position_check():
 def test_z3_zero_only_is_not_warned_and_logs_the_value(caplog):
     with caplog.at_level(logging.INFO, logger="core.card_draft"):
         card_from_draft(_draft(personality_traits=[
-            _timed(_BASELINE, 0, quote=_Q[1])]), _SRC)
+            _timed(_BASELINE, 0, quote=_Q[1])]), _SRC, retro=NOT_DETECTED)
     assert not any("阶段编号不合法" in r.getMessage() for r in caplog.records), \
         "只标 0 的状态类条目被打成了编号非法"
     assert any("全程：" in r.getMessage() and _BASELINE in r.getMessage()
@@ -111,7 +112,7 @@ def test_z3_zero_only_is_not_warned_and_logs_the_value(caplog):
 
 def test_z4_later_entry_does_not_leak_into_phase_one():
     card = card_from_draft(_draft(speaking_style={
-        "catchphrases": [_timed(_LATER, 2, 3)]}), _SRC)
+        "catchphrases": [_timed(_LATER, 2, 3)]}), _SRC, retro=NOT_DETECTED)
     mounted = _mounted(card, "speaking_style.catchphrases")
     assert _LATER in mounted[1] and _LATER in mounted[2], "标 2、3 的口癖该挂阶段 2、3"
     assert _LATER not in (mounted[0] or []), "标 2、3 的口癖不该挂阶段 1"
@@ -121,7 +122,7 @@ def test_z4_later_entry_does_not_leak_into_phase_one():
 
 def test_z5_zero_baseline_scalar_applies_to_earlier_phases():
     card = card_from_draft(_draft(speaking_style={
-        "tone": [_timed(_COLD, 0, quote=_Q[1]), _timed(_WARM, 3)]}), _SRC)
+        "tone": [_timed(_COLD, 0, quote=_Q[1]), _timed(_WARM, 3)]}), _SRC, retro=NOT_DETECTED)
     assert card.speaking_style.tone == _COLD, "0 的基线语气没进顶层"
     assert [project_card(card, k)[0].speaking_style.tone for k in (1, 2, 3)] == \
         [_COLD, _COLD, _WARM], "单值基线/阶段值的投影不符合预期"
@@ -129,7 +130,7 @@ def test_z5_zero_baseline_scalar_applies_to_earlier_phases():
 
 def test_z6_zero_only_verbatim_field_lands_at_top():
     card = card_from_draft(_draft(speaking_style={
-        "catchphrases": [_timed("哼", 0, quote=_Q[1])]}), _SRC)
+        "catchphrases": [_timed("哼", 0, quote=_Q[1])]}), _SRC, retro=NOT_DETECTED)
     assert card.speaking_style.catchphrases == ["哼"], "只标 0 的口癖没进顶层"
     assert "哼" not in _all_mounted(card, "speaking_style.catchphrases")
 
@@ -139,7 +140,7 @@ def test_z7_zero_coexisting_with_phase_is_ignored(caplog):
         card = card_from_draft(_draft(personality_traits=[{
             "value": _BASELINE,
             "occurrences": [{"phase": 0, "quote": _Q[1]},
-                            {"phase": 2, "quote": _Q[2]}]}]), _SRC)
+                            {"phase": 2, "quote": _Q[2]}]}]), _SRC, retro=NOT_DETECTED)
     assert _BASELINE not in card.personality_traits, "0 与阶段号并存时不该进顶层"
     assert _BASELINE in _mounted(card, "personality_traits")[1], \
         "0 与阶段号并存时应忽略 0、照常挂到阶段 2"

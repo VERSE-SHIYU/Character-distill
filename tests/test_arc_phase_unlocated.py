@@ -15,6 +15,7 @@ import pytest
 
 from core.arc_view import project_card
 from core.card_draft import card_from_draft
+from core.retro_regions import NOT_DETECTED
 from core.card_layers import REGISTRY, get_path
 from core.card_quotes import retract_unverified
 from core.export import to_tavern_json
@@ -52,7 +53,7 @@ def _draft(n=3, anchors=_A3, **fields):
 
 
 def _card(n=3, anchors=_A3, src=_SRC, **fields):
-    return card_from_draft(_draft(n, anchors, **fields), src)
+    return card_from_draft(_draft(n, anchors, **fields), src, retro=NOT_DETECTED)
 
 
 def _keys(node):
@@ -225,7 +226,7 @@ def test_u10_card_without_phases_skips_the_check_and_puts_state_on_top():
     """无阶段的卡不做位置检查（规则 5）：状态类也进顶层，不进未定位区（审计发现 3）。"""
     card = card_from_draft({"name": "角色", "personality_traits": [_timed("多疑", _occ(1, _NOWHERE))],
                             "situation_behaviors": [{"situation": "s", "behavior": "b",
-                                                     "occurrences": [_occ(1, _NOWHERE)]}]}, _SRC)
+                                                     "occurrences": [_occ(1, _NOWHERE)]}]}, _SRC, retro=NOT_DETECTED)
     loose = card.character_arc.unlocated
     assert (card.personality_traits, [b.situation for b in card.situation_behaviors],
             loose.overlay, loose.behaviors) == (["多疑"], ["s"], {}, [])
@@ -362,7 +363,7 @@ def test_r5_empty_attitude_relationship_absent_before_last_and_rendered_without_
 
 def test_r6_card_without_phases_keeps_latest_attitude():
     card = card_from_draft({"name": "角色", "relationships": _rel(
-        _att(1, "早", _Q1), _att(2, "晚", _Q2))}, _SRC)
+        _att(1, "早", _Q1), _att(2, "晚", _Q2))}, _SRC, retro=NOT_DETECTED)
     assert (card.relationships[0].attitude, card.relationships[0].phase_attitudes) == ("晚", [])
 
 
