@@ -492,6 +492,9 @@ class _DraftStubDistiller:
         # 路由在转卡前补关系（§4.5）。本 stub 的草稿没有关系名单，真实现此处也直接返回。
         return None
 
+    def locate_phase_starts(self, draft, text, character_name, retro):
+        return None      # 路由在转卡前重新找阶段起点；本替身的草稿不需要（真实现核对得过即不调模型）
+
 
 async def _stub_roster(storage, distiller, text_id, user_id, content):
     return distiller.identify_characters(content)

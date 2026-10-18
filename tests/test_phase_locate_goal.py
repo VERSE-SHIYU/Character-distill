@@ -31,8 +31,6 @@ import test_distill_draft_persist as P
 from limiter import limiter
 from routers import distill as D
 
-_TODO = pytest.mark.xfail(strict=True, reason="阶段起点重定位：尚未实现")
-
 _SRC = ("第1章\n他在家里读书。日子平平淡淡。\n"
         "第2章\n那天他在桥边初遇阿月。他从此心动不已。\n"
         "第3章\n他常想起桥边的阿月。书院来信催他。\n"
@@ -93,7 +91,6 @@ def _chapter_of(pos_norm, src=_SRC):
 _YES = {"初遇心动": {2: "初遇阿月", 3: "桥边的阿月"}, "远行求学": {4: "决定远行求学", 5: "风雨兼程"}}
 
 
-@_TODO
 def test_g1_bad_anchors_get_relocated_and_the_card_gets_starts():
     data = _draft()
     _distiller(_Judge(_YES)).locate_phase_starts(data, _SRC, "他", _RETRO)
@@ -102,7 +99,6 @@ def test_g1_bad_anchors_get_relocated_and_the_card_gets_starts():
         [2, 4], "那天他在桥边初遇阿月。")
 
 
-@_TODO
 def test_g2_earliest_yes_after_the_previous_phase_wins():
     yes = {"初遇心动": {3: "桥边的阿月", 4: "决定远行求学"}, "远行求学": {2: "初遇阿月", 4: "决定远行求学"}}
     data = _draft()
@@ -110,14 +106,12 @@ def test_g2_earliest_yes_after_the_previous_phase_wins():
     assert [_chapter_of(s) for s in _starts(data)[1:]] == [3, 4]
 
 
-@_TODO
 def test_g3_retro_chapters_are_never_asked():
     judge = _Judge(_YES)
     _distiller(judge).locate_phase_starts(_draft(), _SRC, "他", _RETRO)
     assert (6 in {n for _, n in judge.asked}, len(judge.asked) > 0) == (False, True)
 
 
-@_TODO
 def test_g4_a_phase_without_any_yes_leaves_the_draft_untouched(caplog):
     data = _draft()
     with caplog.at_level(logging.WARNING):
@@ -126,7 +120,6 @@ def test_g4_a_phase_without_any_yes_leaves_the_draft_untouched(caplog):
                       for r in caplog.records)) == (_draft(), True)
 
 
-@_TODO
 def test_g5_valid_anchors_make_no_calls():
     good = copy.deepcopy(_PHASES)
     good[1]["anchor"], good[2]["anchor"] = "那天他在桥边初遇阿月", "他终于决定远行求学"
@@ -136,7 +129,6 @@ def test_g5_valid_anchors_make_no_calls():
     assert (judge.asked, data) == ([], _draft(good))
 
 
-@_TODO
 def test_g6_repeated_sentence_is_extended_until_its_first_occurrence_is_in_the_chapter():
     src = _SRC.replace("第4章\n他终于决定远行求学。", "第4章\n路上风雨兼程。他终于决定远行求学。")
     src = src.replace("第5章\n路上风雨兼程。", "第5章\n他想念家乡。路上风雨兼程。远方的书院在望。")
@@ -147,7 +139,6 @@ def test_g6_repeated_sentence_is_extended_until_its_first_occurrence_is_in_the_c
     assert (anchor, _chapter_of(_starts(data, src)[2], src)) == ("路上风雨兼程。远方的书院在望。", 5)
 
 
-@_TODO
 def test_g7_one_monitoring_line_per_phase(caplog):
     with caplog.at_level(logging.WARNING):
         _distiller(_Judge(_YES)).locate_phase_starts(_draft(), _SRC, "他", _RETRO)
@@ -197,7 +188,6 @@ def _spy(monkeypatch):
     monkeypatch.setattr(P, "_DraftStub", _Stub)
 
 
-@_TODO
 def test_g8a_start_locates_before_converting(monkeypatch, store):
     _spy(monkeypatch)
     uid = f"usr_{uuid.uuid4().hex[:8]}"
@@ -205,7 +195,6 @@ def test_g8a_start_locates_before_converting(monkeypatch, store):
     assert (resp.status_code, _ORDER) == (200, [("locate", _RETRO), ("card", True)])
 
 
-@_TODO
 def test_g8b_run_stream_locates_before_converting(monkeypatch, store):
     _spy(monkeypatch)
     uid = f"usr_{uuid.uuid4().hex[:8]}"
