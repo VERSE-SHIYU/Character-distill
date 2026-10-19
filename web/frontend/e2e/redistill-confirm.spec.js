@@ -120,5 +120,6 @@ test('4) 工作台卡片详情：弹出同一个弹窗', async ({ page }) => {
 test('5) 弹窗出现时截图', async ({ page }) => {
   await setup(page)
   await openRedistillModal(page)
-  await page.screenshot({ path: 'e2e/redistill-confirm-modal.png' })
+  // 弹窗有淡入动画（modal-fade-in），关掉动画才截到最终样子
+  await page.screenshot({ path: 'e2e/redistill-confirm-modal.png', animations: 'disabled' })
 })

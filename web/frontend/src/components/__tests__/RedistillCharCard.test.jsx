@@ -49,4 +49,14 @@ describe('G7 角色页按钮：没启动就复原', () => {
     expect(mockState.distillCharacter).toHaveBeenCalledWith('t1', '祈灼', true)
     expect(screen.getByRole('button', { name: '重新蒸馏' })).toBeTruthy()
   })
+  // 第一次蒸馏不变：不传 force（不弹窗），启动成功后按钮保持「蒸馏中…」直到任务结束。
+  // 替身照生产：成功时 addDistillTask 会把 distilling 置 true。
+  it('第一次蒸馏：force=false，成功后按钮保持「蒸馏中…」', async () => {
+    mockState.identifiedChars = [{ name: '祈灼' }, { name: '江澄' }]
+    mockState.distillCharacter = vi.fn(() => { mockState.distilling = true; return Promise.resolve(true) })
+    render(<CharCard />)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '蒸馏角色' })) })
+    expect(mockState.distillCharacter).toHaveBeenCalledWith('t1', '江澄', false)
+    expect(screen.getByRole('button', { name: '蒸馏中…' })).toBeTruthy()
+  })
 })

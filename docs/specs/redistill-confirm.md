@@ -155,3 +155,19 @@ diff 只包含改动的 3 个已有文件（App.jsx、CharCard.jsx、useAppStore
   3. 无卡角色点「蒸馏角色」→ 不弹窗，`/api/distill/start` 1 次，`force: false`。
   4. 工作台卡片详情点「重新蒸馏」→ 弹出同一个弹窗。
   5. 弹窗出现时截图：`web/frontend/e2e/redistill-confirm-modal.png`（`e2e/*.png` 由 `.gitignore` 忽略）。
+
+## 补充（审计，10-19）
+
+独立审计发现：合并门只验了「store 收到 force 后怎么做」（G1–G5）和「CharCard 取消后复原」（G7），没验「每个入口传对 force」和「第一次蒸馏成功后按钮不变」。根因：是否弹窗由调用方传的 force 决定（第三节），入口→force 的对应关系是目标的另一半，第一节没给检查；e2e 覆盖了其中一部分，但 CI 不跑 Playwright。
+
+本提交补的检查：
+
+| 检查 | 文件 | 断言 |
+|---|---|---|
+| G8 入口 × 是否弹窗 | `src/components/__tests__/RedistillEntries.test.jsx`（真实 store + mock 网络层） | 任务栏「重新蒸馏」「继续蒸馏」、工作台任务「重新蒸馏」「继续蒸馏」：不弹窗，直接发 1 次 `force:false`；工作台卡片详情「重新蒸馏」：弹窗，先不发请求 |
+| G7b 第一次蒸馏不变 | `src/components/__tests__/RedistillCharCard.test.jsx` 新增一条 | 无卡角色点「蒸馏角色」：`distillCharacter(…, false)`；成功后按钮保持「蒸馏中…」（替身照生产：成功时把 distilling 置 true） |
+| e2e 截图 | `e2e/redistill-confirm.spec.js` 第 5 条 | `page.screenshot` 加 `animations: 'disabled'`，截到淡入结束后的弹窗 |
+
+变异（每条只改一处，跑 6 个相关文件 + 新文件）：工作台卡片详情不传 force、角色页第一次蒸馏也弹窗、工作台续跑也弹窗、任务栏续跑也弹窗、CharCard 成功后也清「蒸馏中」——补前在 `npm test` 全绿，补后全红。不补：后端无 task_id 返回 true（`/start` 只返回 task_id 或抛错，`web/routers/distill.py:959`，分支不可达）。
+
+事实更正：第二节说任务栏 / 工作台的续跑按钮「只在任务 error 时出现」，实际 interrupted（「继续蒸馏」）也出现（`distill.py` 状态表 :980-985）；两者都不传 force，结论不变。
