@@ -13,7 +13,7 @@ RUN npm run build
 # ============================================================
 # Stage 2: 后端运行
 # ============================================================
-FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
 
 # 系统依赖（部分 Python 包编译需要，如 argon2-cffi）
 RUN apt-get update && \
