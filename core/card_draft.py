@@ -15,6 +15,7 @@
 """
 
 import logging
+from collections.abc import Callable
 from typing import Annotated, Any, NamedTuple
 
 from pydantic import (
@@ -268,7 +269,7 @@ def _valid_number_rows(items, count: int, kind: str, *, layer: str) -> ValidRows
                            kind, count, _row_label(item), nums)
         if pre:
             zero_only.append(i)
-            logger.info("[card_draft] %s：%s", _ZERO_MEANINGS[layer], _row_label(item))
+            logger.warning("[card_draft] %s：%s", _ZERO_MEANINGS[layer], _row_label(item))
         valid_rows.append(valid)
     return ValidRows(valid_rows, zero_only)
 
@@ -295,7 +296,9 @@ def _layer_phases(final_phases: list[list[int]], count: int, layer: str) -> list
 def dispatch(final_phases: list[list[int]], count: int, *,
              layer: str = "state", kind: str = "list",
              label: str = "", unlocated: list[int] = (),
-             zero_only: list[int] = ()) -> tuple[list[int], list[list[int]], list[int]]:
+             zero_only: list[int] = (),
+             describe: Callable[[int, int], str] | None = None,
+             ) -> tuple[list[int], list[list[int]], list[int]]:
     """按最终阶段把条目分发到顶层、各阶段与未定位区 —— 分发只此一处（S6 / B1）。
 
     `layer` 决定「挂到哪些阶段」：``state``（默认，做法走这条）→ 每个最终阶段都挂；
@@ -335,16 +338,24 @@ def dispatch(final_phases: list[list[int]], count: int, *,
             for p in final:
                 by_phase[p - 1].append(i)
     if kind == "scalar":
-        top = _cap_slot(top, label, "顶层")
-        by_phase = [_cap_slot(slot, label, f"阶段 {p}") if slot else slot
+        top = _cap_slot(top, label, "顶层", 0, describe)
+        by_phase = [_cap_slot(slot, label, f"阶段 {p}", p, describe) if slot else slot
                     for p, slot in enumerate(by_phase, 1)]
     return top, by_phase, loose
 
 
-def _cap_slot(slot: list[int], label: str, where: str) -> list[int]:
-    """单值字段的一个格子只留第一条，其余丢弃 + warning（顶层格子同此规则）。"""
-    for _ in slot[1:]:
-        logger.warning("[card_draft] %s 的%s有多条取值，保留第一条", label, where)
+def _cap_slot(slot: list[int], label: str, where: str, phase: int,
+              describe: Callable[[int, int], str] | None) -> list[int]:
+    """单值字段的一个格子只留第一条，其余丢弃 + warning（顶层格子同此规则）。
+
+    `describe` 为 None 时文案与旧版逐字一致；给了就写明保留的是哪条、丢弃的是哪条及其来源。
+    """
+    for i in slot[1:]:
+        if describe is None:
+            logger.warning("[card_draft] %s 的%s有多条取值，保留第一条", label, where)
+        else:
+            logger.warning("[card_draft] %s 的%s 有多条取值，保留%s，丢弃%s",
+                           label, where, describe(slot[0], phase), describe(i, phase))
     return slot[:1]
 
 
@@ -439,7 +450,7 @@ def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions) -> Char
     count = len(phases)
     anchors = phase_anchoring.build_anchors(                       # 整本原文只归一化这一次
         phases, source_text, retro=retro.spans(source_text) if phases else ())
-    phase_anchoring.log_skip(phases, source_text, anchors, draft.name)   # 整卡跳过只在这里打一次
+    phase_anchoring.log_phase_starts(phases, source_text, anchors, draft.name)   # 每张卡只在这里打一次
 
     b = phase_anchoring.verify(
         draft.situation_behaviors,
@@ -469,8 +480,20 @@ def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions) -> Char
             kind=path, label=lambda x: x.value, name=draft.name)
         # 列表与单值走同一个循环：`kind` 在 `dispatch` 里决定格子容量（scalar 每格只留第一条），
         # 这里只按 `kind` 决定取值形态（list → 列表，scalar → 单值）。
+        def describe(i: int, phase: int) -> str:
+            """单值撞车时说明这条取值从哪来：原标此阶段 / 由某阶段改挂进来 / 全程（顶层）。"""
+            value = f"「{rows[i].value}」"
+            if phase == 0:
+                return f"{value}（全程）"
+            targets = res.tag_targets[i]
+            if phase in targets.get(phase, []):
+                return f"{value}（原标此阶段）"
+            source = next((q for q, landed in targets.items() if phase in landed), None)
+            return f"{value}（{'由阶段 %d 改挂进来' % source if source is not None else '原标此阶段'}）"
+
         top, slots, loose = dispatch(res.phases, count, layer=spec.layer, kind=spec.kind,
-                                     label=path, unlocated=res.unlocated, zero_only=vr.zero_only)
+                                     label=path, unlocated=res.unlocated, zero_only=vr.zero_only,
+                                     describe=describe)
         f = kinds["字段"]
         f[0] += res.rehung
         f[1] += len(loose)

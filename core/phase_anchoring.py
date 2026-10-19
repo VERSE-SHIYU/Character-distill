@@ -135,14 +135,16 @@ class PhaseAnchors(NamedTuple):
     """位置核对的上下文：规范化原文 + 各阶段区间 + 整卡跳过的原因 —— **一张卡建一次**。
 
     每个字段各建一次，就是每个字段各归一化一遍整本书（效率 #1）。`reason` 非空即整卡跳过
-    （规则 2 / D7），那条 warning 与逐阶段明细由 `log_skip` 打，`card_from_draft` 每张卡调一次
-    —— `verify` 不打，免得四类条目各打一遍。
+    （规则 2 / D7），那条 warning 与逐阶段明细由 `log_phase_starts` 打，`card_from_draft`
+    每张卡调一次 —— `verify` 不打，免得四类条目各打一遍。`source_text` 供 `verify` 把改挂
+    摘录的规范化位置换回原文坐标取章号。
     """
     n: int
     source_norm: str
     ranges: list[tuple[int, int]]
     reason: str
     retro: Sequence[tuple[int, int, str]] = ()   # 回忆区（规范化区间 + 标签），见 `verify`
+    source_text: str = ""
 
 
 def build_anchors(phases, source_text: str, *,
@@ -159,7 +161,25 @@ def build_anchors(phases, source_text: str, *,
     paragraphs = (paragraph_bounds(source_text, source_norm)
                   if any(has_ellipsis(_anchor_of(p)) for p in phases) else None)
     ranges, reason = phase_ranges(phases, source_text, source_norm, paragraphs, retro)
-    return PhaseAnchors(len(phases), source_norm, ranges, reason, tuple(retro))
+    return PhaseAnchors(len(phases), source_norm, ranges, reason, tuple(retro), source_text)
+
+
+def chapter_labels(source_text: str, raw_positions: Sequence[int | None]) -> list[str]:
+    """原文坐标 → 「第N章」/「首章之前」/「无章节标题」/「章号未知」；**全仓唯一换算处**。
+
+    输入是 `raw_offsets` 的结果。`None`（换不回原文坐标）给「章号未知」；原文没有章节
+    标题时给「无章节标题」；第一个标题之前给「首章之前」。
+    """
+    chapters = chapter_starts(source_text)
+    cuts = [r for _, r in chapters or []]
+    out: list[str] = []
+    for raw in raw_positions:
+        if raw is None:
+            out.append("章号未知")
+            continue
+        i = bisect.bisect_right(cuts, raw) - 1
+        out.append(f"第{chapters[i][0]}章" if i >= 0 else ("无章节标题" if not cuts else "首章之前"))
+    return out
 
 
 # 整卡跳过明细里「前文」取多少字（原文字符）。章内回忆（如祈灼第 383 章「他曾以为……」）
@@ -167,43 +187,56 @@ def build_anchors(phases, source_text: str, *,
 _BEFORE_CHARS = 60
 
 
-def log_skip(phases, source_text: str, anchors: PhaseAnchors, name: str) -> None:
-    """整卡跳过位置检查时打日志：一行原因 + 每个阶段一行明细。**每张卡只调一次**。
+def _detail_tail(anchors: PhaseAnchors, source_text: str, pos: int,
+                 raw: int | None, where: str) -> str:
+    """明细后半段：章号、规范化位置、回忆区判定、锚点前 `_BEFORE_CHARS` 字原文。"""
+    if raw is None:
+        before = anchors.source_norm[max(0, pos - _BEFORE_CHARS):pos]
+    else:
+        before = source_text[max(0, raw - _BEFORE_CHARS):raw].replace("\n", "⏎")
+    region = _region_of(anchors.retro, pos)
+    inside = "不在回忆区" if region is None else f"在回忆区（{region}）"
+    return f"{where}，规范化位置 {pos}，{inside}；前文：{before}"
 
-    明细逐阶段**各自**定位锚点（`phase_ranges` 遇到第一处不对就停，看不到其余阶段）：
-    阶段号、label、锚点原句、查没查到、第几章、规范化位置、在不在回忆区（哪一段）、
-    锚点前 `_BEFORE_CHARS` 字原文（换行记作「⏎」）。不跳过时什么都不打。
+
+def log_phase_starts(phases, source_text: str, anchors: PhaseAnchors, name: str) -> None:
+    """每张卡打一次阶段起点明细。**每张卡只调一次**。
+
+    整卡跳过时：一行原因 + 每个阶段一行「整卡跳过明细」（逐阶段各自定位锚点，能看出是哪句
+    锚点、第几章、是不是回忆）；不跳过时每阶段一行「阶段起点」，后半段格式相同。
     """
-    if not anchors.reason:
+    skipped = bool(anchors.reason)
+    if skipped:
+        logger.warning("整卡跳过位置检查（%s）：%s", anchors.reason, name)
+        paragraphs = paragraph_bounds(source_text, anchors.source_norm)
+        locs = [locate_anchor(source_text, anchors.source_norm, a, paragraphs) if a else None
+                for a in map(_anchor_of, phases)]
+        positions = list(raw_offsets(
+            source_text, anchors.source_norm, [loc[0] for loc in locs if loc is not None]))
+        wheres = iter(chapter_labels(source_text, positions))
+        raws = iter(positions)
+        for k, (phase, loc) in enumerate(zip(phases, locs), 1):
+            anchor = _anchor_of(phase)
+            label = phase.get("label", "") if isinstance(phase, dict) else getattr(phase, "label", "")
+            head = f"整卡跳过明细（{name}）阶段 {k}「{label}」锚点「{anchor}」→ "
+            if not anchor:
+                logger.warning("%s锚点为空%s", head, "（阶段 1 从全书开头算起）" if k == 1 else "")
+                continue
+            if loc is None:
+                logger.warning("%s原文查不到", head)
+                continue
+            pos, raw = loc[0], next(raws)
+            logger.warning("%s%s", head, _detail_tail(anchors, source_text, pos, raw, next(wheres)))
         return
-    logger.warning("整卡跳过位置检查（%s）：%s", anchors.reason, name)
-    paragraphs = paragraph_bounds(source_text, anchors.source_norm)
-    locs = [locate_anchor(source_text, anchors.source_norm, a, paragraphs) if a else None
-            for a in map(_anchor_of, phases)]
-    found = [loc[0] for loc in locs if loc is not None]
-    raw = iter(raw_offsets(source_text, anchors.source_norm, found))
-    chapters = chapter_starts(source_text)
-    cuts = [r for _, r in chapters or []]
-    for k, (phase, loc) in enumerate(zip(phases, locs), 1):
-        anchor = _anchor_of(phase)
+
+    starts = [lo for lo, _ in anchors.ranges]
+    positions = list(raw_offsets(source_text, anchors.source_norm, starts))
+    wheres = chapter_labels(source_text, positions)
+    for k, phase in enumerate(phases, 1):
         label = phase.get("label", "") if isinstance(phase, dict) else getattr(phase, "label", "")
-        head = f"整卡跳过明细（{name}）阶段 {k}「{label}」锚点「{anchor}」→ "
-        if not anchor:
-            logger.warning("%s锚点为空%s", head, "（阶段 1 从全书开头算起）" if k == 1 else "")
-            continue
-        if loc is None:
-            logger.warning("%s原文查不到", head)
-            continue
-        pos, r = loc[0], next(raw)
-        if r is None:
-            where, before = "章号未知", anchors.source_norm[max(0, pos - _BEFORE_CHARS):pos]
-        else:
-            i = bisect.bisect_right(cuts, r) - 1
-            where = f"第{chapters[i][0]}章" if i >= 0 else ("无章节标题" if not cuts else "首章之前")
-            before = source_text[max(0, r - _BEFORE_CHARS):r].replace("\n", "⏎")
-        region = _region_of(anchors.retro, pos)
-        inside = "不在回忆区" if region is None else f"在回忆区（{region}）"
-        logger.warning("%s%s，规范化位置 %d，%s；前文：%s", head, where, pos, inside, before)
+        head = f"阶段起点（{name}）阶段 {k}「{label}」锚点「{_anchor_of(phase)}」→ "
+        logger.warning("%s%s", head, _detail_tail(
+            anchors, source_text, starts[k - 1], positions[k - 1], wheres[k - 1]))
 
 
 def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
@@ -242,6 +275,7 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
     phase_quotes: list[dict[int, str]] = []
     tag_targets: list[dict[int, list[int]]] = []
     unlocated: list[int] = []
+    pending_rehang: list[tuple[str, str, int, list[int], int]] = []
     tags = dropped = ambiguous = unverified = too_frequent = rehung = 0
 
     for i, (item, valid) in enumerate(zip(items, valid_rows)):
@@ -264,6 +298,7 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
         targets: dict[int, list[int]] = {}
         own: dict[int, str] = {}                 # 落进所标阶段的摘录（优先作该阶段的 source_quote）
         moved: dict[int, str] = {}               # 改挂过来的摘录
+        move_pos: dict[int, int] = {}            # 每个标注第一处落点的规范化位置（打章号用）
         for p in valid:                          # 计数单位是标注（条目, 阶段），不是摘录
             tags += 1
             hit: set[int] = set()
@@ -290,6 +325,7 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
                 else:                            # 没落进：落在哪个阶段就挂哪个（D1）
                     for t in landed:
                         moved.setdefault(t, quote)
+                    move_pos.setdefault(p, loc[0])
                     hit.update(landed)
             targets[p] = sorted(hit)
             if not hit:                          # 去掉的标注各打一条 warning，写明每段摘录的原因
@@ -297,8 +333,8 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
                 logger.warning("去掉标注：%s %r 在阶段 %d 没有能定位的摘录（%s）",
                                kind, label(item), p, "；".join(reasons))
             elif targets[p] != [p]:
-                logger.warning("改挂：%s %r 标在阶段 %d，摘录落在阶段 %s",
-                               kind, label(item), p, targets[p])
+                # 章号换算一律放到循环外：一次 `raw_offsets` 换完所有改挂位置。
+                pending_rehang.append((kind, label(item), p, targets[p], move_pos[p]))
 
         landed_all = sorted({t for ts in targets.values() for t in ts})
         tag_targets.append(targets)
@@ -309,6 +345,14 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
             logger.warning("未定位：%s %r 的标注 %s 都没有能定位的摘录", kind, label(item), valid)
         elif any(ts and ts != [p] for p, ts in targets.items()):
             rehung += 1
+
+    if pending_rehang:
+        positions = list(raw_offsets(anchors.source_text, source_norm,
+                                     [pos for *_, pos in pending_rehang]))
+        wheres = chapter_labels(anchors.source_text, positions)
+        for (kind_, label_, p, landed, _pos), where in zip(pending_rehang, wheres):
+            logger.warning("改挂：%s %r 标在阶段 %d，摘录落在阶段 %s（摘录在%s）",
+                           kind_, label_, p, landed, where)
 
     return Verification(final, phase_quotes, tag_targets, skipped, tags, dropped, ambiguous,
                         unverified, too_frequent, rehung, unlocated, starts)

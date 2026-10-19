@@ -313,7 +313,7 @@ def test_g8_zero_means_story_start_is_a_warning(caplog):
         "decision_style": [{"value": "B", "occurrences": [{"phase": 0, "quote": PA._Q1}]}],
     }
     with caplog.at_level(logging.WARNING):
-        card_from_draft(draft, PA._SRC, retro=NOT_DETECTED)
+        card = card_from_draft(draft, PA._SRC, retro=NOT_DETECTED)
     assert sorted((r.levelno, r.getMessage()) for r in caplog.records
                   if r.getMessage().startswith("[card_draft]")) == [
         (logging.WARNING, "[card_draft] 全程：B")]

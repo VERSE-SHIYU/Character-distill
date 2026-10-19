@@ -1088,16 +1088,20 @@ class Distiller:
                 return
             spans = retro.spans(text)
             if not phase_anchoring.build_anchors(phases, text, retro=spans).reason:
+                logger.warning("[phase_locate] card=%s 锚点核对通过，用模型锚点", character_name)
                 return
             result = phase_locate.locate(phases, text, retro, character_name, judge=self._judge_phase_starts)
             for row in result.rows:
                 label = phases[row.phase - 1].get("label", "")
+                for n, happens, why, sent in row.judged:
+                    logger.warning("[phase_locate] card=%s 阶段 %d 候选 第%d章：%s；理由：%s；句子：%s",
+                                   character_name, row.phase, n, "是" if happens else "否", why, sent)
                 if row.chapter is None:
-                    logger.warning("[phase_locate] card=%s 阶段 %d「%s」找不到起点，答是的章 %s；保持原锚点",
-                                   character_name, row.phase, label, row.yes)
+                    logger.warning("[phase_locate] card=%s 阶段 %d「%s」找不到起点，答是的章 %s；保持原锚点；理由：%s",
+                                   character_name, row.phase, label, row.yes, row.why)
                 else:
-                    logger.warning("[phase_locate] card=%s 阶段 %d「%s」→ 第%d章，答是的章 %s；锚点「%s」",
-                                   character_name, row.phase, label, row.chapter, row.yes, row.anchor)
+                    logger.warning("[phase_locate] card=%s 阶段 %d「%s」→ 第%d章，答是的章 %s；锚点「%s」；理由：%s",
+                                   character_name, row.phase, label, row.chapter, row.yes, row.anchor, row.why)
             if result.anchors is None:
                 if not result.rows:
                     logger.warning("[phase_locate] card=%s 不重新定位：%s", character_name, result.reason)
@@ -1109,6 +1113,7 @@ class Distiller:
                 return
             for p, a in zip(phases, result.anchors):
                 p["anchor"] = a
+            logger.warning("[phase_locate] card=%s 已换成重定位锚点", character_name)
         except Exception as exc:                       # 起点是辅助信息：失败不挡蒸馏
             logger.warning("[phase_locate] card=%s 重新定位失败，保持原锚点：%s",
                            character_name, exc, exc_info=True)

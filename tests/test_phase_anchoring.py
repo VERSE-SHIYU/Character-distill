@@ -200,7 +200,7 @@ def test_u14_rehang_warns(caplog):
     with caplog.at_level(logging.WARNING, logger="core.phase_anchoring"):
         _card([_row([_occ(3, _Q1)], "错挂")])
     assert [r.getMessage() for r in caplog.records if "改挂" in r.getMessage()] == [
-        "改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]"]
+        "改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]（摘录在无章节标题）"]
 
 
 def test_u15_rehang_into_a_phase_that_already_stands_is_not_doubled():
