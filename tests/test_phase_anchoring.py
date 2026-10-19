@@ -56,7 +56,7 @@ def _draft(behaviors, n=3, anchors=None, name="角色"):
             "situation_behaviors": behaviors}
 
 
-_A3 = {2: _Q2, 3: _Q3}          # 阶段 1 锚点留空 → 从 0 开始
+_A3 = {2: _Q2, 3: _Q3}          # 阶段 1 锚点留空（阶段 1 无论锚点空不空都从 0 开始）
 
 
 def _card(behaviors, src=_SRC, n=3, anchors=_A3):

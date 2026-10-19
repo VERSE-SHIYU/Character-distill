@@ -732,7 +732,7 @@
         0
       ]
     ],
-    "M32 阶段 1 的空锚点也整卡跳过": [
+    "M32 阶段 1 的锚点重新参与核对（空锚点整卡跳过、比顺序）": [
       [
         "tests/test_phase_anchoring.py",
         "assert phase_anchoring.phase_ranges(_phases(3, _A3), _SRC, normalize(_SRC)) == ( [(0, 5), (5, 10), (10, 15)], ",

@@ -8,7 +8,7 @@
 ## 根因（已核实，main c24a565）
 - 祈灼草稿重转（10-19，task 1989b374baea）：阶段 1 锚点「他曾以为，此生都不会遇见……」取自第 383 章的章内回忆（716034），阶段 2 锚点「因为，我想当你的底牌。」在第 122 章（224224），本来是对的。
 - `phase_anchoring.phase_ranges` 把阶段 1 锚点也定位、拿来和阶段 2 比顺序 → 「锚点位置不严格递增：716034 → 224224」（10-18 日志原文）。
-- `distiller.locate_phase_starts`（:1090）只看 `build_anchors(...).reason` 非空就调 `phase_locate.locate`，把阶段 2..n 全部重找；重找结果是第 335 章，第 122 章被换掉。
+- `distiller.locate_phase_starts`（:1091）只看 `build_anchors(...).reason` 非空就调 `phase_locate.locate`，把阶段 2..n 全部重找；重找结果是第 335 章，第 122 章被换掉。
 - 同一个锚点在两处的前提相反：#176 提交说明「keeping its anchor for the strictly-increasing order check」，没写理由、目标检查也没测它的用处；#185 的 `phase-locate.md` §2 写「重新定位时原锚点通常已经错了……所以置空」。**一条规则写在两处、前提相反。**
 
 ## 改法（规则只在一处）
@@ -18,7 +18,7 @@
 3. `log_phase_starts` 整卡跳过分支：不在 `checked_anchors` 里的阶段（即阶段 1）写「不参与核对（阶段 1 从全书开头算起）」，不定位。
 4. `core/distiller.py` `_phase_list_note`（依赖组与关系分批收到的阶段列表）：起始原句取 `checked_anchors`，阶段 1 一律「（从开头起）」。原先会把模型写的阶段 1 锚点（祈灼 10-18：第 383 章回忆句）当起始原句给下游。
 
-三个调用方（`distiller.py:1090`、`:1110`，`card_draft.py:451`）都走 `build_anchors`，不改。
+三个调用方（`distiller.py:1091`、`:1111`，`card_draft.py:451`）都走 `build_anchors`，不改。
 
 ## 目标检查（第 1 个提交 xfail strict）
 `tests/test_phase1_anchor_not_checked_goal.py`（替身书复用 `test_phase_locate_goal.py`）：
@@ -44,7 +44,7 @@
 ```
 pytest -q tests/test_phase1_anchor_not_checked_goal.py tests/test_phase_anchoring.py tests/test_phase1_range_from_start_goal.py tests/test_phase_anchor_exact_tier_goal.py tests/test_phase_anchoring_elided.py tests/test_phase_locate_goal.py tests/test_anchor_skip_diagnostics_goal.py tests/test_mutation_anchors.py tests/test_card_draft.py tests/test_card_redraft_goal.py
 ```
-审计沙箱实跑：上面 10 个文件 116 passed；另 14 个调用 `build_anchors` / `card_from_draft` 的文件 242 passed。全量交给分支 CI。
+head 941c455 实跑：上面 10 个文件 117 passed（作者沙箱与复核各一次）；另 14 个调用 `build_anchors` / `card_from_draft` 的文件 242 passed（作者沙箱）。全量交给分支 CI。
 
 ## 结构自检
 | 问 | 答（main 基线后的行号） |
@@ -60,3 +60,11 @@ pytest -q tests/test_phase1_anchor_not_checked_goal.py tests/test_phase_anchorin
 
 ## 补充（作者自查，10-19）
 对照返工经验第 6、7b 条自查第一版实现：「阶段 1 锚点不用」写成了 3 处（`phase_ranges` 的 `if i == 0`、`build_anchors` 与明细日志各一个 `phases[1:]`），并漏了第 4 个读取处 `distiller._phase_list_note`（全量 grep `anchor` 读取点发现）。改为 `checked_anchors` 一处定义，补目标检查 g5。代价：整卡跳过明细不再给出阶段 1 锚点的章号；阶段 1 锚点的质量已不影响任何区间与核对，不需要它。
+
+## 补充（复核 941c455，10-19）
+复核结论「代码行为无缺陷、交付未同步，不通过」。已补：
+1. `docs/specs/arc-phase-anchoring.md` §3.2 规则 1 仍写「阶段 1 锚点为空时从 0 开始」（暗示非空会参与定位）→ 改成新规则并指向 `checked_anchors`；`tests/test_phase_anchoring.py` `_A3` 注释同步。
+2. 变异驱动重跑（测试 PG，3 分 26 秒，全部符合预期），刷新 `tests/perf/arc_phase_anchoring_red_lines.json`：只有 M32 换了键名，红源集合不变；`test_lock_coverage` / `test_mutation_anchors` / `test_phase_anchoring` 87 passed。
+3. 本 spec 的调用方行号 1090/1110 → 1091/1111，测试数 116 → 117。
+
+不补：M8（阶段 2..n 空锚点在整卡跳过明细里写成「原文查不到」也照绿）——只影响明细文案，且是本 PR 之前就有的覆盖缺口，不在本 PR 目标内（返工经验 37）；已记入跟踪文档由 Tracy 定。
