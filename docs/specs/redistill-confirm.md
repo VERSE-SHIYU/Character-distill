@@ -145,3 +145,13 @@ diff 只包含改动的 3 个已有文件（App.jsx、CharCard.jsx、useAppStore
 
 - spec 原先没说明本文件跟哪个提交走，现随此提交加入。
 - 第 1 个提交里 G6 无法表现为 `it.fails`：组件文件不存在，整个测试文件加载失败。改前实际结果是 6 条测试失败 + 1 个测试文件加载失败。
+
+## 补充（e2e）
+
+- 文件：`web/frontend/e2e/redistill-confirm.spec.js`
+- 断言：
+  1. 已有卡角色点「重新蒸馏」→ 弹窗出现，标题为「重新蒸馏「祈灼」？」并含《某书》；取消后 `/api/distill/start` 0 次，按钮仍是「重新蒸馏」。
+  2. 再点一次并确认 → `/api/distill/start` 1 次，请求体 `force: true`，`character_name: '祈灼'`。
+  3. 无卡角色点「蒸馏角色」→ 不弹窗，`/api/distill/start` 1 次，`force: false`。
+  4. 工作台卡片详情点「重新蒸馏」→ 弹出同一个弹窗。
+  5. 弹窗出现时截图：`web/frontend/e2e/redistill-confirm-modal.png`（`e2e/*.png` 由 `.gitignore` 忽略）。
