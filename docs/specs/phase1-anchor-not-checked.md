@@ -47,7 +47,7 @@ pytest -q tests/test_phase1_anchor_not_checked_goal.py tests/test_phase_anchorin
 head 941c455 实跑：上面 10 个文件 117 passed（作者沙箱与复核各一次）；另 14 个调用 `build_anchors` / `card_from_draft` 的文件 242 passed（作者沙箱）。全量交给分支 CI。
 
 ## 结构自检
-| 问 | 答（main 基线后的行号） |
+| 问 | 答 |
 |---|---|
 | 「阶段 1 锚点不用」写了几处 | 1 处：`phase_anchoring.checked_anchors`。读取处 2 个：`locate_starts`（核对与明细日志的唯一判定处）、`build_anchors`（是否要算段落边界）；另 `distiller._phase_list_note`（下游阶段列表） |
 | 「这个起点算不算数」判了几处 | 1 处：`locate_starts`，产出逐阶段 `PhaseStart`（状态 + 位置）；跳过原因（`_skip_reason`）与整卡跳过明细（`log_phase_starts`）都只读它，文案各一张表（`_SKIP_REASONS`、`_DETAIL_NO_POSITION`） |

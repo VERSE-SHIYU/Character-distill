@@ -197,6 +197,14 @@ MUTATIONS = [
     # ── phase1-anchor-not-checked 二审：明细与原因同出 locate_starts ──
     ('M44 整卡跳过明细把空锚点写成「原文查不到」', TARGET, [("repl", ANCH, [
         ('    StartStatus.EMPTY: "锚点为空",\n', '    StartStatus.EMPTY: "原文查不到",\n')])], "RED"),
+    ('M45 多个阶段不可用时取最后一个的原因', TARGET, [("repl", ANCH, [
+        ("    for st in starts:\n        template = _SKIP_REASONS.get(st.status)",
+         "    for st in reversed(starts):\n        template = _SKIP_REASONS.get(st.status)")])], "RED"),
+    ('M46 严格递增不含阶段 1 的起点 0', TARGET, [("repl", ANCH, [
+        ("    positions = [st.pos for st in starts]\n    for a, b in zip(positions, positions[1:]):",
+         "    positions = [st.pos for st in starts][1:]\n    for a, b in zip(positions, positions[1:]):")])], "RED"),
+    ('M47 相等位置不算不严格递增', TARGET, [("repl", ANCH, [
+        ("        if b <= a:", "        if b < a:")])], "RED"),
     # ── P15 省略号拼接档（**锚点专用**）──
     ('M40 省略号拼接档起点取末段而非首段', TARGET, [("repl", QUOTES, [
         ("    return [starts[0]]", "    return [starts[-1]]")])], "RED"),
