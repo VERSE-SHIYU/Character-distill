@@ -236,7 +236,7 @@ def _contextvar_def(path: Path, name: str) -> str:
 
 
 def test_only_one_identity_contextvar_exists():
-    """全仓上下文变量只有三个：身份一个、嵌入超时一个、当前时区一个。
+    """全仓上下文变量只有五个：身份一个、嵌入超时一个、当前时区一个、任务日志两个。
 
     **白名单按 `file:line 名字` 整串钉死，不按名字**：按名字放行的话，在另一个模块里
     再写一遍 `LLM_CALLER = ContextVar("llm_caller")` 也能过 —— 而那正是要挡的形态
@@ -247,15 +247,21 @@ def test_only_one_identity_contextvar_exists():
     不是「谁在调」—— 判断身份的问题它一个都答不上，读口也只有一个（`UserClock`），
     写口与 `LLM_CALLER` 同在 `AuthMiddleware.dispatch` 那一个出口。多一条时区不会让
     「谁在调」多出第二个答案，这正是本条要挡的东西。
+
+    `TASK_ID` / `_USAGE`（诊断日志）的答案：**不是**。它们装的是「这一条日志属于哪个
+    任务」与该任务的用量累计，随 `task_scope` 进出；读口只有日志 filter 与
+    `task_log.add_usage`，没有任何身份路径（记账出口仍只读 `LLM_CALLER`）。
     """
     hits = _contextvar_defs(_py_files(_REPO / "core", _REPO / "web", _REPO / "adapters"))
     allowed = sorted([
         _contextvar_def(_REPO / "core" / "clock.py", "_current_timezone"),
         _contextvar_def(_REPO / "core" / "embeddings.py", "_EMBED_DEADLINE"),
         _contextvar_def(_REPO / "core" / "request_context.py", "LLM_CALLER"),
+        _contextvar_def(_REPO / "core" / "task_log.py", "TASK_ID"),
+        _contextvar_def(_REPO / "core" / "task_log.py", "_USAGE"),
     ])
     assert hits == allowed, (
-        f"上下文变量不止这两个：{hits}，白名单是 {allowed}。带着用户身份的那种只能有 "
+        f"上下文变量与白名单不符：{hits}，白名单是 {allowed}。带着用户身份的那种只能有 "
         "`LLM_CALLER` 一份 —— 多一份就意味着有两处「谁在调」的答案，中间件只写得进其中一个。")
 
 
