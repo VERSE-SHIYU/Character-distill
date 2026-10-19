@@ -62,6 +62,13 @@ def _stdout_logging():
         _ROOT.handlers[:] = before
 
 
+def _quiet_retro(monkeypatch):
+    """真 distiller 有 `detect_retro_regions`；替身缺这个方法时回忆区那步会打一条带堆栈的
+    warning，堆栈续行的行首自然没有任务 ID（与 G1 要断言的日志格式无关）。"""
+    monkeypatch.setattr(_DraftStub, "detect_retro_regions",
+                        lambda self, content: NOT_DETECTED, raising=False)
+
+
 def _start_with_draft(monkeypatch, store, uid, tid, draft):
     """跑一次真 `/start`，但用给定的草稿替身（用于制造转卡异常）。"""
     distiller = _DraftStub(draft)
@@ -80,6 +87,7 @@ def _start_with_draft(monkeypatch, store, uid, tid, draft):
 def test_g1_every_line_carries_task_id(capsys, monkeypatch, store):
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     tid = _seed_text(store, uid)
+    _quiet_retro(monkeypatch)
 
     with _stdout_logging():
         resp, _ = _run_start(monkeypatch, store, uid, tid)
@@ -111,7 +119,11 @@ def test_g1_every_line_carries_task_id(capsys, monkeypatch, store):
     for tid_ in (task_id, redraft_id):
         begin = next(i for i, ln in enumerate(lines) if "任务开始" in ln and f"[{tid_}]" in ln)
         finish = next(i for i, ln in enumerate(lines) if "任务结束" in ln and f"[{tid_}]" in ln)
-        assert all(f"[{tid_}]" in ln for ln in lines[begin:finish + 1])
+        # 只看本 handler 的日志行（行首是 `HH:MM:SS`）；链路上残留的裸 print 不在其列。
+        logs = [ln for ln in lines[begin:finish + 1] if re.match(r"\d{2}:\d{2}:\d{2} ", ln)]
+        assert logs, f"任务 {tid_} 范围内应有日志行"
+        bad = [ln for ln in logs if f"[{tid_}]" not in ln]
+        assert bad == [], f"任务 {tid_} 范围内有无 ID 的日志行：{bad}"
 
 
 @xfail
@@ -121,6 +133,7 @@ def test_g1b_resume_start_line_says_resumed(capsys, monkeypatch, store):
 
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     tid = _seed_text(store, uid)
+    _quiet_retro(monkeypatch)
     _run_async(store.create_distill_task(
         f"dt_{uuid.uuid4().hex}", uid, tid, character=_DISTILL_NAME, status="error",
         progress_pct=40, message="蒸馏失败：服务内部异常，请重试", card_id="", awakening="",
@@ -141,6 +154,7 @@ def test_g1b_resume_start_line_says_resumed(capsys, monkeypatch, store):
 def test_g2_step_timings_in_order(capsys, monkeypatch, store):
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     tid = _seed_text(store, uid)
+    _quiet_retro(monkeypatch)
 
     with _stdout_logging():
         resp, _ = _run_start(monkeypatch, store, uid, tid)
@@ -194,7 +208,7 @@ def test_g3_token_totals_by_action(capsys, monkeypatch):
     token = LLM_CALLER.set(Caller(ip=None, user_id="u_log"))
     try:
         with _stdout_logging():
-            with task_log.task_scope("t1", "测试"):
+            with task_log.task_scope("t1", 来源="测试"):
                 try_record_usage(_Store(), _LLM(), action="a", usage=usage)
                 try_record_usage(_Store(), _LLM(), action="b", usage=usage)
             try_record_usage(_Store(), _LLM(), action="c", usage=usage)
