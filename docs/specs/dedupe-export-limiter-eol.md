@@ -132,3 +132,7 @@ cd web/frontend && npm test
 - 全量回归交给分支 CI，gate / 前端 / sentinel 全绿才算过。
 
 报告内容：每个提交的 `git show --stat`；第 1 个提交 G1–G4 的红色输出，以及最后一个提交的绿色输出；上面命令最后的汇总行；test_auth_tokens 删掉 patch 后的结果；Windows 上 `git status` 的原始输出；CI 结果。末尾附「已核实 / 未核实」。范围内的问题直接修，碰到冲突或需要决定的事项才停下。
+
+## 补充（审计）
+
+G3 原来只检查第 61 次返回 429，限流误改得更严（如 1/minute）时检查仍是绿的（审计变异 M2：4 passed）。已补一条：前 60 次必须都是 200。

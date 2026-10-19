@@ -119,7 +119,8 @@ def test_g3_distill_export_rate_limited(store, user_id):
         for _ in range(61)
     ]
 
-    assert statuses[-1] == 429, statuses[-5:]
+    assert statuses[:60] == [200] * 60, statuses[:60]
+    assert statuses[60] == 429, statuses[-5:]
 
 
 def test_g4_rate_limiter_isolation_single_source():
