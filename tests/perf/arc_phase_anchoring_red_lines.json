@@ -918,6 +918,13 @@
         0
       ]
     ],
+    "M44 整卡跳过明细把空锚点写成「原文查不到」": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [r.getMessage() for r in caplog.records if r.getMessage().startswith(\"整卡跳过明细（角色）阶段 2\")] == [ \"整卡跳过明细（角色",
+        0
+      ]
+    ],
     "M40 省略号拼接档起点取末段而非首段": [
       [
         "tests/test_phase_anchoring.py",

@@ -323,7 +323,7 @@ C2 说 `:2207` 传 `text`，C13 说「一律传原始全文」。同步 `distill
 **A5（断言部分空转）** `tests/test_card_draft.py:148-149` 的 `for b in [rows]` 让 `b` 是列表本身，`"occurrences" not in b` 恒真（实测：做法里带 `occurrences`、阶段不带 `anchor` 时整句为 True）。改成两条直写：每条做法的键里没有 `occurrences`，每个阶段的键里没有 `anchor`。
 
 **补的测试与变异（两个方向）**：
-- U6 扩：末阶段空锚点 → 整卡跳过；中间阶段空锚点 → 整卡跳过；阶段 1 空锚点 → 不跳过（已有）。变异 M31 放宽：i>0 空锚点退回取 `len(source_norm)`（现状写法）→ 末阶段用例红。变异 M32 过严：阶段 1 空锚点也跳过 → 阶段 1 用例红。
+- U6 扩：末阶段空锚点 → 整卡跳过；中间阶段空锚点 → 整卡跳过；阶段 1 空锚点 → 不跳过（已有）。变异 M31 放宽：i>0 空锚点退回取 `len(source_norm)`（现状写法）→ 末阶段用例红。变异 M32（10-19 随 `phase1-anchor-not-checked.md` 改义）：阶段 1 锚点重新参与核对（空锚点整卡跳过、比顺序）→ 阶段 1 用例红。
 - U7 扩：同阶段两段摘录（一错一对）+ 另一阶段错标 → 精确断言 `tags=2 dropped=1 unverified_quotes=…`。变异 M33：`dropped` 改回按摘录计 → 红；变异 M34：`tags` 改回按摘录计 → 红。
 - 规则 3 warning：caplog 断言去掉的每个标注各一条。变异 M35：删去该 warning → 红。
 - 以上进 `arc_phase_anchoring_mutations.py`，覆盖闭合由 `test_lock_coverage.py` 核。

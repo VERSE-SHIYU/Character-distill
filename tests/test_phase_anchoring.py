@@ -297,6 +297,10 @@ def test_u24_empty_anchor_on_a_middle_phase_skips_with_its_own_reason(caplog):
         _card([_row([_occ(3, _Q3)], "x")], anchors={2: "", 3: _Q3})
     assert [r.getMessage() for r in caplog.records if "整卡跳过位置检查" in r.getMessage()] == [
         "整卡跳过位置检查（阶段 2 锚点为空）：角色"]
+    # 明细与原因同出 `locate_starts` 的同一份结论：空锚点写「锚点为空」，不写成「原文查不到」（M44）
+    assert [r.getMessage() for r in caplog.records
+            if r.getMessage().startswith("整卡跳过明细（角色）阶段 2")] == [
+        "整卡跳过明细（角色）阶段 2「L2」锚点「」→ 锚点为空"]
 
 
 _COUNT_ROWS = [_row([_occ(2, "查无此句"), _occ(2, _Q2), _occ(1, "又查无此句")], "计数")]

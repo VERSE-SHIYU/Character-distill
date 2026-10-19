@@ -49,7 +49,8 @@ head 941c455 实跑：上面 10 个文件 117 passed（作者沙箱与复核各�
 ## 结构自检
 | 问 | 答（main 基线后的行号） |
 |---|---|
-| 「阶段 1 锚点不用」写了几处 | 1 处：`phase_anchoring.checked_anchors`（:74）。读取处 4 个：`phase_ranges`、`build_anchors`、`log_phase_starts`、`distiller._phase_list_note`，都只调它 |
+| 「阶段 1 锚点不用」写了几处 | 1 处：`phase_anchoring.checked_anchors`。读取处 2 个：`locate_starts`（核对与明细日志的唯一判定处）、`build_anchors`（是否要算段落边界）；另 `distiller._phase_list_note`（下游阶段列表） |
+| 「这个起点算不算数」判了几处 | 1 处：`locate_starts`，产出逐阶段 `PhaseStart`（状态 + 位置）；跳过原因（`_skip_reason`）与整卡跳过明细（`log_phase_starts`）都只读它，文案各一张表（`_SKIP_REASONS`、`_DETAIL_NO_POSITION`） |
 | 调用方要知道吗 | 不用：三个调用方只读 `reason` / `ranges`；下游提示词只读阶段列表 |
 | 以后改阶段 1 的规则改几处 | 1 处 |
 
@@ -67,4 +68,15 @@ head 941c455 实跑：上面 10 个文件 117 passed（作者沙箱与复核各�
 2. 变异驱动重跑（测试 PG，3 分 26 秒，全部符合预期），刷新 `tests/perf/arc_phase_anchoring_red_lines.json`：只有 M32 换了键名，红源集合不变；`test_lock_coverage` / `test_mutation_anchors` / `test_phase_anchoring` 87 passed。
 3. 本 spec 的调用方行号 1090/1110 → 1091/1111，测试数 116 → 117。
 
-不补：M8（阶段 2..n 空锚点在整卡跳过明细里写成「原文查不到」也照绿）——只影响明细文案，且是本 PR 之前就有的覆盖缺口，不在本 PR 目标内（返工经验 37）；已记入跟踪文档由 Tracy 定。
+不补：M8（阶段 2..n 空锚点在整卡跳过明细里写成「原文查不到」也照绿）——只影响明细文案，且是本 PR 之前就有的覆盖缺口，不在本 PR 目标内（返工经验 37）；已记入跟踪文档由 Tracy 定。（已被下一节取代：Tracy 要求按高内聚低耦合二审后修。）
+
+## 补充（二审：内聚与耦合，10-19，Tracy 要求）
+**问题**：`phase_ranges` 与 `log_phase_starts` 各自遍历锚点、各自判「空 / 查不到 / 回忆区 / 定位成功」——同一套判定写两处，与 P1 同类（规则两处、可以漂移）；M8 漏网也来自这里：明细的状态没有单一出处，文案写错测不出。明细日志还把整本书重新定位一遍。
+
+**修法**（`core/phase_anchoring.py`，对外行为不变）：
+1. `locate_starts` 逐阶段给出 `PhaseStart(k, anchor, status, pos, region)`，`StartStatus` 五态（`FROM_START` / `EMPTY` / `NOT_FOUND` / `IN_RETRO` / `LOCATED`）；不在第一个失败处停。
+2. `_skip_reason` 按阶段顺序取第一个不可用状态 → `_SKIP_REASONS` 表；都可用再核严格递增。`_ranges_from` 起点 → 区间。`phase_ranges` = 二者组合（签名不变）。
+3. `PhaseAnchors.starts` 带上这份结论（`build_anchors` 只定位一次）；`log_phase_starts` 读它，两个分支合成一个循环，无位置状态的文案查 `_DETAIL_NO_POSITION` 表，不再重新定位、不再算段落边界。
+4. `_field_of` 收掉 `label` / `anchor` 的两份 dict-or-attr 取值。
+
+**测试**：`test_u24` 补断言「空锚点明细写『锚点为空』」，新变异 M44（把 EMPTY 文案换成「原文查不到」）打红它；M5a / M20 / M31 定位串改指新代码、语义不变。变异驱动重跑（测试 PG）全部符合预期；产物 diff 只多 M44 一项，其余 43 项红源逐条不变 —— 重构行为等价的证据。10 个受影响文件 + `test_lock_coverage` 见 PR 描述。

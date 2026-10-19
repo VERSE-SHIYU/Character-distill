@@ -66,16 +66,55 @@ class Verification(NamedTuple):
     starts: list[int] | None
 
 
+def _field_of(phase, name: str) -> str:
+    """阶段对象的字段（草稿是 `DraftPhase`，测试里也用字典）。"""
+    return phase.get(name, "") if isinstance(phase, dict) else getattr(phase, name, "")
+
+
 def _anchor_of(phase) -> str:
-    """阶段对象的锚点文本（草稿是 `DraftPhase`，测试里也用字典）。"""
-    return getattr(phase, "anchor", "") if not isinstance(phase, dict) else phase.get("anchor", "")
+    """阶段对象的锚点文本。"""
+    return _field_of(phase, "anchor")
+
+
+class StartStatus(Enum):
+    """一个阶段起点的定位结论。**整卡跳过原因与逐阶段明细都只从它推出**（判定只在 `locate_starts`）。"""
+    FROM_START = "from_start"    # 不参与核对（`checked_anchors` 不含它）：一律从全书开头算起
+    EMPTY = "empty"              # 锚点为空（与「查不到」同为不可定位）
+    NOT_FOUND = "not_found"      # 锚点核对不上
+    IN_RETRO = "in_retro"        # 锚点落在回忆区
+    LOCATED = "located"
+
+
+class PhaseStart(NamedTuple):
+    """阶段 k 的起点：状态 + 规范化位置（FROM_START 为 0；EMPTY / NOT_FOUND 为 None）+ 回忆区标签。"""
+    k: int
+    anchor: str
+    status: StartStatus
+    pos: int | None = None
+    region: str | None = None
+
+
+# 状态 → 整卡跳过原因（不在表里的状态不触发跳过）。**原因文案只在这里**。
+_SKIP_REASONS = {
+    StartStatus.EMPTY: "阶段 {k} 锚点为空",
+    StartStatus.NOT_FOUND: "阶段 {k} 锚点核对不上：{anchor}",
+    StartStatus.IN_RETRO: "阶段 {k} 锚点落在回忆区（{region}）：{anchor}",
+}
+
+# 状态 → 整卡跳过明细里没有位置可展示时的文案（其余状态打章号 / 位置 / 前文）。**只在这里**。
+_DETAIL_NO_POSITION = {
+    StartStatus.FROM_START: "不参与核对（阶段 1 从全书开头算起）",
+    StartStatus.EMPTY: "锚点为空",
+    StartStatus.NOT_FOUND: "原文查不到",
+}
 
 
 def checked_anchors(phases) -> list[tuple[int, str]]:
     """参与核对的锚点 ``[(阶段号, 锚点), …]``，阶段号 1 起。
 
     **「阶段 1 锚点不用」只在这里定义**：阶段 1 一律从全书开头算起，它的锚点不定位、不核对、
-    也不当作起始原句给下游（spec `phase1-anchor-not-checked.md`）。核对、明细日志与阶段列表都读本函数。
+    也不当作起始原句给下游（spec `phase1-anchor-not-checked.md`）。`locate_starts`（核对与明细日志）
+    与阶段列表都读本函数。
     """
     return [(k, _anchor_of(p)) for k, p in enumerate(phases, 1) if k > 1]
 
@@ -95,6 +134,57 @@ def _region_of(retro: Sequence[tuple[int, int, str]], pos: int) -> str | None:
     return next((label for lo, hi, label in retro if lo <= pos < hi), None)
 
 
+def locate_starts(phases, source_text: str, source_norm: str,
+                  paragraphs: list[int] | None = None,
+                  retro: Sequence[tuple[int, int, str]] = ()) -> list[PhaseStart]:
+    """逐阶段定位起点 —— **「这个阶段的起点算不算数」只在这里判定**。
+
+    每个阶段都给出结论（不在第一个失败处停），整卡跳过原因（`_skip_reason`）与整卡跳过明细
+    （`log_phase_starts`）都只读这份结果，不各自重新定位。锚点位置由 `quotes.locate_anchor`
+    给出（逐字 → 规范化 → 省略号拼接，判定顺序只在那一处）。
+    """
+    checked = dict(checked_anchors(phases))
+    out: list[PhaseStart] = []
+    for k, phase in enumerate(phases, 1):
+        anchor = _anchor_of(phase)
+        if k not in checked:
+            out.append(PhaseStart(k, anchor, StartStatus.FROM_START, 0))
+            continue
+        if not anchor:
+            out.append(PhaseStart(k, anchor, StartStatus.EMPTY))
+            continue
+        loc = locate_anchor(source_text, source_norm, anchor, paragraphs)
+        if loc is None:
+            out.append(PhaseStart(k, anchor, StartStatus.NOT_FOUND))
+            continue
+        region = _region_of(retro, loc[0])
+        status = StartStatus.LOCATED if region is None else StartStatus.IN_RETRO
+        out.append(PhaseStart(k, anchor, status, loc[0], region))
+    return out
+
+
+def _skip_reason(starts: Sequence[PhaseStart]) -> str:
+    """整卡跳过的原因（空串 = 不跳过）：按阶段顺序取第一个不可用的起点，都可用再核严格递增。"""
+    for st in starts:
+        template = _SKIP_REASONS.get(st.status)
+        if template is not None:
+            return template.format(k=st.k, anchor=st.anchor, region=st.region)
+    positions = [st.pos for st in starts]
+    for a, b in zip(positions, positions[1:]):
+        if b <= a:
+            return f"锚点位置不严格递增：{a} → {b}"
+    return ""
+
+
+def _ranges_from(starts: Sequence[PhaseStart], norm_len: int) -> tuple[list[tuple[int, int]], str]:
+    """起点 → 各阶段半开区间与跳过原因；跳过时区间为空表。"""
+    reason = _skip_reason(starts)
+    if reason:
+        return [], reason
+    positions = [st.pos for st in starts]
+    return [(lo, hi) for lo, hi in zip(positions, [*positions[1:], norm_len])], ""
+
+
 def phase_ranges(phases, source_text: str, source_norm: str,
                  paragraphs: list[int] | None = None,
                  retro: Sequence[tuple[int, int, str]] = ()) -> tuple[list[tuple[int, int]], str]:
@@ -109,24 +199,8 @@ def phase_ranges(phases, source_text: str, source_norm: str,
     「查不到」同为不可定位）、锚点核对不上、锚点落在回忆区（`retro`，倒叙章节里的位置不是
     故事时间，拿它分阶段必错）、锚点位置不严格递增。
     """
-    starts: list[int] = [0]                  # 阶段 1 一律从全书开头算起（checked_anchors 不含它）
-    for k, anchor in checked_anchors(phases):
-        if not anchor:
-            return [], f"阶段 {k} 锚点为空"
-        loc = locate_anchor(source_text, source_norm, anchor, paragraphs)
-        if loc is None:
-            return [], f"阶段 {k} 锚点核对不上：{anchor}"
-        region = _region_of(retro, loc[0])
-        if region is not None:
-            return [], f"阶段 {k} 锚点落在回忆区（{region}）：{anchor}"
-        starts.append(loc[0])
-    for a, b in zip(starts, starts[1:]):
-        if b <= a:
-            return [], f"锚点位置不严格递增：{a} → {b}"
-    n = len(phases)
-    ranges = [(starts[k], starts[k + 1] if k + 1 < n else len(source_norm))
-              for k in range(n)]
-    return ranges, ""
+    return _ranges_from(locate_starts(phases, source_text, source_norm, paragraphs, retro),
+                        len(source_norm))
 
 
 def phase_at(ranges: list[tuple[int, int]], pos: int) -> int:
@@ -151,6 +225,7 @@ class PhaseAnchors(NamedTuple):
     reason: str
     retro: Sequence[tuple[int, int, str]] = ()   # 回忆区（规范化区间 + 标签），见 `verify`
     source_text: str = ""
+    starts: tuple[PhaseStart, ...] = ()          # 逐阶段起点结论（`locate_starts`），明细日志直接读
 
 
 def build_anchors(phases, source_text: str, *,
@@ -166,8 +241,9 @@ def build_anchors(phases, source_text: str, *,
     source_norm = normalize(source_text)
     paragraphs = (paragraph_bounds(source_text, source_norm)
                   if any(has_ellipsis(a) for _, a in checked_anchors(phases)) else None)
-    ranges, reason = phase_ranges(phases, source_text, source_norm, paragraphs, retro)
-    return PhaseAnchors(len(phases), source_norm, ranges, reason, tuple(retro), source_text)
+    starts = tuple(locate_starts(phases, source_text, source_norm, paragraphs, retro))
+    ranges, reason = _ranges_from(starts, len(source_norm))
+    return PhaseAnchors(len(phases), source_norm, ranges, reason, tuple(retro), source_text, starts)
 
 
 def chapter_labels(source_text: str, raw_positions: Sequence[int | None]) -> list[str]:
@@ -208,45 +284,26 @@ def _detail_tail(anchors: PhaseAnchors, source_text: str, pos: int,
 def log_phase_starts(phases, source_text: str, anchors: PhaseAnchors, name: str) -> None:
     """每张卡打一次阶段起点明细。**每张卡只调一次**。
 
-    整卡跳过时：一行原因 + 每个阶段一行「整卡跳过明细」（逐阶段各自定位锚点，能看出是哪句
-    锚点、第几章、是不是回忆）；不跳过时每阶段一行「阶段起点」，后半段格式相同。
+    整卡跳过时：一行原因 + 每个阶段一行「整卡跳过明细」（能看出是哪句锚点、第几章、是不是
+    回忆）；不跳过时每阶段一行「阶段起点」，后半段格式相同。逐阶段结论读 `anchors.starts`
+    （`locate_starts` 的结果），这里不重新定位；没有位置的状态打 `_DETAIL_NO_POSITION` 的文案。
     """
     skipped = bool(anchors.reason)
     if skipped:
         logger.warning("整卡跳过位置检查（%s）：%s", anchors.reason, name)
-        paragraphs = paragraph_bounds(source_text, anchors.source_norm)
-        checked = dict(checked_anchors(phases))
-        locs = [locate_anchor(source_text, anchors.source_norm, checked[k], paragraphs)
-                if checked.get(k) else None for k in range(1, len(phases) + 1)]
-        positions = list(raw_offsets(
-            source_text, anchors.source_norm, [loc[0] for loc in locs if loc is not None]))
-        wheres = iter(chapter_labels(source_text, positions))
-        raws = iter(positions)
-        for k, (phase, loc) in enumerate(zip(phases, locs), 1):
-            anchor = _anchor_of(phase)
-            label = phase.get("label", "") if isinstance(phase, dict) else getattr(phase, "label", "")
-            head = f"整卡跳过明细（{name}）阶段 {k}「{label}」锚点「{anchor}」→ "
-            if k not in checked:
-                logger.warning("%s不参与核对（阶段 1 从全书开头算起）", head)
-                continue
-            if not anchor:
-                logger.warning("%s锚点为空", head)
-                continue
-            if loc is None:
-                logger.warning("%s原文查不到", head)
-                continue
-            pos, raw = loc[0], next(raws)
-            logger.warning("%s%s", head, _detail_tail(anchors, source_text, pos, raw, next(wheres)))
-        return
-
-    starts = [lo for lo, _ in anchors.ranges]
-    positions = list(raw_offsets(source_text, anchors.source_norm, starts))
-    wheres = chapter_labels(source_text, positions)
-    for k, phase in enumerate(phases, 1):
-        label = phase.get("label", "") if isinstance(phase, dict) else getattr(phase, "label", "")
-        head = f"阶段起点（{name}）阶段 {k}「{label}」锚点「{_anchor_of(phase)}」→ "
-        logger.warning("%s%s", head, _detail_tail(
-            anchors, source_text, starts[k - 1], positions[k - 1], wheres[k - 1]))
+    title = "整卡跳过明细" if skipped else "阶段起点"
+    shown = [st for st in anchors.starts
+             if not (skipped and st.status in _DETAIL_NO_POSITION)]
+    positions = list(raw_offsets(source_text, anchors.source_norm, [st.pos for st in shown]))
+    tails = {st.k: (pos, raw, where) for st, pos, raw, where in zip(
+        shown, [st.pos for st in shown], positions, chapter_labels(source_text, positions))}
+    for st, phase in zip(anchors.starts, phases):
+        head = f"{title}（{name}）阶段 {st.k}「{_field_of(phase, 'label')}」锚点「{st.anchor}」→ "
+        if st.k not in tails:
+            logger.warning("%s%s", head, _DETAIL_NO_POSITION[st.status])
+            continue
+        pos, raw, where = tails[st.k]
+        logger.warning("%s%s", head, _detail_tail(anchors, source_text, pos, raw, where))
 
 
 def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
