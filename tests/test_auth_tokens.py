@@ -18,12 +18,7 @@ from pwdlib import PasswordHash
 from deps import get_storage
 from storage.sqlite_store import SQLiteStore
 
-# Patch slowapi rate-limiter before importing the auth router so that
-# @limiter.limit(...) decorators become no-ops in tests.
-import limiter as _lim_  # noqa: E402  (web/limiter.py)
-_lim_.limiter.limit = lambda *a, **kw: lambda f: f
-
-from routers.auth import get_jwt_secret, jwt_secret_source, router as auth_router  # noqa: E402
+from routers.auth import get_jwt_secret, jwt_secret_source, router as auth_router
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

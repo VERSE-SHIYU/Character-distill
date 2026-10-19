@@ -27,15 +27,6 @@ from routers.auth import get_current_user
 from routers.text import router as text_router
 
 
-@pytest.fixture(autouse=True)
-def _isolate_rate_limiter():
-    """`limiter` 是进程级单例、按 client IP 记 5/min；本文件几次上传与别的用例共用
-    「testclient」桶会互相顶成 429。前后各清一次，保证本文件零残留。"""
-    limiter.reset()
-    yield
-    limiter.reset()
-
-
 class _MemStore:
     """最小存储替身：上传路径只用到这两个方法。"""
 

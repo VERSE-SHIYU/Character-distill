@@ -122,7 +122,6 @@ def test_g3_distill_export_rate_limited(store, user_id):
     assert statuses[-1] == 429, statuses[-5:]
 
 
-@pytest.mark.xfail(strict=True, reason="G4: 限流隔离散落多处，导入期还在改装饰器")
 def test_g4_rate_limiter_isolation_single_source():
     reset_needle = "limiter." + "reset("
     patch_needle = "limiter." + "limit ="

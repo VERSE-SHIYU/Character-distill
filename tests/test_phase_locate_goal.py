@@ -28,7 +28,6 @@ from core.card_draft import card_from_draft
 from core.retro_regions import ChapterRange, RetroRegions
 from storage.sqlite_store import SQLiteStore
 import test_distill_draft_persist as P
-from limiter import limiter
 from routers import distill as D
 
 _SRC = ("第1章\n他在家里读书。日子平平淡淡。\n"
@@ -160,14 +159,6 @@ class _Stub(P._DraftStub):
 
 
 _ORDER: list = []
-
-
-@pytest.fixture(autouse=True)
-def _isolate_rate_limiter():
-    """同 `test_retro_position_check_goal.py`：`/run_stream` 限流按进程共用一个桶。"""
-    limiter.reset()
-    yield
-    limiter.reset()
 
 
 @pytest.fixture

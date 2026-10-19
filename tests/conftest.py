@@ -116,6 +116,17 @@ def _jwt_secret_for_tests(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_rate_limiter():
+    """web/limiter.py 的 limiter 是进程级单例，用 memory 存储，按 client IP 计数；所有 TestClient
+    都是同一个 IP「testclient」。不清空的话，全量跑时各用例共用一个桶，会互相顶成 429。
+    每个用例前后各清一次。"""
+    from limiter import limiter
+    limiter.reset()
+    yield
+    limiter.reset()
+
+
 class EnvironmentRequirement:
     """一条「本用例需要某个外部环境」的声明，把三件事绑在同一处：
 
