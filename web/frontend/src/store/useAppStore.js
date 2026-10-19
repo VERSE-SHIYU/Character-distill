@@ -59,6 +59,15 @@ export const isTerminal = (task) => task?.done === true
 /** 可用动作 —— 只认归一化后的 actions。UI 不得在 actions 之外自行推断。 */
 export const taskActions = (task) => (Array.isArray(task?.actions) ? task.actions : [])
 
+// 蒸馏入口：只在这里定义一次，调用方传常量；必须与后端 DistillTaskRequest.entry 的
+// Literal 完全一致（E6 与 E4 各守一端）。redraft 由后端草稿重转自己写，前端不发起。
+export const DISTILL_ENTRY = {
+  characterPage: 'character_page',
+  workbenchCard: 'workbench_card',
+  workbenchTask: 'workbench_task',
+  taskBar: 'task_bar',
+}
+
 // 建会话请求体与 URL：只此一处（S3），三处建会话都走 startSessionBody。
 const START_SESSION_URL = '/api/distill/start_session'
 
@@ -868,7 +877,7 @@ const useAppStore = create((set, get) => {
   }),
 
   redistillPrompt: null,
-  distillCharacter: async (textId, characterName, force = false) => {
+  distillCharacter: async (textId, characterName, force = false, entry = '') => {
     if (force) {
       const ok = await new Promise((resolve) =>
         set({ redistillPrompt: { textId, name: characterName, resolve } }))
@@ -876,7 +885,7 @@ const useAppStore = create((set, get) => {
     }
     set({ error: null })
     try {
-      const data = await postJSON('/api/distill/start', { text_id: textId, character_name: characterName, force })
+      const data = await postJSON('/api/distill/start', { text_id: textId, character_name: characterName, force, entry })
       if (data.task_id) { get().addDistillTask(data.task_id, textId, characterName); return true }
       set({ error: '蒸馏启动失败' }); return false
     } catch (err) { set({ error: err.message }); return false }

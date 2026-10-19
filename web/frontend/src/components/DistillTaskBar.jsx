@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import useAppStore, { isTerminal, taskActions } from '../store/useAppStore'
+import useAppStore, { DISTILL_ENTRY, isTerminal, taskActions } from '../store/useAppStore'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import useCanWrite from '../hooks/useCanWrite'
 import ErrorBox from './common/ErrorBox'
@@ -83,7 +83,7 @@ function DistillTaskItem({ task }) {
   const handleRestart = (e) => {
     e.stopPropagation()
     removeDistillTask(task.id)
-    distillCharacter(task.textId, task.character)
+    distillCharacter(task.textId, task.character, false, DISTILL_ENTRY.taskBar)
   }
 
   // 本地关闭：纯列表管理，不是服务端动作，故不受 actions 管辖

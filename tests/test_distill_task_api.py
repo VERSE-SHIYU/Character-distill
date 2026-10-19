@@ -67,7 +67,8 @@ class _FakeStore:
 
     async def update_distill_task(self, task_id, *, status=None, progress_pct=None,
                                   message=None, card_id=None, awakening=None,
-                                  chunk_size=None, text_fingerprint=None):
+                                  chunk_size=None, text_fingerprint=None,
+                                  force=None, entry=None):
         self.attempts += 1
         if self.fail:
             raise RuntimeError("db down")

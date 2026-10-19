@@ -992,6 +992,7 @@ class StorageBase(ABC):
         message: str = "", card_id: str = "", awakening: str = "",
         chunk_size: int | None = None, overlap: int | None = None,
         text_fingerprint: str = "",
+        force: bool = False, entry: str = "",
     ) -> dict | None:
         """Insert a NEW distillation task row. Returns the stored row.
 
@@ -1062,7 +1063,7 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None, card_id: str | None = None, awakening: str | None = None, chunk_size: int | None = None, text_fingerprint: str | None = None) -> int:
+    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None, card_id: str | None = None, awakening: str | None = None, chunk_size: int | None = None, text_fingerprint: str | None = None, force: bool | None = None, entry: str | None = None) -> int:
         """Patch only the non-None fields of a distillation task row. UPDATE-only.
 
         Returns the number of rows affected. 0 means the row is gone (e.g. its text

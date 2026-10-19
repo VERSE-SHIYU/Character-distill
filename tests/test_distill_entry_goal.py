@@ -45,7 +45,6 @@ def _text(store, uid, body="正文" * 20):
     return tid
 
 
-@pytest.mark.xfail(strict=True)
 @pytest.mark.parametrize("entry,force", [("character_page", True), ("workbench_card", True),
                                          ("character_page", False)])
 def test_e1_new_task_records_force_and_entry(store, user_id, monkeypatch, entry, force):
@@ -56,7 +55,6 @@ def test_e1_new_task_records_force_and_entry(store, user_id, monkeypatch, entry,
     assert _row(store, resp.json()["task_id"]) == (force, entry)
 
 
-@pytest.mark.xfail(strict=True)
 def test_e2_resume_row_restamped_with_this_request(store, user_id, monkeypatch):
     body = "角色说的话" * 20
     tid = _text(store, user_id, body)
@@ -70,7 +68,6 @@ def test_e2_resume_row_restamped_with_this_request(store, user_id, monkeypatch):
     assert _row(store, task_id) == (False, "task_bar")
 
 
-@pytest.mark.xfail(strict=True)
 def test_e3_redraft_records_redraft_entry(store, user_id, monkeypatch):
     import json
     tid = _text(store, user_id)
@@ -85,7 +82,6 @@ def test_e3_redraft_records_redraft_entry(store, user_id, monkeypatch):
     assert _row(store, resp.json()["task_id"]) == (True, "redraft")
 
 
-@pytest.mark.xfail(strict=True)
 def test_e4_entry_is_a_closed_set(store, user_id, monkeypatch):
     tid = _text(store, user_id)
     bad, _ = _start(monkeypatch, store, user_id, tid, {"character_name": "甲", "entry": "somewhere"})
@@ -96,7 +92,6 @@ def test_e4_entry_is_a_closed_set(store, user_id, monkeypatch):
     assert _row(store, none_given.json()["task_id"]) == (False, "")
 
 
-@pytest.mark.xfail(strict=True)
 def test_e5_task_start_log_carries_entry(store, user_id, monkeypatch, caplog):
     import routers.distill as D
     tid = _text(store, user_id)

@@ -3519,6 +3519,7 @@ class PostgresStore(StorageBase):
         message: str = "", card_id: str = "", awakening: str = "",
         chunk_size: int | None = None, overlap: int | None = None,
         text_fingerprint: str = "",
+        force: bool = False, entry: str = "",
     ) -> dict | None:
         """Insert a NEW distillation task row (INSERT-only, no upsert). Returns the stored row.
 
@@ -3528,9 +3529,9 @@ class PostgresStore(StorageBase):
         """
         try:
             cols = ["task_id", "user_id", "text_id", "character", "status",
-                    "progress_pct", "message", "card_id", "awakening"]
+                    "progress_pct", "message", "card_id", "awakening", "force", "entry"]
             vals: list[Any] = [task_id, user_id, text_id, character, status,
-                               progress_pct, message, card_id, awakening]
+                               progress_pct, message, card_id, awakening, force, entry]
             if chunk_size is not None:
                 cols.append("chunk_size"); vals.append(chunk_size)
             if overlap is not None:
@@ -3632,7 +3633,7 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Count distill tasks failed: {exc}")
             raise
 
-    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None, card_id: str | None = None, awakening: str | None = None, chunk_size: int | None = None, text_fingerprint: str | None = None) -> int:
+    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None, card_id: str | None = None, awakening: str | None = None, chunk_size: int | None = None, text_fingerprint: str | None = None, force: bool | None = None, entry: str | None = None) -> int:
         """Patch only the non-None fields of a distillation task row. Returns rows affected.
 
         UPDATE-only、绝不 upsert：0 行 = 行已被删（如文本被删时 bg 线程仍在跑），
@@ -3645,6 +3646,7 @@ class PostgresStore(StorageBase):
                 ("status", status), ("progress_pct", progress_pct), ("message", message),
                 ("card_id", card_id), ("awakening", awakening),
                 ("chunk_size", chunk_size), ("text_fingerprint", text_fingerprint),
+                ("force", force), ("entry", entry),
             ):
                 if val is not None:
                     field_items.append((col, val))

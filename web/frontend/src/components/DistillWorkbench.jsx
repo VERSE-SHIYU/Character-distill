@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import useAppStore, { isTerminal, taskActions } from '../store/useAppStore'
+import useAppStore, { DISTILL_ENTRY, isTerminal, taskActions } from '../store/useAppStore'
 import { exportCard } from '../api/client'
 import { fetchAllCards } from '../api/cards'
 import useSmoothProgress from '../hooks/useSmoothProgress'
@@ -288,7 +288,7 @@ function TaskDetail({ task, onBack }) {
   // resume 与 retry 打同一端点，续跑 vs 整批重跑由后端任务级门裁决；前端只差文案。
   const restartTask = () => {
     removeDistillTask(task.id)
-    distillCharacter(task.textId, task.character)
+    distillCharacter(task.textId, task.character, false, DISTILL_ENTRY.workbenchTask)
   }
   // 工作台没进过角色页时卡片列表是空的，点「试聊当前版本」现取一次；取到后交给共用入口。
   const resolveChatCard = async () => {
@@ -386,7 +386,7 @@ function CardDetail({ card, onBack }) {
     pushView('character')
   }
   const redistill = () => {
-    if (card.text_id) distillCharacter(card.text_id, name, true)
+    if (card.text_id) distillCharacter(card.text_id, name, true, DISTILL_ENTRY.workbenchCard)
   }
 
   return (

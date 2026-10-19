@@ -4,9 +4,9 @@
 //
 // 断言五条：
 //   1) 已有卡角色点「重新蒸馏」→ 弹窗出现（角色名 + 书名）；取消后 0 次请求，按钮复原
-//   2) 再点并确认 → 1 次请求，force=true，character_name 正确
-//   3) 无卡角色点「蒸馏角色」→ 不弹窗，1 次请求，force=false
-//   4) 工作台卡片详情点「重新蒸馏」→ 弹出同一个弹窗
+//   2) 再点并确认 → 1 次请求，force=true，character_name 正确，entry=character_page
+//   3) 无卡角色点「蒸馏角色」→ 不弹窗，1 次请求，force=false，entry=character_page
+//   4) 工作台卡片详情点「重新蒸馏」→ 弹出同一个弹窗，确认后 entry=workbench_card
 //   5) 弹窗出现时截图到 e2e/redistill-confirm-modal.png
 //
 // 用法：cd web/frontend && npx playwright test e2e/redistill-confirm.spec.js
@@ -93,7 +93,7 @@ test('2) 已有卡：确认后发 1 次 force=true', async ({ page }) => {
 
   await expect(page.locator('.modal-card')).toHaveCount(0)
   await expect.poll(() => sent.length).toBe(1)
-  expect(sent[0]).toEqual({ text_id: 't1', character_name: '祈灼', force: true })
+  expect(sent[0]).toEqual({ text_id: 't1', character_name: '祈灼', force: true, entry: 'character_page' })
 })
 
 test('3) 无卡角色：不弹窗，force=false', async ({ page }) => {
@@ -102,11 +102,11 @@ test('3) 无卡角色：不弹窗，force=false', async ({ page }) => {
 
   await expect.poll(() => sent.length).toBe(1)
   await expect(page.locator('.modal-card')).toHaveCount(0)
-  expect(sent[0]).toEqual({ text_id: 't1', character_name: '江澄', force: false })
+  expect(sent[0]).toEqual({ text_id: 't1', character_name: '江澄', force: false, entry: 'character_page' })
 })
 
-test('4) 工作台卡片详情：弹出同一个弹窗', async ({ page }) => {
-  await setup(page, { view: 'distillWorkbench' })
+test('4) 工作台卡片详情：弹出同一个弹窗，确认后 entry=workbench_card', async ({ page }) => {
+  const sent = await setup(page, { view: 'distillWorkbench' })
   const cardItem = page.locator('.dw-task-item').filter({ hasText: '祈灼' })
   await expect(cardItem).toBeVisible({ timeout: 8000 })
   await cardItem.click()
@@ -115,6 +115,10 @@ test('4) 工作台卡片详情：弹出同一个弹窗', async ({ page }) => {
   const modal = await openRedistillModal(page)
   await expect(modal.locator('.modal-title')).toHaveText('重新蒸馏「祈灼」？')
   await expect(modal.locator('.modal-body')).toContainText('《某书》')
+
+  await modal.locator('.modal-actions .btn-danger').click()
+  await expect.poll(() => sent.length).toBe(1)
+  expect(sent[0]).toEqual({ text_id: 't1', character_name: '祈灼', force: true, entry: 'workbench_card' })
 })
 
 test('5) 弹窗出现时截图', async ({ page }) => {

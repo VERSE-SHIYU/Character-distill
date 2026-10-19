@@ -17,13 +17,13 @@ beforeEach(() => {
 })
 
 describe('E6 入口随请求发出', () => {
-  it.fails('取值表与后端约定一致', () => {
+  it('取值表与后端约定一致', () => {
     expect(DISTILL_ENTRY).toEqual({
       characterPage: 'character_page', workbenchCard: 'workbench_card',
       workbenchTask: 'workbench_task', taskBar: 'task_bar',
     })
   })
-  it.fails('请求体带 entry', async () => {
+  it('请求体带 entry', async () => {
     await useAppStore.getState().distillCharacter('t1', '甲', false, DISTILL_ENTRY.taskBar)
     expect(postJSON).toHaveBeenCalledWith('/api/distill/start',
       { text_id: 't1', character_name: '甲', force: false, entry: 'task_bar' })

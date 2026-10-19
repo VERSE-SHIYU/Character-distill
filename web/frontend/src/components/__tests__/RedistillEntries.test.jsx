@@ -43,9 +43,10 @@ beforeEach(() => {
   useAppStore.setState({ authUser: null, texts: [TEXT], distillTasks: [], distilling: false, redistillPrompt: null, error: null })
 })
 
-const expectStartedWithoutPrompt = async () => {
+const expectStartedWithoutPrompt = async (entry) => {
   await waitFor(() => expect(postJSON).toHaveBeenCalledTimes(1))
-  expect(postJSON).toHaveBeenCalledWith('/api/distill/start', { text_id: 'x1', character_name: '祈灼', force: false })
+  expect(postJSON).toHaveBeenCalledWith('/api/distill/start',
+    { text_id: 'x1', character_name: '祈灼', force: false, entry })
   expect(useAppStore.getState().redistillPrompt).toBeNull()
 }
 const expectPromptWithoutStart = async () => {
@@ -65,14 +66,14 @@ const clickWorkbenchCta = async (label) => {
 
 describe('G8 入口 × 是否弹窗', () => {
   it.each([
-    ['任务栏 出错「重新蒸馏」', 'error', ['retry'], () => { render(<DistillTaskBar />); clickTaskBar('重新蒸馏') }],
-    ['任务栏 中断「继续蒸馏」', 'interrupted', ['resume'], () => { render(<DistillTaskBar />); clickTaskBar('继续蒸馏') }],
-    ['工作台任务 出错「重新蒸馏」', 'error', ['retry'], async () => { render(<DistillWorkbench />); await clickWorkbenchCta('重新蒸馏') }],
-    ['工作台任务 中断「继续蒸馏」', 'interrupted', ['resume'], async () => { render(<DistillWorkbench />); await clickWorkbenchCta('继续蒸馏') }],
-  ])('%s：续跑，不弹窗，force=false', async (_name, status, actions, act) => {
+    ['任务栏 出错「重新蒸馏」', 'error', ['retry'], () => { render(<DistillTaskBar />); clickTaskBar('重新蒸馏') }, 'task_bar'],
+    ['任务栏 中断「继续蒸馏」', 'interrupted', ['resume'], () => { render(<DistillTaskBar />); clickTaskBar('继续蒸馏') }, 'task_bar'],
+    ['工作台任务 出错「重新蒸馏」', 'error', ['retry'], async () => { render(<DistillWorkbench />); await clickWorkbenchCta('重新蒸馏') }, 'workbench_task'],
+    ['工作台任务 中断「继续蒸馏」', 'interrupted', ['resume'], async () => { render(<DistillWorkbench />); await clickWorkbenchCta('继续蒸馏') }, 'workbench_task'],
+  ])('%s：续跑，不弹窗，force=false', async (_name, status, actions, act, entry) => {
     useAppStore.setState({ distillTasks: [task(status, actions)] })
     await act()
-    await expectStartedWithoutPrompt()
+    await expectStartedWithoutPrompt(entry)
   })
 
   it('工作台卡片详情「重新蒸馏」：弹窗，先不发请求', async () => {
