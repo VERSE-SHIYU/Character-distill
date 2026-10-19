@@ -18,6 +18,7 @@ from core.card_relationships import dedupe_relationship_targets
 from core.retro_regions import NOT_DETECTED
 from core.schema import POST_FORMAT_FIELDS, CharacterCard
 from routers import distill as D
+from storage.sqlite_store import SQLiteStore
 from test_distill_draft_persist import (
     _CARD_NAME,
     _DISTILL_NAME,
@@ -34,6 +35,11 @@ from test_distill_task_api import _build_client, _run_async
 
 _RELOCATED = "重定位后才会出现的独有背景串"
 _NO_DRAFT = "没有存草稿"
+
+
+@pytest.fixture
+def store(tmp_path):
+    return SQLiteStore(str(tmp_path / f"redraft_{uuid.uuid4().hex}.db"))
 
 
 def _redraft(client, card_id: str):
@@ -73,7 +79,6 @@ def _assert_no_task_row(store, tid: str) -> None:
     assert _task_rows_of_text(store, tid) == [], "失败请求不该建任务行"
 
 
-@pytest.mark.xfail(strict=True, reason="redraft 路由尚未实现（spec card-redraft §1 G1）")
 def test_g1_redraft_uses_stored_draft_without_redistilling(monkeypatch, store):
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     tid = _seed_text(store, uid)
@@ -118,7 +123,6 @@ def test_g1_redraft_uses_stored_draft_without_redistilling(monkeypatch, store):
     assert a == b, "存下的草稿还原不出库里那张卡"
 
 
-@pytest.mark.xfail(strict=True, reason="redraft 路由尚未实现（spec card-redraft §1 G2）")
 def test_g2_redraft_requires_own_card_with_draft(monkeypatch, store):
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     tid = _seed_text(store, uid)
@@ -138,7 +142,6 @@ def test_g2_redraft_requires_own_card_with_draft(monkeypatch, store):
     _assert_no_task_row(store, tid)
 
 
-@pytest.mark.xfail(strict=True, reason="redraft 路由尚未实现（spec card-redraft §1 G4）")
 def test_g4_redraft_shares_the_per_user_gate(monkeypatch, store):
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     tid = _seed_text(store, uid)

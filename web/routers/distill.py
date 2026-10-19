@@ -10,7 +10,7 @@ import os
 import threading
 import uuid as _uuid
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from urllib.parse import quote
 
@@ -790,19 +790,17 @@ async def distill_by_text_id(
         raise HTTPException(400, str(exc)) from exc
 
 
-@router.post("/start")
-async def distill_start(
-    req: DistillTaskRequest,
-    user: dict = Depends(get_current_user),
-    storage: StorageBase = Depends(get_storage),
+async def _gated_start(
+    user_id: str,
+    storage: StorageBase,
+    start: Callable[[], Awaitable[dict[str, Any]]],
 ) -> dict[str, Any]:
-    """按用户并发闸包住 _distill_start_impl：占坑 → 两道门 → 跑。
+    """按用户并发闸包住一次启动：占坑 → 两道门 → 跑。
 
-    槽位所有权只在 impl **正常返回**时转移给后台线程（由 _run_distill_task 退出时
-    释放）。impl 抛任何异常（404 / 503 / DB 出错）都在这里释放，否则该用户会被自己
+    槽位所有权只在 start **正常返回**时转移给后台线程（由 _run_distill_task 退出时
+    释放）。start 抛任何异常（404 / 503 / DB 出错）都在这里释放，否则该用户会被自己
     永久挡住。占坑是第一条语句，前面没有任何 await。
     """
-    user_id = user["id"]
     if not _reserve_user_slot(user_id):
         raise HTTPException(429, _DISTILL_BUSY_MSG)
     try:
@@ -812,16 +810,29 @@ async def distill_start(
             user_id, window_minutes=DISTILL_GHOST_IDLE_MIN)
         if occupied >= DISTILL_MAX_PER_USER:
             raise HTTPException(429, _DISTILL_BUSY_MSG)
-        return await _distill_start_impl(req, user, storage)
+        return await start()
     except BaseException:
         _release_user_slot(user_id)
         raise
+
+
+@router.post("/start")
+async def distill_start(
+    req: DistillTaskRequest,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """起一次蒸馏；并发闸与 slot 释放口径见 `_gated_start`。"""
+    return await _gated_start(
+        user["id"], storage, lambda: _distill_start_impl(req, user, storage))
 
 
 async def _distill_start_impl(
     req: DistillTaskRequest,
     user: dict,
     storage: StorageBase,
+    *,
+    draft: dict | None = None,
 ) -> dict[str, Any]:
     """Start distillation as a background task, return task_id immediately."""
     from deps import get_distiller, get_user_llm
@@ -940,6 +951,7 @@ async def _distill_start_impl(
         _run_distill_task,
         args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type,
               llm, emb.key, emb.region, resume_candidates),
+        kwargs={"draft": draft},
         daemon=True,
     )
     thread.start()
@@ -1418,6 +1430,32 @@ class MoveUnlocatedRequest(BaseModel):
     phase: int            # 1 起
     path: str = ""        # section=overlay 时的登记表路径
     revision: str         # 挪动所依据的那一版；卡变过（序号可能漂移）即 409，不按旧序号挪
+
+
+REDRAFT_NO_DRAFT = "这张卡没有存草稿，只能重新蒸馏"
+
+
+@router.post("/card/{card_id}/redraft")
+async def redraft_card(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """用蒸馏时存下的草稿重新出卡（不重蒸），覆盖同一张卡。"""
+    user_id = user["id"]
+    record = await storage.get_card_owned(card_id, user_id)
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not record:
+        raise HTTPException(404, "Card not found")
+    raw = await storage.load_card_draft_owned(card_id, user_id)
+    if not raw:
+        raise HTTPException(409, REDRAFT_NO_DRAFT)
+    payload = json.loads(raw)
+    req = DistillTaskRequest(
+        text_id=record["text_id"], character_name=payload["character"], force=True)
+    return await _gated_start(
+        user_id, storage,
+        lambda: _distill_start_impl(req, user, storage, draft=payload["draft"]))
 
 
 @router.post("/card/{card_id}/unlocated/move")
