@@ -18,13 +18,13 @@ beforeEach(() => {
 const flush = () => new Promise((r) => setTimeout(r, 0))
 
 describe('重新蒸馏确认', () => {
-  it.fails('G1 force=true 先不发请求', async () => {
+  it('G1 force=true 先不发请求', async () => {
     useAppStore.getState().distillCharacter('t1', '祈灼', true)
     await flush()
     expect(postJSON).not.toHaveBeenCalled()
     expect(useAppStore.getState().redistillPrompt).toMatchObject({ textId: 't1', name: '祈灼' })
   })
-  it.fails('G2 确认后发一次 force=true，返回 true', async () => {
+  it('G2 确认后发一次 force=true，返回 true', async () => {
     const p = useAppStore.getState().distillCharacter('t1', '祈灼', true)
     await flush()
     useAppStore.getState().confirmRedistill()
@@ -33,7 +33,7 @@ describe('重新蒸馏确认', () => {
     expect(postJSON).toHaveBeenCalledWith('/api/distill/start', { text_id: 't1', character_name: '祈灼', force: true })
     expect(useAppStore.getState().redistillPrompt).toBeNull()
   })
-  it.fails('G3 取消不发请求，返回 false', async () => {
+  it('G3 取消不发请求，返回 false', async () => {
     const p = useAppStore.getState().distillCharacter('t1', '祈灼', true)
     await flush()
     useAppStore.getState().cancelRedistill()
@@ -41,13 +41,13 @@ describe('重新蒸馏确认', () => {
     expect(postJSON).not.toHaveBeenCalled()
     expect(useAppStore.getState().redistillPrompt).toBeNull()
   })
-  it.fails('G4 force=false 立即发', async () => {
+  it('G4 force=false 立即发', async () => {
     const p = useAppStore.getState().distillCharacter('t1', '祈灼', false)
     expect(await p).toBe(true)
     expect(postJSON).toHaveBeenCalledWith('/api/distill/start', { text_id: 't1', character_name: '祈灼', force: false })
     expect(useAppStore.getState().redistillPrompt).toBeNull()
   })
-  it.fails('G5 启动失败返回 false', async () => {
+  it('G5 启动失败返回 false', async () => {
     vi.mocked(postJSON).mockRejectedValueOnce(new Error('boom'))
     expect(await useAppStore.getState().distillCharacter('t1', '祈灼', false)).toBe(false)
   })

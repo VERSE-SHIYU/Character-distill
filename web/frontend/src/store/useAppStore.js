@@ -867,19 +867,22 @@ const useAppStore = create((set, get) => {
     }
   }),
 
+  redistillPrompt: null,
   distillCharacter: async (textId, characterName, force = false) => {
+    if (force) {
+      const ok = await new Promise((resolve) =>
+        set({ redistillPrompt: { textId, name: characterName, resolve } }))
+      if (!ok) return false
+    }
     set({ error: null })
     try {
       const data = await postJSON('/api/distill/start', { text_id: textId, character_name: characterName, force })
-      if (data.task_id) {
-        get().addDistillTask(data.task_id, textId, characterName)
-      } else {
-        set({ error: '蒸馏启动失败' })
-      }
-    } catch (err) {
-      set({ error: err.message })
-    }
+      if (data.task_id) { get().addDistillTask(data.task_id, textId, characterName); return true }
+      set({ error: '蒸馏启动失败' }); return false
+    } catch (err) { set({ error: err.message }); return false }
   },
+  confirmRedistill: () => { const p = get().redistillPrompt; set({ redistillPrompt: null }); p?.resolve(true) },
+  cancelRedistill: () => { const p = get().redistillPrompt; set({ redistillPrompt: null }); p?.resolve(false) },
 
   addDistillTask: (taskId, textId, characterName) => {
     // 本地乐观种子：形状对齐契约（过 normalizeTask 门），actions 与「刚启动的 running

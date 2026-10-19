@@ -15,7 +15,7 @@ beforeEach(() => {
 })
 
 describe('G6 重新蒸馏确认弹窗', () => {
-  it.fails('写出角色名和书名；取消不发请求', async () => {
+  it('写出角色名和书名；取消不发请求', async () => {
     let p
     await act(async () => { p = useAppStore.getState().distillCharacter('t1', '祈灼', true) })
     render(<RedistillConfirm />)

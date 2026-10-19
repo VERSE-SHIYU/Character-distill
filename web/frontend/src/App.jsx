@@ -7,6 +7,7 @@ import LoginPage from './components/LoginPage'
 import DistillTaskBar from './components/DistillTaskBar'
 import DistillWorkbench from './components/DistillWorkbench'
 import AwakeningToast from './components/AwakeningToast'
+import RedistillConfirm from './components/RedistillConfirm'
 import ArchiveListModal from './components/ArchiveListModal'
 import CrossBorderConsentModal from './components/CrossBorderConsentModal'
 import MobileTabBar from './components/MobileTabBar'
@@ -285,6 +286,7 @@ export default function App() {
       <MobileTabBar />
       <DistillTaskBar />
       <AwakeningToast />
+      <RedistillConfirm />
       <ArchiveListModal />
       <CrossBorderConsentModal />
     </div>

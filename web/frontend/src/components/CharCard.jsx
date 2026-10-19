@@ -278,9 +278,9 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     } catch { /* store already sets error */ }
   }
 
-  const handleDistill = (name, force = false) => {
+  const handleDistill = async (name, force = false) => {
     setDistillingName(name)
-    distillCharacter(textId, name, force)
+    if (!(await distillCharacter(textId, name, force))) setDistillingName(null)
   }
 
   const texts = useAppStore((s) => s.texts)

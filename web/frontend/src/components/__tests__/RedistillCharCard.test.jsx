@@ -42,7 +42,7 @@ const base = () => ({
 })
 describe('G7 角色页按钮：没启动就复原', () => {
   beforeEach(() => { for (const k of Object.keys(mockState)) delete mockState[k]; Object.assign(mockState, base()) })
-  it.fails('取消后按钮回到「重新蒸馏」', async () => {
+  it('取消后按钮回到「重新蒸馏」', async () => {
     render(<CharCard />)
     const btn = screen.getByRole('button', { name: '重新蒸馏' })
     await act(async () => { fireEvent.click(btn) })
