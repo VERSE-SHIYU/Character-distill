@@ -171,6 +171,16 @@
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ( [], [[], [_beh(\"乱序\", quote=_Q2)], [_beh(\"乱序\", quote=_Q3)]])",
         0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert phase_anchoring.phase_ranges( _phases(3, {2: _Q1, 3: _Q3}), _SRC, normalize(_SRC)) == ([], \"锚点位置不严格递增：0",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert phase_anchoring.phase_ranges( _phases(3, {2: _Q2, 3: _Q2}), _SRC, normalize(_SRC)) == ([], \"锚点位置不严格递增：5",
+        0
       ]
     ],
     "M6  锚点正常也整卡跳过": [
@@ -728,11 +738,16 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"整卡跳过位置检查\" in r.getMessage()] == [ \"整卡跳过位置检查（阶段 2 锚点为空）：角色\"]",
+        "assert ([m for m in msgs if \"整卡跳过位置检查\" in m], [m for m in msgs if m.startswith(\"整卡跳过明细（角色）阶段 2\")]) == ( [\"整卡跳过",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert phase_anchoring.phase_ranges( _phases(3, {2: \"\", 3: \"查无此句\"}), _SRC, normalize(_SRC)) == ([], \"阶段 2 锚点为空",
         0
       ]
     ],
-    "M32 阶段 1 的空锚点也整卡跳过": [
+    "M32 阶段 1 的锚点重新参与核对（空锚点整卡跳过、比顺序）": [
       [
         "tests/test_phase_anchoring.py",
         "assert phase_anchoring.phase_ranges(_phases(3, _A3), _SRC, normalize(_SRC)) == ( [(0, 5), (5, 10), (10, 15)], ",
@@ -810,7 +825,22 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"整卡跳过位置检查\" in r.getMessage()] == [ \"整卡跳过位置检查（阶段 2 锚点为空）：角色\"]",
+        "assert ([m for m in msgs if \"整卡跳过位置检查\" in m], [m for m in msgs if m.startswith(\"整卡跳过明细（角色）阶段 2\")]) == ( [\"整卡跳过",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert phase_anchoring.phase_ranges( _phases(3, {2: \"\", 3: \"查无此句\"}), _SRC, normalize(_SRC)) == ([], \"阶段 2 锚点为空",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert phase_anchoring.phase_ranges( _phases(3, {2: _Q1, 3: _Q3}), _SRC, normalize(_SRC)) == ([], \"锚点位置不严格递增：0",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert phase_anchoring.phase_ranges( _phases(3, {2: _Q2, 3: _Q2}), _SRC, normalize(_SRC)) == ([], \"锚点位置不严格递增：5",
         0
       ],
       [
@@ -915,6 +945,39 @@
       [
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[_beh(\"两份证据\", quote=\"开头甲\")], [], []])",
+        0
+      ]
+    ],
+    "M44 整卡跳过明细把空锚点写成「原文查不到」": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert ([m for m in msgs if \"整卡跳过位置检查\" in m], [m for m in msgs if m.startswith(\"整卡跳过明细（角色）阶段 2\")]) == ( [\"整卡跳过",
+        0
+      ]
+    ],
+    "M45 多个阶段不可用时取最后一个的原因": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert phase_anchoring.phase_ranges( _phases(3, {2: \"\", 3: \"查无此句\"}), _SRC, normalize(_SRC)) == ([], \"阶段 2 锚点为空",
+        0
+      ]
+    ],
+    "M46 严格递增不含阶段 1 的起点 0": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert phase_anchoring.phase_ranges( _phases(3, {2: _Q1, 3: _Q3}), _SRC, normalize(_SRC)) == ([], \"锚点位置不严格递增：0",
+        0
+      ]
+    ],
+    "M47 相等位置不算不严格递增": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert phase_anchoring.phase_ranges( _phases(3, {2: _Q1, 3: _Q3}), _SRC, normalize(_SRC)) == ([], \"锚点位置不严格递增：0",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert phase_anchoring.phase_ranges( _phases(3, {2: _Q2, 3: _Q2}), _SRC, normalize(_SRC)) == ([], \"锚点位置不严格递增：5",
         0
       ]
     ],

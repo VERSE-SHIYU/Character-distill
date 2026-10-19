@@ -1,0 +1,82 @@
+# 阶段 1 的锚点不参与核对
+
+基线 main `c24a565`。分支 `fix/phase1-anchor-not-checked`。修复包 A（总问题见「祈灼卡修复 · 当前问题」P1）。
+
+## 目标
+阶段 1 的锚点不划区间，就不该参与任何核对，更不能因为它判不过而把别的阶段的锚点换掉。
+
+## 根因（已核实，main c24a565）
+- 祈灼草稿重转（10-19，task 1989b374baea）：阶段 1 锚点「他曾以为，此生都不会遇见……」取自第 383 章的章内回忆（716034），阶段 2 锚点「因为，我想当你的底牌。」在第 122 章（224224），本来是对的。
+- `phase_anchoring.phase_ranges` 把阶段 1 锚点也定位、拿来和阶段 2 比顺序 → 「锚点位置不严格递增：716034 → 224224」（10-18 日志原文）。
+- `distiller.locate_phase_starts`（:1091）只看 `build_anchors(...).reason` 非空就调 `phase_locate.locate`，把阶段 2..n 全部重找；重找结果是第 335 章，第 122 章被换掉。
+- 同一个锚点在两处的前提相反：#176 提交说明「keeping its anchor for the strictly-increasing order check」，没写理由、目标检查也没测它的用处；#185 的 `phase-locate.md` §2 写「重新定位时原锚点通常已经错了……所以置空」。**一条规则写在两处、前提相反。**
+
+## 改法（规则只在一处）
+`core/phase_anchoring.py` 新增 `checked_anchors(phases)`：返回参与核对的 `[(阶段号, 锚点)]`，只含阶段 2..n。**「阶段 1 锚点不用」只定义在这里**，四个读取处都调它：
+1. `phase_ranges`：`starts` 以 0 开头（阶段 1），只遍历 `checked_anchors`；顺序核对照旧在 `starts` 上做。去掉 `bounds`。
+2. `build_anchors`：省略号判断只看 `checked_anchors`。
+3. `log_phase_starts` 整卡跳过分支：不在 `checked_anchors` 里的阶段（即阶段 1）写「不参与核对（阶段 1 从全书开头算起）」，不定位。
+4. `core/distiller.py` `_phase_list_note`（依赖组与关系分批收到的阶段列表）：起始原句取 `checked_anchors`，阶段 1 一律「（从开头起）」。原先会把模型写的阶段 1 锚点（祈灼 10-18：第 383 章回忆句）当起始原句给下游。
+
+三个调用方（`distiller.py:1091`、`:1111`，`card_draft.py:451`）都走 `build_anchors`，不改。
+
+## 目标检查（第 1 个提交 xfail strict）
+`tests/test_phase1_anchor_not_checked_goal.py`（替身书复用 `test_phase_locate_goal.py`）：
+- g1 阶段 1 锚点比阶段 2 靠后 → 不跳过，阶段 2 从自己的锚点起；
+- g2 同一草稿 → `locate_phase_starts` 一次判断都不调、草稿不动；
+- g3 阶段 1 锚点查不到 / 在回忆区 → 都不影响；
+- g4 阶段 2..n 之间乱序照旧跳过；
+- g5 下游阶段列表不带阶段 1 锚点（审计自查补，单独一个 xfail 提交）。
+改前 g1–g3、g5 红，g4 绿（沙箱实跑）。
+
+## 随之改的旧断言（都是旧规则本身，不是放宽）
+| 文件 | 原断言 | 改后 | 理由 |
+|---|---|---|---|
+| `test_phase1_range_from_start_goal.py` g4 | 阶段 1 锚点乱序 → 跳过 | 不跳过（改名 `test_g4_phase1_anchor_is_not_order_checked`） | 就是要改掉的行为 |
+| `test_anchor_skip_diagnostics_goal.py` g2 | 阶段 1 明细写章号与位置 | 写「不参与核对」 | 明细与规则一致 |
+| `test_anchor_skip_diagnostics_goal.py` g6 | 三个阶段都断言章号未知 | 断言阶段 2、3 | 阶段 1 不再定位 |
+| `tests/perf/arc_phase_anchoring_mutations.py` M5a / M20 / M31 / M32 | 定位串指向旧代码（`{i + 1}`、`bounds`、`if i == 0`） | 指向新代码；M32 改为「`checked_anchors` 含阶段 1」 | 变异驱动的定位串必须存在（`test_mutation_anchors`） |
+
+另：`docs/specs/phase-locate.md` §2 的「只参与顺序核对」一句改为引用本文件。
+
+## 验证
+本地只跑受影响文件（库用 docker 测试库）：
+```
+pytest -q tests/test_phase1_anchor_not_checked_goal.py tests/test_phase_anchoring.py tests/test_phase1_range_from_start_goal.py tests/test_phase_anchor_exact_tier_goal.py tests/test_phase_anchoring_elided.py tests/test_phase_locate_goal.py tests/test_anchor_skip_diagnostics_goal.py tests/test_mutation_anchors.py tests/test_card_draft.py tests/test_card_redraft_goal.py
+```
+head 941c455 实跑：上面 10 个文件 117 passed（作者沙箱与复核各一次）；另 14 个调用 `build_anchors` / `card_from_draft` 的文件 242 passed（作者沙箱）。全量交给分支 CI。
+
+## 结构自检
+| 问 | 答 |
+|---|---|
+| 「阶段 1 锚点不用」写了几处 | 1 处：`phase_anchoring.checked_anchors`。读取处 2 个：`locate_starts`（核对与明细日志的唯一判定处）、`build_anchors`（是否要算段落边界）；另 `distiller._phase_list_note`（下游阶段列表） |
+| 「这个起点算不算数」判了几处 | 1 处：`locate_starts`，产出逐阶段 `PhaseStart`（状态 + 位置）；跳过原因（`_skip_reason`）与整卡跳过明细（`log_phase_starts`）都只读它，文案各一张表（`_SKIP_REASONS`、`_DETAIL_NO_POSITION`） |
+| 调用方要知道吗 | 不用：三个调用方只读 `reason` / `ranges`；下游提示词只读阶段列表 |
+| 以后改阶段 1 的规则改几处 | 1 处 |
+
+## 不在本 PR
+- 阶段 2..n 的锚点落在章内回忆、顺序又恰好对时发现不了（P6）；
+- 重新定位本身的判断规则（P2）；
+- 阶段被合并（P3）。
+
+## 补充（作者自查，10-19）
+对照返工经验第 6、7b 条自查第一版实现：「阶段 1 锚点不用」写成了 3 处（`phase_ranges` 的 `if i == 0`、`build_anchors` 与明细日志各一个 `phases[1:]`），并漏了第 4 个读取处 `distiller._phase_list_note`（全量 grep `anchor` 读取点发现）。改为 `checked_anchors` 一处定义，补目标检查 g5。代价：整卡跳过明细不再给出阶段 1 锚点的章号；阶段 1 锚点的质量已不影响任何区间与核对，不需要它。
+
+## 补充（复核 941c455，10-19）
+复核结论「代码行为无缺陷、交付未同步，不通过」。已补：
+1. `docs/specs/arc-phase-anchoring.md` §3.2 规则 1 仍写「阶段 1 锚点为空时从 0 开始」（暗示非空会参与定位）→ 改成新规则并指向 `checked_anchors`；`tests/test_phase_anchoring.py` `_A3` 注释同步。
+2. 变异驱动重跑（测试 PG，3 分 26 秒，全部符合预期），刷新 `tests/perf/arc_phase_anchoring_red_lines.json`：只有 M32 换了键名，红源集合不变；`test_lock_coverage` / `test_mutation_anchors` / `test_phase_anchoring` 87 passed。
+3. 本 spec 的调用方行号 1090/1110 → 1091/1111，测试数 116 → 117。
+
+不补：M8（阶段 2..n 空锚点在整卡跳过明细里写成「原文查不到」也照绿）——只影响明细文案，且是本 PR 之前就有的覆盖缺口，不在本 PR 目标内（返工经验 37）；已记入跟踪文档由 Tracy 定。（已被下一节取代：Tracy 要求按高内聚低耦合二审后修。）
+
+## 补充（二审：内聚与耦合，10-19，Tracy 要求）
+**问题**：`phase_ranges` 与 `log_phase_starts` 各自遍历锚点、各自判「空 / 查不到 / 回忆区 / 定位成功」——同一套判定写两处，与 P1 同类（规则两处、可以漂移）；M8 漏网也来自这里：明细的状态没有单一出处，文案写错测不出。明细日志还把整本书重新定位一遍。
+
+**修法**（`core/phase_anchoring.py`，对外行为不变）：
+1. `locate_starts` 逐阶段给出 `PhaseStart(k, anchor, status, pos, region)`，`StartStatus` 五态（`FROM_START` / `EMPTY` / `NOT_FOUND` / `IN_RETRO` / `LOCATED`）；不在第一个失败处停。
+2. `_skip_reason` 按阶段顺序取第一个不可用状态 → `_SKIP_REASONS` 表；都可用再核严格递增。`_ranges_from` 起点 → 区间。`phase_ranges` = 二者组合（签名不变）。
+3. `PhaseAnchors.starts` 带上这份结论（`build_anchors` 只定位一次）；`log_phase_starts` 读它，两个分支合成一个循环，无位置状态的文案查 `_DETAIL_NO_POSITION` 表，不再重新定位、不再算段落边界。
+4. `_field_of` 收掉 `label` / `anchor` 的两份 dict-or-attr 取值。
+
+**测试**：`test_u24` 补断言「空锚点明细写『锚点为空』」，新变异 M44（把 EMPTY 文案换成「原文查不到」）打红它；M5a / M20 / M31 定位串改指新代码、语义不变。变异驱动重跑（测试 PG）全部符合预期；产物 diff 只多 M44 一项，其余 43 项红源逐条不变 —— 重构行为等价的证据。10 个受影响文件 + `test_lock_coverage` 见 PR 描述。

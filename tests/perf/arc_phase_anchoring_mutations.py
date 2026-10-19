@@ -71,10 +71,8 @@ MUTATIONS = [
     ('M4b 改挂只取最早落点（状态类应取全部）', TARGET, [("repl", ANCH, [
         (_REHANG, "                    hit.add(landed[0])")])], "RED"),
     ('M5a 锚点查不到时当作全文末尾，照常检查（不跳过）', TARGET, [("repl", ANCH, [
-        ('        if loc is None:\n            return [], f"阶段 {i + 1} 锚点核对不上：{anchor}"',
-         "        if loc is None:\n"
-         "            starts.append(len(source_norm))\n"
-         "            continue")])], "RED"),
+        ("            out.append(PhaseStart(k, anchor, StartStatus.NOT_FOUND))",
+         "            out.append(PhaseStart(k, anchor, StartStatus.LOCATED, len(source_norm)))")])], "RED"),
     ('M5b 去掉锚点「严格递增」检查', TARGET, [("repl", ANCH, [
         ("        if b <= a:", "        if False:")])], "RED"),
     ('M6  锚点正常也整卡跳过', TARGET, [("repl", ANCH, [
@@ -128,8 +126,8 @@ MUTATIONS = [
         ("                if len(loc) > MAX_OCCURRENCES:",
          "                if False:  # 删去次数限制")])], "RED"),
     ('M20 阶段上界整体挪一（含下一阶段首字）', TARGET, [("repl", ANCH, [
-        ("    ranges = [(bounds[k], bounds[k + 1] if k + 1 < n else len(source_norm))",
-         "    ranges = [(bounds[k], (bounds[k + 1] + 1) if k + 1 < n else len(source_norm))")])], "RED"),
+        ("    return [(lo, hi) for lo, hi in zip(positions, [*positions[1:], norm_len])], \"\"",
+         "    return [(lo, hi) for lo, hi in zip(positions, [*(p + 1 for p in positions[1:]), norm_len])], \"\"")])], "RED"),
     ('M21 阶段上界退一（锚点前一字被排除）', TARGET, [("repl", ANCH, [
         (_PHASE_AT, "        if lo <= pos < hi - 1:")])], "RED"),
     ('M22 位置只取次匹配的第一处（单一命中）', TARGET, [("repl", QUOTES, [
@@ -166,10 +164,11 @@ MUTATIONS = [
          "    occurrences: list[DraftOccurrence] = []\n    phases: list[int] = []\n")])], "RED"),
     # ── 审计 §9.5 补（A1–A3），两个方向 ──
     ('M31 阶段 1 以外的空锚点退回取全文末尾（不跳过整卡）', TARGET, [("repl", ANCH, [
-        ('            return [], f"阶段 {i + 1} 锚点为空"',
-         "            starts.append(len(source_norm))\n            continue")])], "RED"),
-    ('M32 阶段 1 的空锚点也整卡跳过', TARGET, [("repl", ANCH, [
-        ("            if i == 0:\n                starts.append(0)\n                continue\n", "")])], "RED"),
+        ("            out.append(PhaseStart(k, anchor, StartStatus.EMPTY))",
+         "            out.append(PhaseStart(k, anchor, StartStatus.LOCATED, len(source_norm)))")])], "RED"),
+    ('M32 阶段 1 的锚点重新参与核对（空锚点整卡跳过、比顺序）', TARGET, [("repl", ANCH, [
+        ("    return [(k, _anchor_of(p)) for k, p in enumerate(phases, 1) if k > 1]",
+         "    return [(k, _anchor_of(p)) for k, p in enumerate(phases, 1) if k > 0]")])], "RED"),
     ('M33 dropped 按摘录计（核对不上的摘录也记一次去掉）', TARGET, [("repl", ANCH, [
         ("                    unverified += 1              # 查不到 → 不作位置证据\n",
          "                    unverified += 1              # 查不到 → 不作位置证据\n"
@@ -195,6 +194,17 @@ MUTATIONS = [
     ('M39 改挂过来的摘录压过所标阶段自己的摘录', TARGET, [("repl", ANCH, [
         ("        phase_quotes.append({t: own.get(t) or moved[t] for t in landed_all})",
          "        phase_quotes.append({t: moved.get(t) or own[t] for t in landed_all})")])], "RED"),
+    # ── phase1-anchor-not-checked 二审：明细与原因同出 locate_starts ──
+    ('M44 整卡跳过明细把空锚点写成「原文查不到」', TARGET, [("repl", ANCH, [
+        ('    StartStatus.EMPTY: "锚点为空",\n', '    StartStatus.EMPTY: "原文查不到",\n')])], "RED"),
+    ('M45 多个阶段不可用时取最后一个的原因', TARGET, [("repl", ANCH, [
+        ("    for st in starts:\n        template = _SKIP_REASONS.get(st.status)",
+         "    for st in reversed(starts):\n        template = _SKIP_REASONS.get(st.status)")])], "RED"),
+    ('M46 严格递增不含阶段 1 的起点 0', TARGET, [("repl", ANCH, [
+        ("    positions = [st.pos for st in starts]\n    for a, b in zip(positions, positions[1:]):",
+         "    positions = [st.pos for st in starts][1:]\n    for a, b in zip(positions, positions[1:]):")])], "RED"),
+    ('M47 相等位置不算不严格递增', TARGET, [("repl", ANCH, [
+        ("        if b <= a:", "        if b < a:")])], "RED"),
     # ── P15 省略号拼接档（**锚点专用**）──
     ('M40 省略号拼接档起点取末段而非首段', TARGET, [("repl", QUOTES, [
         ("    return [starts[0]]", "    return [starts[-1]]")])], "RED"),

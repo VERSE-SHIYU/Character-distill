@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""阶段 1 的范围一律从全书开头算起（它的锚点只参与顺序核对）。"""
+"""阶段 1 的范围一律从全书开头算起；它的锚点不参与任何核对（10-19 起，spec `phase1-anchor-not-checked.md`）。"""
 from __future__ import annotations
 
 from core import phase_anchoring
@@ -33,6 +33,8 @@ def test_g3_phase2_still_starts_at_its_anchor():
     assert ph.ranges[1][0] == normalize(_SRC).index(normalize(_A2))
 
 
-def test_g4_order_check_still_uses_phase1_anchor():
+def test_g4_phase1_anchor_is_not_order_checked():
+    """原 g4 断言「顺序核对仍用阶段 1 锚点」—— 10-19 起反过来：阶段 1 锚点不划区间，也不比顺序
+    （祈灼重转 1989b374baea：它把第 122 章这个对的阶段 2 起点换掉了）。"""
     ph = phase_anchoring.build_anchors(_phases(_A2, _A1), _SRC)
-    assert "不严格递增" in ph.reason
+    assert ph.reason == ""

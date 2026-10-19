@@ -56,7 +56,7 @@ def _draft(behaviors, n=3, anchors=None, name="角色"):
             "situation_behaviors": behaviors}
 
 
-_A3 = {2: _Q2, 3: _Q3}          # 阶段 1 锚点留空 → 从 0 开始
+_A3 = {2: _Q2, 3: _Q3}          # 阶段 1 锚点留空（阶段 1 无论锚点空不空都从 0 开始）
 
 
 def _card(behaviors, src=_SRC, n=3, anchors=_A3):
@@ -295,8 +295,30 @@ def test_u24_empty_anchor_on_a_middle_phase_skips_with_its_own_reason(caplog):
     """中间阶段锚点为空 → 整卡跳过，原因写「锚点为空」，不是碰巧撞上递增检查（§9.5 A1）。"""
     with caplog.at_level(logging.WARNING, logger="core.phase_anchoring"):
         _card([_row([_occ(3, _Q3)], "x")], anchors={2: "", 3: _Q3})
-    assert [r.getMessage() for r in caplog.records if "整卡跳过位置检查" in r.getMessage()] == [
-        "整卡跳过位置检查（阶段 2 锚点为空）：角色"]
+    # 原因与明细同出 `locate_starts` 的同一份结论：空锚点明细写「锚点为空」，不写成「原文查不到」（M44）
+    msgs = [r.getMessage() for r in caplog.records]
+    assert ([m for m in msgs if "整卡跳过位置检查" in m],
+            [m for m in msgs if m.startswith("整卡跳过明细（角色）阶段 2")]) == (
+        ["整卡跳过位置检查（阶段 2 锚点为空）：角色"],
+        ["整卡跳过明细（角色）阶段 2「L2」锚点「」→ 锚点为空"])
+
+
+def test_u24b_first_unusable_phase_decides_the_reason():
+    """多个阶段不可用时，原因取**阶段顺序上的第一个**（与旧版遇首个失败即返回一致；M45）。"""
+    assert phase_anchoring.phase_ranges(
+        _phases(3, {2: "", 3: "查无此句"}), _SRC, normalize(_SRC)) == ([], "阶段 2 锚点为空")
+
+
+def test_u18b_phase2_anchor_at_text_start_is_not_after_phase1():
+    """阶段 1 一律从 0 起，也参与严格递增：阶段 2 锚点在全文开头 = 0 → 0，整卡跳过（M46）。"""
+    assert phase_anchoring.phase_ranges(
+        _phases(3, {2: _Q1, 3: _Q3}), _SRC, normalize(_SRC)) == ([], "锚点位置不严格递增：0 → 0")
+
+
+def test_u18c_equal_anchor_positions_are_not_strictly_increasing():
+    """两个阶段锚点同一句 → 位置相等，按不严格递增整卡跳过（空区间不许出现；M47）。"""
+    assert phase_anchoring.phase_ranges(
+        _phases(3, {2: _Q2, 3: _Q2}), _SRC, normalize(_SRC)) == ([], "锚点位置不严格递增：5 → 5")
 
 
 _COUNT_ROWS = [_row([_occ(2, "查无此句"), _occ(2, _Q2), _occ(1, "又查无此句")], "计数")]
