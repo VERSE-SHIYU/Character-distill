@@ -61,6 +61,9 @@ def test_e2_resume_row_restamped_with_this_request(store, user_id, monkeypatch):
     task_id = f"dt_{uuid.uuid4().hex}"
     A._seed_checkpoint_row(store, user_id, tid, task_id=task_id, chunk_size=3000,
                            fp=text_fingerprint(body), status="error", message="x")
+    # 旧行先记成「重新蒸馏、工作台卡片详情」，才看得出这次请求有没有把两列都改写
+    A._run_async(store.update_distill_task(task_id, force=True, entry="workbench_card"))
+    assert _row(store, task_id) == (True, "workbench_card")
     resp, _ = _start(monkeypatch, store, user_id, tid,
                      {"character_name": "甲", "force": False, "entry": "task_bar"})
     assert resp.status_code == 200, resp.text

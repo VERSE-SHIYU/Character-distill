@@ -76,12 +76,16 @@ describe('G8 入口 × 是否弹窗', () => {
     await expectStartedWithoutPrompt(entry)
   })
 
-  it('工作台卡片详情「重新蒸馏」：弹窗，先不发请求', async () => {
+  it('工作台卡片详情「重新蒸馏」：弹窗，先不发请求；确认后 force=true、entry=workbench_card', async () => {
     render(<DistillWorkbench />)
     await waitFor(() => expect(document.querySelector('.dw-detail-scroll')).toBeInTheDocument())
     const btn = () => [...document.querySelectorAll('.dw-detail-scroll button')].find((b) => b.textContent.includes('重新蒸馏'))
     await waitFor(() => expect(btn()).toBeTruthy())
     fireEvent.click(btn())
     await expectPromptWithoutStart()
+    useAppStore.getState().confirmRedistill()
+    await waitFor(() => expect(postJSON).toHaveBeenCalledTimes(1))
+    expect(postJSON).toHaveBeenCalledWith('/api/distill/start',
+      { text_id: 'x1', character_name: '祈灼', force: true, entry: 'workbench_card' })
   })
 })
