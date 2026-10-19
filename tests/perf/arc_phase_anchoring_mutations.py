@@ -128,8 +128,8 @@ MUTATIONS = [
         ("                if len(loc) > MAX_OCCURRENCES:",
          "                if False:  # 删去次数限制")])], "RED"),
     ('M20 阶段上界整体挪一（含下一阶段首字）', TARGET, [("repl", ANCH, [
-        ("    ranges = [(bounds[k], bounds[k + 1] if k + 1 < n else len(source_norm))",
-         "    ranges = [(bounds[k], (bounds[k + 1] + 1) if k + 1 < n else len(source_norm))")])], "RED"),
+        ("    ranges = [(starts[k], starts[k + 1] if k + 1 < n else len(source_norm))",
+         "    ranges = [(starts[k], (starts[k + 1] + 1) if k + 1 < n else len(source_norm))")])], "RED"),
     ('M21 阶段上界退一（锚点前一字被排除）', TARGET, [("repl", ANCH, [
         (_PHASE_AT, "        if lo <= pos < hi - 1:")])], "RED"),
     ('M22 位置只取次匹配的第一处（单一命中）', TARGET, [("repl", QUOTES, [
@@ -168,8 +168,8 @@ MUTATIONS = [
     ('M31 阶段 1 以外的空锚点退回取全文末尾（不跳过整卡）', TARGET, [("repl", ANCH, [
         ('            return [], f"阶段 {i + 1} 锚点为空"',
          "            starts.append(len(source_norm))\n            continue")])], "RED"),
-    ('M32 阶段 1 的空锚点也整卡跳过', TARGET, [("repl", ANCH, [
-        ("            if i == 0:\n                starts.append(0)\n                continue\n", "")])], "RED"),
+    ('M32 阶段 1 的锚点重新参与核对（空锚点整卡跳过、比顺序）', TARGET, [("repl", ANCH, [
+        ("        if i == 0:\n            starts.append(0)\n            continue\n", "")])], "RED"),
     ('M33 dropped 按摘录计（核对不上的摘录也记一次去掉）', TARGET, [("repl", ANCH, [
         ("                    unverified += 1              # 查不到 → 不作位置证据\n",
          "                    unverified += 1              # 查不到 → 不作位置证据\n"

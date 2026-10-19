@@ -92,7 +92,9 @@ def phase_ranges(phases, source_text: str, source_norm: str,
     """各阶段在规范化原文里的半开区间 `[起, 止)`，以及整卡跳过的原因（空串 = 不跳过）。
 
     阶段 k 的范围是 `[锚点 k 位置, 锚点 k+1 位置)`：锚点取**最长段**在全文的**首次**出现；
-    阶段 1 一律从 0 开始，阶段 1 的锚点只用于顺序核对；最后一阶段到全文末尾。每个锚点的位置由
+    阶段 1 一律从 0 开始，**阶段 1 的锚点不定位、不参与任何核对**（它不划区间；模型写的阶段 1
+    锚点常取自回忆，拿它比顺序只会误判别的阶段 —— spec `phase1-anchor-not-checked.md`）；
+    最后一阶段到全文末尾。每个锚点的位置由
     `quotes.locate_anchor` 给出（逐字 → 规范化 → 省略号拼接，判定顺序只在那一处）。
     以下任一情况返回空表与原因，由调用方整卡跳过（规则 2 / D7）：阶段 1 以外的锚点为空（与
     「查不到」同为不可定位）、锚点核对不上、锚点落在回忆区（`retro`，倒叙章节里的位置不是
@@ -100,11 +102,12 @@ def phase_ranges(phases, source_text: str, source_norm: str,
     """
     starts: list[int] = []
     for i, phase in enumerate(phases):
+        # 阶段 1 一律从全书开头算起：它的锚点不定位、不比顺序（见上方文档）
+        if i == 0:
+            starts.append(0)
+            continue
         anchor = _anchor_of(phase)
         if not anchor:
-            if i == 0:
-                starts.append(0)
-                continue
             return [], f"阶段 {i + 1} 锚点为空"
         loc = locate_anchor(source_text, source_norm, anchor, paragraphs)
         if loc is None:
@@ -117,8 +120,7 @@ def phase_ranges(phases, source_text: str, source_norm: str,
         if b <= a:
             return [], f"锚点位置不严格递增：{a} → {b}"
     n = len(phases)
-    bounds = [0, *starts[1:]]          # 阶段 1 一律从全书开头算起；它的锚点只参与顺序核对
-    ranges = [(bounds[k], bounds[k + 1] if k + 1 < n else len(source_norm))
+    ranges = [(starts[k], starts[k + 1] if k + 1 < n else len(source_norm))
               for k in range(n)]
     return ranges, ""
 
@@ -159,7 +161,7 @@ def build_anchors(phases, source_text: str, *,
         return PhaseAnchors(0, "", [], "")
     source_norm = normalize(source_text)
     paragraphs = (paragraph_bounds(source_text, source_norm)
-                  if any(has_ellipsis(_anchor_of(p)) for p in phases) else None)
+                  if any(has_ellipsis(_anchor_of(p)) for p in phases[1:]) else None)
     ranges, reason = phase_ranges(phases, source_text, source_norm, paragraphs, retro)
     return PhaseAnchors(len(phases), source_norm, ranges, reason, tuple(retro), source_text)
 
@@ -209,8 +211,8 @@ def log_phase_starts(phases, source_text: str, anchors: PhaseAnchors, name: str)
     if skipped:
         logger.warning("整卡跳过位置检查（%s）：%s", anchors.reason, name)
         paragraphs = paragraph_bounds(source_text, anchors.source_norm)
-        locs = [locate_anchor(source_text, anchors.source_norm, a, paragraphs) if a else None
-                for a in map(_anchor_of, phases)]
+        locs = [None] + [locate_anchor(source_text, anchors.source_norm, a, paragraphs) if a else None
+                         for a in map(_anchor_of, phases[1:])]      # 阶段 1 锚点不定位（同 phase_ranges）
         positions = list(raw_offsets(
             source_text, anchors.source_norm, [loc[0] for loc in locs if loc is not None]))
         wheres = iter(chapter_labels(source_text, positions))
@@ -219,8 +221,11 @@ def log_phase_starts(phases, source_text: str, anchors: PhaseAnchors, name: str)
             anchor = _anchor_of(phase)
             label = phase.get("label", "") if isinstance(phase, dict) else getattr(phase, "label", "")
             head = f"整卡跳过明细（{name}）阶段 {k}「{label}」锚点「{anchor}」→ "
+            if k == 1:
+                logger.warning("%s不参与核对（阶段 1 从全书开头算起）", head)
+                continue
             if not anchor:
-                logger.warning("%s锚点为空%s", head, "（阶段 1 从全书开头算起）" if k == 1 else "")
+                logger.warning("%s锚点为空", head)
                 continue
             if loc is None:
                 logger.warning("%s原文查不到", head)

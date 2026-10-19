@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import copy
 
-import pytest
-
 from core import phase_anchoring
 from core.quotes import normalize
 from test_phase_locate_goal import _PHASES, _RETRO, _SRC, _Judge, _YES, _distiller, _draft
@@ -33,13 +31,11 @@ def _build(phases, retro=()):
     return phase_anchoring.build_anchors(phases, _SRC, retro=retro)
 
 
-@pytest.mark.xfail(strict=True, reason="实现提交前：阶段 1 锚点仍参与核对")
 def test_g1_late_phase1_anchor_does_not_skip_the_card():
     ph = _build(_GOOD)
     assert (ph.reason, ph.ranges[1][0]) == ("", normalize(_SRC).index(normalize("那天他在桥边初遇阿月")))
 
 
-@pytest.mark.xfail(strict=True, reason="实现提交前：阶段 1 锚点仍参与核对")
 def test_g2_late_phase1_anchor_does_not_trigger_relocation():
     judge = _Judge(_YES)
     data = _draft(_GOOD)
@@ -47,7 +43,6 @@ def test_g2_late_phase1_anchor_does_not_trigger_relocation():
     assert (judge.asked, data) == ([], _draft(_GOOD))
 
 
-@pytest.mark.xfail(strict=True, reason="实现提交前：阶段 1 锚点仍参与核对")
 def test_g3_unfindable_or_retro_phase1_anchor_is_ignored():
     missing = copy.deepcopy(_GOOD)
     missing[0]["anchor"] = "查无此句"

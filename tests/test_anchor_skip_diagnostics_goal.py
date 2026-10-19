@@ -62,8 +62,7 @@ def test_g1_one_skip_warning_per_card(caplog):
 def test_g2_each_phase_gets_one_detail_line(caplog):
     msgs = _messages(caplog, _RETRO, _draft("中间己己己己己", anchor3="查无此句"))
     assert [m for m in msgs if m.startswith("整卡跳过明细")] == [
-        "整卡跳过明细（角色）阶段 1「L1」锚点「开头甲甲甲甲甲」→ 第1章，规范化位置 3，不在回忆区；"
-        "前文：第1章⏎",
+        "整卡跳过明细（角色）阶段 1「L1」锚点「开头甲甲甲甲甲」→ 不参与核对（阶段 1 从全书开头算起）",
         "整卡跳过明细（角色）阶段 2「L2」锚点「中间己己己己己」→ 第4章，规范化位置 58，"
         "在回忆区（第4–4章日记）；前文：" + _SRC[_SRC.index("中间己") - 60:_SRC.index("中间己")].replace("\n", "⏎"),
         "整卡跳过明细（角色）阶段 3「L3」锚点「查无此句」→ 原文查不到"]
@@ -97,11 +96,10 @@ def test_g6_raw_conversion_failure_falls_back_to_unknown_chapter(caplog, monkeyp
     """换不回原文坐标（`raw_offsets` 给 None）→ 章号写「章号未知」，前文退回规范化文字。"""
     monkeypatch.setattr("core.phase_anchoring.raw_offsets", lambda *a: [None] * len(a[2]))
     msgs = _messages(caplog, _RETRO, _draft("中间己己己己己"))
-    detail = [m for m in msgs if m.startswith("整卡跳过明细")]
+    detail = [m for m in msgs if m.startswith("整卡跳过明细")][1:]   # 阶段 1 不定位（不参与核对），从阶段 2 看
     norm = normalize(_SRC)
     assert ([m.split("；前文：")[0].rsplit("→ ", 1)[-1] for m in detail],
             [m.split("；前文：")[1] for m in detail]) == (
-        ["章号未知，规范化位置 3，不在回忆区",
-         "章号未知，规范化位置 58，在回忆区（第4–4章日记）",
+        ["章号未知，规范化位置 58，在回忆区（第4–4章日记）",
          "章号未知，规范化位置 30，不在回忆区"],
-        [norm[max(0, p - 60):p] for p in (3, 58, 30)])
+        [norm[max(0, p - 60):p] for p in (58, 30)])
