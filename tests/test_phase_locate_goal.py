@@ -200,3 +200,15 @@ def test_g8b_run_stream_locates_before_converting(monkeypatch, store):
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     P._run_stream(monkeypatch, store, uid, P._seed_text(store, uid))
     assert _ORDER == [("locate", _RETRO), ("card", True)]
+
+
+# ── 9：回忆区口径与位置核对同一份（审计 #185 非阻断 1）────────────────────────────
+
+@pytest.mark.xfail(strict=True, reason="回忆区口径未统一：phase_locate 直接读 ranges")
+def test_g9_retro_that_does_not_match_the_book_counts_as_unmarked_everywhere():
+    """回忆区章号与原文对不上（原文变了）→ 位置核对按「未标」处理（`RetroRegions.spans` 为空）；
+    重新定位也必须同口径：第 6 章照常进候选，而不是一边按未标、一边仍排除第 6 章。"""
+    stale = RetroRegions("marked", (ChapterRange(6, 99, "日记"),))
+    judge = _Judge(_YES)
+    _distiller(judge).locate_phase_starts(_draft(), _SRC, "他", stale)
+    assert (stale.spans(_SRC), 6 in {n for _, n in judge.asked}) == ([], True)
