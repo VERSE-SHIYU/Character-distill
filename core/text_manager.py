@@ -611,7 +611,8 @@ class TextManager:
                 actual_card_id, user_id,
                 f"[distill-validator] 检测到注入性内容，已清除并待人工复核：{verdict.summary[:300]}",
             )
-            print(f"[card-guard] flagged {len(verdict.flagged)} leaves (neutralized {verdict.neutralized}): {verdict.summary}")
+            logger.warning("[card-guard] flagged %s leaves (neutralized %s): %s",
+                           len(verdict.flagged), verdict.neutralized, verdict.summary)
 
         text_rec = await self._storage.get_text_owned(text_id, user_id)
         content = text_rec.get("content", "")

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+from core import task_log
 from core.nonfatal import nonfatal
 from core.request_context import current_user_id
 from core.scheduling import submit_to_main_loop
 from core.tokens import count_tokens
+
+logger = logging.getLogger(__name__)
 
 
 # 用量 dict 里「厂商可能不回」的字段（DeepSeek 专有）。字段名与含义以官方文档为准：
@@ -97,12 +101,14 @@ def try_record_usage(
     """
     user_id = current_user_id()
     if not storage or not user_id:
-        print(f"[{source}] usage not recorded: storage/user_id missing (user={user_id}, action={action})")
+        logger.warning("[%s] usage not recorded: storage/user_id missing (user=%s, action=%s)",
+                       source, user_id, action)
         return
     if usage is None:
         usage = llm.last_usage
     if not usage:
-        print(f"[{source}] usage not recorded: no usage data (user={user_id}, action={action})")
+        logger.warning("[%s] usage not recorded: no usage data (user=%s, action=%s)",
+                       source, user_id, action)
         return
     model = getattr(llm, "_model", "") or ""
     pt = usage.get("prompt_tokens", 0)
@@ -111,6 +117,7 @@ def try_record_usage(
     chunk_count = usage.get("chunk_count")
     cache_hit = usage.get(CACHE_HIT_FIELD)
     cache_miss = usage.get(CACHE_MISS_FIELD)
+    task_log.add_usage(action, pt, ct, cache_hit, cache_miss)
 
     async def _write() -> None:
         async with nonfatal("usage", f"record usage ({source}/{action})"):

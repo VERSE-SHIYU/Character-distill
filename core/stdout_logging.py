@@ -15,6 +15,8 @@ import logging
 import sys
 from collections.abc import Callable
 
+from core.task_log import TaskIdFilter
+
 
 class _StdoutHandler(logging.StreamHandler):
     """读时现取 `sys.stdout`，写法照抄标准库 `logging._StderrHandler`。
@@ -38,8 +40,11 @@ class _StdoutHandler(logging.StreamHandler):
 
 
 _handler = _StdoutHandler()
+_handler.addFilter(TaskIdFilter())
 _handler.setFormatter(
-    logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S")
+    logging.Formatter(
+        "%(asctime)s %(levelname)s [%(task)s] %(name)s: %(message)s", datefmt="%H:%M:%S"
+    )
 )
 
 

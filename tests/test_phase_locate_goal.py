@@ -142,9 +142,10 @@ def test_g7_one_monitoring_line_per_phase(caplog):
     with caplog.at_level(logging.WARNING):
         _distiller(_Judge(_YES)).locate_phase_starts(_draft(), _SRC, "他", _RETRO)
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("[phase_locate]")]
+    lines = [m for m in lines if "→ 第" in m]     # 候选明细与「已换成」由目标检查覆盖
     assert lines == [
-        "[phase_locate] card=他 阶段 2「初遇心动」→ 第2章，答是的章 [2, 3]；锚点「那天他在桥边初遇阿月。」",
-        "[phase_locate] card=他 阶段 3「远行求学」→ 第4章，答是的章 [4, 5]；锚点「他终于决定远行求学。」"]
+        "[phase_locate] card=他 阶段 2「初遇心动」→ 第2章，答是的章 [2, 3]；锚点「那天他在桥边初遇阿月。」；理由：是",
+        "[phase_locate] card=他 阶段 3「远行求学」→ 第4章，答是的章 [4, 5]；锚点「他终于决定远行求学。」；理由：是"]
 
 
 # ── 8：两个蒸馏入口都在转卡前调它，并把回忆区交给它 ──────────────────────────────

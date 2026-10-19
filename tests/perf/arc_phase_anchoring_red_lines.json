@@ -32,7 +32,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]\"]",
+        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]（摘",
         0
       ],
       [
@@ -98,7 +98,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]\"]",
+        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]（摘",
         0
       ],
       [
@@ -216,7 +216,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]\"]",
+        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]（摘",
         0
       ],
       [
@@ -305,7 +305,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]\"]",
+        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]（摘",
         0
       ],
       [
@@ -780,7 +780,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]\"]",
+        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]（摘",
         0
       ],
       [
@@ -900,7 +900,7 @@
     "M37 删去「改挂」的 warning": [
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]\"]",
+        "assert [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessage()] == [ \"改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]（摘",
         0
       ]
     ],

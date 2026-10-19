@@ -149,6 +149,8 @@ class PhaseResult:
     anchor: str
     yes: list[int]
     why: str = ""
+    # 每个候选章的判断：（章、是否、why、所选句子；否时句子为空串）—— 供监测行
+    judged: list[tuple[int, bool, str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -195,6 +197,11 @@ def locate(phases: Sequence[dict], source_text: str, retro: RetroRegions, name: 
         jobs += [(k, n) for n in cands if sents[n]]
     replies = judge([judge_prompt(name, phases[k - 1], n, sents[n]) for k, n in jobs])
     verdicts = {job: parse_verdict(r, len(sents[job[1]])) for job, r in zip(jobs, replies)}
+    judged: dict[int, list[tuple[int, bool, str, str]]] = {}
+    for k, n in jobs:
+        v = verdicts[(k, n)]
+        sent = sents[n][v.sent - 1] if v.happens and v.sent else ""
+        judged.setdefault(k, []).append((n, v.happens, v.why, sent))
 
     source_norm = normalize(source_text)
     ends = sorted(start for start, _ in bodies.values()) + [len(source_text)]
@@ -202,14 +209,14 @@ def locate(phases: Sequence[dict], source_text: str, retro: RetroRegions, name: 
     anchors, prev = [""], 0
     for k in range(2, len(phases) + 1):
         yes = sorted(n for (kk, n), v in verdicts.items() if kk == k and v.happens)
-        row = PhaseResult(k, None, "", yes)
+        row = PhaseResult(k, None, "", yes, judged=judged.get(k, []))
         for n in (c for c in yes if c > prev):
             start = bodies[n][0]
             end = next(e for e in ends if e > start)
             v = verdicts[(k, n)]
             anchor = _unique_anchor(source_text, source_norm, start, end, sents[n], v.sent - 1)
             if anchor:
-                row = PhaseResult(k, n, anchor, yes, v.why)
+                row = PhaseResult(k, n, anchor, yes, v.why, judged.get(k, []))
                 break
         rows.append(row)
         if row.chapter is None:
