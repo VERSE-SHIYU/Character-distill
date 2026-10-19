@@ -352,12 +352,147 @@ def _generate_awakening(llm, card: CharacterCard, storage=None) -> str:
         return ""
 
 
+def _distill_to_draft(
+    task_id: str, name: str, content: str, text_type: str,
+    aliases: list[str], resume_candidates: dict[int, dict] | None,
+    distiller: Distiller,
+) -> dict | None:
+    """蒸馏 → 解析 JSON → 补关系；失败时已 `_set_task`，返回 None。"""
+    # Step 2: run incremental distill (synchronous, collect full output)
+    full = ""
+    full_format = ""
+    cur_phase = None
+    EXPECT_CHARS = 3500
+
+    def _persist_chunk(index: int, result: str, fingerprint: str) -> None:
+        """每片 Map 完成即落库（ON CONFLICT DO NOTHING，重写同 index 是 no-op）。
+
+        写失败不致命（该片退化为下次重跑），但不静默吞——续跑省调用靠的就是这些片。
+        """
+        async def _save() -> None:
+            await get_storage().save_distill_chunk(task_id, index, result, fingerprint)
+        try:
+            submit_to_main_loop(_save(), timeout=10)
+        except Exception as exc:
+            logger.warning("Persist chunk %s of %s failed (non-fatal): %s",
+                           index, task_id, exc, exc_info=True)
+
+    stream = distiller.distill_incremental_stream(
+        content, name,
+        aliases=aliases, text_type=text_type,
+        on_chunk_done=_persist_chunk, resume_candidates=resume_candidates,
+    )
+    for piece in stream:
+        with _task_lock:
+            aborted = _tasks.get(task_id, {}).get("status") == "error"
+        if aborted:
+            # cancel/删文本置了内存 error 作停止信号。这里补一个终态 DB 写，
+            # 盖掉 cancel 之后 bg 可能交错的最后一次 running 进度写（避免 DB
+            # 停在 running 占 count_running 槽）。message 从内存取已取消原因。
+            _set_task(task_id, {"status": "error"})
+            return None
+        if isinstance(piece, dict):
+            if "error" in piece:
+                print(f"[distill] Stream error for {name}: {piece['error']}")
+                _set_task(task_id, {"status": "error", "message": piece["error"], "character": name})
+                return None
+            if piece.get("heartbeat"):
+                continue
+            cur_phase = piece.get("status", cur_phase)
+            current = piece.get("current", 0)
+            total = piece.get("total", 1)
+            status = piece.get("status", "analyzing")
+            if status == "analyzing":
+                pct = 10 + int((current / total) * 60) if total > 0 else 10
+                msg = f"分析角色 {current}/{total}"
+            elif status == "merging":
+                pct = 70 + int((current / total) * 20) if total > 0 else 75
+                msg = f"合并角色信息 {current}/{total}"
+            elif status == "formatting":
+                full_format = ""
+                pct = 40
+                msg = "生成角色卡…"
+            else:
+                pct = 10
+                msg = ""
+            _set_task(task_id, {
+                "status": status,
+                "current": current,
+                "total": total,
+                "progress_pct": pct,
+                "character": name,
+                "message": msg,
+            })
+        else:
+            if cur_phase == "formatting":
+                full_format += piece
+                f_len = len(full_format)
+                f_pct = 40 + min(int(f_len / EXPECT_CHARS * 55), 55)
+                _set_task(task_id, {"progress_pct": f_pct})
+            full += piece
+
+    # Step 3: parse + validate — 健壮处理 LLM 可能的格式问题
+    stripped = full.strip()
+    data = None
+
+    import re
+    # 1. 去掉 markdown 代码块标记
+    fence_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', stripped, re.DOTALL)
+    if fence_match:
+        stripped = fence_match.group(1).strip()
+
+    # 2. 尝试直接解析
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        # 3. 提取最外层的 { ... }（处理前缀/后缀文字）
+        brace_depth = 0
+        json_start = -1
+        json_end = -1
+        for i, ch in enumerate(stripped):
+            if ch == '{':
+                if brace_depth == 0:
+                    json_start = i
+                brace_depth += 1
+            elif ch == '}':
+                brace_depth -= 1
+                if brace_depth == 0 and json_start != -1:
+                    json_end = i
+                    break  # 找到第一个完整的顶层 {}
+
+        if json_start != -1 and json_end != -1:
+            try:
+                data = json.loads(stripped[json_start:json_end + 1])
+            except json.JSONDecodeError:
+                pass
+
+    if data is None:
+        if not stripped:
+            logger.error("Empty format output for %s - Map/Reduce likely failed upstream", name)
+            _set_task(task_id, {"status": "error", "message": "蒸馏失败：服务内部异常，请重试", "character": name})
+        else:
+            logger.error("JSON parse failed for %s (first 200 chars): %r", name, stripped[:200])
+            _set_task(task_id, {"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
+        return None
+
+    try:
+        # 主调用（维度 F）只出关系名单，细节在转卡前按批补齐（§4.5）。本通道的草稿在
+        # 消费方成型，补关系也只能在这里做 —— 前缀与主调用同源（`_longcontext_prompt`）。
+        distiller.fill_relationships(data, content, name)
+    except Exception as exc:
+        logger.error("Relationship batching failed for %s: %s", name, exc, exc_info=True)
+        _set_task(task_id, {"status": "error", "message": "蒸馏失败：关系生成失败，请重试", "character": name})
+        return None
+    return data
+
+
 @T.spanned("distill.task", wf="distill")
 def _run_distill_task(
     task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
     content: str, text_type: str, llm: LLMAdapter | None,
     embedding_key: str = "", embedding_region: str = "",
     resume_candidates: dict[int, dict] | None = None,
+    draft: dict | None = None,
 ) -> None:
     """Background thread: run distillation end-to-end, update _tasks[task_id].
 
@@ -420,130 +555,9 @@ def _run_distill_task(
 
         _set_task(task_id, {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
 
-        # Step 2: run incremental distill (synchronous, collect full output)
-        full = ""
-        full_format = ""
-        cur_phase = None
-        EXPECT_CHARS = 3500
-
-        def _persist_chunk(index: int, result: str, fingerprint: str) -> None:
-            """每片 Map 完成即落库（ON CONFLICT DO NOTHING，重写同 index 是 no-op）。
-
-            写失败不致命（该片退化为下次重跑），但不静默吞——续跑省调用靠的就是这些片。
-            """
-            async def _save() -> None:
-                await get_storage().save_distill_chunk(task_id, index, result, fingerprint)
-            try:
-                submit_to_main_loop(_save(), timeout=10)
-            except Exception as exc:
-                logger.warning("Persist chunk %s of %s failed (non-fatal): %s",
-                               index, task_id, exc, exc_info=True)
-
-        stream = distiller.distill_incremental_stream(
-            content, name,
-            aliases=aliases, text_type=text_type,
-            on_chunk_done=_persist_chunk, resume_candidates=resume_candidates,
-        )
-        for piece in stream:
-            with _task_lock:
-                aborted = _tasks.get(task_id, {}).get("status") == "error"
-            if aborted:
-                # cancel/删文本置了内存 error 作停止信号。这里补一个终态 DB 写，
-                # 盖掉 cancel 之后 bg 可能交错的最后一次 running 进度写（避免 DB
-                # 停在 running 占 count_running 槽）。message 从内存取已取消原因。
-                _set_task(task_id, {"status": "error"})
-                return
-            if isinstance(piece, dict):
-                if "error" in piece:
-                    print(f"[distill] Stream error for {name}: {piece['error']}")
-                    _set_task(task_id, {"status": "error", "message": piece["error"], "character": name})
-                    return
-                if piece.get("heartbeat"):
-                    continue
-                cur_phase = piece.get("status", cur_phase)
-                current = piece.get("current", 0)
-                total = piece.get("total", 1)
-                status = piece.get("status", "analyzing")
-                if status == "analyzing":
-                    pct = 10 + int((current / total) * 60) if total > 0 else 10
-                    msg = f"分析角色 {current}/{total}"
-                elif status == "merging":
-                    pct = 70 + int((current / total) * 20) if total > 0 else 75
-                    msg = f"合并角色信息 {current}/{total}"
-                elif status == "formatting":
-                    full_format = ""
-                    pct = 40
-                    msg = "生成角色卡…"
-                else:
-                    pct = 10
-                    msg = ""
-                _set_task(task_id, {
-                    "status": status,
-                    "current": current,
-                    "total": total,
-                    "progress_pct": pct,
-                    "character": name,
-                    "message": msg,
-                })
-            else:
-                if cur_phase == "formatting":
-                    full_format += piece
-                    f_len = len(full_format)
-                    f_pct = 40 + min(int(f_len / EXPECT_CHARS * 55), 55)
-                    _set_task(task_id, {"progress_pct": f_pct})
-                full += piece
-
-        # Step 3: parse + validate — 健壮处理 LLM 可能的格式问题
-        stripped = full.strip()
-        data = None
-
-        import re
-        # 1. 去掉 markdown 代码块标记
-        fence_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', stripped, re.DOTALL)
-        if fence_match:
-            stripped = fence_match.group(1).strip()
-
-        # 2. 尝试直接解析
-        try:
-            data = json.loads(stripped)
-        except json.JSONDecodeError:
-            # 3. 提取最外层的 { ... }（处理前缀/后缀文字）
-            brace_depth = 0
-            json_start = -1
-            json_end = -1
-            for i, ch in enumerate(stripped):
-                if ch == '{':
-                    if brace_depth == 0:
-                        json_start = i
-                    brace_depth += 1
-                elif ch == '}':
-                    brace_depth -= 1
-                    if brace_depth == 0 and json_start != -1:
-                        json_end = i
-                        break  # 找到第一个完整的顶层 {}
-
-            if json_start != -1 and json_end != -1:
-                try:
-                    data = json.loads(stripped[json_start:json_end + 1])
-                except json.JSONDecodeError:
-                    pass
-
+        data = draft if draft is not None else _distill_to_draft(
+            task_id, name, content, text_type, aliases, resume_candidates, distiller)
         if data is None:
-            if not stripped:
-                logger.error("Empty format output for %s - Map/Reduce likely failed upstream", name)
-                _set_task(task_id, {"status": "error", "message": "蒸馏失败：服务内部异常，请重试", "character": name})
-            else:
-                logger.error("JSON parse failed for %s (first 200 chars): %r", name, stripped[:200])
-                _set_task(task_id, {"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
-            return
-
-        try:
-            # 主调用（维度 F）只出关系名单，细节在转卡前按批补齐（§4.5）。本通道的草稿在
-            # 消费方成型，补关系也只能在这里做 —— 前缀与主调用同源（`_longcontext_prompt`）。
-            distiller.fill_relationships(data, content, name)
-        except Exception as exc:
-            logger.error("Relationship batching failed for %s: %s", name, exc, exc_info=True)
-            _set_task(task_id, {"status": "error", "message": "蒸馏失败：关系生成失败，请重试", "character": name})
             return
 
         # 模型写的阶段锚点核对不过时，按原文重新找起点（spec phase-locate）；不抛、找不到不动草稿。
