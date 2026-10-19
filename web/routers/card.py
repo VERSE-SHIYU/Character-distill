@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from card_visibility import page_meta as card_page_meta
@@ -63,44 +62,6 @@ async def save_card_avatar(
         raise HTTPException(400, "Avatar data too short")
     await storage.save_card_avatar(card_id, user["id"], body.data)
     return {"ok": True}
-
-
-@router.get("/{card_id}/export")
-@limiter.limit("60/minute")
-async def export_card(
-    card_id: str,
-    request: Request,
-    user: dict = Depends(get_current_user),
-    storage: StorageBase = Depends(get_storage),
-) -> Response:
-    """Export a character card's full JSON as a downloadable file."""
-    record = await storage.get_card_owned(card_id, user["id"])
-    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not record:
-        raise HTTPException(404, "Card not found")
-
-    # Parse card_json to extract the character name
-    card_json = record.get("card_json", "{}")
-    import json
-
-    try:
-        parsed = json.loads(card_json) if isinstance(card_json, str) else card_json
-    except json.JSONDecodeError:
-        # isinstance 已判过是字符串，这里只可能是内容不是合法 JSON —— 拿不到名字就
-        # 退回卡片记录里的 name（导出本体照给，不因解析失败而失败）
-        parsed = {}
-    char_name = parsed.get("name", record.get("name", card_id))
-
-    safe_name = quote(f"{char_name}.json")
-    return Response(
-        content=card_json if isinstance(card_json, str) else json.dumps(card_json, ensure_ascii=False, indent=2),
-        media_type="application/json; charset=utf-8",
-        headers={
-            "Content-Disposition": (
-                f"attachment; filename*=UTF-8''{safe_name}"
-            ),
-        },
-    )
 
 
 @router.get("/trash")

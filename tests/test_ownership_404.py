@@ -233,11 +233,6 @@ class TestCardOwnership:
         r = intruder_client.put(f"/api/cards/{cid}/avatar", json={"data": "a" * 32})
         assert r.status_code == 404 and r.status_code != 403
 
-    def test_export_card_404(self, store, owner, intruder_client):
-        cid = _card(store, owner)
-        r = intruder_client.get(f"/api/cards/{cid}/export")
-        assert r.status_code == 404 and r.status_code != 403
-
     def test_get_card_404(self, store, owner, intruder_client):
         cid = _card(store, owner)
         r = intruder_client.get(f"/api/cards/{cid}")

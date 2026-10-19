@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useAppStore, { isTerminal, taskActions } from '../store/useAppStore'
-import { fetchWithTimeout } from '../api/client'
+import { exportCard } from '../api/client'
 import { fetchAllCards } from '../api/cards'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import useIsMobile from '../hooks/useIsMobile'
@@ -52,24 +52,6 @@ const pad = (n) => String(n).padStart(2, '0')
 const nowHM = () => {
   const d = new Date()
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-async function exportCard(card) {
-  const name = (typeof card.card_json === 'string' ? parseCardJson(card).name : card.name) || '角色卡'
-  try {
-    const res = await fetchWithTimeout(`/api/distill/cards/${card.id}/export?format=raw`)
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${name}.json`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
-  } catch (e) {
-    console.warn('[distill-workbench] export failed:', e)
-  }
 }
 
 function shortId(id) {
@@ -379,7 +361,7 @@ function TaskDetail({ task, onBack }) {
         {view?.canChat && (
           <>
             <StartChatButton resolveCard={resolveChatCard} className="dw-cta-btn dw-cta-primary" icon={<Sparkles size={15} />} label="试聊当前版本" />
-            <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={() => exportCard({ id: task.card_id, card_json: null, name: task.character })}><Download size={15} /> 导出卡片</button>
+            <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={() => exportCard(task.card_id).catch(e => console.warn('[distill-workbench] export failed:', e))}><Download size={15} /> 导出卡片</button>
           </>
         )}
         <button type="button" className="dw-cta-btn dw-cta-ghost" onClick={() => pushView('character')}>返回角色页</button>
@@ -439,7 +421,7 @@ function CardDetail({ card, onBack }) {
 
       <div className="dw-cta">
         <StartChatButton card={card} className="dw-cta-btn dw-cta-primary" icon={<Sparkles size={15} />} label="试聊" />
-        <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={() => exportCard(card)}><Download size={15} /> 导出</button>
+        <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={() => exportCard(card.id).catch(e => console.warn('[distill-workbench] export failed:', e))}><Download size={15} /> 导出</button>
         {canWrite && <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={editCard}>编辑</button>}
         {canWrite && card.text_id && <button type="button" className="dw-cta-btn dw-cta-ghost" onClick={redistill}><RefreshCw size={15} /> 重新蒸馏</button>}
       </div>

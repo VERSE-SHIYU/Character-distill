@@ -72,7 +72,17 @@ def _client(store, uid):
     return TestClient(_build_app(store, uid), raise_server_exceptions=False)
 
 
-@pytest.mark.xfail(strict=True, reason="G1: card.py 仍有一条独立导出实现")
+def _route_paths(routes):
+    """展开 app.routes：FastAPI 会把 include_router 收成 _IncludedRouter。"""
+    for route in routes:
+        path = getattr(route, "path", None)
+        if path is not None:
+            yield path
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            yield from _route_paths(included.routes)
+
+
 def test_g1_single_export_backend(store, user_id):
     card_id = _seed_card(store, user_id, '{"name": "张三"}')
     app = _build_app(store, user_id)
@@ -82,14 +92,12 @@ def test_g1_single_export_backend(store, user_id):
     assert resp.status_code == 404
 
     export_routes = [
-        route.path
-        for route in app.routes
-        if route.path.endswith("/export") and "card_id" in route.path
+        path for path in _route_paths(app.routes)
+        if path.endswith("/export") and "card_id" in path
     ]
     assert export_routes == [_EXPORT_ROUTE]
 
 
-@pytest.mark.xfail(strict=True, reason="G2: raw 导出在坏 JSON 上先做 model_validate_json")
 def test_g2_raw_export_survives_bad_json(store, user_id):
     bad_json = '{"name": "张三",'
     card_id = _seed_card(store, user_id, bad_json)
@@ -102,7 +110,6 @@ def test_g2_raw_export_survives_bad_json(store, user_id):
     assert resp.content == bad_json.encode("utf-8")
 
 
-@pytest.mark.xfail(strict=True, reason="G3: distill 导出没有限流")
 def test_g3_distill_export_rate_limited(store, user_id):
     card_id = _seed_card(store, user_id, '{"name": "张三"}')
     client = _client(store, user_id)
