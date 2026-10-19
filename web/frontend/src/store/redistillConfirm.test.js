@@ -46,6 +46,8 @@ describe('重新蒸馏确认', () => {
     expect(await p).toBe(true)
     expect(postJSON).toHaveBeenCalledWith('/api/distill/start', { text_id: 't1', character_name: '祈灼', force: false })
     expect(useAppStore.getState().redistillPrompt).toBeNull()
+    // 启动成功即进入「蒸馏中」：角色页按钮靠它保持「蒸馏中…」（G7b 的替身照此写）
+    expect(useAppStore.getState().distilling).toBe(true)
   })
   it('G5 启动失败返回 false', async () => {
     vi.mocked(postJSON).mockRejectedValueOnce(new Error('boom'))

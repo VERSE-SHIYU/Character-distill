@@ -171,3 +171,14 @@ diff 只包含改动的 3 个已有文件（App.jsx、CharCard.jsx、useAppStore
 变异（每条只改一处，跑 6 个相关文件 + 新文件）：工作台卡片详情不传 force、角色页第一次蒸馏也弹窗、工作台续跑也弹窗、任务栏续跑也弹窗、CharCard 成功后也清「蒸馏中」——补前在 `npm test` 全绿，补后全红。不补：后端无 task_id 返回 true（`/start` 只返回 task_id 或抛错，`web/routers/distill.py:959`，分支不可达）。
 
 事实更正：第二节说任务栏 / 工作台的续跑按钮「只在任务 error 时出现」，实际 interrupted（「继续蒸馏」）也出现（`distill.py` 状态表 :980-985）；两者都不传 force，结论不变。
+
+## 补充（复核 87ee16f，10-19）
+
+另开会话复核 87ee16f，查出两处替身不照生产（原则 9），已补：
+
+| 问题 | 根因 | 修法 |
+|---|---|---|
+| G8 任务替身没有 status：「出错就传 force」（`force = task.status === 'error'`）写进任务栏或工作台，G8 照样绿 | 替身按「组件当前读的字段」造，绕过了生产必经的 `normalizeTask`（`useAppStore.js:39` 缺 status 就丢弃） | `RedistillEntries.test.jsx` 的任务改由 `normalizeTask` 生成；重新蒸馏配 `status:'error'`，继续蒸馏配 `status:'interrupted'` |
+| G7b 替身假设「启动成功 distilling=true」，生产这一行（`addDistillTask`，`useAppStore.js:894`）没人守 | mock store 的测试只证明组件怎么用返回值，不证明 store 真这么做 | 真实 store 的 G4 加断言：启动成功后 `distilling === true` |
+
+补后变异：任务栏 / 工作台按 status 出错就传 force、addDistillTask 不置 distilling——补前全绿，补后全红；87ee16f 那 5 个变异仍红。

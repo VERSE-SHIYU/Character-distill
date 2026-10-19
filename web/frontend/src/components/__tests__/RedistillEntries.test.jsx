@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, fireEvent, waitFor } from '@testing-library/react'
 import DistillTaskBar from '../DistillTaskBar'
 import DistillWorkbench from '../DistillWorkbench'
-import useAppStore from '../../store/useAppStore'
+import useAppStore, { normalizeTask } from '../../store/useAppStore'
 import { fetchWithTimeout, postJSON } from '../../api/client'
 
 // G8 入口 × 是否弹窗：弹不弹由调用方传的 force 决定（store 只认 force），
@@ -26,7 +26,8 @@ vi.mock('../../api/client', () => ({
 
 const TEXT = { id: 'x1', title: '某书' }
 const CARD = { id: 'c1', name: '祈灼', text_id: 'x1', card_json: '{"name":"祈灼"}' }
-const task = (actions) => ({ id: 'tk1', textId: 'x1', character: '祈灼', actions, done: true, progress_pct: 30 })
+// 任务照生产形状造：过 normalizeTask 门；status 与 actions 按服务端状态表成对（distill.py:980-985）。
+const task = (status, actions) => normalizeTask({ task_id: 'tk1', textId: 'x1', character: '祈灼', status, actions, done: true, progress_pct: 30 })
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) })
 
 beforeEach(() => {
@@ -64,12 +65,12 @@ const clickWorkbenchCta = async (label) => {
 
 describe('G8 入口 × 是否弹窗', () => {
   it.each([
-    ['任务栏 出错「重新蒸馏」', ['retry'], () => { render(<DistillTaskBar />); clickTaskBar('重新蒸馏') }],
-    ['任务栏 中断「继续蒸馏」', ['resume'], () => { render(<DistillTaskBar />); clickTaskBar('继续蒸馏') }],
-    ['工作台任务 出错「重新蒸馏」', ['retry'], async () => { render(<DistillWorkbench />); await clickWorkbenchCta('重新蒸馏') }],
-    ['工作台任务 中断「继续蒸馏」', ['resume'], async () => { render(<DistillWorkbench />); await clickWorkbenchCta('继续蒸馏') }],
-  ])('%s：续跑，不弹窗，force=false', async (_name, actions, act) => {
-    useAppStore.setState({ distillTasks: [task(actions)] })
+    ['任务栏 出错「重新蒸馏」', 'error', ['retry'], () => { render(<DistillTaskBar />); clickTaskBar('重新蒸馏') }],
+    ['任务栏 中断「继续蒸馏」', 'interrupted', ['resume'], () => { render(<DistillTaskBar />); clickTaskBar('继续蒸馏') }],
+    ['工作台任务 出错「重新蒸馏」', 'error', ['retry'], async () => { render(<DistillWorkbench />); await clickWorkbenchCta('重新蒸馏') }],
+    ['工作台任务 中断「继续蒸馏」', 'interrupted', ['resume'], async () => { render(<DistillWorkbench />); await clickWorkbenchCta('继续蒸馏') }],
+  ])('%s：续跑，不弹窗，force=false', async (_name, status, actions, act) => {
+    useAppStore.setState({ distillTasks: [task(status, actions)] })
     await act()
     await expectStartedWithoutPrompt()
   })
