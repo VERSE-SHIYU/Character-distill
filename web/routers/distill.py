@@ -28,6 +28,7 @@ from core.character_roster import aliases_for, resolve_characters, target_charac
 from core.retro_cache import resolve_retro_regions
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core import examples_pending
+from core import task_log
 from core.embeddings import EMBEDDING_KEY_REQUIRED
 from core.nonfatal import nonfatal_sync
 from core.unlocated import UnknownPhase, move_unlocated
@@ -487,6 +488,11 @@ def _distill_to_draft(
 
 
 @T.spanned("distill.task", wf="distill")
+@task_log.scoped(lambda b: (b["task_id"], {
+    "来源": "草稿重转" if b["draft"] is not None else "蒸馏",
+    "force": b["force"],
+    "resumed": b["resume_candidates"] is not None,
+}))
 def _run_distill_task(
     task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
     content: str, text_type: str, llm: LLMAdapter | None,
@@ -543,29 +549,37 @@ def _run_distill_task(
         # 冒泡到本函数外层 except，走 `user_facing_error` 那条唯一的渲染路径。
         # 原先这里的宽捕获把上游故障（网络 / DB / 额度）渲染成了「没识别到角色」；
         # 两段手抄的「空名单 / 缺 name」分支也一并收进 character_roster 的判据。
-        chars = submit_to_main_loop(
-            resolve_characters(get_storage(), distiller, text_id, user_id, content))
+        with task_log.step("名单"):
+            chars = submit_to_main_loop(
+                resolve_characters(get_storage(), distiller, text_id, user_id, content))
         if not name:
             name = target_character_name(chars)
         aliases = aliases_for(chars, name)
         # 回忆区（书的属性，按书缓存）：转卡时交给位置核对（倒叙章节里的位置不作阶段证据）。
         # 标不了不挡蒸馏，失败口径在 resolve_retro_regions 里。
-        retro = submit_to_main_loop(
-            resolve_retro_regions(get_storage(), distiller, text_id, user_id, content))
+        with task_log.step("回忆区"):
+            retro = submit_to_main_loop(
+                resolve_retro_regions(get_storage(), distiller, text_id, user_id, content))
 
         _set_task(task_id, {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
 
-        data = draft if draft is not None else _distill_to_draft(
-            task_id, name, content, text_type, aliases, resume_candidates, distiller)
+        if draft is None:
+            with task_log.step("蒸馏"):
+                data = _distill_to_draft(
+                    task_id, name, content, text_type, aliases, resume_candidates, distiller)
+        else:
+            data = draft
         if data is None:
             return
 
         # 模型写的阶段锚点核对不过时，按原文重新找起点（spec phase-locate）；不抛、找不到不动草稿。
-        distiller.locate_phase_starts(data, content, name, retro)
+        with task_log.step("重定位"):
+            distiller.locate_phase_starts(data, content, name, retro)
 
         try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
-            card = card_from_draft(data, content, retro=retro)
+            with task_log.step("转卡"):
+                card = card_from_draft(data, content, retro=retro)
         except Exception as exc:
             # ValidationError 的 str() 带字段名与输入值（可能含原文片段），只进日志
             logger.error("Card validation failed for %s: %s", name, exc, exc_info=True)
@@ -574,12 +588,14 @@ def _run_distill_task(
 
         # 后置步骤：核对引文 + 贴对话示例（WP18 / WP17）。挑不出示例时卡照常返回（保底在
         # `finalize_card` 里）；它抛出来的都按任务失败处理。
-        card = distiller.finalize_card(card, content, name, aliases, chars)
+        with task_log.step("后置"):
+            card = distiller.finalize_card(card, content, name, aliases, chars)
         card_dict = card.model_dump()
 
         # AI auto-tagging (fails open)
         try:
-            tags = distiller._auto_tag(card_dict)
+            with task_log.step("打标签"):
+                tags = distiller._auto_tag(card_dict)
             if tags:
                 card_dict["tags"] = tags
                 card = CharacterCard.model_validate(card_dict)
@@ -610,7 +626,8 @@ def _run_distill_task(
         })
 
         try:
-            result = submit_to_main_loop(_save_card(), timeout=120)
+            with task_log.step("落卡"):
+                result = submit_to_main_loop(_save_card(), timeout=120)
         except FutureTimeoutError:
             _set_task(task_id, {
                 "status": "error",
@@ -623,14 +640,16 @@ def _run_distill_task(
         # 没配上对话示例的卡记「待补」（规则在 `core.examples_pending`）。记不上不影响落卡：
         # 里面那层吞的是写库出错，这一层吞的是投递到主 loop 超时。
         with nonfatal_sync("examples_pending", "submit mark after distill"):
-            submit_to_main_loop(
-                examples_pending.mark_after_distill(
-                    get_storage(), result.get("card_id", ""), user_id, card, name),
-                timeout=30,
-            )
+            with task_log.step("待补"):
+                submit_to_main_loop(
+                    examples_pending.mark_after_distill(
+                        get_storage(), result.get("card_id", ""), user_id, card, name),
+                    timeout=30,
+                )
 
         # Generate awakening line (non-fatal, outside lock)
-        awakening = _generate_awakening(llm, card, storage=get_storage())
+        with task_log.step("苏醒台词"):
+            awakening = _generate_awakening(llm, card, storage=get_storage())
 
         # Persist awakening_message to card (non-fatal)
         if awakening:
@@ -1113,6 +1132,7 @@ async def distill_stream(
     storage: StorageBase = Depends(get_storage),
 ):
     """Stream distillation via SSE — no timeout, frontend renders tokens in real-time."""
+    task_log.TASK_ID.set(f"s-{_uuid.uuid4().hex[:12]}")
     user_id = user["id"]
     from deps import get_distiller, get_text_manager, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)

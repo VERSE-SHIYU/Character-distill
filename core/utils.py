@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core import task_log
 from core.nonfatal import nonfatal
 from core.request_context import current_user_id
 from core.scheduling import submit_to_main_loop
@@ -111,6 +112,7 @@ def try_record_usage(
     chunk_count = usage.get("chunk_count")
     cache_hit = usage.get(CACHE_HIT_FIELD)
     cache_miss = usage.get(CACHE_MISS_FIELD)
+    task_log.add_usage(action, pt, ct, cache_hit, cache_miss)
 
     async def _write() -> None:
         async with nonfatal("usage", f"record usage ({source}/{action})"):
