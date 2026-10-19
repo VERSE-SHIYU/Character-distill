@@ -310,7 +310,7 @@ async def _persist_awakening(storage, card_id: str, user_id: str, awakening: str
     if await storage.update_card(card_id, card.model_dump(), expected=rec["card_json"]) is None:
         logger.warning("[distill] awakening not persisted: card %s changed meanwhile", card_id)
         return
-    print(f"[distill] Persisted awakening_message to card {card_id}")
+    logger.warning("[distill] Persisted awakening_message to card %s", card_id)
 
 
 DONE_MESSAGE = "蒸馏完成 ✓"
@@ -394,7 +394,7 @@ def _distill_to_draft(
             return None
         if isinstance(piece, dict):
             if "error" in piece:
-                print(f"[distill] Stream error for {name}: {piece['error']}")
+                logger.warning("[distill] Stream error for %s: %s", name, piece["error"])
                 _set_task(task_id, {"status": "error", "message": piece["error"], "character": name})
                 return None
             if piece.get("heartbeat"):
@@ -521,7 +521,7 @@ def _run_distill_task(
     assert llm is not None, "后台蒸馏任务必须由请求线程传入已解析的 llm（§2.10）"
     acquired = _DISTILL_SEMAPHORE.acquire(timeout=300)
     if not acquired:
-        print(f"[distill] 并发蒸馏达上限，任务超时: {char_name}")
+        logger.warning("[distill] 并发蒸馏达上限，任务超时: %s", char_name)
         _set_task(task_id, {"status": "error", "message": "服务器繁忙，请稍后重试"})
         _confirm_terminal_persist(task_id)
         _release_user_slot(user_id)   # 没进 try/finally，按用户槽要在这里放
@@ -635,7 +635,8 @@ def _run_distill_task(
                 "character": name, "text_id": text_id,
             })
             return
-        print(f"[distill] Card saved: card_id={result.get('card_id','')} name={name} text_id={text_id} user_id={user_id}")
+        logger.warning("[distill] Card saved: card_id=%s name=%s text_id=%s user_id=%s",
+                       result.get("card_id", ""), name, text_id, user_id)
 
         # 没配上对话示例的卡记「待补」（规则在 `core.examples_pending`）。记不上不影响落卡：
         # 里面那层吞的是写库出错，这一层吞的是投递到主 loop 超时。
@@ -908,17 +909,19 @@ async def _distill_start_impl(
         # 任务级门（先于分片三重门）：切分参数 / 全文指纹任一不符 → 整批作废。
         # 两种故障分开记日志：用户看到的解释不同（换了解析参数 vs 换了原文）。
         if existing.get("chunk_size") != chunk_size:
-            print(f"[distill] Resume {task_id} rejected: 切分参数变更 "
-                  f"chunk_size {existing.get('chunk_size')} → {chunk_size}，整批重跑")
+            logger.warning("[distill] Resume %s rejected: 切分参数变更 chunk_size %s → %s，整批重跑",
+                           task_id, existing.get("chunk_size"), chunk_size)
         elif existing.get("text_fingerprint") != text_fp:
-            print(f"[distill] Resume {task_id} rejected: 原文变更（text_fingerprint 不符），整批重跑")
+            logger.warning("[distill] Resume %s rejected: 原文变更（text_fingerprint 不符），整批重跑",
+                           task_id)
         else:
             rows = await storage.get_distill_chunks(task_id)
             resume_candidates = {
                 r["chunk_index"]: {"result": r["result"], "fingerprint": r["chunk_fingerprint"]}
                 for r in rows
             }
-            print(f"[distill] Resume {task_id}: {len(resume_candidates)} 片候选，任务级门通过")
+            logger.warning("[distill] Resume %s: %s 片候选，任务级门通过",
+                           task_id, len(resume_candidates))
     else:
         task_id = _uuid.uuid4().hex[:12]
 

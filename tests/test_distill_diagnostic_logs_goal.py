@@ -48,7 +48,6 @@ _ROOT = logging.getLogger()
 def store(tmp_path):
     return SQLiteStore(str(tmp_path / f"diag_{uuid.uuid4().hex}.db"))
 
-xfail = pytest.mark.xfail(strict=True, reason="诊断日志尚未实现")
 
 
 @contextmanager
@@ -83,7 +82,6 @@ def _start_with_draft(monkeypatch, store, uid, tid, draft):
     return resp
 
 
-@xfail
 def test_g1_every_line_carries_task_id(capsys, monkeypatch, store):
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     tid = _seed_text(store, uid)
@@ -126,7 +124,6 @@ def test_g1_every_line_carries_task_id(capsys, monkeypatch, store):
         assert bad == [], f"任务 {tid_} 范围内有无 ID 的日志行：{bad}"
 
 
-@xfail
 def test_g1b_resume_start_line_says_resumed(capsys, monkeypatch, store):
     """任务级门通过、复用 error 行时，开始行写 resumed=true。"""
     from test_distill_draft_persist import _DISTILL_NAME, _SRC
@@ -150,7 +147,6 @@ def test_g1b_resume_start_line_says_resumed(capsys, monkeypatch, store):
     assert [("resumed=true" in ln) for ln in starts] == [True]
 
 
-@xfail
 def test_g2_step_timings_in_order(capsys, monkeypatch, store):
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     tid = _seed_text(store, uid)
@@ -185,7 +181,6 @@ def test_g2_step_timings_in_order(capsys, monkeypatch, store):
     assert re.search(r"步骤 转卡 失败 耗时 \d+\.\d+s：ValidationError", out_bad), out_bad
 
 
-@xfail
 def test_g3_token_totals_by_action(capsys, monkeypatch):
     from core import task_log
     from core.utils import try_record_usage
@@ -223,7 +218,6 @@ def test_g3_token_totals_by_action(capsys, monkeypatch):
         True, True, True, True, True, False)
 
 
-@xfail
 def test_g4_phase_starts_logged_every_time(caplog):
     msgs = SK._messages(caplog, SK._RETRO, SK._draft("中间乙乙乙乙乙"))
     starts = [m for m in msgs if m.startswith("阶段起点（角色）阶段 ")]
@@ -236,7 +230,6 @@ def test_g4_phase_starts_logged_every_time(caplog):
         (True, True, True, True, False)] * 3
 
 
-@xfail
 def test_g5_rehang_line_names_the_chapter(caplog):
     with caplog.at_level(logging.WARNING, logger="core.phase_anchoring"):
         PA._card([PA._row([PA._occ(3, PA._Q1)], "错挂")])
@@ -244,7 +237,6 @@ def test_g5_rehang_line_names_the_chapter(caplog):
         "改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]（摘录在无章节标题）"]
 
 
-@xfail
 def test_g6_candidate_verdicts_and_reasons(caplog):
     class _WhyJudge(PL._Judge):
         def chat(self, system, messages, max_tokens=None, **kw):
@@ -270,7 +262,6 @@ def test_g6_candidate_verdicts_and_reasons(caplog):
     assert [ln.rsplit("；理由：", 1)[-1] for ln in originals] == ["第2章是", "第4章是"]
 
 
-@xfail
 def test_g6b_verified_anchors_say_so(caplog):
     good = copy.deepcopy(PL._PHASES)
     good[1]["anchor"], good[2]["anchor"] = "那天他在桥边初遇阿月", "他终于决定远行求学"
@@ -282,7 +273,6 @@ def test_g6b_verified_anchors_say_so(caplog):
     assert lines == ["[phase_locate] card=他 锚点核对通过，用模型锚点"]
 
 
-@xfail
 def test_g7_no_print_left_on_the_chain():
     targets = {
         "web/routers/distill.py": [
@@ -305,7 +295,6 @@ def test_g7_no_print_left_on_the_chain():
     assert bad == []
 
 
-@xfail
 def test_g8_zero_means_story_start_is_a_warning(caplog):
     draft = {
         "name": "角色",
@@ -320,7 +309,6 @@ def test_g8_zero_means_story_start_is_a_warning(caplog):
     assert card.decision_style == "B"
 
 
-@xfail
 def test_g9_scalar_collision_names_kept_and_dropped(caplog):
     draft = {
         "name": "角色",

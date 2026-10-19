@@ -1010,7 +1010,7 @@ class Distiller:
             )
             evidence = self._truncation_evidence(exc, text)
             if evidence is None:
-                print(f"调用 LLM 进行{label}失败：{exc}")
+                logger.warning("调用 LLM 进行%s失败：%s", label, exc)
                 raise
             return evidence, True
         self._try_record_usage(usage_action, usage)
@@ -1053,7 +1053,7 @@ class Distiller:
                 prefix=prefix, name=character_name, material=material,
                 batch_size=REL_BATCH_SIZE)
         except RelationshipBatchError as exc:
-            print(f"关系分批失败：{exc}")
+            logger.warning("关系分批失败：%s", exc)
             raise DistillError("蒸馏失败：关系生成失败，请重试", str(exc)) from exc
 
     def detect_retro_regions(self, text: str) -> RetroRegions:
@@ -1188,7 +1188,7 @@ class Distiller:
                 # 会让统计系统性偏低（缺陷 91 同形）。
                 self._try_record_usage(action, estimate_usage(
                     self._prompt_text(system_prompt, messages)))
-                print(f"调用 LLM 进行{label}失败：{exc}")
+                logger.warning("调用 LLM 进行%s失败：%s", label, exc)
                 raise
             reply, truncated = evidence, True
             usage = estimate_usage(
@@ -1412,10 +1412,11 @@ class Distiller:
 
         # All attempts exhausted — log raw output and raise readable error
         raw_preview = reply.strip()[:500]
-        print(
-            f"[distiller] {action_label} JSON parse failed after {attempts} attempts.\n"
-            f"  last_error: {last_error}\n"
-            f"  raw_preview (first 500 chars): {raw_preview}"
+        logger.error(
+            "[distiller] %s JSON parse failed after %s attempts.\n"
+            "  last_error: %s\n"
+            "  raw_preview (first 500 chars): %s",
+            action_label, attempts, last_error, raw_preview,
         )
         if truncated:
             raise DistillError(
@@ -1460,7 +1461,7 @@ class Distiller:
             if cached is not None:
                 result, ts = cached
                 if time.time() - ts < IDENTIFY_CACHE_TTL_SECONDS:
-                    print("[distill] identify cache hit")
+                    logger.warning("[distill] identify cache hit")
                     # Deep copy to prevent caller mutation from polluting cache
                     return json.loads(json.dumps(result))
                 else:
@@ -1490,7 +1491,7 @@ class Distiller:
         称呼落库，下游按子串选片时几乎命中每一片。
         """
         if not isinstance(parsed, list):
-            print("角色识别结果不是 JSON 数组")
+            logger.warning("角色识别结果不是 JSON 数组")
             raise TypeError("expected JSON array")
         out: list[dict[str, Any]] = []
         for idx, item in enumerate(parsed):
@@ -1502,7 +1503,7 @@ class Distiller:
                 ]
                 out.append(item)
             else:
-                print(f"警告：角色识别数组第 {idx} 项不是对象，已跳过")
+                logger.warning("警告：角色识别数组第 %s 项不是对象，已跳过", idx)
         return out
 
     @classmethod
@@ -1510,7 +1511,7 @@ class Distiller:
         try:
             parsed = json.loads(cls._extract_json(raw))
         except json.JSONDecodeError as exc:
-            print(f"解析角色识别 JSON 失败：{exc}")
+            logger.warning("解析角色识别 JSON 失败：%s", exc)
             raise
         return cls._normalize_identify_items(parsed)
 
@@ -1528,7 +1529,7 @@ class Distiller:
         try:
             reply = self._llm.chat(IDENTIFY_SYSTEM_PROMPT, messages)
         except Exception as exc:
-            print(f"调用 LLM 进行角色识别失败：{exc}")
+            logger.warning("调用 LLM 进行角色识别失败：%s", exc)
             raise
         # 紧跟在调用后读 last_usage —— 下一次调用会覆盖它，攒着记必然串号
         self._try_record_usage("distill_identify")
@@ -1540,7 +1541,7 @@ class Distiller:
             try:
                 reply_retry = self._llm.chat(retry_prompt, messages)
             except Exception as exc:
-                print(f"角色识别重试调用 LLM 失败：{exc}")
+                logger.warning("角色识别重试调用 LLM 失败：%s", exc)
                 raise
             self._try_record_usage("distill_identify")
             try:
@@ -1678,8 +1679,8 @@ class Distiller:
                 f"（执行器失败 {len(failures)} 次），不足 {self.IDENTIFY_JUDGE_QUORUM} 份",
             )
         pairs, impersonal = tally_judge_samples(parsed, self.IDENTIFY_JUDGE_QUORUM)
-        print(f"[distill] identify judge merge={pairs}")
-        print(f"[distill] identify judge impersonal={sorted(impersonal)}")
+        logger.warning("[distill] identify judge merge=%s", pairs)
+        logger.warning("[distill] identify judge impersonal=%s", sorted(impersonal))
         return pairs, impersonal
 
     @staticmethod
@@ -2700,7 +2701,7 @@ class Distiller:
                 break
             if kind == "error":
                 # 阶段名（Map/Reduce）是内部实现词，只进日志不上屏
-                print(f"[distiller] map stage aborted: {item[1]}")
+                logger.error("[distiller] map stage aborted: %s", item[1])
                 yield {"error": user_facing_error(item[1])}
                 return
             if kind == "chunk":
@@ -2798,7 +2799,7 @@ class Distiller:
                 if kind == "done":
                     break
                 if kind == "error":
-                    print(f"[distiller] reduce stage aborted: {item[1]}")
+                    logger.error("[distiller] reduce stage aborted: %s", item[1])
                     yield {"error": user_facing_error(item[1])}
                     return
                 if kind == "batch":

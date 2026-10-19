@@ -404,7 +404,7 @@ class TestWholeChain:
     def setup_method(self):
         _IDENTIFY_CACHE.clear()
 
-    def test_speaking_chunks_decide_rank_and_order(self, capsys):
+    def test_speaking_chunks_decide_rank_and_order(self, caplog):
         llm = _make_llm(async_chat=_seven_chunk_map_stub())
         d = _make_distiller(llm)
 
@@ -415,7 +415,7 @@ class TestWholeChain:
         systems = _systems(llm)
         assert systems.count(IDENTIFY_JUDGE_PROMPT) == 5
         assert systems.count(IDENTIFY_SYSTEM_PROMPT) == 7
-        out = capsys.readouterr().out
+        out = caplog.text
         assert "[distill] identify judge merge=" in out
         assert "[distill] identify judge impersonal=" in out
 

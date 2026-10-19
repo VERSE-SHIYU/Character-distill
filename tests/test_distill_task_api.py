@@ -647,7 +647,7 @@ class TestEResumeGate:
         _run_async(store.save_text(tid, "src.txt", body, user_id=user_id))
         return tid
 
-    def test_chunk_size_change_rejects_whole_batch(self, store, user_id, monkeypatch, capsys):
+    def test_chunk_size_change_rejects_whole_batch(self, store, user_id, monkeypatch, caplog):
         """门 A：切分参数变 → 复用行整批作废、候选 None、日志点明原因、重新盖章。"""
         body = "角色说的话" * 20
         tid = self._text(store, user_id, body)
@@ -661,11 +661,11 @@ class TestEResumeGate:
         assert resp.status_code == 200
         assert resp.json()["task_id"] == task_id      # 仍复用原 id（不是新铸）
         assert cands is None
-        assert "切分参数变更" in capsys.readouterr().out
+        assert "切分参数变更" in caplog.text
         assert _run_async(store.get_distill_task_unscoped(task_id))["chunk_size"] == 3000
 
     def test_text_change_rejects_even_if_chunk_fp_wellformed(self, store, user_id,
-                                                            monkeypatch, capsys):
+                                                            monkeypatch, caplog):
         """门 B：原文变 → 整批重跑。
 
         行里挂一片「指纹格式完全合法（真 sha256）」的分片，证明分片级门根本没机会跑：
@@ -683,7 +683,7 @@ class TestEResumeGate:
         assert resp.status_code == 200
         assert resp.json()["task_id"] == task_id
         assert cands is None
-        assert "原文变更" in capsys.readouterr().out
+        assert "原文变更" in caplog.text
         assert _run_async(store.get_distill_task_unscoped(task_id))["text_fingerprint"] == text_fingerprint(body)
 
     def test_matching_checkpoint_loads_candidates(self, store, user_id, monkeypatch):
