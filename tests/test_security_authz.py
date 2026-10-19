@@ -225,7 +225,7 @@ class TestReadAuthorization:
     def test_04_card_export_404(self, store, user_a, client_b):
         tid = _create_text(store, user_a)
         cid = _create_card(store, user_a, tid)
-        r = client_b.get(f"/api/cards/{cid}/export")
+        r = client_b.get(f"/api/distill/cards/{cid}/export")
         assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
         assert r.status_code != 403
 
@@ -636,7 +636,7 @@ class TestControlAccess:
     def test_07c_own_card_export_200(self, store, user_a, client_a):
         tid = _create_text(store, user_a)
         cid = _create_card(store, user_a, tid)
-        r = client_a.get(f"/api/cards/{cid}/export")
+        r = client_a.get(f"/api/distill/cards/{cid}/export")
         assert r.status_code == 200, f"Expected 200, got {r.status_code}"
         # export returns a file download (not JSON)
         assert "attachment" in r.headers.get("content-disposition", "")

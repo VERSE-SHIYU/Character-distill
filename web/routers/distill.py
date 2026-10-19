@@ -1513,6 +1513,7 @@ async def list_standalone_cards(
 
 
 @router.get("/cards/{card_id}/export")
+@limiter.limit("60/minute")
 async def export_card(
     card_id: str,
     request: Request,
@@ -1531,9 +1532,8 @@ async def export_card(
     if not record:
         raise HTTPException(404, "Card not found")
 
-    card = CharacterCard.model_validate_json(record["card_json"])
-
     if format == "tavern":
+        card = CharacterCard.model_validate_json(record["card_json"])
         body = export_tavern_json(card, first_mes)
         safe_name = quote(f"{card.name}_tavern.json")
         return Response(
@@ -1547,9 +1547,16 @@ async def export_card(
         )
 
     if format == "raw":
-        safe_name = quote(f"{card.name}.json")
+        card_json = record.get("card_json", "{}")
+        try:
+            parsed = json.loads(card_json) if isinstance(card_json, str) else card_json
+        except json.JSONDecodeError:
+            # 拿不到名字就退回卡片记录里的 name：导出本体照给，不因解析失败而失败
+            parsed = {}
+        name = parsed.get("name", record.get("name", card_id))
+        safe_name = quote(f"{name}.json")
         return Response(
-            content=record["card_json"],
+            content=card_json if isinstance(card_json, str) else json.dumps(card_json, ensure_ascii=False, indent=2),
             media_type="application/json; charset=utf-8",
             headers={
                 "Content-Disposition": (
