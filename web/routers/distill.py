@@ -10,7 +10,7 @@ import os
 import threading
 import uuid as _uuid
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 
 from urllib.parse import quote
 
@@ -252,6 +252,7 @@ class DistillTaskRequest(BaseModel):
     text_id: str
     character_name: str = ""
     force: bool = False
+    entry: Literal["", "character_page", "workbench_card", "workbench_task", "task_bar", "redraft"] = ""
 
 
 async def cancel_distill_tasks_by_text_id(text_id: str) -> int:
@@ -492,6 +493,7 @@ def _distill_to_draft(
     "来源": "草稿重转" if b["draft"] is not None else "蒸馏",
     "force": b["force"],
     "resumed": b["resume_candidates"] is not None,
+    "entry": b["entry"],
 }))
 def _run_distill_task(
     task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
@@ -499,6 +501,7 @@ def _run_distill_task(
     embedding_key: str = "", embedding_region: str = "",
     resume_candidates: dict[int, dict] | None = None,
     draft: dict | None = None,
+    entry: str = "",
 ) -> None:
     """Background thread: run distillation end-to-end, update _tasks[task_id].
 
@@ -942,6 +945,7 @@ async def _distill_start_impl(
                 task_id, status="running", progress_pct=0, message=_queued_msg,
                 card_id="", awakening="",
                 chunk_size=chunk_size, text_fingerprint=text_fp,
+                force=req.force, entry=req.entry,
             )
             if affected == 0:
                 logger.error(
@@ -956,6 +960,7 @@ async def _distill_start_impl(
                 status="running", progress_pct=0, message=_queued_msg,
                 card_id="", awakening="",
                 chunk_size=chunk_size, text_fingerprint=text_fp,
+                force=req.force, entry=req.entry,
             )
     except HTTPException:
         raise
@@ -973,7 +978,7 @@ async def _distill_start_impl(
         _run_distill_task,
         args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type,
               llm, emb.key, emb.region, resume_candidates),
-        kwargs={"draft": draft},
+        kwargs={"draft": draft, "entry": req.entry},
         daemon=True,
     )
     thread.start()
@@ -1475,7 +1480,8 @@ async def redraft_card(
         raise HTTPException(409, REDRAFT_NO_DRAFT)
     payload = json.loads(raw)
     req = DistillTaskRequest(
-        text_id=record["text_id"], character_name=payload["character"], force=True)
+        text_id=record["text_id"], character_name=payload["character"], force=True,
+        entry="redraft")
     return await _gated_start(
         user_id, storage,
         lambda: _distill_start_impl(req, user, storage, draft=payload["draft"]))

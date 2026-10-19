@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import useAppStore from '../store/useAppStore'
+import useAppStore, { DISTILL_ENTRY } from '../store/useAppStore'
 import { getAuthHeaders, fetchWithTimeout, exportCard } from '../api/client'
 import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
@@ -280,7 +280,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 
   const handleDistill = async (name, force = false) => {
     setDistillingName(name)
-    if (!(await distillCharacter(textId, name, force))) setDistillingName(null)
+    if (!(await distillCharacter(textId, name, force, DISTILL_ENTRY.characterPage))) setDistillingName(null)
   }
 
   const texts = useAppStore((s) => s.texts)

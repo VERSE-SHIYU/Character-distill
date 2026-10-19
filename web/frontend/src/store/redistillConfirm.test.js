@@ -30,7 +30,7 @@ describe('重新蒸馏确认', () => {
     useAppStore.getState().confirmRedistill()
     expect(await p).toBe(true)
     expect(postJSON).toHaveBeenCalledTimes(1)
-    expect(postJSON).toHaveBeenCalledWith('/api/distill/start', { text_id: 't1', character_name: '祈灼', force: true })
+    expect(postJSON).toHaveBeenCalledWith('/api/distill/start', { text_id: 't1', character_name: '祈灼', force: true, entry: '' })
     expect(useAppStore.getState().redistillPrompt).toBeNull()
   })
   it('G3 取消不发请求，返回 false', async () => {
@@ -44,7 +44,7 @@ describe('重新蒸馏确认', () => {
   it('G4 force=false 立即发', async () => {
     const p = useAppStore.getState().distillCharacter('t1', '祈灼', false)
     expect(await p).toBe(true)
-    expect(postJSON).toHaveBeenCalledWith('/api/distill/start', { text_id: 't1', character_name: '祈灼', force: false })
+    expect(postJSON).toHaveBeenCalledWith('/api/distill/start', { text_id: 't1', character_name: '祈灼', force: false, entry: '' })
     expect(useAppStore.getState().redistillPrompt).toBeNull()
     // 启动成功即进入「蒸馏中」：角色页按钮靠它保持「蒸馏中…」（G7b 的替身照此写）
     expect(useAppStore.getState().distilling).toBe(true)
