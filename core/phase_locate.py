@@ -184,8 +184,7 @@ def locate(phases: Sequence[dict], source_text: str, retro: RetroRegions, name: 
     bodies = chapter_bodies(source_text)
     if not bodies:
         return LocateResult(None, reason="原文没有可用的章节标题")
-    retro_ch = {n for r in (retro.ranges if retro.status == "marked" else ())
-                for n in range(r.first, r.last + 1)}
+    retro_ch = retro.chapters(source_text)       # 与位置核对（`RetroRegions.spans`）同一份口径
     index = ChapterIndex({n: t for n, (_, t) in bodies.items() if n not in retro_ch})
     sents = {n: sentences(t) for n, (_, t) in bodies.items()}
 
