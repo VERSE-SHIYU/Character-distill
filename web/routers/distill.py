@@ -546,6 +546,9 @@ def _run_distill_task(
             _set_task(task_id, {"status": "error", "message": "蒸馏失败：关系生成失败，请重试", "character": name})
             return
 
+        # 模型写的阶段锚点核对不过时，按原文重新找起点（spec phase-locate）；不抛、找不到不动草稿。
+        distiller.locate_phase_starts(data, content, name, retro)
+
         try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
             card = card_from_draft(data, content, retro=retro)
@@ -1179,6 +1182,9 @@ async def distill_stream(
             logger.error("Relationship batching failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': '蒸馏失败：关系生成失败，请重试'}, ensure_ascii=False, default=str)}\n\n"
             return
+
+        # 同 /start：锚点核对不过时重新找起点；一批并发短调用，挪进线程不堵事件循环。
+        await asyncio.to_thread(distiller.locate_phase_starts, data, content, char_name, retro)
 
         try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。

@@ -101,13 +101,10 @@ class RetroRegions:
         区间从首章标题起、到末章的下一章标题止（末章是最后一章则到全文末尾）。未标、或章节
         标题与标注时对不上（原文变了）→ 空表，位置核对行为同没有回忆区。
         """
-        if self.status != "marked" or not self.ranges:
+        chapters = self._matched_chapters(source_text)
+        if chapters is None:
             return []
-        chapters = chapter_starts(source_text)
-        index = {n: i for i, (n, _) in enumerate(chapters or [])}
-        if chapters is None or any(r.first not in index or r.last not in index for r in self.ranges):
-            logger.warning("[retro] 原文章节与回忆区对不上，本次按未标处理：%s", self.summary())
-            return []
+        index = {n: i for i, (n, _) in enumerate(chapters)}
         raw = [(chapters[index[r.first]][1],
                 chapters[index[r.last] + 1][1] if index[r.last] + 1 < len(chapters)
                 else len(source_text),
@@ -115,6 +112,26 @@ class RetroRegions:
         points = sorted({x for a, b, _ in raw for x in (a, b)})
         norm = dict(zip(points, normalized_starts(source_text, points)))
         return [(norm[a], norm[b], label) for a, b, label in raw]
+
+    def chapters(self, source_text: str) -> set[int]:
+        """回忆区覆盖的章号（按原文实际存在的章）。口径与 `spans` 同一份：未标或对不上原文 → 空集。"""
+        chapters = self._matched_chapters(source_text)
+        if chapters is None:
+            return set()
+        nums = [n for n, _ in chapters]
+        return {n for r in self.ranges for n in nums if r.first <= n <= r.last}
+
+    def _matched_chapters(self, source_text: str) -> list[tuple[int, int]] | None:
+        """可用时返回原文章节表；未标、无区间、或章节标题与标注时对不上（原文变了）→ None。
+        `spans` 与 `chapters` 共用这一处判定，两种形态不会一边按未标、一边仍按已标。"""
+        if self.status != "marked" or not self.ranges:
+            return None
+        chapters = chapter_starts(source_text)
+        index = {n for n, _ in chapters or []}
+        if chapters is None or any(r.first not in index or r.last not in index for r in self.ranges):
+            logger.warning("[retro] 原文章节与回忆区对不上，本次按未标处理：%s", self.summary())
+            return None
+        return chapters
 
     def summary(self) -> str:
         if self.status != "marked":
