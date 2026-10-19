@@ -497,9 +497,10 @@ def _phase_list_note(phases: list[dict]) -> str:
     """
     if not phases:
         return "本角色没有阶段：需要按阶段标注的字段只写一条，phase 填 0。"
+    checked = dict(phase_anchoring.checked_anchors(phases))   # 阶段 1 不带锚点原句（规则只在那里）
     lines = ["本角色弧线的阶段（维度 L 已定，按阶段标注的字段用这些编号）："]
     lines += [f"  {phase_header(i, p.get('label', ''))} · {p.get('state', '')}"
-              f" · 起始原句：{p.get('anchor') or '（从开头起）'}"
+              f" · 起始原句：{checked.get(i) or '（从开头起）'}"
               for i, p in enumerate(phases, 1)]
     return "\n".join(lines)
 

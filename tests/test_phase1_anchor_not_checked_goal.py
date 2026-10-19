@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import copy
 
-import pytest
-
 from core import phase_anchoring
 from core.quotes import normalize
 from test_phase_locate_goal import _PHASES, _RETRO, _SRC, _Judge, _YES, _distiller, _draft
@@ -59,7 +57,6 @@ def test_g4_order_among_phases_2_to_n_is_still_checked():
     assert "不严格递增" in _build(rev).reason
 
 
-@pytest.mark.xfail(strict=True, reason="实现提交前：阶段列表仍带阶段 1 锚点")
 def test_g5_phase_list_for_downstream_calls_omits_phase1_anchor():
     """依赖组与关系分批收到的阶段列表里，阶段 1 不带模型写的锚点原句（同一条规则，
     审计自查 10-19 发现：distiller._phase_list_note 曾把第 383 章回忆句当阶段 1 起始原句给下游）。"""

@@ -71,7 +71,7 @@ MUTATIONS = [
     ('M4b 改挂只取最早落点（状态类应取全部）', TARGET, [("repl", ANCH, [
         (_REHANG, "                    hit.add(landed[0])")])], "RED"),
     ('M5a 锚点查不到时当作全文末尾，照常检查（不跳过）', TARGET, [("repl", ANCH, [
-        ('        if loc is None:\n            return [], f"阶段 {i + 1} 锚点核对不上：{anchor}"',
+        ('        if loc is None:\n            return [], f"阶段 {k} 锚点核对不上：{anchor}"',
          "        if loc is None:\n"
          "            starts.append(len(source_norm))\n"
          "            continue")])], "RED"),
@@ -166,10 +166,11 @@ MUTATIONS = [
          "    occurrences: list[DraftOccurrence] = []\n    phases: list[int] = []\n")])], "RED"),
     # ── 审计 §9.5 补（A1–A3），两个方向 ──
     ('M31 阶段 1 以外的空锚点退回取全文末尾（不跳过整卡）', TARGET, [("repl", ANCH, [
-        ('            return [], f"阶段 {i + 1} 锚点为空"',
+        ('            return [], f"阶段 {k} 锚点为空"',
          "            starts.append(len(source_norm))\n            continue")])], "RED"),
     ('M32 阶段 1 的锚点重新参与核对（空锚点整卡跳过、比顺序）', TARGET, [("repl", ANCH, [
-        ("        if i == 0:\n            starts.append(0)\n            continue\n", "")])], "RED"),
+        ("    return [(k, _anchor_of(p)) for k, p in enumerate(phases, 1) if k > 1]",
+         "    return [(k, _anchor_of(p)) for k, p in enumerate(phases, 1) if k > 0]")])], "RED"),
     ('M33 dropped 按摘录计（核对不上的摘录也记一次去掉）', TARGET, [("repl", ANCH, [
         ("                    unverified += 1              # 查不到 → 不作位置证据\n",
          "                    unverified += 1              # 查不到 → 不作位置证据\n"

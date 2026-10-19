@@ -71,6 +71,15 @@ def _anchor_of(phase) -> str:
     return getattr(phase, "anchor", "") if not isinstance(phase, dict) else phase.get("anchor", "")
 
 
+def checked_anchors(phases) -> list[tuple[int, str]]:
+    """参与核对的锚点 ``[(阶段号, 锚点), …]``，阶段号 1 起。
+
+    **「阶段 1 锚点不用」只在这里定义**：阶段 1 一律从全书开头算起，它的锚点不定位、不核对、
+    也不当作起始原句给下游（spec `phase1-anchor-not-checked.md`）。核对、明细日志与阶段列表都读本函数。
+    """
+    return [(k, _anchor_of(p)) for k, p in enumerate(phases, 1) if k > 1]
+
+
 def _situation_label(item) -> str:
     """条目的识别文本：做法取 `situation`，记忆取 `memory`（警告文案里点出是哪一条）。"""
     return getattr(item, "situation", "") or getattr(item, "memory", "")
@@ -100,21 +109,16 @@ def phase_ranges(phases, source_text: str, source_norm: str,
     「查不到」同为不可定位）、锚点核对不上、锚点落在回忆区（`retro`，倒叙章节里的位置不是
     故事时间，拿它分阶段必错）、锚点位置不严格递增。
     """
-    starts: list[int] = []
-    for i, phase in enumerate(phases):
-        # 阶段 1 一律从全书开头算起：它的锚点不定位、不比顺序（见上方文档）
-        if i == 0:
-            starts.append(0)
-            continue
-        anchor = _anchor_of(phase)
+    starts: list[int] = [0]                  # 阶段 1 一律从全书开头算起（checked_anchors 不含它）
+    for k, anchor in checked_anchors(phases):
         if not anchor:
-            return [], f"阶段 {i + 1} 锚点为空"
+            return [], f"阶段 {k} 锚点为空"
         loc = locate_anchor(source_text, source_norm, anchor, paragraphs)
         if loc is None:
-            return [], f"阶段 {i + 1} 锚点核对不上：{anchor}"
+            return [], f"阶段 {k} 锚点核对不上：{anchor}"
         region = _region_of(retro, loc[0])
         if region is not None:
-            return [], f"阶段 {i + 1} 锚点落在回忆区（{region}）：{anchor}"
+            return [], f"阶段 {k} 锚点落在回忆区（{region}）：{anchor}"
         starts.append(loc[0])
     for a, b in zip(starts, starts[1:]):
         if b <= a:
@@ -161,7 +165,7 @@ def build_anchors(phases, source_text: str, *,
         return PhaseAnchors(0, "", [], "")
     source_norm = normalize(source_text)
     paragraphs = (paragraph_bounds(source_text, source_norm)
-                  if any(has_ellipsis(_anchor_of(p)) for p in phases[1:]) else None)
+                  if any(has_ellipsis(a) for _, a in checked_anchors(phases)) else None)
     ranges, reason = phase_ranges(phases, source_text, source_norm, paragraphs, retro)
     return PhaseAnchors(len(phases), source_norm, ranges, reason, tuple(retro), source_text)
 
@@ -211,8 +215,9 @@ def log_phase_starts(phases, source_text: str, anchors: PhaseAnchors, name: str)
     if skipped:
         logger.warning("整卡跳过位置检查（%s）：%s", anchors.reason, name)
         paragraphs = paragraph_bounds(source_text, anchors.source_norm)
-        locs = [None] + [locate_anchor(source_text, anchors.source_norm, a, paragraphs) if a else None
-                         for a in map(_anchor_of, phases[1:])]      # 阶段 1 锚点不定位（同 phase_ranges）
+        checked = dict(checked_anchors(phases))
+        locs = [locate_anchor(source_text, anchors.source_norm, checked[k], paragraphs)
+                if checked.get(k) else None for k in range(1, len(phases) + 1)]
         positions = list(raw_offsets(
             source_text, anchors.source_norm, [loc[0] for loc in locs if loc is not None]))
         wheres = iter(chapter_labels(source_text, positions))
@@ -221,7 +226,7 @@ def log_phase_starts(phases, source_text: str, anchors: PhaseAnchors, name: str)
             anchor = _anchor_of(phase)
             label = phase.get("label", "") if isinstance(phase, dict) else getattr(phase, "label", "")
             head = f"整卡跳过明细（{name}）阶段 {k}「{label}」锚点「{anchor}」→ "
-            if k == 1:
+            if k not in checked:
                 logger.warning("%s不参与核对（阶段 1 从全书开头算起）", head)
                 continue
             if not anchor:
