@@ -442,7 +442,7 @@ def write_artifact(path: str | pathlib.Path, driver_rel: str, domain: Sequence[s
                     "mutations": mutations,
                     "controls": list(controls), "skipped": list(skipped)},
                    ensure_ascii=False, indent=2, sort_keys=False) + "\n",
-        encoding="utf-8")
+        encoding="utf-8", newline="\n")
 
 
 # ── pytest 汇总行 → 判档（三个变异驱动共用一份实现）────────────────────────────
