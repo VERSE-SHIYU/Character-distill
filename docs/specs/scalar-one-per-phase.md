@@ -104,3 +104,50 @@
 ## 7. 未核实
 
 - 新规则对真模型是否足够（模型会不会仍写两条）：只有 B2 后的小重放能答，见第 1 节末。
+
+## 补充（复核，合并后）
+
+复核对象：`98a8d363`（测试）→ `7cd4540a`（提示词）→ `1e07845c`（撞车），基线 `5df7052c`；合并 `0c9467ca`（PR #193）。复核方未改实现。
+
+### 结论
+
+**通过**（实现行为符合本 spec 的目标）：四次目标检查分别为 `1 passed, 6 xfailed`、`5 passed, 2 xfailed`、`7 passed`、`7 passed`；关系态度回归 `78 passed`；第 6 节受影响文件 `220 passed`。未发现需要回滚或立即修改的实现缺陷；以下是需跟进项。
+
+### 偏离判定
+
+1. **G5 未标 xfail：spec 错，实现对。** 第 1 节标题写「全部 `xfail(strict=True)`」，同节 G5 又写「与现行为一致，回归守卫」。已绿用例标 `xfail(strict=True)` 会 XPASS 判失败，两者不能同时成立。实现按 G5 的描述办，正确。
+2. **`_cap_slot` 空槽提前返回：实现必需，不是行为偏离。** 旧 `_cap_slot([])` 走 `slot[:1]` 返回 `[]`；新 `slot_winner` 会取 `cands[0]`，而 `dispatch` 对顶层格无条件调用 `_cap_slot`（顶层为空是常见情形），没有该守卫会 `IndexError`。空槽行为与旧版一致。`dispatch` 里 `if slot else slot` 因此成为多余但无害的一层，可删。
+
+### 变异（只跑对应测试文件；每条跑完 `git checkout --` 复原）
+
+| 变异 | 方向 | 结果 |
+|---|---|---|
+| M1 `_phase_rule` 对 scalar 返回描述规则 | 放宽 | G1、G2、G3 红 |
+| M2 单值规则删「对一般人的样子」 | 放宽 | G1、G3 红 |
+| M3 三档改回「各一句具体做法」 | 放宽 | G3 红 |
+| M4 `slot_winner` 恒取 `cands[0]` | 放宽 | G4 红；g9 红 |
+| M5 `slot_winner` 优先改挂进来的（回落末条） | 过严/反向 | G4、G5 红 |
+| M6 `_convert_relationships` 恢复内联判据 | 结构 | G6 红 |
+| M7 维度说明直接拼 `_PHASE_DESCRIPTION_RULE` | 结构 | G7 红 |
+| M8 `_timed_tpl` 单值两条同阶段 | 放宽 | G1、G2 红 |
+| M9 字段循环忘传 `tagged`（用默认空集） | 放宽 | G4 红 |
+| M10 用位置核对结果当原标 | 放宽 | G4 红 |
+| M11 三档只把 `close` 当单值 | 放宽 | G1、G2 红 |
+| M12 顶层格不做「原标 0 优先」 | 放宽 | **全绿（存活）→ F1** |
+| M13 `_phase_rule` 先判 scalar 后判逐字清单 | 结构 | 无红（当前无 scalar∩verbatim，判序不可观测） |
+
+### 需跟进
+
+- **F1（目标检查缺口）**：3.2.1 要求顶层格「原标含 0 的优先」，G1–G7 未覆盖。`dispatch([[1,2],[]], 2, kind="scalar", zero_only=[1], tagged=…)` 在干净代码上留原标 0 的行，M12 后留第一条；两种结果都全绿。建议补 G8。
+- **F2（入库台账失效）**：`docs/specs/artifacts/arc_phase_unlocated_mutations.py` X20 与 `arc_phase_fields_mutations.py` MB2/MB3 的锚点仍指向本次被替换的旧文本（当前命中 0 次），`mutation_framework` 的「锚点恰一命中」会当场 assert。根因：重构改了锚点文本，未同步。建议把 X20 改锚 `slot_winner` 的返回行，MB2/MB3 改锚新的 `_cap_slot(...)` 调用行。
+- **F3（静默兜底）**：`dispatch(tagged=...)` 默认 `lambda i: set()` 会让新单值调用方忘传时静默退回「排前面优先」（M9 只剩 G4 能抓）。建议改成 `None` + `kind == "scalar"` 时硬失败，或把单值分发拆成必传 `tagged` 的入口。
+- **F4**：第 1 节「全部 xfail」对 G5 不成立（见偏离 1），标题应改为「G1–G4、G6、G7 xfail；G5 为已绿回归守卫」。
+- **F5**：3.1 第 4 条「列表 → `[元素, ...]`（与现在逐字相同）」对口癖不成立：旧模板是 `[元素]`，改后多出 `, ...`。口癖本身是列表，提示词变化可接受；建议订正 spec 措辞，或若要逐字保留则给口癖单独分支。
+- **F6**：第 6 节漏了 `tests/test_arc_phase_fields_unit.py`（直接调用 `dispatch(kind="scalar")`）。复核时补跑：`62 passed`。
+
+### 其他
+
+- 「一格留谁」生产代码只在 `slot_winner` 一处（`grep -rn "cands\[0\]\|phase in tagged\|phase == t" --include=*.py core web` 仅命中该函数）；两份一次性变异脚本仍有旧文本锚点，见 F2。
+- g9 只改了第一段的两行（断言值与日志文本），其余断言未动。
+- 关系态度改调 `slot_winner` 后：`tests/test_arc_phase_unlocated.py tests/test_arc_phase_unlocated_goal.py` → `78 passed`。
+- 口癖 `catchphrases` 模板 diff 是唯一 spec 未要求的提示词变化（F5）。
