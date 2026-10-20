@@ -33,6 +33,15 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 _EXC_SUFFIX = ("Error", "Exception", "Warning", "Exit", "Interrupt")
 
+
+class _PickleCause(ValueError):
+    """往返比对用的异常实参：`BaseException` 默认按身份比较，`vars()` 比不过去。"""
+
+    def __eq__(self, other):
+        return type(other) is type(self) and other.args == self.args
+
+    __hash__ = None
+
 # 登记表：(相对路径, 类名) -> (导入名, 造实例的工厂)。
 # 键必须与静态普查结果**完全相等**：多一个（陈旧）或少一个（漏登记）都红。
 _REGISTRY = {
@@ -52,6 +61,10 @@ _REGISTRY = {
     ("core/distiller.py", "DistillError"): (
         "core.distiller",
         lambda cls: cls("用户可读消息", "ops 细节"),
+    ),
+    ("core/distiller.py", "_FormatGroupError"): (
+        "core.distiller",
+        lambda cls: cls("G1", _PickleCause("boom")),
     ),
     ("core/character_roster.py", "NoTargetCharacter"): (
         "core.character_roster",

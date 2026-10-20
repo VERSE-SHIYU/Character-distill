@@ -102,7 +102,9 @@ C2 在基线本来就绿（它是回归护栏，不是「达成目标」检查�
 - `tests/perf/card_draft_mutations.py` M24–M28：锚点落在 F1 正文，抽取后若命中次数不再是 1，按新位置改锚点文本，**变异意图不变**（M24 每组交一段 JSON；M25 草稿坏；M26 不校验；M27 错误帧键名；M28 在 distiller 里转卡）。M28 的替换代码改用新结构下可见的变量（`draft.model_dump()`），仍复现「occurrences 丢失」的缺陷形态。实际改动：M26 锚点由 12 空格缩进的 `draft = CardDraft.model_validate(merged)` 改为新方法里的 8 空格 `return CardDraft.model_validate(merged)`（命中 1 次）；M24、M25、M27 锚点原样命中 1 次；M28 替换改为 `card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)`。
 - `tests/test_arc_phase_fields_entries.py::_assert_batched`：E14 原先断言 `distill_incremental_stream` 函数体内直接含 `_relationships_batched(`；抽取后调用点搬进 `_format_groups`。改为「直接调 **或** 委托 `_format_groups` 且该方法体含调用」，红源不删：入口不再委托、或共用方法丢掉关系分批，断言仍红。
 - C1 的 `FORMAT_GROUPS` 扫描只数 `for … in FORMAT_GROUPS` 的组循环（`loops_only=True`）：`format_prompt_after` 里有 `group not in FORMAT_GROUPS` 的成员校验，那不是组循环/消费点；`PHASE_DEPENDENT_GROUPS` 仍数全部引用。
-- C2 fixture 里保存改前的期望值；C1 的 AST 扫描按新方法名更新。除这三处外不改测试判据。
+- `tests/test_arc_phase_fields_locks.py::test_s14_batch_prefix_only_from_shared_prefix`：共用的 `_format_groups` 把前缀作参数 `rel_prefix` 收进来，`_relationships_batched(prefix=…)` 不再是直接调用产出者。锁改为：直接调用仍须是 `book_prefix` / `format_prompt_shared`；若是 `rel_prefix`，则每个 `_format_groups(rel_prefix=…)` 调用点传的也必须是这两个产出者。判据（分批前缀只能出自共享前缀函数）不变。
+- `tests/test_exception_pickle_lock.py`：`_FormatGroupError` 带自定义字段（组名 + 原始异常），登记进 `_REGISTRY` 并补 `__reduce__`（`cls(group, cause)` 可重建）；测试侧的 `_PickleCause` 只解决「`BaseException` 按身份比较、`vars()` 比不过去」的比对问题。
+- C2 fixture 里保存改前的期望值；C1 的 AST 扫描按新方法名更新。除这五处外不改测试判据。
 
 ## 6. 测试
 

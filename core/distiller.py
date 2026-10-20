@@ -560,6 +560,10 @@ class _FormatGroupError(Exception):
         self.cause = cause
         super().__init__(f"{group}: {cause}")
 
+    def __reduce__(self):
+        # 带自定义字段的异常类必须登记进 test_exception_pickle_lock 并能原样重建。
+        return (self.__class__, (self.group, self.cause))
+
 
 def _shape_ok(data: Any, required_keys: tuple[str, ...]) -> bool:
     """JSON 形状校验：dict 且含全部必需字段。
