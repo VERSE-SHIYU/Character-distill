@@ -552,6 +552,19 @@ class DistillError(ValueError):
         super().__init__(f"{user_message}｜{ops_detail}" if ops_detail else user_message)
 
 
+class _FormatGroupError(Exception):
+    """某一字段组失败：带上组名与原始异常，由调用方决定上屏形态。"""
+
+    def __init__(self, group: str, cause: BaseException) -> None:
+        self.group = group
+        self.cause = cause
+        super().__init__(f"{group}: {cause}")
+
+    def __reduce__(self):
+        # 带自定义字段的异常类必须登记进 test_exception_pickle_lock 并能原样重建。
+        return (self.__class__, (self.group, self.cause))
+
+
 def _shape_ok(data: Any, required_keys: tuple[str, ...]) -> bool:
     """JSON 形状校验：dict 且含全部必需字段。
 
@@ -2605,6 +2618,90 @@ class Distiller:
 
         return card
 
+    def _format_groups(
+        self, *, character_name: str, user_message: str, rel_prefix: str,
+        rel_material: str, action: str, system_prefix: str = "",
+    ):
+        """按字段组并行格式化 → 合并 → 关系分批 → 按草稿校验。
+
+        每组是一次长输出（共享前缀 + 组片段 + 该组子 schema），彼此独立，故并行发；组内
+        串行。依赖：组内有状态/经历类字段的组（`PHASE_DEPENDENT_GROUPS`，由登记表推导）
+        要按阶段编号标注 occurrences，得先知道弧线所在组定下的阶段 —— 故这些组的线程在
+        该组返回后才启动，提示词附上阶段列表；弧线组自己产出阶段，其余无阶段字段的组
+        先并行。
+
+        ``system_prefix`` 供一次读完路径把整本书放在最前（Context Caching 只认前缀）；
+        分组路径留空。每组完成 yield 一次心跳；返回值是校验后的 `CardDraft`。
+        组失败经 `_FormatGroupError` 上抛，由调用方决定上屏形态 —— 本函数不拼半张卡。
+        """
+        fmt_queue: queue.Queue = queue.Queue()
+
+        def _format_one_group(group: str, phase_list_note: str = "") -> None:
+            try:
+                sub_schema = json.dumps(
+                    draft_schema(group), ensure_ascii=False, indent=2
+                )
+                system_prompt = (
+                    system_prefix + DISTILL_PROMPT_BEFORE_NAME + character_name
+                    + format_prompt_after(group)
+                    + (phase_list_note + "\n\n" if phase_list_note else "")
+                    + sub_schema
+                )
+                messages = [{"role": "user", "content": user_message}]
+                reply, upstream_truncated = self._chat_accounted(
+                    system_prompt, messages, "最终格式化", action,
+                    stream=True, max_tokens=self.CARD_MAX_TOKENS,
+                )
+                data = self._parse_json_with_retry(
+                    reply, system_prompt, messages,
+                    action_label=action,
+                    # 必填 = 该组字段：组模板列的就是这几个，缺一个说明这组没照模板来
+                    # （不查的话 `{}` 也能过，合并后被默认值填成一张空卡）。
+                    required_keys=FORMAT_GROUPS[group],
+                    upstream_truncated=upstream_truncated,
+                    stream=True, max_tokens=self.CARD_MAX_TOKENS,
+                )
+                fmt_queue.put(("ok", group, data))
+            except Exception as exc:
+                fmt_queue.put(("error", group, exc))   # 上屏口径交给调用方统一出口
+
+        # 先起不依赖阶段的组；破障/并行只发生在这一批。
+        for group in FORMAT_GROUPS:
+            if group not in PHASE_DEPENDENT_GROUPS:
+                C.ctx_thread(_format_one_group, args=(group,),
+                             name=f"format-{group}").start()
+
+        group_data: dict[str, dict[str, Any]] = {}
+
+        # 弧线组到手 → 启动依赖组（提示词附上它定出的阶段列表）
+        while _PHASE_SOURCE_GROUP not in group_data:
+            kind, group, payload = fmt_queue.get()
+            if kind == "error":
+                raise _FormatGroupError(group, payload) from payload
+            group_data[group] = payload
+            yield {"heartbeat": True}
+        for group in PHASE_DEPENDENT_GROUPS:
+            C.ctx_thread(_format_one_group, args=(group,),
+                         kwargs={"phase_list_note": _phase_list_note(
+                             _arc_phases(group_data[_PHASE_SOURCE_GROUP]))},
+                         name=f"format-{group}").start()
+
+        while len(group_data) < len(FORMAT_GROUPS):
+            kind, group, payload = fmt_queue.get()
+            if kind == "error":
+                raise _FormatGroupError(group, payload) from payload
+            group_data[group] = payload
+            yield {"heartbeat": True}   # 每组回来一次心跳，不新增状态值
+
+        merged: dict[str, Any] = {}
+        for group in FORMAT_GROUPS:      # 按 FORMAT_GROUPS 的顺序合并，与完成次序无关
+            merged.update(group_data[group])
+        # 关系详情：主调用只出名单，这里按批补齐（在按草稿校验之前，校验才见完整形态）。
+        self._relationships_batched(
+            merged, prefix=rel_prefix, character_name=character_name,
+            material=rel_material)
+        return CardDraft.model_validate(merged)
+
     def distill_incremental_stream(
         self,
         text: str,
@@ -2856,94 +2953,26 @@ class Distiller:
             yield {"error": "未能从文本中提取到角色信息"}
             return
 
-        # ── Phase 3: Format — 各组并行，合并校验后一次交出 ──
-        # 每组是一次长输出（共享前缀 + 组片段 + 该组子 schema），彼此独立，故并行发；组内串行。
-        # 依赖：组内有状态/经历类字段的组（`PHASE_DEPENDENT_GROUPS`，由登记表推导）要按阶段
-        # 编号标注 occurrences，得先知道 G6（弧线）定下的阶段 —— 故这些组的线程在 G6 返回后
-        # 才启动，提示词附上 G6 的阶段列表；G6 自己产出阶段、G1/G5 没有阶段字段，三者先并行。
-        # 合并 → 关系分批（主调用只出名单，见 `_relationships_batched`）→ 按草稿校验
-        # （`CardDraft.model_validate`）→ **一个**草稿的 json.dumps 字符串 yield：本生成器的
-        # 每条路径都交出草稿，转成卡只在消费方调 `card_from_draft` 一处（两条消费路径都从
-        # 累加串里 parse，见 web/routers/distill.py）。
-        # 任一组失败或校验不过：上屏 error 帧，不拼半张卡。
+        # ── Phase 3: Format — 按组并行，合并校验后一次交出 ──
+        # 流程（阶段依赖、合并、关系分批、校验）只在 `_format_groups` 一处；这里只负责
+        # 上屏协议：formatting 帧 → 每组一次心跳 → 一个草稿 JSON 串（失败则一个 error 帧）。
         yield {"status": "formatting"}
 
-        fmt_queue: queue.Queue = queue.Queue()
-
-        def _format_one_group(group: str, phase_list_note: str = "") -> None:
-            try:
-                sub_schema = json.dumps(
-                    draft_schema(group), ensure_ascii=False, indent=2
-                )
-                system_prompt = (
-                    DISTILL_PROMPT_BEFORE_NAME + character_name
-                    + format_prompt_after(group)
-                    + (phase_list_note + "\n\n" if phase_list_note else "")
-                    + sub_schema
-                )
-                messages = [{"role": "user", "content":
+        try:
+            draft = yield from self._format_groups(
+                character_name=character_name,
+                user_message=(
                     f"以下是关于「{character_name}」的完整分析档案，"
                     f"严格按 JSON 格式输出模板中的字段：\n\n{format_input}"
-                }]
-                reply, upstream_truncated = self._chat_accounted(
-                    system_prompt, messages, "最终格式化", "distill_format",
-                    stream=True, max_tokens=self.CARD_MAX_TOKENS,
-                )
-                data = self._parse_json_with_retry(
-                    reply, system_prompt, messages,
-                    action_label="distill_format",
-                    # 必填 = 该组字段：组模板列的就是这几个，缺一个说明这组没照模板来
-                    # （不查的话 `{}` 也能过，合并后被默认值填成一张空卡）。
-                    required_keys=FORMAT_GROUPS[group],
-                    upstream_truncated=upstream_truncated,
-                    stream=True, max_tokens=self.CARD_MAX_TOKENS,
-                )
-                fmt_queue.put(("ok", group, data))
-            except Exception as exc:
-                fmt_queue.put(("error", group, exc))   # 上屏口径交给下面统一出口
-
-        # 先起不依赖阶段的组；破障/并行只发生在这一批。
-        for group in FORMAT_GROUPS:
-            if group not in PHASE_DEPENDENT_GROUPS:
-                C.ctx_thread(_format_one_group, args=(group,),
-                             name=f"format-{group}").start()
-
-        group_data: dict[str, dict[str, Any]] = {}
-
-        # G6 到手 → 启动依赖组（提示词附 G6 的阶段列表）
-        while "G6" not in group_data:
-            kind, group, payload = fmt_queue.get()
-            if kind == "error":
-                logger.error("format group %s aborted: %s", group, payload)
-                yield {"error": user_facing_error(payload)}
-                return
-            group_data[group] = payload
-            yield {"heartbeat": True}
-        for group in PHASE_DEPENDENT_GROUPS:
-            C.ctx_thread(_format_one_group, args=(group,),
-                         kwargs={"phase_list_note": _phase_list_note(_arc_phases(group_data["G6"]))},
-                         name=f"format-{group}").start()
-
-        while len(group_data) < len(FORMAT_GROUPS):
-            kind, group, payload = fmt_queue.get()
-            if kind == "error":
-                # 与校验失败那一处同口径：上屏给用户的同时，模块 logger 留痕（spec-119）
-                logger.error("format group %s aborted: %s", group, payload)
-                yield {"error": user_facing_error(payload)}
-                return
-            group_data[group] = payload
-            yield {"heartbeat": True}   # 每组回来一次心跳，不新增状态值
-
-        merged: dict[str, Any] = {}
-        for group in FORMAT_GROUPS:      # 按 FORMAT_GROUPS 的顺序合并，与完成次序无关
-            merged.update(group_data[group])
-        try:
-            # 关系详情：主调用只出名单，这里按批补齐（在按草稿校验之前，校验才见完整形态）。
-            self._relationships_batched(
-                merged,
-                prefix=format_prompt_shared(character_name),
-                character_name=character_name, material=format_input)
-            draft = CardDraft.model_validate(merged)
+                ),
+                rel_prefix=format_prompt_shared(character_name),
+                rel_material=format_input,
+                action="distill_format",
+            )
+        except _FormatGroupError as err:
+            logger.error("format group %s aborted: %s", err.group, err.cause)
+            yield {"error": user_facing_error(err.cause)}
+            return
         except ValidationError as exc:
             # 模块 logger，不是 print：print 只进容器 stdout（不进日志面板、不发告警），
             # 而这条上屏的是用户可见的报错帧 —— 服务端这一半必须留痕（spec-119 口径）。

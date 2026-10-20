@@ -264,10 +264,17 @@ def test_s14_batch_prefix_only_from_shared_prefix():
     传出主调用的系统提示会把维度 F 的「不要写关系详情」带进「给我关系详情」的这一步 ——
     前缀只能是**不含本步指令**的那一段；本锁钉住「只有这两个产出者」。
     """
+    def _producer(src: str) -> bool:
+        return src.startswith("book_prefix(") or src.startswith("format_prompt_shared(")
+
     prefixes = _kwarg_sources(_CORE / "distiller.py", "_relationships_batched", "prefix")
     assert prefixes, "没找到任何 _relationships_batched 的 prefix 实参（判据失去意义）"
+    # 共用流程把前缀作参数收进来（`rel_prefix`），值由调用方给：再看每个
+    # `_format_groups(...)` 调用传的 `rel_prefix=` —— 入口处仍须是共享前缀产出者。
+    passed = _kwarg_sources(_CORE / "distiller.py", "_format_groups", "rel_prefix")
     bad = [p for p in prefixes
-           if not (p.startswith("book_prefix(") or p.startswith("format_prompt_shared("))]
+           if not (_producer(p)
+                   or (p == "rel_prefix" and passed and all(map(_producer, passed))))]
     assert not bad, f"分批前缀不是共享前缀函数产出的：{bad}"
 
 
