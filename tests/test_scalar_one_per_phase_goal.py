@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """目标检查：单值字段每阶段一条（修复包 B1 / P4，spec `docs/specs/scalar-one-per-phase.md`）。
 
-G1–G9。G1–G4、G6、G7 实现前是 `xfail(strict=True)`，实现后逐个摘标记；G5、G8 是「不误伤」
-回归守卫，现有代码已绿（两条都原标本阶段时本来就留先写的；顶层格本来也优先原标 0），
-标 strict 会 XPASS，故未标。G9 是 F3 的目标检查，实现前标 `xfail(strict=True)`。
+G1–G9。G5、G8 是「不误伤」回归守卫，实现之初即绿（两条都原标本阶段时留先写的；
+顶层格本来也优先原标 0），故从未标 `xfail`。G9 锁单值分发必传 `tagged`。
 
 预言是本文件里的字面量；被测的是发给模型的提示词与转卡结果。
 """
@@ -133,7 +132,6 @@ def test_g8_top_level_prefers_originally_tagged_zero():
     assert top == [1]
 
 
-@pytest.mark.xfail(strict=True, reason="F3：tagged 默认空集，单值调用方漏传会静默退回排前面优先")
 def test_g9_scalar_dispatch_requires_tagged():
     with pytest.raises(ValueError, match="g9_field"):
         dispatch([[1], []], 2, kind="scalar", label="g9_field")

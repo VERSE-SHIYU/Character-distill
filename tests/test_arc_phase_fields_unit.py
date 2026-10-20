@@ -293,7 +293,8 @@ def test_dispatch_scalar_one_per_slot():
     """U8：单值字段一个格子只留第一条 —— 同一阶段两条，第二条丢弃。"""
     from core.card_draft import dispatch
 
-    top, by_phase, _ = dispatch([[2], [2]], 3, layer="state", kind="scalar")
+    top, by_phase, _ = dispatch([[2], [2]], 3, layer="state", kind="scalar",
+                                tagged=lambda i: set())
     assert top == []
     assert by_phase == [[], [0], []]
 
@@ -302,7 +303,8 @@ def test_dispatch_scalar_multi_phase_fills_each_slot():
     """U8：单值字段标注多个阶段 → 每个阶段各得该值（不是只取第一个阶段）。"""
     from core.card_draft import dispatch
 
-    top, by_phase, _ = dispatch([[2, 3]], 3, layer="state", kind="scalar")
+    top, by_phase, _ = dispatch([[2, 3]], 3, layer="state", kind="scalar",
+                                tagged=lambda i: set())
     assert top == []
     assert by_phase == [[], [0], [0]]
 
@@ -311,7 +313,8 @@ def test_dispatch_scalar_all_phases_top_takes_first():
     """U8：单值字段两条都覆盖全部 → 顶层只留第一条。"""
     from core.card_draft import dispatch
 
-    top, by_phase, _ = dispatch([[1, 2, 3], [1, 2, 3]], 3, kind="scalar")
+    top, by_phase, _ = dispatch([[1, 2, 3], [1, 2, 3]], 3, kind="scalar",
+                                tagged=lambda i: set())
     assert top == [0]
     assert by_phase == [[], [], []]
 
@@ -321,7 +324,8 @@ def test_dispatch_count_zero():
     from core.card_draft import dispatch
 
     assert dispatch([[1, 2], [1, 2]], 0, kind="list") == ([0, 1], [], [])
-    assert dispatch([[1, 2], [1, 2]], 0, kind="scalar") == ([0], [], [])
+    assert dispatch([[1, 2], [1, 2]], 0, kind="scalar",
+                    tagged=lambda i: set()) == ([0], [], [])
 
 
 def test_scalar_same_phase_second_dropped_not_promoted():

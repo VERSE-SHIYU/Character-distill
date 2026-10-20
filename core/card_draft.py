@@ -298,7 +298,7 @@ def dispatch(final_phases: list[list[int]], count: int, *,
              label: str = "", unlocated: list[int] = (),
              zero_only: list[int] = (),
              describe: Callable[[int, int], str] | None = None,
-             tagged: Callable[[int], set[int]] = lambda i: set(),
+             tagged: Callable[[int], set[int]] | None = None,
              ) -> tuple[list[int], list[list[int]], list[int]]:
     """按最终阶段把条目分发到顶层、各阶段与未定位区 —— 分发只此一处（S6 / B1）。
 
@@ -339,9 +339,11 @@ def dispatch(final_phases: list[list[int]], count: int, *,
             for p in final:
                 by_phase[p - 1].append(i)
     if kind == "scalar":
+        if tagged is None:
+            raise ValueError(f"单值字段 {label or '(未命名)'} 分发时必须给 tagged（模型原标），"
+                             "否则撞车会静默退回「排前面优先」")
         top = _cap_slot(top, label, "顶层", 0, describe, tagged)
         by_phase = [_cap_slot(slot, label, f"阶段 {p}", p, describe, tagged)
-                    if slot else slot
                     for p, slot in enumerate(by_phase, 1)]
     return top, by_phase, loose
 
