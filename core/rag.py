@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import threading
 import uuid
 from typing import Any, NamedTuple
 
@@ -176,6 +178,26 @@ class _ScoredScene(NamedTuple):
     meta: dict[str, Any] | None
 
 
+_CHROMA_CLIENTS: dict[str, Any] = {}
+_CHROMA_CLIENTS_LOCK = threading.Lock()
+
+
+def chroma_client(path: str | None = None) -> Any:
+    """按持久化路径共用一个 chromadb 客户端（进程内）。
+
+    chromadb 的 System 缓存无锁，且在 ``start()`` 之前就入缓存：两个线程同时
+    首次构造会互相拆台。这里锁内创建，且只缓存成功的结果。路径先 abspath，
+    相对/绝对写法视为同一个。
+    """
+    key = os.path.abspath(path or "./data/chroma_db")
+    with _CHROMA_CLIENTS_LOCK:
+        client = _CHROMA_CLIENTS.get(key)
+        if client is None:
+            client = chromadb.PersistentClient(path=key)
+            _CHROMA_CLIENTS[key] = client
+        return client
+
+
 class RAGEngine:
     """使用 ChromaDB 与阿里云百炼 text-embedding-v4 的 RAG 检索引擎。"""
 
@@ -199,9 +221,9 @@ class RAGEngine:
             raise
 
         try:
-            self._client = chromadb.PersistentClient(path=chroma_path or "./data/chroma_db")
+            self._client = chroma_client(chroma_path)
         except Exception as exc:
-            print(f"初始化 Chroma EphemeralClient 失败：{exc}")
+            print(f"初始化 Chroma PersistentClient 失败：{exc}")
             raise
 
         try:

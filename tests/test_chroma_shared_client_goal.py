@@ -1,4 +1,4 @@
-"""P8 目标检查：一个进程一个 chroma 客户端（实现前全部 xfail(strict=True)）。
+"""P8 目标检查：一个进程一个 chroma 客户端。
 
 C1 并发首次构造不再失败；C2 同路径（含相对/绝对写法）共用同一客户端、不同路径不共用；
 C3 构造失败不写入缓存；C4 生产代码里 `chromadb.PersistentClient(` 只出现一次，在共享入口。
@@ -77,7 +77,6 @@ _C1_CHILD = textwrap.dedent(
 )
 
 
-@pytest.mark.xfail(strict=True, reason="P8 未实现：两个线程并发首次构造会撞上 chromadb 未加锁的 System 缓存")
 def test_c1_concurrent_first_construction_is_safe():
     env = dict(os.environ)
     env["PYTHONPATH"] = str(_REPO) + os.pathsep + env.get("PYTHONPATH", "")
@@ -101,8 +100,7 @@ def test_c1_concurrent_first_construction_is_safe():
     )
 
 
-@pytest.mark.xfail(strict=True, reason="P8 未实现：每次 RAGEngine 都新造 PersistentClient，不是按路径共用")
-def test_c2_one_client_per_path(tmp_path):
+def test_c2_one_client_per_path(tmp_path, monkeypatch):
     from core.rag import RAGEngine
 
     first = tmp_path / "chroma"
@@ -110,6 +108,8 @@ def test_c2_one_client_per_path(tmp_path):
     second = tmp_path / "chroma-other"
     second.mkdir()
 
+    # 相对路径按进程 cwd 解析；把 cwd 放到临时目录，避免 Windows 跨盘符取不了 relpath。
+    monkeypatch.chdir(tmp_path)
     abs_path = str(first)
     rel_path = os.path.relpath(abs_path)
 
@@ -121,7 +121,6 @@ def test_c2_one_client_per_path(tmp_path):
     assert c._client is not a._client, "不同路径不能共用客户端"
 
 
-@pytest.mark.xfail(strict=True, reason="P8 未实现：core.rag.chroma_client 尚不存在，失败缓存语义无从谈起")
 def test_c3_failure_is_not_cached(tmp_path, monkeypatch):
     try:
         from core.rag import chroma_client
@@ -179,7 +178,6 @@ def _enclosing_function(tree: ast.AST) -> dict[ast.AST, str]:
     return names
 
 
-@pytest.mark.xfail(strict=True, reason="P8 未实现：core/rag.py 与 scripts/ 各有一处直接构造")
 def test_c4_single_persistent_client_constructor():
     hits: list[tuple[str, str]] = []
     for sub in ("core", "web", "mcp_server", "scripts"):

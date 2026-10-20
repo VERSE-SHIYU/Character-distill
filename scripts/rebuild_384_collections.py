@@ -54,7 +54,7 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from core.embeddings import DashScopeEmbedding, get_embed_stats, reset_embed_stats  # noqa: E402
-from core.rag import RAGEngine, mark_built  # noqa: E402
+from core.rag import RAGEngine, chroma_client, mark_built  # noqa: E402
 from core.request_context import system_llm_context  # noqa: E402
 from web.llm_resolution import EmbeddingResolution, resolve_embedding  # noqa: E402
 
@@ -166,9 +166,7 @@ def all_characters_for(db: Path, text_id: str, refs: list[dict]) -> list[dict]:
 
 def collection_states(chroma_path: Path) -> dict[str, dict]:
     """枚举所有集合：{name: {dim, count}}。dim None=空/peek 失败。"""
-    import chromadb
-
-    client = chromadb.PersistentClient(path=str(chroma_path))
+    client = chroma_client(str(chroma_path))
     out: dict[str, dict] = {}
     for c in client.list_collections():
         name = c.name
