@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """目标检查：单值字段每阶段一条（修复包 B1 / P4，spec `docs/specs/scalar-one-per-phase.md`）。
 
-G1–G7：G1–G4、G6、G7 先 `xfail(strict=True)`，实现后逐个摘标记。G5 是「不误伤」回归守卫，
-现有代码已绿（两条都原标本阶段时本来就留先写的），标 strict 会 XPASS，故不标。
+G1–G7。G1–G4、G6、G7 实现前是 `xfail(strict=True)`，实现后逐个摘标记；G5 是「不误伤」
+回归守卫，现有代码已绿（两条都原标本阶段时本来就留先写的），标 strict 会 XPASS，故未标。
 
 预言是本文件里的字面量；被测的是发给模型的提示词与转卡结果。
 """
@@ -102,7 +102,6 @@ def _collision_card():
     }
 
 
-@pytest.mark.xfail(strict=True, reason="撞车仍按输出顺序留第一条")
 def test_g4_originally_tagged_phase_wins_collision(caplog):
     with caplog.at_level(logging.WARNING):
         card = card_from_draft(_collision_card(), PA._SRC, retro=NOT_DETECTED)
@@ -135,7 +134,6 @@ def _calls(node: ast.AST, name: str) -> bool:
                for c in ast.walk(node))
 
 
-@pytest.mark.xfail(strict=True, reason="「一格留谁」仍有两处、写法相反")
 def test_g6_one_winner_function_used_by_both_call_sites():
     tree = ast.parse((_REPO / "core" / "card_draft.py").read_text(encoding="utf-8"))
     funcs = _top_level_funcs(tree)

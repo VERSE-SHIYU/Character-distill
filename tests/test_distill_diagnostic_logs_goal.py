@@ -321,10 +321,10 @@ def test_g9_scalar_collision_names_kept_and_dropped(caplog):
     with caplog.at_level(logging.WARNING):
         card = card_from_draft(draft, PA._SRC, retro=NOT_DETECTED)
     msgs = [r.getMessage() for r in caplog.records]
-    assert card.character_arc.phases[1].overlay.get("decision_style") == "B"
+    assert card.character_arc.phases[1].overlay.get("decision_style") == "A"
     assert [m for m in msgs if "有多条取值" in m] == [
         "[card_draft] decision_style 的阶段 2 有多条取值，"
-        "保留「B」（由阶段 1 改挂进来），丢弃「A」（原标此阶段）"]
+        "保留「A」（原标此阶段），丢弃「B」（由阶段 1 改挂进来）"]
 
     both = {
         "name": "角色",

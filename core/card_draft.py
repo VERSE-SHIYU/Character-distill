@@ -298,6 +298,7 @@ def dispatch(final_phases: list[list[int]], count: int, *,
              label: str = "", unlocated: list[int] = (),
              zero_only: list[int] = (),
              describe: Callable[[int, int], str] | None = None,
+             tagged: Callable[[int], set[int]] = lambda i: set(),
              ) -> tuple[list[int], list[list[int]], list[int]]:
     """按最终阶段把条目分发到顶层、各阶段与未定位区 —— 分发只此一处（S6 / B1）。
 
@@ -338,25 +339,41 @@ def dispatch(final_phases: list[list[int]], count: int, *,
             for p in final:
                 by_phase[p - 1].append(i)
     if kind == "scalar":
-        top = _cap_slot(top, label, "顶层", 0, describe)
-        by_phase = [_cap_slot(slot, label, f"阶段 {p}", p, describe) if slot else slot
+        top = _cap_slot(top, label, "顶层", 0, describe, tagged)
+        by_phase = [_cap_slot(slot, label, f"阶段 {p}", p, describe, tagged)
+                    if slot else slot
                     for p, slot in enumerate(by_phase, 1)]
     return top, by_phase, loose
 
 
+def slot_winner(cands: list[int], phase: int,
+                tagged: Callable[[int], set[int]]) -> int:
+    """「一格留谁」只在这里判定：原标此阶段（顶层为 0）的那条优先，没有则取第一条。
+
+    `tagged(i)` 返回第 i 条**模型原标**的阶段集合；不用位置核对结果（整卡跳过时它为空）。
+    """
+    return next((i for i in cands if phase in tagged(i)), cands[0])
+
+
 def _cap_slot(slot: list[int], label: str, where: str, phase: int,
-              describe: Callable[[int, int], str] | None) -> list[int]:
-    """单值字段的一个格子只留第一条，其余丢弃 + warning（顶层格子同此规则）。
+              describe: Callable[[int, int], str] | None,
+              tagged: Callable[[int], set[int]]) -> list[int]:
+    """单值字段的一个格子只留一条，其余丢弃 + warning（顶层格子同此规则）。
 
     `describe` 为 None 时文案与旧版逐字一致；给了就写明保留的是哪条、丢弃的是哪条及其来源。
     """
-    for i in slot[1:]:
+    if not slot:
+        return []
+    winner = slot_winner(slot, phase, tagged)
+    for i in slot:
+        if i == winner:
+            continue
         if describe is None:
             logger.warning("[card_draft] %s 的%s有多条取值，保留第一条", label, where)
         else:
             logger.warning("[card_draft] %s 的%s 有多条取值，保留%s，丢弃%s",
-                           label, where, describe(slot[0], phase), describe(i, phase))
-    return slot[:1]
+                           label, where, describe(winner, phase), describe(i, phase))
+    return [winner]
 
 
 def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[dict], list[dict], int, int]:
@@ -406,7 +423,7 @@ def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[d
         for t in range(1, count + 1):
             cands = [j for j in mine if j in top or j in slots[t - 1]]
             if cands:
-                winners[t] = next((j for j in cands if flat[j][1].phase == t), cands[0])
+                winners[t] = slot_winner(cands, t, lambda j: {flat[j][1].phase})
                 for j in cands:                   # 同阶段撞车：只采用一条，其余落败
                     if j != winners[t]:
                         logger.warning("撞车落败：态度 %r 标在阶段 %d，阶段 %d 采用了另一条",
@@ -493,7 +510,8 @@ def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions) -> Char
 
         top, slots, loose = dispatch(res.phases, count, layer=spec.layer, kind=spec.kind,
                                      label=path, unlocated=res.unlocated, zero_only=vr.zero_only,
-                                     describe=describe)
+                                     describe=describe,
+                                     tagged=lambda i: {o.phase for o in rows[i].occurrences})
         f = kinds["字段"]
         f[0] += res.rehung
         f[1] += len(loose)
