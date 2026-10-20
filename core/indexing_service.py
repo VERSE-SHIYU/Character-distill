@@ -159,7 +159,7 @@ class IndexingService:
         每次都新造，**不缓存引擎对象**：引擎持有「当前指向哪个集合」这个可变状态，
         共享它就等于让所有会话共用一个指针（场景预索引会把它改指到某张卡的
         `scenes_*`，同一本书的其他卡跟着串过去）。可共享的部分在更低一层已经共享：
-        chroma 客户端按持久化路径共用一个 System，嵌入函数按「地域 + key 指纹」缓存
+        客户端由 `core.rag.chroma_client` 按路径共用一个，嵌入函数按「地域 + key 指纹」缓存
         （`core/embeddings.py::create_safe_embedding_fn`）。
         """
         rag_config = dict(self._rag_config)
