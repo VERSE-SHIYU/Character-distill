@@ -10,7 +10,7 @@
 1. **提示词把它当列表写**：维度说明和模板都没说「每阶段一条」，模型就给同一阶段写两条（10-18 祈灼：tone / sentence_pattern / decision_style 阶段 1 各 2 条，第二条全是「对她时…」）；
 2. **改挂撞车**：位置核对把别的阶段的取值挪进来，`_cap_slot` 按输出顺序留第一条，可能留下挪进来的、丢掉标对的；而关系态度遇到同样撞车是「原标此阶段优先」——同一条「一格留谁」规则写了两处、写法相反。
 
-## 1. 目标检查（第一个提交，`tests/test_scalar_one_per_phase_goal.py`，全部 `xfail(strict=True)`）
+## 1. 目标检查（第一个提交，`tests/test_scalar_one_per_phase_goal.py`；G5 是已绿的回归守卫、不标 `xfail`，其余标 `xfail(strict=True)`）（10-20 复核订正，F4）
 
 | # | 检查 | 测的是目标 |
 |---|---|---|
@@ -58,7 +58,7 @@
    > 取值按阶段给，写成 {"value": "结论（「原话」）", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]} —— **每个阶段只写一条：同一个阶段只能出现在一条取值的 occurrences 里**；此人对不同的人表现不同时，只写他这一阶段对一般人的样子，只对某个特定的人才有的表现不写在这里；＋ `_BASELINE_ZERO_RULE`
 2. 新函数 `_phase_rule(path)`：逐字清单 → `_PHASE_VERBATIM_RULE`；`REGISTRY[path].kind == "scalar"` → `_PHASE_SCALAR_RULE`；否则 `_PHASE_DESCRIPTION_RULE`。与 `_timed_tpl` 同一判据来源。
 3. `_FORMAT_DIMS` / `_FORMAT_DIM_M` 里所有按阶段的拼接改成 `_phase_rule("<路径>")`（列表字段的文字不变，只是改由函数给）。维度 C「语气/句式按阶段给，」「口癖按阶段给，」「用词水平是稳定项」措辞保留（F13）。
-4. `_timed_tpl(path)` 改为返回**整个数组**：列表 → `[元素, ...]`（与现在逐字相同）；单值 → `[元素(phase 1), 元素(phase 2)]`。模板各处去掉外层方括号。
+4. `_timed_tpl(path)` 改为返回**整个数组**：列表 → `[元素, ...]`；单值 → `[元素(phase 1), 元素(phase 2)]`。模板各处去掉外层方括号。口癖（`catchphrases`，列表）模板由 `[元素]` 变成 `[元素, ...]`，多出 `, ...`；口癖本身是列表，提示词变化可接受（复核判为不算问题）（10-20 复核订正，F5）。
 5. 维度 M 三档：「各一句具体做法」→「各一句具体做法与语气」（F10：它在聊天时取代的就是语气）。
 
 ### 3.2 撞车（`core/card_draft.py`）
@@ -97,7 +97,7 @@
 ## 6. 测试
 
 只跑受影响文件，库用 `docker compose -f docker-compose.test.yml up -d --wait`（55432）：
-`tests/test_scalar_one_per_phase_goal.py tests/test_distill_diagnostic_logs_goal.py tests/test_arc_phase_fields_locks.py tests/test_evidence_format_goal.py tests/test_personality_distill_goal.py tests/test_state_baseline_zero_goal.py tests/test_state_inertia_goal.py tests/test_arc_phase_unlocated.py tests/test_arc_phase_unlocated_goal.py tests/test_card_arc_behaviors.py tests/test_card_draft.py tests/test_distill_output_bounds.py tests/test_pre_story_memory_goal.py`。全量看分支 CI。
+`tests/test_scalar_one_per_phase_goal.py tests/test_distill_diagnostic_logs_goal.py tests/test_arc_phase_fields_locks.py tests/test_arc_phase_fields_unit.py tests/test_evidence_format_goal.py tests/test_personality_distill_goal.py tests/test_state_baseline_zero_goal.py tests/test_state_inertia_goal.py tests/test_arc_phase_unlocated.py tests/test_arc_phase_unlocated_goal.py tests/test_card_arc_behaviors.py tests/test_card_draft.py tests/test_distill_output_bounds.py tests/test_pre_story_memory_goal.py`（补 `tests/test_arc_phase_fields_unit.py`：直接调用 `dispatch(kind="scalar")`）（10-20 复核订正，F6）。全量看分支 CI。
 
 **改写的旧断言（属旧规则本身，复核方逐条核）**：g9 第一段 `overlay["decision_style"] == "B"` → `"A"`，日志改为 `保留「A」（原标此阶段），丢弃「B」（由阶段 1 改挂进来）`。其余断言不许改；要改就停下报告。
 
