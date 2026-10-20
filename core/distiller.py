@@ -210,6 +210,16 @@ _PHASE_DESCRIPTION_RULE = (
     '[{"phase": 1, "quote": "该阶段原文摘录"}]} —— 一条取值只写一次；'
     + _BASELINE_ZERO_RULE
 )
+# 按阶段的单值字段（语气、句式、决策风格…）的写法：一个阶段只能放一条取值。只定义一次
+# （锁 S4 数它）。
+_PHASE_SCALAR_RULE = (
+    '取值按阶段给，写成 {"value": "' + _DESC_VALUE + '", "occurrences": '
+    '[{"phase": 1, "quote": "该阶段原文摘录"}]} —— 每个阶段只写一条：'
+    '同一个阶段只能出现在一条取值的 occurrences 里；'
+    '此人对不同的人表现不同时，只写他这一阶段对一般人的样子，'
+    '只对某个特定的人才有的表现不写在这里；'
+    + _BASELINE_ZERO_RULE
+)
 # 原话类字段（口癖…）的写法：整个值就是原文本身，不加描述、括号与引号。只定义一次（锁 S4 数它）。
 _PHASE_VERBATIM_RULE = (
     '取值就是原话本身：写成 {"value": "' + _VERBATIM_VALUE + '", "occurrences": '
@@ -222,24 +232,42 @@ _STABLE_FIELD_RULE = (
 )
 
 
+# 按阶段字段的写法：逐字清单 → 原话规则；登记表单值 → 单值规则；其余 → 描述规则。
+def _phase_rule(path: str) -> str:
+    if f"{path}[]" in VERBATIM_FIELDS:
+        return _PHASE_VERBATIM_RULE
+    if REGISTRY[path].kind == "scalar":
+        return _PHASE_SCALAR_RULE
+    return _PHASE_DESCRIPTION_RULE
+
+
 # 按阶段字段在 JSON 模板里的取值形态：路径在逐字清单里用原话模板，其余用描述模板。
+# 返回整个数组：列表示范一条 + `...`，单值示范两条、阶段号不同。
 def _timed_tpl(path: str) -> str:
     value = _VERBATIM_VALUE if f"{path}[]" in VERBATIM_FIELDS else _DESC_VALUE
-    return '{"value": "' + value + '", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]}'
+
+    def item(phase: int) -> str:
+        return ('{"value": "' + value + '", "occurrences": '
+                '[{"phase": ' + str(phase) + ', "quote": "该阶段原文摘录"}]}')
+
+    if REGISTRY[path].kind == "scalar":
+        return '[' + item(1) + ', ' + item(2) + ']'
+    return '[' + item(1) + ', ...]'
 
 
 _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ("G1", 'A. 基本信息：名字、身份、背景（背景只写故事开始前就成立的出身与处境，不写故事里的遭遇）'),
-    ("G2", 'B. 核心性格（3-5个）：每个特质 + 原文中的具体场景作为证据。' + _PHASE_DESCRIPTION_RULE),
+    ("G2", 'B. 核心性格（3-5个）：每个特质 + 原文中的具体场景作为证据。'
+           + _phase_rule("personality_traits")),
     ("G2", 'P. 动机：此人想要什么、为此不惜做到哪一步（不写手段 —— 手段在维度 O「情境→做法」里）；'
-           '负面动机（贪、算计、报复）照原文如实写，不美化。' + _PHASE_DESCRIPTION_RULE),
+           '负面动机（贪、算计、报复）照原文如实写，不美化。' + _phase_rule("motives")),
     ("G3", 'C. 说话风格：语气、句式、口癖（直接从原文对话提取）。语气/句式按阶段给，'
-           + _PHASE_DESCRIPTION_RULE +
-           '口癖按阶段给，' + _PHASE_VERBATIM_RULE +
+           + _phase_rule("speaking_style.tone") +
+           '口癖按阶段给，' + _phase_rule("speaking_style.catchphrases") +
            '用词水平是稳定项，' + _STABLE_FIELD_RULE +
            '禁忌用词（taboo_words）：根据角色性格，推断他绝对不会说出口的话或词'
            '（如违背人设的示弱话、不符其语言习惯的词）。从原文和人设推断，确实没有才留空。'),
-    ("G2", 'D. 价值观（2-4个）：什么对他最重要？两难时怎么选？' + _PHASE_DESCRIPTION_RULE),
+    ("G2", 'D. 价值观（2-4个）：什么对他最重要？两难时怎么选？' + _phase_rule("values")),
     ("G6",
         'E. 关键记忆（3-5个）：塑造此人的重要经历，全部写进 key_memories。每条给出：\n'
         '   - memory：一句话讲清这段经历（不带人名地名）。\n'
@@ -254,12 +282,12 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
         '   关系的类型、态度与阶段变化由后续单独生成，这里**不要**写。'
     ),
     ("G2", 'G. 内在矛盾（1-3个）：此人身上自相矛盾之处，以及矛盾如何影响行为。'
-           + _PHASE_DESCRIPTION_RULE),
+           + _phase_rule("inner_tensions")),
     ("G3", 'H. 开场白：以此角色的口吻写一句开场白，用于对话开始时'),
     ("G2", 'J. 情感模式（2-3个）：什么情况下会生气、开心、沉默、逃避？触发条件是什么？'
-           + _PHASE_DESCRIPTION_RULE),
+           + _phase_rule("emotional_patterns")),
     ("G2", 'K. 决策风格：面对选择时是冲动还是谨慎？靠情感还是逻辑？举例说明。'
-           + _PHASE_DESCRIPTION_RULE),
+           + _phase_rule("decision_style")),
     ("G6",
         'L. 角色弧线：此人从故事开始到结束，心态或立场发生了怎样的变化？无明显变化则 axis 留空、phases 输出空数组 []。\n'
         '   - axis：一句「从…到…」（≤30字），两端都写心态或立场，不写情节。\n'
@@ -275,8 +303,8 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
     ("G3",
         'N. 认知/语言画像：基于原文中角色的实际话语和行为，判断以下四项：\n'
         '   - education_level（文化程度）：文盲/识字不多/普通/受过良好教育/学者。从句式复杂度、用词丰富度、会不会用成语典故判断。依据原文中角色说的话判断。稳定项，' + _STABLE_FIELD_RULE + '\n'
-        '   - knowledge_scope（知识边界）：这个角色的时代/阶层/见识决定他知道什么、不知道什么。如"古代农妇，不懂现代科技与时事", 或"现代都市白领，对古代文学不了解"。从角色身份、背景、行为推断。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
-        '   - speech_style（说话腔调）：用词雅俗、长短句风格、会不会用成语/专业词、口头禅、方言口音感。从原文对话提取最典型的说话特征。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
+        '   - knowledge_scope（知识边界）：这个角色的时代/阶层/见识决定他知道什么、不知道什么。如"古代农妇，不懂现代科技与时事", 或"现代都市白领，对古代文学不了解"。从角色身份、背景、行为推断。按阶段给：' + _phase_rule("cognitive.knowledge_scope") + '\n'
+        '   - speech_style（说话腔调）：用词雅俗、长短句风格、会不会用成语/专业词、口头禅、方言口音感。从原文对话提取最典型的说话特征。按阶段给：' + _phase_rule("cognitive.speech_style") + '\n'
         '   - vocabulary_level（用词层次）：粗白（市井/底层）/日常（普通人）/文雅（读书人/官员）/书面（学者/文人）。从原文用词直接判断。稳定项，' + _STABLE_FIELD_RULE
     ),
     ("G6",
@@ -293,10 +321,10 @@ _FORMAT_DIM_M = (
     '   - affinity_baseline（0-100）：此角色对一个新认识的人，默认会停在的关系基线。高冷/谨慎者低（25-40），热情/外向者高（55-70），多数人 45-55。\n'
     '   - volatility：情绪波动幅度，平稳/适中/剧烈（高神经质偏剧烈）。\n'
     '   - grudge_inertia：受到负面对待后多久消化，大度/一般/记仇（低宜人性或高神经质偏记仇）。\n'
-    '   - triggers（1-3 条）：碰了会让 ta 情绪激烈下降的具体雷点，从原文冲突场景提取。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
-    '   - soft_spots（1-3 条）：戳中会让 ta 心软/好感上升的点，从原文提取。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
-    '   - 关系做法三档 relational_modes（close 对亲近的人 / normal 对平常的人 / conflict 起冲突时）：各一句具体做法，按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
-    '   - warming_conditions（亲近条件，1-3 条）：对方要做到什么，此人才肯更近一步。按阶段给：' + _PHASE_DESCRIPTION_RULE + '\n'
+    '   - triggers（1-3 条）：碰了会让 ta 情绪激烈下降的具体雷点，从原文冲突场景提取。按阶段给：' + _phase_rule("psyche.triggers") + '\n'
+    '   - soft_spots（1-3 条）：戳中会让 ta 心软/好感上升的点，从原文提取。按阶段给：' + _phase_rule("psyche.soft_spots") + '\n'
+    '   - 关系做法三档 relational_modes（close 对亲近的人 / normal 对平常的人 / conflict 起冲突时）：各一句具体做法与语气，按阶段给：' + _phase_rule("psyche.relational_modes.close") + '\n'
+    '   - warming_conditions（亲近条件，1-3 条）：对方要做到什么，此人才肯更近一步。按阶段给：' + _phase_rule("psyche.warming_conditions") + '\n'
     '   - agreeableness_facets（宜人性三分面：同情 / 谦恭 / 信任）：每条给「高/中/低」、一句概括性的行为、一段逐字照抄的原文摘录（quote，10-40 字）。' + _STABLE_FIELD_RULE + '只写概括性的行为，不写具体剧情事件。'
 )
 _FORMAT_OUTPUT_RULES = (
@@ -309,18 +337,18 @@ _FORMAT_TEMPLATE_INTRO = 'JSON 模板（所有字段必须包含）：'
 _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("name", '  "name": "角色名"'),
     ("identity", '  "identity": "一句话身份"'),
-    ("personality_traits", '  "personality_traits": [' + _timed_tpl("personality_traits") + ', ...]'),
+    ("personality_traits", '  "personality_traits": ' + _timed_tpl("personality_traits")),
     ("speaking_style",
         '  "speaking_style": {\n'
-        '    "tone": [' + _timed_tpl("speaking_style.tone") + '],\n'
-        '    "sentence_pattern": [' + _timed_tpl("speaking_style.sentence_pattern") + '],\n'
-        '    "catchphrases": [' + _timed_tpl("speaking_style.catchphrases") + '],\n'
+        '    "tone": ' + _timed_tpl("speaking_style.tone") + ',\n'
+        '    "sentence_pattern": ' + _timed_tpl("speaking_style.sentence_pattern") + ',\n'
+        '    "catchphrases": ' + _timed_tpl("speaking_style.catchphrases") + ',\n'
         '    "vocabulary_level": "文雅/日常/粗白",\n'
         '    "taboo_words": ["禁忌词1", "禁忌词2"]\n'
         '  }'
     ),
-    ("values", '  "values": [' + _timed_tpl("values") + ', ...]'),
-    ("motives", '  "motives": [' + _timed_tpl("motives") + ', ...]'),
+    ("values", '  "values": ' + _timed_tpl("values")),
+    ("motives", '  "motives": ' + _timed_tpl("motives")),
     ("key_memories",
         '  "key_memories": [\n'
         '    {"memory": "关键经历' + _EVIDENCE_EXAMPLE + '", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}]}\n'
@@ -331,11 +359,11 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
         '    {"target": "对方名"}\n'
         '  ]'
     ),
-    ("inner_tensions", '  "inner_tensions": [' + _timed_tpl("inner_tensions") + ', ...]'),
+    ("inner_tensions", '  "inner_tensions": ' + _timed_tpl("inner_tensions")),
     ("background", '  "background": "背景摘要"'),
     ("first_message", '  "first_message": "角色开场白"'),
-    ("emotional_patterns", '  "emotional_patterns": [' + _timed_tpl("emotional_patterns") + ', ...]'),
-    ("decision_style", '  "decision_style": [' + _timed_tpl("decision_style") + ']'),
+    ("emotional_patterns", '  "emotional_patterns": ' + _timed_tpl("emotional_patterns")),
+    ("decision_style", '  "decision_style": ' + _timed_tpl("decision_style")),
     ("character_arc",
         '  "character_arc": {\n'
         '    "axis": "从…到…",\n'
@@ -358,13 +386,13 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
         '    "affinity_baseline": 50,\n'
         '    "volatility": "适中",\n'
         '    "grudge_inertia": "一般",\n'
-        '    "triggers": [' + _timed_tpl("psyche.triggers") + ', ...],\n'
-        '    "soft_spots": [' + _timed_tpl("psyche.soft_spots") + ', ...],\n'
-        '    "warming_conditions": [' + _timed_tpl("psyche.warming_conditions") + ', ...],\n'
+        '    "triggers": ' + _timed_tpl("psyche.triggers") + ',\n'
+        '    "soft_spots": ' + _timed_tpl("psyche.soft_spots") + ',\n'
+        '    "warming_conditions": ' + _timed_tpl("psyche.warming_conditions") + ',\n'
         '    "relational_modes": {\n'
-        '      "close": [' + _timed_tpl("psyche.relational_modes.close") + '],\n'
-        '      "normal": [' + _timed_tpl("psyche.relational_modes.normal") + '],\n'
-        '      "conflict": [' + _timed_tpl("psyche.relational_modes.conflict") + ']\n'
+        '      "close": ' + _timed_tpl("psyche.relational_modes.close") + ',\n'
+        '      "normal": ' + _timed_tpl("psyche.relational_modes.normal") + ',\n'
+        '      "conflict": ' + _timed_tpl("psyche.relational_modes.conflict") + '\n'
         '    },\n'
         '    "agreeableness_facets": [\n'
         '      {"facet": "同情/谦恭/信任", "level": "高/中/低", "behavior": "一句概括性的行为", "quote": "原文摘录"}\n'
@@ -374,8 +402,8 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("cognitive",
         '  "cognitive": {\n'
         '    "education_level": "文盲/识字不多/普通/受过良好教育/学者",\n'
-        '    "knowledge_scope": [' + _timed_tpl("cognitive.knowledge_scope") + '],\n'
-        '    "speech_style": [' + _timed_tpl("cognitive.speech_style") + '],\n'
+        '    "knowledge_scope": ' + _timed_tpl("cognitive.knowledge_scope") + ',\n'
+        '    "speech_style": ' + _timed_tpl("cognitive.speech_style") + ',\n'
         '    "vocabulary_level": "粗白/日常/文雅/书面"\n'
         '  }'
     ),
