@@ -26,7 +26,14 @@ def _entry_sources(name: str) -> list[str]:
 def _assert_batched(name: str) -> None:
     srcs = _entry_sources(name)
     assert srcs, f"distiller.py 里找不到入口 {name}"
-    assert any("_relationships_batched(" in s for s in srcs), f"{name} 未走关系分批"
+    # 直接调，或交给共用流程 `_format_groups`（它内部调）——两种都算走了关系分批。
+    shared_batches = any(
+        "_relationships_batched(" in s for s in _entry_sources("_format_groups"))
+    assert any(
+        "_relationships_batched(" in s
+        or ("_format_groups(" in s and shared_batches)
+        for s in srcs
+    ), f"{name} 未走关系分批"
 
 
 # ── E11 `distill` ──────────────────────────────────────────────────────────

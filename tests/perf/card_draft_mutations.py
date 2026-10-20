@@ -231,8 +231,8 @@ MUTATIONS = [
     # 撞到 [262, 263]
     ('M26  分组流式合并后不校验（model_construct）：坏草稿也交出字符串、不再产错误帧',
      TARGET, [("repl", DIST, [
-         ('            draft = CardDraft.model_validate(merged)\n',
-          '            draft = CardDraft.model_construct(**merged)\n'),
+         ('        return CardDraft.model_validate(merged)\n',
+          '        return CardDraft.model_construct(**merged)\n'),
      ])], "RED"),
     # 撞到 [263]
     ('M27  分组流式校验失败的错误帧键名不是 error',
@@ -248,7 +248,7 @@ MUTATIONS = [
     ('M28  分组流式在 distiller 里就转成卡，交出的不再是草稿（occurrences 已丢）',
      TARGET, [("repl", DIST, [
          ('        yield json.dumps(draft.model_dump(), ensure_ascii=False)',
-          '        yield json.dumps(card_from_draft(merged, text, retro=NOT_DETECTED).model_dump(), ensure_ascii=False)'),
+          '        yield json.dumps(card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED).model_dump(), ensure_ascii=False)'),
      ])], "RED"),
     # 撞到 [68, 69]
     ('M29  路由 R1（/start 后台任务）退回 CharacterCard.model_validate',

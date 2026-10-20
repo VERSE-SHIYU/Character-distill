@@ -17,8 +17,6 @@ import json
 import re
 from pathlib import Path
 
-import pytest
-
 import core.distiller as D
 from core.card_draft import CardDraft
 from core.distiller import Distiller
@@ -42,10 +40,11 @@ _ARC = {"axis": "从甲到乙", "phases": [
 ]}
 
 
-def _function_owners(name: str) -> set[str]:
+def _function_owners(name: str, *, loops_only: bool = False) -> set[str]:
     """生产代码里引用 `name` 的**最外层函数名**集合（嵌套闭包算进它所在的方法）。
 
-    只看 AST 的 Name/Attribute，不看注释与文档串 —— 规则说的是「消费点」。
+    `loops_only=True` 只数 `for … in name` 的组循环；否则数全部 Name/Attribute。
+    只看 AST，不看注释与文档串 —— 规则说的是「消费点」。
     """
     tree = ast.parse((_ROOT / "core" / "distiller.py").read_text(encoding="utf-8"))
     owners: set[str] = set()
@@ -66,12 +65,18 @@ def _function_owners(name: str) -> set[str]:
                 owners.add(self.stack[0])
 
         def visit_Name(self, node: ast.Name) -> None:
-            if node.id == name:
+            if not loops_only and node.id == name:
                 self._note()
             self.generic_visit(node)
 
         def visit_Attribute(self, node: ast.Attribute) -> None:
-            if isinstance(node.value, ast.Name) and node.value.id == name:
+            if (not loops_only and isinstance(node.value, ast.Name)
+                    and node.value.id == name):
+                self._note()
+            self.generic_visit(node)
+
+        def visit_For(self, node: ast.For) -> None:
+            if loops_only and isinstance(node.iter, ast.Name) and node.iter.id == name:
                 self._note()
             self.generic_visit(node)
 
@@ -79,10 +84,9 @@ def _function_owners(name: str) -> set[str]:
     return owners
 
 
-@pytest.mark.xfail(strict=True, reason="段 1 未实现：按组格式化还没有共用实现")
 def test_c1_grouped_format_has_one_implementation():
     assert _function_owners("PHASE_DEPENDENT_GROUPS") == {_SHARED_METHOD}
-    assert _function_owners("FORMAT_GROUPS") == {_SHARED_METHOD}
+    assert _function_owners("FORMAT_GROUPS", loops_only=True) == {_SHARED_METHOD}
 
 
 def _payload_for(group: str) -> dict:
