@@ -57,7 +57,6 @@ def _template_phases(prompt: str, leaf: str) -> list[str]:
     return re.findall(r'"phase":\s*(\d+)', line)
 
 
-@pytest.mark.xfail(strict=True, reason="单值规则与两条示范尚未实现")
 def test_g1_each_scalar_path_gets_one_per_phase_rule_and_two_phase_template():
     paths = _scalar_paths()
     assert len(paths) == 8, f"按阶段单值字段应为 8 个，实际 {paths}"
@@ -69,23 +68,22 @@ def test_g1_each_scalar_path_gets_one_per_phase_rule_and_two_phase_template():
             f"[{path}] 模板应示范两条取值且阶段号不同，实际 {phases}"
 
 
-@pytest.mark.xfail(strict=True, reason="规则尚未由登记表决定")
 def test_g2_rule_follows_the_registry(monkeypatch):
     import core.distiller as d
 
+    original = d.REGISTRY["values"]
     assert d._phase_rule("values") == d._PHASE_DESCRIPTION_RULE
-    monkeypatch.setitem(d.REGISTRY, "values", type(REGISTRY["values"])("state", "scalar", "价值观"))
+    monkeypatch.setitem(d.REGISTRY, "values", type(original)("state", "scalar", "价值观"))
     assert "每个阶段只写一条" in d._phase_rule("values"), "登记表改成单值后，维度规则没跟着变"
     phases = re.findall(r'"phase":\s*(\d+)', d._timed_tpl("values"))
     assert len(phases) == 2 and phases[0] != phases[1], \
         f"登记表改成单值后，模板应示范两条且阶段不同，实际 {phases}"
 
-    monkeypatch.setitem(d.REGISTRY, "values", REGISTRY["values"])
+    monkeypatch.setitem(d.REGISTRY, "values", original)
     assert d._phase_rule("values") == d._PHASE_DESCRIPTION_RULE, "改回列表后仍带着单值规则"
     assert len(re.findall(r'"phase":\s*(\d+)', d._timed_tpl("values"))) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="单值规则与三档措辞尚未实现")
 def test_g3_rule_names_the_general_audience_and_relational_modes_carry_tone():
     full = format_prompt_after()
     assert "只写他这一阶段对一般人的样子" in _SCALAR_RULE
@@ -155,7 +153,6 @@ def test_g6_one_winner_function_used_by_both_call_sites():
     assert phase_cmp <= {"slot_winner"}, f"这些函数里还有第二份「一格留谁」判据：{phase_cmp}"
 
 
-@pytest.mark.xfail(strict=True, reason="维度说明还在直接拼规则常量")
 def test_g7_dimension_rules_go_through_phase_rule():
     tree = ast.parse((_REPO / "core" / "distiller.py").read_text(encoding="utf-8"))
 
