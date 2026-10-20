@@ -86,3 +86,44 @@
 ## 8. 未核实
 
 - C1 在 CI 机器上是否同样稳定复现（沙箱 3/3）：第一个提交推上去后看 CI 里 C1 是否为 XFAIL（不是 XPASS）。
+
+## 补充（复核）
+
+独立复核用 detached worktree（`be1dffc0`），基线 `5df7052c`。结论：**通过**。
+
+### 判定
+
+1. **C2 加 `monkeypatch.chdir(tmp_path)` 不是放宽**。三条断言未动，改动只解决 Windows 跨盘符 `relpath` 不可用。变异「键不做 abspath」仍使 C2 红（`a._client is b._client` 在 `tests/test_chroma_shared_client_goal.py:120` 失败），检测力保留。
+2. **abspath 只改 chroma 的进程内标识，不改磁盘目录**。chromadb 1.5.9：`settings.persist_directory = str(path)`（`chromadb/__init__.py:219-228`），identifier 即 `persist_directory`（`api/shared_system_client.py:52-63`），只作 `_identifier_to_system` 的字典键（同文件 15-16、24-26），不落盘。容器 `WORKDIR /app`（`Dockerfile:23`）、`./data:/app/data`（`docker-compose.prod.yml` app volumes）、`mkdir -p /app/data/chroma_db`（`Dockerfile:48`），故 `./data/chroma_db` 与 `/app/data/chroma_db` 同目录。本地实测：在临时 cwd 下用相对写法，sqlite 生成在 `cwd/data/chroma_db/chroma.sqlite3`，且与 abspath 写法返回同一对象。
+3. **无需 close**。仓库无 `set_tenant` / `set_database` / `close` 调用（grep）；`RAGEngine` 只调 `get/create/delete_collection`（`core/rag.py:331`、`:338`、`:654`、`:671`、`:704`）。旧实现每个引擎各造一个 Client 且从不 close（refcount 只增），新缓存把对象数从 N 降到 1，严格更省。测试中没有「删临时目录后同路径再用」的路径：C1 用 `mkdtemp`（不删、子进程），C2/C3 与 `test_session_rag_binding` 用 per-test `tmp_path`。缓存按唯一路径只增不淘汰是已知上限；生产与脚本各只有一个路径，不构成缺陷。
+4. **C4 覆盖 MCP 与脚本**。扫描目录含 `mcp_server`、`scripts`；MCP 经 `RAGEngine`（`mcp_server/server.py:155`）间接走 `chroma_client`，脚本 `collection_states` 直接调 `chroma_client`（`scripts/rebuild_384_collections.py:169`），同脚本 RAGEngine 调用传同一 `str(chroma_path)`（`:299`、`:356`）。全仓其余直接构造只在 `tests/`（`test_session_rag_binding.py:782` 子进程、`:817` 手工引擎），用绝对临时路径。
+
+### 变异实测（每条只跑目标文件，跑完已复原）
+
+| 变异 | 方向 | 结果 |
+|---|---|---|
+| 去掉锁 | 放宽 | C1 红（1 failed, 3 passed） |
+| 全进程一个客户端 | 过严 | C2 红；C3 连带红（C2 的全局缓存使 C3 的 monkeypatch 未被调用） |
+| 失败也写进缓存 | 放宽 | C3 红（1 failed, 3 passed） |
+| 键不做 abspath（原样字符串） | 放宽 | C2 红（line 120） |
+| RAGEngine 恢复直接 `PersistentClient(` | 结构 | C1/C2/C4 红，C3 绿 |
+| 锁只在函数内新建（线程间不共享） | 放宽（自补） | C1 红 |
+| 模块级 `from chromadb import PersistentClient` | 结构（自补） | C3 红（`DID NOT RAISE`）+ C4 红；函数内 import 则 C3 绿、仅 C4 红 |
+| 锁只包住读取、不包住创建 | 放宽（自补） | C1 红 |
+
+### 目标检查与回归
+
+- `d7d10512` 本地：`4 xfailed in 9.48s`；`--runxfail` 跑 C1 的报错与线上一致：`AttributeError: 'RustBindingsAPI' object has no attribute 'bindings'` + `KeyError: 'D:\\Temp\\chroma-race-…'`，不是导入错误。同提交 CI gate 日志：`3780 passed, 4 xfailed, 36 warnings in 387.93s`（§8 成立）。
+- `be1dffc0` 本地：`4 passed in 28.05s`。
+- 第 6 节文件：`55 passed in 36.99s`（55432 测试库）。
+- CI（PR #194，head `be1dffc0`）：gate pass 8m51s、前端 pass 1m35s、sentinel pass 9m36s；build skipped（push 触发）。
+
+### 实现偏离（非缺陷）
+
+- C2 增加 `monkeypatch.chdir(tmp_path)`：spec 未写，属测试可行性修正；检测力已用变异验证未削弱。
+
+### 非阻塞观察
+
+- C1 的 `subprocess.run(..., text=True)` 在中文 Windows 按 GBK 解码子进程输出，失败时可能触发 `PytestUnhandledThreadExceptionWarning`（`UnicodeDecodeError`）。Linux CI 不受影响且不影响断言；要消掉可加 `encoding="utf-8", errors="replace"`。
+- C4 锁的是「四个目录 + `chromadb.PersistentClient(` 这一种调用形态」。当前全仓无其它 chromadb 构造（grep 证据），够用；将来在 `adapters/`、`storage/` 等目录新增构造不会被它发现。
+- 缓存键用 `abspath`：不解析符号链接、Windows 下大小写不归一。生产 Linux 单路径，不构成问题。
