@@ -100,11 +100,9 @@ def test_c1_grouped_format_has_one_implementation():
 
 def _payload_for(group: str, relationships: tuple[str, ...] = ()) -> dict:
     base = CardDraft(name=_NAME).model_dump()
-    if group == "G6":
+    if group == "G6":       # 段 2 起弧线单独成组（spec §8.2）
         base["character_arc"] = _ARC
-        base["situation_behaviors"] = []
-        base["key_memories"] = []
-    if group == "G7":       # 段 2 起做法/记忆单独成组（spec §8.2）
+    if group == "G7":
         base["situation_behaviors"] = []
         base["key_memories"] = []
     if group == "G5":
@@ -227,7 +225,9 @@ def _group_llm(*, bad_group: str | None = None, relationships: tuple[str, ...] =
             calls.append({"group": group, "system": system, "messages": messages,
                           "max_tokens": max_tokens})
             if group == bad_group:
-                yield "这不是 JSON"
+                # 合法 JSON 但缺该组必需字段：重修环的 Attempt 2 会带着原 system 重问，
+                # 三次尝试都失败才算「这一组失败」（生产语义）。
+                yield "{}"
             else:
                 yield json.dumps(_payload_for(group, relationships), ensure_ascii=False)
             events.append("end:" + group)
@@ -245,7 +245,6 @@ def _run_f4(llm, text: str = _TEXT_S2, name: str = _NAME) -> list:
 
 
 @pytest.mark.parametrize("path", ["f3", "f4"])
-@pytest.mark.xfail(strict=True, reason="段 2 目标：一次读完按组专注调用（spec §8.4 G1）")
 def test_g1_one_pass_calls_are_grouped_arc_first(path: str):
     from core.distiller import PHASE_DEPENDENT_GROUPS, _phase_list_note, book_prefix
 
@@ -281,7 +280,6 @@ def test_g1_one_pass_calls_are_grouped_arc_first(path: str):
         f"有组在弧线组返回前就启动了：{events}"
 
 
-@pytest.mark.xfail(strict=True, reason="段 2 目标：G6 只留弧线、新增 G7（spec §8.4 G2）")
 def test_g2_arc_group_split_and_phase_dependency_derived():
     from core.distiller import PHASE_DEPENDENT_GROUPS
     from core.schema import POST_FORMAT_FIELDS, CharacterCard
@@ -295,7 +293,6 @@ def test_g2_arc_group_split_and_phase_dependency_derived():
     assert sum(map(len, buckets)) == len(set().union(*buckets)), "组字段两两有交集"
 
 
-@pytest.mark.xfail(strict=True, reason="段 2 目标：草稿离开 distiller 时关系已补全（spec §8.4 G3）")
 def test_g3_every_path_hands_over_completed_relationships(monkeypatch):
     monkeypatch.setattr(D, "try_record_usage", lambda *a, **kw: None)
     relationships = (_REL_TARGET,)
@@ -324,7 +321,6 @@ def test_g3_every_path_hands_over_completed_relationships(monkeypatch):
     assert "fill_relationships" not in router, "路由仍在补关系"
 
 
-@pytest.mark.xfail(strict=True, reason="段 2 目标：任一组失败整步失败（spec §8.4 G4）")
 def test_g4_any_group_failure_fails_the_whole_step(monkeypatch):
     from core.distiller import DistillError
 

@@ -476,15 +476,6 @@ def _distill_to_draft(
             logger.error("JSON parse failed for %s (first 200 chars): %r", name, stripped[:200])
             _set_task(task_id, {"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
         return None
-
-    try:
-        # 主调用（维度 F）只出关系名单，细节在转卡前按批补齐（§4.5）。本通道的草稿在
-        # 消费方成型，补关系也只能在这里做 —— 前缀与主调用同源（`_longcontext_prompt`）。
-        distiller.fill_relationships(data, content, name)
-    except Exception as exc:
-        logger.error("Relationship batching failed for %s: %s", name, exc, exc_info=True)
-        _set_task(task_id, {"status": "error", "message": "蒸馏失败：关系生成失败，请重试", "character": name})
-        return None
     return data
 
 
@@ -1226,15 +1217,6 @@ async def distill_stream(
 
         if data is None:
             yield f"data: {json.dumps({'error': '蒸馏失败：LLM 返回格式不正确'}, ensure_ascii=False, default=str)}\n\n"
-            return
-
-        try:
-            # 主调用（维度 F）只出关系名单，细节在转卡前按批补齐（§4.5）。本通道的草稿在
-            # 消费方成型，补关系也只能在这里做 —— 前缀与主调用同源（`_longcontext_prompt`）。
-            await asyncio.to_thread(distiller.fill_relationships, data, content, char_name)
-        except Exception as exc:
-            logger.error("Relationship batching failed: %s", exc, exc_info=True)
-            yield f"data: {json.dumps({'error': '蒸馏失败：关系生成失败，请重试'}, ensure_ascii=False, default=str)}\n\n"
             return
 
         # 同 /start：锚点核对不过时重新找起点；一批并发短调用，挪进线程不堵事件循环。

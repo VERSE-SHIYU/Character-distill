@@ -268,7 +268,7 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
            '禁忌用词（taboo_words）：根据角色性格，推断他绝对不会说出口的话或词'
            '（如违背人设的示弱话、不符其语言习惯的词）。从原文和人设推断，确实没有才留空。'),
     ("G2", 'D. 价值观（2-4个）：什么对他最重要？两难时怎么选？' + _phase_rule("values")),
-    ("G6",
+    ("G7",
         'E. 关键记忆（3-5个）：塑造此人的重要经历，全部写进 key_memories。每条给出：\n'
         '   - memory：一句话讲清这段经历（不带人名地名）。\n'
         '   - occurrences：这段经历在原文里哪些阶段成立，'
@@ -307,7 +307,7 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
         '   - speech_style（说话腔调）：用词雅俗、长短句风格、会不会用成语/专业词、口头禅、方言口音感。从原文对话提取最典型的说话特征。按阶段给：' + _phase_rule("cognitive.speech_style") + '\n'
         '   - vocabulary_level（用词层次）：粗白（市井/底层）/日常（普通人）/文雅（读书人/官员）/书面（学者/文人）。从原文用词直接判断。稳定项，' + _STABLE_FIELD_RULE
     ),
-    ("G6",
+    ("G7",
         'O. 情境→行为：此人遇到某类情境时会怎么做，全部写进 situation_behaviors（6-12条），每条只写一次。\n'
         '   - situation：把情境抽象成一类（如「被人当众质疑」「有人向他求助」），不带人名、地名和只发生一次的细节。\n'
         '   - behavior：具体做法（说什么、做什么、怎么应对），≤60字，不要写形容词；负面做法（算计、欺骗、自私、记仇）照原文如实写，不美化、不改成直接发火。\n'
@@ -416,8 +416,8 @@ _FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
            'occurrences 的 phase 用维度 L 的阶段编号（1 起）；' + _BASELINE_ZERO_RULE),
     ("G5", '- relationships 只出【名单】：每个元素是【对象】，只含 target（对方的标准名）；relation/attitude/note/attitudes 由后续步骤生成，不要在这里写'),
     ("G6", '- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state/anchor/boundary_examples'),
-    ("G6", '- situation_behaviors / key_memories 的每个元素是【对象】；occurrences 的每个元素是【对象】，含 phase/quote'),
-    ("G6", '- 有阶段时，occurrences 的 phase 用维度 L 的阶段编号（1 起）；关键记忆发生在故事开始之前的填 0；没有阶段时只写一条，phase 填 0'),
+    ("G7", '- situation_behaviors / key_memories 的每个元素是【对象】；occurrences 的每个元素是【对象】，含 phase/quote'),
+    ("G7", '- 有阶段时，occurrences 的 phase 用维度 L 的阶段编号（1 起）；关键记忆发生在故事开始之前的填 0；没有阶段时只写一条，phase 填 0'),
     ("G4", '- 数字字段（openness/conscientiousness 等）输出整数，不要加引号'),
     (None, '- 所有字段必须按此模板输出，不要添加自定义字段'),
 )
@@ -502,17 +502,6 @@ def book_prefix(text: str) -> str:
     return "以下是完整的文本内容：\n\n" + text
 
 
-def distill_instruction(character_name: str) -> str:
-    """本步指令（主调用）：角色行 + 分析维度 + 输出规则 + 草稿 JSON 结构。"""
-    try:
-        schema_str = json.dumps(draft_schema(), ensure_ascii=False, indent=2)
-    except (TypeError, ValueError) as exc:
-        print(f"生成 CharacterCard JSON Schema 失败：{exc}")
-        raise
-    return (DISTILL_PROMPT_BEFORE_NAME + character_name
-            + DISTILL_PROMPT_AFTER_NAME + schema_str)
-
-
 def _arc_phases(draft: dict) -> list[dict]:
     """草稿里弧线的阶段列表（草稿原形，键 label / state / anchor）。"""
     return ((draft or {}).get("character_arc") or {}).get("phases") or []
@@ -563,6 +552,21 @@ class _FormatGroupError(Exception):
     def __reduce__(self):
         # 带自定义字段的异常类必须登记进 test_exception_pickle_lock 并能原样重建。
         return (self.__class__, (self.group, self.cause))
+
+
+def _run_format_groups(gen) -> Any:
+    """同步消费 `_format_groups`：丢弃心跳、取返回的草稿；组失败抛原因异常。
+
+    原因异常与改前各同步入口直接抛出的类型相同（`ValueError` / `DistillError` 等），
+    调用方原有的 `except` 口径不用改。
+    """
+    try:
+        while True:
+            next(gen)
+    except StopIteration as stop:
+        return stop.value
+    except _FormatGroupError as err:
+        raise err.cause from err.cause
 
 
 def _shape_ok(data: Any, required_keys: tuple[str, ...]) -> bool:
@@ -1175,16 +1179,6 @@ class Distiller:
         with ThreadPoolExecutor(max_workers=self.LOCATE_WORKERS) as pool:
             futures = [C.ctx_submit(pool, one, u) for u in prompts]
             return [f.result() for f in futures]
-
-    def fill_relationships(self, draft: dict[str, Any], text: str,
-                           character_name: str) -> None:
-        """一次读完路径的**流式**支路：草稿只在消费方（SSE / 后台路由）成型，由它调这里补关系。
-
-        其余入口的草稿在 distiller 内部成型，入口自己调 `_relationships_batched`；这里只是
-        同一条链在消费方那一侧的入口，前缀与主调用同源（`book_prefix` 共享段）。
-        """
-        self._relationships_batched(draft, prefix=book_prefix(text),
-                                    character_name=character_name, material="")
 
     def _chat_accounted(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str, action: str,
@@ -1912,73 +1906,36 @@ class Distiller:
 
     # ── Long-context distillation ──────────────────────────────────────
 
-    @staticmethod
-    def _longcontext_prompt(text: str, character_name: str) -> tuple[str, list[dict[str, Any]]]:
-        """整本蒸的提示词（system + user 消息）—— 一次读完的两条路径共用，顺序只此一处。
-
-        「全文在前、角色相关指令在后」是为了同一本书的不同角色共享前缀、命中 Context
-        Caching：官方规则是**前缀**匹配，共享段必须落在请求最前面（
-        https://api-docs.deepseek.com/guides/kv_cache：「A subsequent request can only
-        hit the cache if it fully matches a cache prefix unit」）。原先角色名写在系统
-        提示开头，同一本书换个角色从第 1 个 token 就分叉，正文永远进不了共享前缀。
-        因而正文放在**系统段**：它是唯一排在 user 消息之前的位置。
-
-        同步（`_distill_longcontext`）与流式（`_distill_longcontext_stream`）曾各拼各的，
-        顺序因此分叉（同步那条留在旧结构）；收到这里一份，改顺序只改这里。
-
-        拆成 `book_prefix(text)`（共享段）+ `distill_instruction(name)`（本步指令）：关系分批
-        拿共享段当前缀，不会把本步指令里维度 F 的「只出名单」带进「给我详情」的那一步（B2）。
-        """
-        system_prompt = book_prefix(text) + "\n\n" + distill_instruction(character_name)
-        user_content = f"请基于以上全文为「{character_name}」生成角色卡。"
-        return system_prompt, [{"role": "user", "content": user_content}]
-
     def _distill_longcontext(self, text: str, character_name: str) -> CharacterCard:
-        """整本蒸：全文 + DISTILL_PROMPT → 一次性调用 LLM 产出角色卡。"""
-        system_prompt, user_messages = self._longcontext_prompt(text, character_name)
+        """整本蒸：按组专注调用（弧线先发，其余组带阶段列表）→ 合并 → 转卡。
 
-        reply, upstream_truncated = self._chat_accounted(
-            system_prompt, user_messages, "整本蒸馏", "distill_longcontext",
-            max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
-        )
-
-        data = self._parse_json_with_retry(
-            reply, system_prompt, user_messages,
-            action_label="distill_longcontext", upstream_truncated=upstream_truncated,
-        )
-        self._relationships_batched(data, prefix=book_prefix(text),
-                                    character_name=character_name, material="")
+        整本书放在 system 最前（`book_prefix`），同一本书的不同角色与关系分批都命中
+        同一段前缀（Context Caching 只认前缀）。
+        """
         try:
-            return card_from_draft(data, text, retro=NOT_DETECTED)
+            draft = _run_format_groups(self._format_groups(
+                character_name=character_name,
+                user_message=f"请基于以上全文为「{character_name}」输出模板中的字段",
+                rel_prefix=book_prefix(text),
+                rel_material="",
+                action="distill_longcontext",
+                system_prefix=book_prefix(text) + "\n\n",
+            ))
+            return card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
 
     def _distill_longcontext_stream(self, text: str, character_name: str):
-        """整本蒸流式版 — 一次性 LLM 调用 + 流式 token + 思考模式。"""
-        system_prompt, user_messages = self._longcontext_prompt(text, character_name)
-
-        yield {"status": "formatting"}
-        tc = 0
-        usage: dict | None = None
-        stream = self._llm.chat_stream_long(
-            system_prompt, user_messages,
-            max_tokens=self.LONG_OUTPUT_MAX_TOKENS,
+        """整本蒸流式版：按组专注调用，逐组心跳 + 一个草稿 JSON 串。"""
+        yield from self._format_groups_stream(
+            character_name=character_name,
+            user_message=f"请基于以上全文为「{character_name}」输出模板中的字段",
+            rel_prefix=book_prefix(text),
+            rel_material="",
+            action="distill_longcontext",
+            system_prefix=book_prefix(text) + "\n\n",
         )
-        while True:
-            try:
-                token = next(stream)
-            except StopIteration as stop:   # 滤思考态用的是显式驱动，返回值同样要接住
-                usage = stop.value
-                break
-            if token == "\x00THINKING\x00":
-                continue
-            yield token
-            tc += 1
-            if tc % 50 == 0:
-                yield {"heartbeat": True}
-
-        self._try_record_usage("distill_longcontext", usage)
 
     def dialogue_candidates(
         self,
@@ -2572,35 +2529,19 @@ class Distiller:
                 logger.warning("Profile compression failed: %s", exc, exc_info=True)
             self._try_record_usage("distill_compress", compress_usage)
 
-        # Phase 3: Format — produce CharacterCard JSON
+        # Phase 3: Format — 按组专注调用（与 F1 同一流程，参数同 F1、素材是分析档案）
         try:
-            schema_obj = draft_schema()
-            schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError) as exc:
-            print(f"生成 CharacterCard JSON Schema 失败：{exc}")
-            raise
-
-        system_prompt = (
-            DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
-        )
-        user_messages = [{"role": "user", "content":
-            f"以下是关于「{character_name}」的完整分析档案，请严格按照JSON格式输出角色卡。\n"
-            f"特别注意：\n"
-            f"- catchphrases 必须是原文中的真实口癖，不要编造\n"
-            f"- personality_traits 每条必须附带具体场景证据\n\n"
-            f"{profile_draft}"
-        }]
-        reply, upstream_truncated = self._chat_accounted(system_prompt, user_messages, "最终格式化", "distill_format")
-
-        data = self._parse_json_with_retry(
-            reply, system_prompt, user_messages,
-            action_label="distill_format", upstream_truncated=upstream_truncated,
-        )
-        self._relationships_batched(
-            data, prefix=format_prompt_shared(character_name), character_name=character_name,
-            material=profile_draft)
-        try:
-            card = card_from_draft(data, text, retro=NOT_DETECTED)
+            draft = _run_format_groups(self._format_groups(
+                character_name=character_name,
+                user_message=(
+                    f"以下是关于「{character_name}」的完整分析档案，"
+                    f"严格按 JSON 格式输出模板中的字段：\n\n{profile_draft}"
+                ),
+                rel_prefix=format_prompt_shared(character_name),
+                rel_material=profile_draft,
+                action="distill_format",
+            ))
+            card = card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
@@ -2624,11 +2565,11 @@ class Distiller:
     ):
         """按字段组并行格式化 → 合并 → 关系分批 → 按草稿校验。
 
-        每组是一次长输出（共享前缀 + 组片段 + 该组子 schema），彼此独立，故并行发；组内
-        串行。依赖：组内有状态/经历类字段的组（`PHASE_DEPENDENT_GROUPS`，由登记表推导）
-        要按阶段编号标注 occurrences，得先知道弧线所在组定下的阶段 —— 故这些组的线程在
-        该组返回后才启动，提示词附上阶段列表；弧线组自己产出阶段，其余无阶段字段的组
-        先并行。
+        每组是一次长输出（共享前缀 + 组片段 + 该组子 schema），组内串行。**弧线组单独先发**，
+        返回后其余所有组并行：依赖组（`PHASE_DEPENDENT_GROUPS`，由登记表推导）要按阶段编号
+        标注 occurrences，得先知道弧线组定下的阶段，提示词附上阶段列表；其余组不带阶段列表。
+        弧线先单发也保住了缓存：一次读完的每次调用都带整本书的前缀，首批若并行而缓存未预热，
+        会按未命中计费多次（spec §8.2）。
 
         ``system_prefix`` 供一次读完路径把整本书放在最前（Context Caching 只认前缀）；
         分组路径留空。每组完成 yield 一次心跳；返回值是校验后的 `CardDraft`。
@@ -2665,26 +2606,26 @@ class Distiller:
             except Exception as exc:
                 fmt_queue.put(("error", group, exc))   # 上屏口径交给调用方统一出口
 
-        # 先起不依赖阶段的组；破障/并行只发生在这一批。
+        # 弧线组单独先发：它定出阶段号，其余组才有得跟；也避免首批并行时多次未命中缓存。
+        C.ctx_thread(_format_one_group, args=(_PHASE_SOURCE_GROUP,),
+                     name=f"format-{_PHASE_SOURCE_GROUP}").start()
+
+        kind, group, payload = fmt_queue.get()
+        if kind == "error":
+            raise _FormatGroupError(group, payload) from payload
+        group_data: dict[str, dict[str, Any]] = {group: payload}
+        yield {"heartbeat": True}
+
+        # 弧线组到手 → 其余组一起发；依赖组附上它定出的阶段列表
+        phase_list_note = _phase_list_note(_arc_phases(payload))
         for group in FORMAT_GROUPS:
-            if group not in PHASE_DEPENDENT_GROUPS:
-                C.ctx_thread(_format_one_group, args=(group,),
-                             name=f"format-{group}").start()
-
-        group_data: dict[str, dict[str, Any]] = {}
-
-        # 弧线组到手 → 启动依赖组（提示词附上它定出的阶段列表）
-        while _PHASE_SOURCE_GROUP not in group_data:
-            kind, group, payload = fmt_queue.get()
-            if kind == "error":
-                raise _FormatGroupError(group, payload) from payload
-            group_data[group] = payload
-            yield {"heartbeat": True}
-        for group in PHASE_DEPENDENT_GROUPS:
-            C.ctx_thread(_format_one_group, args=(group,),
-                         kwargs={"phase_list_note": _phase_list_note(
-                             _arc_phases(group_data[_PHASE_SOURCE_GROUP]))},
-                         name=f"format-{group}").start()
+            if group == _PHASE_SOURCE_GROUP:
+                continue
+            C.ctx_thread(
+                _format_one_group, args=(group,),
+                kwargs=({"phase_list_note": phase_list_note}
+                        if group in PHASE_DEPENDENT_GROUPS else {}),
+                name=f"format-{group}").start()
 
         while len(group_data) < len(FORMAT_GROUPS):
             kind, group, payload = fmt_queue.get()
@@ -2701,6 +2642,43 @@ class Distiller:
             merged, prefix=rel_prefix, character_name=character_name,
             material=rel_material)
         return CardDraft.model_validate(merged)
+
+    def _format_groups_stream(
+        self, *, character_name: str, user_message: str, rel_prefix: str,
+        rel_material: str, action: str, system_prefix: str = "",
+    ):
+        """F1/F4 共用的上屏协议：formatting 帧 → 每组一次心跳 → 一个草稿 JSON 串。
+
+        流程（阶段依赖、合并、关系分批、校验）只在 `_format_groups` 一处；失败一律收成
+        **一个** error 帧，不交半张卡。同步路径不经过这里，自己解包 `_FormatGroupError`。
+        """
+        yield {"status": "formatting"}
+
+        try:
+            draft = yield from self._format_groups(
+                character_name=character_name,
+                user_message=user_message,
+                rel_prefix=rel_prefix,
+                rel_material=rel_material,
+                action=action,
+                system_prefix=system_prefix,
+            )
+        except _FormatGroupError as err:
+            logger.error("format group %s aborted: %s", err.group, err.cause)
+            yield {"error": user_facing_error(err.cause)}
+            return
+        except ValidationError as exc:
+            # 模块 logger，不是 print：print 只进容器 stdout（不进日志面板、不发告警），
+            # 而这条上屏的是用户可见的报错帧 —— 服务端这一半必须留痕（spec-119 口径）。
+            logger.error("Pydantic 校验 CharacterCard 失败：%s", exc)
+            yield {"error": user_facing_error(exc)}
+            return
+        except DistillError as exc:
+            logger.error("关系分批失败：%s", exc)
+            yield {"error": user_facing_error(exc)}
+            return
+
+        yield json.dumps(draft.model_dump(), ensure_ascii=False)
 
     def distill_incremental_stream(
         self,
@@ -2954,34 +2932,14 @@ class Distiller:
             return
 
         # ── Phase 3: Format — 按组并行，合并校验后一次交出 ──
-        # 流程（阶段依赖、合并、关系分批、校验）只在 `_format_groups` 一处；这里只负责
-        # 上屏协议：formatting 帧 → 每组一次心跳 → 一个草稿 JSON 串（失败则一个 error 帧）。
-        yield {"status": "formatting"}
-
-        try:
-            draft = yield from self._format_groups(
-                character_name=character_name,
-                user_message=(
-                    f"以下是关于「{character_name}」的完整分析档案，"
-                    f"严格按 JSON 格式输出模板中的字段：\n\n{format_input}"
-                ),
-                rel_prefix=format_prompt_shared(character_name),
-                rel_material=format_input,
-                action="distill_format",
-            )
-        except _FormatGroupError as err:
-            logger.error("format group %s aborted: %s", err.group, err.cause)
-            yield {"error": user_facing_error(err.cause)}
-            return
-        except ValidationError as exc:
-            # 模块 logger，不是 print：print 只进容器 stdout（不进日志面板、不发告警），
-            # 而这条上屏的是用户可见的报错帧 —— 服务端这一半必须留痕（spec-119 口径）。
-            logger.error("Pydantic 校验 CharacterCard 失败：%s", exc)
-            yield {"error": user_facing_error(exc)}
-            return
-        except DistillError as exc:
-            logger.error("关系分批失败：%s", exc)
-            yield {"error": user_facing_error(exc)}
-            return
-
-        yield json.dumps(draft.model_dump(), ensure_ascii=False)
+        # 上屏协议（formatting 帧 / 心跳 / 草稿串 / error 帧）与 F4 共用一处。
+        yield from self._format_groups_stream(
+            character_name=character_name,
+            user_message=(
+                f"以下是关于「{character_name}」的完整分析档案，"
+                f"严格按 JSON 格式输出模板中的字段：\n\n{format_input}"
+            ),
+            rel_prefix=format_prompt_shared(character_name),
+            rel_material=format_input,
+            action="distill_format",
+        )
