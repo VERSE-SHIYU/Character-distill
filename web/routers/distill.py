@@ -362,9 +362,7 @@ def _distill_to_draft(
     """蒸馏 → 解析 JSON（草稿交出时关系已在 distiller 内补全）；失败时已 `_set_task`，返回 None。"""
     # Step 2: run incremental distill (synchronous, collect full output)
     full = ""
-    full_format = ""
     cur_phase = None
-    EXPECT_CHARS = 3500
 
     def _persist_chunk(index: int, result: str, fingerprint: str) -> None:
         """每片 Map 完成即落库（ON CONFLICT DO NOTHING，重写同 index 是 no-op）。
@@ -399,6 +397,10 @@ def _distill_to_draft(
                 _set_task(task_id, {"status": "error", "message": piece["error"], "character": name})
                 return None
             if piece.get("heartbeat"):
+                # 格式化阶段每组回来一次心跳，带组进度：40% → 95%（复审发现 4）
+                if cur_phase == "formatting" and piece.get("total"):
+                    _set_task(task_id, {"progress_pct":
+                                        40 + 55 * piece.get("current", 0) // piece["total"]})
                 continue
             cur_phase = piece.get("status", cur_phase)
             current = piece.get("current", 0)
@@ -411,7 +413,6 @@ def _distill_to_draft(
                 pct = 70 + int((current / total) * 20) if total > 0 else 75
                 msg = f"合并角色信息 {current}/{total}"
             elif status == "formatting":
-                full_format = ""
                 pct = 40
                 msg = "生成角色卡…"
             else:
@@ -426,11 +427,6 @@ def _distill_to_draft(
                 "message": msg,
             })
         else:
-            if cur_phase == "formatting":
-                full_format += piece
-                f_len = len(full_format)
-                f_pct = 40 + min(int(f_len / EXPECT_CHARS * 55), 55)
-                _set_task(task_id, {"progress_pct": f_pct})
             full += piece
 
     # Step 3: parse + validate — 健壮处理 LLM 可能的格式问题

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""§6.2 E11–E14、E18：4 个蒸馏入口与苏醒台词都过同一个关系分批钩子与同一个开场白模块。
+"""§6.2 E11–E14、E14b、E18：4 个蒸馏入口（E14 拆出一次读完那一支）与苏醒台词都过同一个关系分批钩子与同一个开场白模块。
 
 这四个入口的「草稿 → overlay / 经历 1..k / 关系口径」由 Commit 3/4 的 `card_from_draft`
 用例覆盖（U11/U7）；这里只钉**调用点**：每个入口在 `card_from_draft` 之前都调了
@@ -63,6 +63,13 @@ def test_entry_incremental_fields():
 # ── E14 `distill_incremental_stream`（一次读完 / 分组两支） ──────────────────
 def test_entry_stream_fields():
     _assert_batched("distill_incremental_stream")
+
+
+# ── E14b `_distill_longcontext_stream`（E14 的一次读完那一支）────────────────
+# E14 的入口同时包着 F1 分组与 F4 一次读完；F1 那支走到分批就让 E14 绿，F4 那支漏了也认不出
+# （复审发现 8）。F4 单独钉一次。
+def test_entry_longctx_stream_fields():
+    _assert_batched("_distill_longcontext_stream")
 
 
 # ── E18 苏醒台词走 `core/opening.py`（最后阶段投影） ─────────────────────────

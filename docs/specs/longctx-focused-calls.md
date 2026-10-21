@@ -254,4 +254,21 @@ C2 在基线本来就绿（它是回归护栏，不是「达成目标」检查�
 | `_distill_to_draft` 文档串仍写「补关系」 | 改为「草稿交出时关系已在 distiller 内补全」 |
 | `_format_groups_stream` 文档写「失败一律收成一个 error 帧」 | 收窄为「已知失败」，写明其余异常交路由统一出口 |
 | `test_stream_longcontext_yields_draft` 只比 `situation_behaviors` | 收紧为整份相等（期望值 = 默认值补齐后的同一份草稿过 `CardDraft`）；`card_draft_red_lines.json` 随之重跑刷新 |
-| AST 匹配弱点（别名调用、重新绑名可绕过）、SSE 双 error 帧 | 既有问题，非本 PR 引入，目标外，记跟踪文档 |
+| AST 匹配弱点（别名调用、重新绑名可绕过） | 既有问题，非本 PR 引入，目标外，记跟踪文档 |
+| SSE 双 error 帧 | **定性更正（§8.11 发现 3）**：缺陷是既有的（`/run_stream` 的 dict 分支不认 `error` 键，`_distill_to_draft` 认 —— 同一件事两个消费方各写一遍），但改前 F4 从不出 error 帧，**本 PR 让它在一次读完主路径上可达**。代码不在本 PR 改：`/run_stream` 前端无调用方（grep 0 命中）；记跟踪文档待 Tracy 定 |
+
+### 8.11 补充（独立复审，10-21 远端沙箱）
+
+复审结论「不通过，阻断 1、非阻断 7」（head `0dadfed`）。本 PR 改动面内的按下表修；目标外的记跟踪文档。
+
+| # | 发现 | 根因 | 处理 | 守护 |
+|---|---|---|---|---|
+| 1（阻断） | 弧线组失败被吞，全部测试仍绿 | 弧线组单独先发后有两个抛错出口（`_format_groups` 第一次 `fmt_queue.get()`、其后循环），G4 只测了后一个；§8.4 的 G4 写「任一组失败」但没要求两个出口都覆盖（spec 错） | G4 按 `bad_group ∈ {G6, G4}` 参数化；G6 失败时另断言其余组一次都没发 | `test_g4_any_group_failure_fails_the_whole_step[G6]`（复审 L5 变异下红） |
+| 2 + 7 | 路由换个名字补关系照样全绿；重新出卡「不补关系」的守卫随 `fill_relationships` 一起被删 | 锁按名字查，不按职责查；§8.6 把守卫当成无用替身（定性错） | G3 改为按职责：后台 /start 走一次读完，关系分批调用恰一次（只由 distiller 调）；路由源码不出现任何补关系入口名；`_NoRedistillStub` 的守卫改挂在真正干这件事的 `_relationships_batched` 上 | G3（`getattr` 拼名绕过的变异下红：调用 2 次）；`test_card_redraft_goal.py` |
+| 4 | 后台 /start 的进度在格式化阶段停在 40%，最后一跳 | 进度按流式 token 长度算；段 2 起 F4 只交一个草稿串（§8.5 漏写上屏进度的变化） | 心跳带组进度 `{"heartbeat", "current", "total"}`（`_format_groups` 两处）；路由在格式化阶段按心跳推进 40% → 95%，删掉按 token 长度估的旧算法（`EXPECT_CHARS`）。不新增状态值，帧种类不变（C2 fixture 不重录） | `test_g5_start_progress_advances_per_group`（改前路由下红：`[40, 56]`） |
+| 6 | fixture 丢了 `baseline_commit`、`character_name` | 重录时没沿用原结构 | 补回；`baseline_commit` = 重录所用提交 `b291122` | — |
+| 8 | 入口锁认不出 F4 那一支 | `distill_incremental_stream` 同时包 F1、F4，F1 走到分批就让 E14 绿 | 新增 E14b，单独钉 `_distill_longcontext_stream` | E14b（F4 不经共用流程的变异下红） |
+| 3 | SSE 双 error 帧 | 见 §8.10 定性更正 | 代码不改，记跟踪文档 | — |
+| 5 | 一组失败后其余组线程不取消，照常计费 | 线程无取消机制（既有设计，本 PR 扩到主路径；缓存命中时每次约 $0.0025–0.005） | 目标外，记跟踪文档 | — |
+| — | 每组输出上限 8192（改前整卡 16384）够不够 | 未核实 | 真模型小重放看有无 `upstream_truncated` | — |
+

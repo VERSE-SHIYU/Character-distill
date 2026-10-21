@@ -2614,7 +2614,8 @@ class Distiller:
         if kind == "error":
             raise _FormatGroupError(group, payload) from payload
         group_data: dict[str, dict[str, Any]] = {group: payload}
-        yield {"heartbeat": True}
+        # 心跳带组进度：消费方据此推进度条，不必知道有几组（复审发现 4）
+        yield {"heartbeat": True, "current": len(group_data), "total": len(FORMAT_GROUPS)}
 
         # 弧线组到手 → 其余组一起发；依赖组附上它定出的阶段列表
         phase_list_note = _phase_list_note(_arc_phases(payload))
@@ -2632,7 +2633,8 @@ class Distiller:
             if kind == "error":
                 raise _FormatGroupError(group, payload) from payload
             group_data[group] = payload
-            yield {"heartbeat": True}   # 每组回来一次心跳，不新增状态值
+            # 每组回来一次心跳，不新增状态值
+            yield {"heartbeat": True, "current": len(group_data), "total": len(FORMAT_GROUPS)}
 
         merged: dict[str, Any] = {}
         for group in FORMAT_GROUPS:      # 按 FORMAT_GROUPS 的顺序合并，与完成次序无关

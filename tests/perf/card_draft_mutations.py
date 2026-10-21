@@ -220,9 +220,11 @@ MUTATIONS = [
     ('M24  分组流式每组回来就交出一段 JSON：交出的字符串不止一个',
      TARGET, [("repl", DIST, [
          ('            group_data[group] = payload\n'
-          '            yield {"heartbeat": True}   # 每组回来一次心跳，不新增状态值',
+          '            # 每组回来一次心跳，不新增状态值\n'
+          '            yield {"heartbeat": True, "current": len(group_data), "total": len(FORMAT_GROUPS)}',
           '            group_data[group] = payload\n'
-          '            yield json.dumps(payload, ensure_ascii=False)   # 每组回来一次心跳，不新增状态值'),
+          '            # 每组回来一次心跳，不新增状态值\n'
+          '            yield json.dumps(payload, ensure_ascii=False)'),
      ])], "RED"),
     # 撞到 [258]
     ('M25  分组流式交出的 JSON 不是合法草稿（character_arc 被写成字符串）',

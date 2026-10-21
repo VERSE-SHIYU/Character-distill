@@ -9,12 +9,13 @@ C2 是回归护栏（基线本来就绿）：用替身 LLM 跑 F1，把每次组
 与 formatting 之后的帧序列跟改前录下的 fixture 逐字比较。fixture 由基线
 `9200a502` 的同一段代码录制（`e2e/scratch/record_f1_calls.py`，不入库），期望值在
 第一个提交里随测试一起入库。段 2 有意改变 F1（G6 拆分、弧线先单发），fixture 在
-实现提交里按新期望重录（spec §8.4/§8.6）。
+实现提交里按新期望重录（spec §8.4/§8.6），`baseline_commit` 记重录所用的提交 `b291122`。
 
 G1–G4 是段 2 的目标检查，实现前全部 `xfail(strict=True)`（spec §8.4）：
 G1 一次读完每次调用以整书前缀开头、弧线组先单独一次、其余组在它之后并行、
 依赖组带阶段列表；G2 分组与阶段依赖；G3 所有路径交出的草稿关系已补全、不再由
-调用方补；G4 任一组失败整步失败。
+调用方补；G4 任一组失败整步失败（弧线组、其余组两个出口各测一次）；G5 后台 /start
+的进度在格式化阶段按组推进（spec §8.11 复审补充）。
 """
 
 from __future__ import annotations
@@ -317,21 +318,68 @@ def test_g3_every_path_hands_over_completed_relationships(monkeypatch):
         "F2 交出的卡关系没补全"
 
     assert not hasattr(Distiller, "fill_relationships"), "fill_relationships 仍在"
+
+    # 路由不补关系：按职责查，不按名字查（复审发现 2）。
+    # ① 行为：后台 /start 走一次读完，关系分批只由 distiller 自己调一次。
+    import web.routers.distill as R
+    monkeypatch.setattr(R, "_set_task", lambda *_a, **_kw: None)
+    llm, _, _ = _group_llm(relationships=relationships)
+    d = Distiller(llm=llm, config_path=None)
+    batched_calls: list[int] = []
+    real_batched = d._relationships_batched
+    monkeypatch.setattr(d, "_relationships_batched",
+                        lambda *a, **kw: batched_calls.append(1) or real_batched(*a, **kw))
+    assert R._distill_to_draft("t-g3", _NAME, _TEXT_S2, "story", [], None, d) is not None
+    assert len(batched_calls) == 1, f"关系分批不是只由 distiller 调一次：{len(batched_calls)}"
+    # ② 源码：SSE 那一处没有前端调用方、不好跑行为，查路由里不出现任何补关系的入口
     router = (_ROOT / "web" / "routers" / "distill.py").read_text(encoding="utf-8")
-    assert "fill_relationships" not in router, "路由仍在补关系"
+    for name in ("fill_relationships", "_relationships_batched", "relationship_batch"):
+        assert name not in router, f"路由仍在补关系：{name}"
 
 
-def test_g4_any_group_failure_fails_the_whole_step(monkeypatch):
+# 失败有两个出口：弧线组单独先发、单独取结果（`_format_groups` 第一次 `fmt_queue.get()`），
+# 其余组在后面的循环里取。两个出口各测一次，一个都不能漏（复审发现 1）。
+@pytest.mark.parametrize("bad_group", ["G6", "G4"])
+def test_g4_any_group_failure_fails_the_whole_step(monkeypatch, bad_group: str):
     from core.distiller import DistillError
 
     monkeypatch.setattr(D, "try_record_usage", lambda *a, **kw: None)
 
-    llm, _, _ = _group_llm(bad_group="G4")
+    llm, calls, _ = _group_llm(bad_group=bad_group)
     with pytest.raises(DistillError):
         _run_f3(llm)
+    if bad_group == "G6":
+        assert {c["group"] for c in calls} == {"G6"}, \
+            f"弧线组失败后仍发了其余组：{[c['group'] for c in calls]}"
 
-    llm, _, _ = _group_llm(bad_group="G4")
+    llm, _, _ = _group_llm(bad_group=bad_group)
     frames = _run_f4(llm)
     errors = [f for f in frames if isinstance(f, dict) and "error" in f]
     assert len(errors) == 1, f"流式不是恰一个 error 帧：{frames}"
     assert not [f for f in frames if isinstance(f, str)], "组失败还交出了草稿"
+
+
+def test_g5_start_progress_advances_per_group(monkeypatch):
+    """后台 `/start` 走一次读完时，格式化阶段的进度按组推进，不停在 40%（复审发现 4）。
+
+    改前进度按流式 token 的长度算；段 2 起 F4 只在最后交一个草稿串，旧算法退化成
+    「停在 40% 到最后一跳」。前端 `useAppStore.js` 读 `progress_pct`，这是用户看得见的。
+    """
+    import web.routers.distill as R
+
+    monkeypatch.setattr(D, "try_record_usage", lambda *a, **kw: None)
+    updates: list[dict] = []
+    monkeypatch.setattr(R, "_set_task", lambda _tid, u: updates.append(dict(u)))
+
+    llm, _, _ = _group_llm()
+    d = Distiller(llm=llm, config_path=None)
+    assert d._takes_one_pass(_TEXT_S2), "前提：这段文本走一次读完（F4）"
+    data = R._distill_to_draft("t-progress", _NAME, _TEXT_S2, "story", [], None, d)
+    assert data is not None, f"草稿没交出来：{updates}"
+
+    pcts = [u["progress_pct"] for u in updates if "progress_pct" in u]
+    start = pcts.index(40)
+    fmt = pcts[start:]
+    assert len(fmt) == len(FORMAT_GROUPS) + 1, f"不是每组推进一次：{fmt}"
+    assert fmt == sorted(fmt) and len(set(fmt)) == len(fmt), f"进度没有逐组上升：{fmt}"
+    assert fmt[-1] == 95, f"格式化结束时没到 95%：{fmt}"
