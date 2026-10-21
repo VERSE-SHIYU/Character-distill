@@ -2,7 +2,7 @@
 """蒸馏小重放：走生产同一条链到 `card_from_draft` 为止，落盘每次调用的原文与判据。
 
     python scripts/replay_distill.py --text-id <id> --name 祈灼 --runs 2 \\
-        --out /tmp/replay-<时间戳> [--truth 祈灼] [--evidence <id>]
+        --out /tmp/replay-<时间戳> [--truth 祈灼]
 
 **不写库**：不存卡、不写 `distill_tasks`、不打标签、不做后置收尾。整段重放包在
 `system_llm_context()` 里 —— 记账出口据此读不到用户身份，用量只进 `calls.jsonl` /
@@ -402,7 +402,7 @@ def _h5(runs: list[dict]) -> dict:
 async def _replay(storage: Any, llm: Any, *, text_id: str, name: str, runs: int,
                   out_dir: Path, text_type: str, truth_name: str | None,
                   prices: dict[str, float | None] | None,
-                  evidence_id: str | None, user_id: str | None = None) -> dict:
+                  user_id: str | None = None) -> dict:
     # 命令行脚本无登录语境：这一次引导读只为拿到属主，随后名单/回忆区都按属主读。
     row = await storage.get_text_unscoped(text_id)
     if row is None:
@@ -540,8 +540,6 @@ async def _replay(storage: Any, llm: Any, *, text_id: str, name: str, runs: int,
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     _print_table(summary)
 
-    if evidence_id:
-        _write_evidence(evidence_id, llm, summary, name)
     return summary
 
 
@@ -562,46 +560,17 @@ def _print_table(summary: dict) -> None:
     print(f"usage: {summary['usage']}  cost={summary['cost']}")
 
 
-def _write_evidence(evidence_id: str, llm: Any, summary: dict, name: str) -> None:
-    sys.path.insert(0, str(ROOT / "tests" / "perf"))
-    import evidence_writer  # noqa: PLC0415
-
-    payload = {
-        "probe": "replay_distill",
-        "text_id": summary["text_id"],
-        "name": name,
-        "runs": summary["runs"],
-        "H1": summary["H1"],
-        "H2": summary["H2"],
-        "H3": summary["H3"],
-        "H4": summary["H4"],
-        "H5": summary["H5"],
-        "H6": summary["H6"],
-        "usage": summary["usage"],
-        "cost": summary["cost"],
-    }
-    evidence_writer.write_evidence(
-        evidence_id, payload,
-        claim="蒸馏小重放：阶段起点与位置核对的实测判据",
-        script="scripts/replay_distill.py",
-        env=f"{sys.platform} python{sys.version_info.major}.{sys.version_info.minor} "
-            f"model={getattr(llm, '_model', '')}",
-        code_sha=evidence_writer.code_sha(),
-    )
-
-
 async def run_replay(storage: Any, llm: Any, *, text_id: str, name: str = "", runs: int = 1,
                      out_dir: str | Path, text_type: str = "story",
                      truth_name: str | None = None,
                      prices: dict[str, float | None] | None = None,
-                     evidence_id: str | None = None,
                      user_id: str | None = None) -> dict:
     """重放入口。整段包在 `system_llm_context()`：用量不进 `usage_stats`。"""
     with system_llm_context():
         return await _replay(storage, llm, text_id=text_id, name=name, runs=runs,
                              out_dir=Path(out_dir), text_type=text_type,
                              truth_name=truth_name, prices=prices,
-                             evidence_id=evidence_id, user_id=user_id)
+                             user_id=user_id)
 
 
 # ── CLI ────────────────────────────────────────────────────────────────
@@ -622,8 +591,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="每百万缓存未命中输入 token 单价")
     parser.add_argument("--price-output", type=float, default=None,
                         help="每百万输出 token 单价")
-    parser.add_argument("--evidence", default=None,
-                        help="把 summary 的数字经 write_evidence 登记（不含原文）")
     return parser.parse_args(argv)
 
 
@@ -643,7 +610,7 @@ async def _main(args: argparse.Namespace) -> dict:
                 "cache_miss": args.price_cache_miss,
                 "output": args.price_output,
             },
-            evidence_id=args.evidence, user_id=args.user_id)
+            user_id=args.user_id)
     finally:
         await storage.close()
 

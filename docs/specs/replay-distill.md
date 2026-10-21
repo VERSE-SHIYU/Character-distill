@@ -92,7 +92,7 @@ python scripts/replay_distill.py --text-id <id> --name 祈灼 --runs 2 --out /tm
      3. 与真值表对得上的阶段，起点落在真值范围内。
    - 真值：祈灼 1 孤冷求索 0；2 一见倾心 12–13；3 甘为底牌 122；4 甘愿放手 343–344。谢凛羽 2 心动沦陷 29–30；3 甘愿共享 460–461。
    - 「两次都过才算过」（返工经验第 34 条）。
-5. 只在 `--evidence <id>` 时，把 summary 里的数字（不含原文摘录）经 `write_evidence` 登记（K8）；草稿、调用原文只留在 `--out`，不入库。
+5. ~~只在 `--evidence <id>` 时，把 summary 里的数字（不含原文摘录）经 `write_evidence` 登记（K8）；草稿、调用原文只留在 `--out`，不入库。~~ **已删除（复审 F1/F2）**：H4/H6 含原文锚点与条目正文，证据出口会把它们带进 `docs/evidence/`；summary 只留服务器 `--out`。
 6. 成本：按 usage 汇总 token；**单价不写死在代码里**，由 `--price-*` 参数传入（段 2 执行前查 DeepSeek 官方价格页填）。
 
 ## 6. 不做
@@ -204,4 +204,4 @@ grep 到的本链写点（原始输出见报告）：
 - 提示词假设 Linux 云端沙箱（原生 PG 16 + `su postgres` + `/var/tmp/pgtest`）。实际执行机是 Windows 11 + Git Bash + Docker 29.4.3，没有 `psql` / `su postgres` / 原生 55432 实例。无法执行 §1 的初始化命令。
 - Shiyu 2026-10-21 选定：用 `docker compose -f docker-compose.test.yml up -d --wait` 起 55432 的 `charsim_test`。这不改测试语义（`tests/conftest.py` 只在会话开始核库名以 `_test` 结尾）。
 - 跟踪文档「祈灼卡修复 · 当前问题」不在仓库里；验收清单原文只能取自本提示词，真值表另与 `docs/specs/phase-locate.md:38-44` 交叉核对一致。spec 里注明来源。
-- `tests/perf/evidence_writer.write_evidence` 拒绝未注册 id；本 PR 注册 `replay-distill` 白名单（只收统计量），否则 `--evidence` 无出口。
+- ~~`tests/perf/evidence_writer.write_evidence` 拒绝未注册 id；本 PR 注册 `replay-distill` 白名单（只收统计量），否则 `--evidence` 无出口。~~ **已删除（复审 F1/F2）**：白名单与 `--evidence` 一并撤回，`write_evidence` 对本工具回到未注册状态。
