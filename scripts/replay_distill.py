@@ -402,10 +402,13 @@ def _h5(runs: list[dict]) -> dict:
 async def _replay(storage: Any, llm: Any, *, text_id: str, name: str, runs: int,
                   out_dir: Path, text_type: str, truth_name: str | None,
                   prices: dict[str, float | None] | None,
-                  evidence_id: str | None) -> dict:
+                  evidence_id: str | None, user_id: str | None = None) -> dict:
+    # 命令行脚本无登录语境：这一次引导读只为拿到属主，随后名单/回忆区都按属主读。
     row = await storage.get_text_unscoped(text_id)
     if row is None:
         raise SystemExit(f"找不到文本 {text_id!r}")
+    if user_id and row["user_id"] != user_id:
+        raise SystemExit(f"文本 {text_id!r} 不属于用户 {user_id!r}")
     content = row["content"]
     user_id = row["user_id"]
 
@@ -501,9 +504,9 @@ async def _replay(storage: Any, llm: Any, *, text_id: str, name: str, runs: int,
         hit = usage[CACHE_HIT_FIELD]
         miss = usage[CACHE_MISS_FIELD] or max(usage["prompt_tokens"] - hit, 0)
         cost = round(
-            hit / 1_000_000 * prices["cache_hit"]
-            + miss / 1_000_000 * prices["cache_miss"]
-            + usage["completion_tokens"] / 1_000_000 * prices["output"], 6)
+            hit / 1e6 * prices["cache_hit"]
+            + miss / 1e6 * prices["cache_miss"]
+            + usage["completion_tokens"] / 1e6 * prices["output"], 6)
 
     summary = {
         "text_id": text_id,
@@ -591,13 +594,14 @@ async def run_replay(storage: Any, llm: Any, *, text_id: str, name: str = "", ru
                      out_dir: str | Path, text_type: str = "story",
                      truth_name: str | None = None,
                      prices: dict[str, float | None] | None = None,
-                     evidence_id: str | None = None) -> dict:
+                     evidence_id: str | None = None,
+                     user_id: str | None = None) -> dict:
     """重放入口。整段包在 `system_llm_context()`：用量不进 `usage_stats`。"""
     with system_llm_context():
         return await _replay(storage, llm, text_id=text_id, name=name, runs=runs,
                              out_dir=Path(out_dir), text_type=text_type,
                              truth_name=truth_name, prices=prices,
-                             evidence_id=evidence_id)
+                             evidence_id=evidence_id, user_id=user_id)
 
 
 # ── CLI ────────────────────────────────────────────────────────────────
@@ -631,11 +635,6 @@ async def _main(args: argparse.Namespace) -> dict:
         raise SystemExit("没有可用的 LLM 适配器（config.yaml / DEEPSEEK_API_KEY 未配置）")
     storage = get_storage()
     try:
-        row = await storage.get_text_unscoped(args.text_id)
-        if row is None:
-            raise SystemExit(f"找不到文本 {args.text_id!r}")
-        if args.user_id and row["user_id"] != args.user_id:
-            raise SystemExit(f"文本 {args.text_id!r} 不属于用户 {args.user_id!r}")
         return await run_replay(
             storage, llm, text_id=args.text_id, name=args.name, runs=args.runs,
             out_dir=args.out, text_type=args.text_type, truth_name=args.truth,
@@ -644,7 +643,7 @@ async def _main(args: argparse.Namespace) -> dict:
                 "cache_miss": args.price_cache_miss,
                 "output": args.price_output,
             },
-            evidence_id=args.evidence)
+            evidence_id=args.evidence, user_id=args.user_id)
     finally:
         await storage.close()
 
