@@ -383,3 +383,27 @@ def test_g5_start_progress_advances_per_group(monkeypatch):
     assert len(fmt) == len(FORMAT_GROUPS) + 1, f"不是每组推进一次：{fmt}"
     assert fmt == sorted(fmt) and len(set(fmt)) == len(fmt), f"进度没有逐组上升：{fmt}"
     assert fmt[-1] == 95, f"格式化结束时没到 95%：{fmt}"
+
+
+def test_g5_formatting_heartbeat_without_progress_is_ignored(monkeypatch):
+    """格式化心跳不带组进度（缺 `total` 或为 0）时：照常完成，进度停在 40%，不报错。
+
+    生产里格式化心跳只由 `_format_groups` 发、总带 `total`；这里钉住路由对其余形态的
+    口径（跳过，不除零、不中断任务），防止有人把它改成「缺进度就报错」（复审第二轮发现 1）。
+    """
+    import web.routers.distill as R
+
+    updates: list[dict] = []
+    monkeypatch.setattr(R, "_set_task", lambda _tid, u: updates.append(dict(u)))
+
+    class _Stub:
+        def distill_incremental_stream(self, *_a, **_kw):
+            yield {"status": "formatting"}
+            yield {"heartbeat": True}
+            yield {"heartbeat": True, "current": 1, "total": 0}
+            yield json.dumps({"name": _NAME}, ensure_ascii=False)
+
+    data = R._distill_to_draft("t-hb", _NAME, _TEXT_S2, "story", [], None, _Stub())
+    assert data == {"name": _NAME}, f"任务没有照常完成：{updates}"
+    assert not [u for u in updates if u.get("status") == "error"], updates
+    assert [u["progress_pct"] for u in updates if "progress_pct" in u] == [40], updates
