@@ -244,3 +244,5 @@ grep 到的本链写点（原始输出见报告）：
 | N5 | 清单第 1 条（整卡跳过）的失败路径没有用例 | 已处理：补跳过场景的用例 | 复审变异 R17「第 1 条恒过」现在必红。守护 `test_checklist_item1_fails_when_position_check_is_skipped` |
 | N6 | 两套 JSON 解析在不可达边界（后缀含 `}`、尾逗号）结果不同 | 不处理 | 工具解析的是 `core/distiller.py:2685` 的 `json.dumps(model_dump())` 帧，不是模型散文；流契约改动时才需重评 |
 | N7 | 并发非流式 locate 调用共用 `llm.last_usage`，用量可能串到别的调用上 | 不处理 | 与生产 `try_record_usage` 同口径，只影响成本展示，不影响判定 |
+
+**F5（第三轮）**：工具改用属主 LLM —— 引导读拿到 `user_id` 后走 `get_user_llm(user_id)`（与生产同一出口，`web/deps.py:136`）；属主未配置时直接退出，不回落全局。守护 `tests/test_replay_owner_llm_goal.py`。

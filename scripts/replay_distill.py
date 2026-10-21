@@ -9,6 +9,9 @@
 `summary.json`，不进 `usage_stats`（`web/llm_gate.py:65-67` 要求调用方身份，不能靠「不设
 LLM_CALLER」；`core/request_context.py:54` 的 `system_llm_context` 是请求外的唯一声明口）。
 
+**模型取属主自己的配置**：引导读拿到文本属主后走 `web/deps.py:136` `get_user_llm(user_id)`
+—— 与生产同一条出口，不回落全局（`get_llm()`）。属主没配 key 时直接退出。
+
 名单缓存 / 回忆区缓存与生产同口径写回（它们是书的属性，第二次重放才有得命中）。
 
 判定线照抄跟踪文档（Tracy 10-19 12:09 定，跑前写死、事后不改）；`tests/test_replay_distill_goal.py`
@@ -428,7 +431,7 @@ def _h5(runs: list[dict]) -> dict:
 
 # ── 主流程 ─────────────────────────────────────────────────────────────
 
-async def _replay(storage: Any, llm: Any, *, text_id: str, name: str, runs: int,
+async def _replay(storage: Any, *, text_id: str, name: str, runs: int,
                   out_dir: Path, text_type: str, truth_name: str | None,
                   prices: dict[str, float | None] | None,
                   user_id: str | None = None) -> dict:
@@ -440,6 +443,13 @@ async def _replay(storage: Any, llm: Any, *, text_id: str, name: str, runs: int,
         raise SystemExit(f"文本 {text_id!r} 不属于用户 {user_id!r}")
     content = row["content"]
     user_id = row["user_id"]
+
+    # 与生产同一出口（web/deps.py:136）。局部 import 让测试能替换 web.deps.get_user_llm。
+    from web.deps import get_user_llm
+    llm = await get_user_llm(user_id, storage=storage)
+    if llm is None:
+        raise SystemExit(
+            f"属主未配置 LLM（user_id={user_id!r}）；生产蒸馏只认属主自己的 key，不回落全局")
 
     setup = _Recorder()
     setup_distiller = _ReplayDistiller(_RecordingLLM(llm, setup), recorder=setup,
@@ -596,14 +606,14 @@ def _print_table(summary: dict) -> None:
     print(f"usage: {summary['usage']}  cost={summary['cost']}")
 
 
-async def run_replay(storage: Any, llm: Any, *, text_id: str, name: str = "", runs: int = 1,
+async def run_replay(storage: Any, *, text_id: str, name: str = "", runs: int = 1,
                      out_dir: str | Path, text_type: str = "story",
                      truth_name: str | None = None,
                      prices: dict[str, float | None] | None = None,
                      user_id: str | None = None) -> dict:
     """重放入口。整段包在 `system_llm_context()`：用量不进 `usage_stats`。"""
     with system_llm_context():
-        return await _replay(storage, llm, text_id=text_id, name=name, runs=runs,
+        return await _replay(storage, text_id=text_id, name=name, runs=runs,
                              out_dir=Path(out_dir), text_type=text_type,
                              truth_name=truth_name, prices=prices,
                              user_id=user_id)
@@ -631,15 +641,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 async def _main(args: argparse.Namespace) -> dict:
-    from web.deps import get_llm, get_storage
+    from web.deps import get_storage
 
-    llm = get_llm()
-    if llm is None:
-        raise SystemExit("没有可用的 LLM 适配器（config.yaml / DEEPSEEK_API_KEY 未配置）")
     storage = get_storage()
     try:
         return await run_replay(
-            storage, llm, text_id=args.text_id, name=args.name, runs=args.runs,
+            storage, text_id=args.text_id, name=args.name, runs=args.runs,
             out_dir=args.out, text_type=args.text_type, truth_name=args.truth,
             prices={
                 "cache_hit": args.price_cache_hit,
