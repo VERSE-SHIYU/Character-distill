@@ -48,7 +48,8 @@ class Verification(NamedTuple):
     `phase_quotes[i]` 是第 i 条条目在每个最终阶段下该用的 `source_quote`（顶层不用它，取第一条
     摘录）。`tag_targets[i][p]` 是模型标的阶段 p 按摘录位置最终落到的阶段（空 = 没有位置证据）
     —— 关系态度按它逐条分发（每个阶段的态度文字不同，不能整条挪）。`unlocated` 是有合法标注、
-    却没有任何一段摘录能定位的条目序号（由 `card_from_draft` 按类别处置）。`starts` 是各阶段
+    却没有任何一段摘录能定位的条目序号（由 `card_from_draft` 按类别处置）。`rehung_items` 是
+    其中发生改挂的条目序号，与 `rehung` 同源，供只读消费方逐条取用。`starts` 是各阶段
     起点在规范化原文里的位置（整卡跳过 / 无阶段时 None）。计数口径见 spec §3 —— 由
     `card_from_draft` 打监测行（本模块不打，避免日志出处分家）。
     """
@@ -62,6 +63,7 @@ class Verification(NamedTuple):
     unverified_quotes: int        # 摘录查不到的段数（按摘录计）
     too_frequent: int             # 摘录出现超过 MAX_OCCURRENCES 的段数（与上一条分开计，原因不同）
     rehung: int
+    rehung_items: list[int]
     unlocated: list[int]
     starts: list[int] | None
 
@@ -331,7 +333,7 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
     n = anchors.n
     if n == 0:                                   # 规则 5：无阶段的卡不做位置检查
         return Verification([[] for _ in items], [{} for _ in items], [{} for _ in items],
-                            False, 0, 0, 0, 0, 0, 0, [], None)
+                            False, 0, 0, 0, 0, 0, 0, [], [], None)
 
     source_norm = anchors.source_norm
     ranges, reason = anchors.ranges, anchors.reason
@@ -342,6 +344,7 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
     phase_quotes: list[dict[int, str]] = []
     tag_targets: list[dict[int, list[int]]] = []
     unlocated: list[int] = []
+    rehung_items: list[int] = []
     pending_rehang: list[tuple[str, str, int, list[int], int]] = []
     tags = dropped = ambiguous = unverified = too_frequent = rehung = 0
 
@@ -412,6 +415,7 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
             logger.warning("未定位：%s %r 的标注 %s 都没有能定位的摘录", kind, label(item), valid)
         elif any(ts and ts != [p] for p, ts in targets.items()):
             rehung += 1
+            rehung_items.append(i)
 
     if pending_rehang:
         positions = list(raw_offsets(anchors.source_text, source_norm,
@@ -422,4 +426,4 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
                            kind_, label_, p, landed, where)
 
     return Verification(final, phase_quotes, tag_targets, skipped, tags, dropped, ambiguous,
-                        unverified, too_frequent, rehung, unlocated, starts)
+                        unverified, too_frequent, rehung, rehung_items, unlocated, starts)

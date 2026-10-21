@@ -82,26 +82,32 @@ def _chapter_map(chapter2: int) -> dict[str, int]:
     }
 
 
-def _payload(group: str, *, relationships: tuple[str, ...] = ()) -> dict:
+def _payload(group: str, *, relationships: tuple[str, ...] = (),
+             entries: dict | None = None) -> dict:
     base = CardDraft(name=_NAME).model_dump()
     if group == "G6":
         base["character_arc"] = _arc(12)
     if group == "G7":
-        base["situation_behaviors"] = [{
-            "situation": "见到她", "behavior": "沉默",
-            "occurrences": [{"phase": 2, "quote": _ENTRY_QUOTES["行为"]}],
-        }]
-        base["key_memories"] = [{
-            "memory": "护她",
-            "occurrences": [{"phase": 3, "quote": _ENTRY_QUOTES["记忆"]}],
-        }]
+        if entries is not None:
+            base["situation_behaviors"] = entries["situation_behaviors"]
+            base["key_memories"] = entries["key_memories"]
+        else:
+            base["situation_behaviors"] = [{
+                "situation": "见到她", "behavior": "沉默",
+                "occurrences": [{"phase": 2, "quote": _ENTRY_QUOTES["行为"]}],
+            }]
+            base["key_memories"] = [{
+                "memory": "护她",
+                "occurrences": [{"phase": 3, "quote": _ENTRY_QUOTES["记忆"]}],
+            }]
     if group == "G5":
         base["relationships"] = [{"target": t} for t in relationships]
     from core.schema import FORMAT_GROUPS
     return {k: base[k] for k in FORMAT_GROUPS[group]}
 
 
-def _stub(*, arcs: list[int] | None = None, truncate_group: str | None = None):
+def _stub(*, arcs: list[int] | None = None, truncate_group: str | None = None,
+          entries: dict | None = None):
     """组感知替身：弧线组按 `arcs` 轮换起点章号；可让某组在完整回包后报 `length` 截断。
 
     截断分支照生产形态：上游以 `length` 终态结束（`IncompleteResponseError`），
@@ -128,7 +134,7 @@ def _stub(*, arcs: list[int] | None = None, truncate_group: str | None = None):
         calls.append({"group": group, "system": system, "messages": messages,
                       "max_tokens": max_tokens})
         if group == "G7":
-            payload = _payload("G7")
+            payload = _payload("G7", entries=entries)
         elif group == "G5":
             payload = {"relationships": []}
         else:
@@ -335,3 +341,74 @@ def test_t6_checklist_and_truth_are_verbatim():
     import scripts.replay_distill as replay
     assert list(replay.ACCEPTANCE_CHECKLIST) == _spec_checklist()
     assert replay.TRUTH == _spec_truth()
+
+
+# ── T7：逐条判定与 core 同口径（复审 F4/F9）──────────────────────────────
+
+#: 三条样本，分别对应「一致 / 改挂 / 未定位」：
+#: - 一致：标 2、3 两个阶段；阶段 2 的摘录查不到（该阶段没有位置证据），阶段 3 的摘录落在 3。
+#:   旧工具把「某阶段无位置证据」误判成改挂（漏 `ts and`）。
+#: - 改挂：标阶段 2，摘录实际落在阶段 3。
+#: - 未定位：只有阶段 2，摘录查不到。
+_VERDICT_ENTRIES = {
+    "situation_behaviors": [
+        {"situation": "一致条目", "behavior": "沉默", "occurrences": [
+            {"phase": 2, "quote": "阶段二查无此句"},
+            {"phase": 3, "quote": _ENTRY_QUOTES["记忆"]},
+        ]},
+        {"situation": "改挂条目", "behavior": "沉默", "occurrences": [
+            {"phase": 2, "quote": _ENTRY_QUOTES["记忆"]},
+        ]},
+        {"situation": "未定位条目", "behavior": "沉默", "occurrences": [
+            {"phase": 2, "quote": "另一句查无此句"},
+        ]},
+    ],
+    "key_memories": [
+        {"memory": "一致记忆", "occurrences": [
+            {"phase": 2, "quote": "阶段二另查无此句"},
+            {"phase": 3, "quote": _ENTRY_QUOTES["记忆"]},
+        ]},
+        {"memory": "改挂记忆", "occurrences": [
+            {"phase": 2, "quote": _ENTRY_QUOTES["记忆"]},
+        ]},
+        {"memory": "未定位记忆", "occurrences": [
+            {"phase": 2, "quote": "再一句查无此句"},
+        ]},
+    ],
+}
+
+
+def test_t7_entry_verdicts_match_core_verify_counts(tmp_path):
+    async def go():
+        store, user, text = await _prepare()
+        try:
+            await _run(store, text["id"], tmp_path, _stub(entries=_VERDICT_ENTRIES))
+            content = (await store.get_text_unscoped(text["id"]))["content"]
+        finally:
+            await store.close()
+        return content
+
+    content = asyncio.run(go())
+    run_dir = tmp_path / "run-1"
+    draft = json.loads((run_dir / "draft_after_locate.json").read_text(encoding="utf-8"))
+    model = CardDraft.model_validate(draft)
+    anchors = phase_anchoring.build_anchors(
+        model.character_arc.phases, content,
+        retro=RetroRegions("marked").spans(content))
+    count = len(model.character_arc.phases)
+
+    verdicts: dict[str, list[str]] = {}
+    for line in (run_dir / "entries.tsv").read_text(
+            encoding="utf-8").splitlines()[1:]:
+        cols = line.split("\t")
+        verdicts.setdefault(cols[0], []).append(cols[4])
+
+    for name, items, kind in (
+            ("situation_behaviors", model.situation_behaviors, "做法"),
+            ("key_memories", model.key_memories, "记忆")):
+        valid = _valid_number_rows(items, count, kind, layer=REGISTRY[name].layer).valid
+        result = phase_anchoring.verify(items, valid, anchors, kind=kind)
+        got = verdicts[name]
+        assert got == ["一致", "改挂", "未定位"], (name, got)
+        assert got.count("改挂") == result.rehung, (name, got, result.rehung)
+        assert got.count("未定位") == len(result.unlocated), (name, got, result.unlocated)

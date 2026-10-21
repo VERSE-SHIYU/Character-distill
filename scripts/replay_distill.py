@@ -280,13 +280,15 @@ def _entries(model: CardDraft, anchors, content: str) -> list[dict]:
         layer = REGISTRY[name].layer
         valid = _valid_number_rows(items, count, kind, layer=layer).valid
         result = verify(items, valid, anchors, kind=kind)
+        rehung_items = set(result.rehung_items)
+        unlocated = set(result.unlocated)
         for i, item in enumerate(items):
             tagged = sorted({occ.phase for occ in item.occurrences})
             targets = result.tag_targets[i]
             located = sorted({t for ts in targets.values() for t in ts})
-            if not located:
+            if i in unlocated:
                 verdict = "未定位"
-            elif any(targets.get(p) != [p] for p in tagged if p in targets):
+            elif i in rehung_items:
                 verdict = "改挂"
             else:
                 verdict = "一致"
