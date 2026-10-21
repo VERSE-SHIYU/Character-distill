@@ -62,6 +62,28 @@ def _kwarg_sources(path: Path, method: str, kwarg: str) -> list[str]:
     return out
 
 
+def _rel_prefix_values(path: Path) -> list[str]:
+    """所有 `rel_prefix=` 实参的源码片段，去掉「把外层函数自己的 `rel_prefix` 形参原样转交」的。"""
+    text = _read(path)
+    out: list[str] = []
+
+    def visit(node, params: set[str]) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            params = {a.arg for a in node.args.args + node.args.kwonlyargs}
+        if isinstance(node, ast.Call):
+            for kw in node.keywords:
+                if kw.arg != "rel_prefix":
+                    continue
+                if isinstance(kw.value, ast.Name) and kw.value.id == "rel_prefix" and "rel_prefix" in params:
+                    continue   # 转交
+                out.append((ast.get_source_segment(text, kw.value) or "").strip())
+        for child in ast.iter_child_nodes(node):
+            visit(child, params)
+
+    visit(ast.parse(text), set())
+    return out
+
+
 def _imports(path: Path) -> set[str]:
     """导入的**子模块名**，相对 `core` 归一：`core.distiller` → `distiller`、
     `core.adapters.x` → `adapters`；仓外模块取首段（`pydash`）。
@@ -269,9 +291,10 @@ def test_s14_batch_prefix_only_from_shared_prefix():
 
     prefixes = _kwarg_sources(_CORE / "distiller.py", "_relationships_batched", "prefix")
     assert prefixes, "没找到任何 _relationships_batched 的 prefix 实参（判据失去意义）"
-    # 共用流程把前缀作参数收进来（`rel_prefix`），值由调用方给：再看每个
-    # `_format_groups(...)` 调用传的 `rel_prefix=` —— 入口处仍须是共享前缀产出者。
-    passed = _kwarg_sources(_CORE / "distiller.py", "_format_groups", "rel_prefix")
+    # 共用流程把前缀作参数收进来（`rel_prefix`），值由调用方给；流式再包一层
+    # `_format_groups_stream` 原样转交。转交（实参就是外层函数自己的 `rel_prefix` 形参）放行，
+    # 其余每个 `rel_prefix=` 实参都必须是共享前缀产出者 —— 入口处守的东西不变。
+    passed = _rel_prefix_values(_CORE / "distiller.py")
     bad = [p for p in prefixes
            if not (_producer(p)
                    or (p == "rel_prefix" and passed and all(map(_producer, passed))))]

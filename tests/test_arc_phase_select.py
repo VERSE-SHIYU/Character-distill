@@ -85,14 +85,20 @@ def test_u8_skipped_card_writes_no_starts():
 
 # ── U9 分组：key_memories 从 G4 挪到 G6 ─────────────────────────────────────
 
-def test_u9_key_memories_moved_from_g4_to_g6():
+def test_u9_key_memories_in_a_phase_dependent_group():
+    """关键记忆标的是阶段编号：它所在的组必须是依赖组（拿到弧线的阶段列表再写）。
+
+    S2（longctx-focused-calls §8）把它从弧线组 G6 挪到 G7 —— 原断言「在 G6」守的是「和阶段
+    同处一个调用」，S2 的数据推翻了这条前提，改守「在依赖组里、拿得到阶段列表」。
+    """
+    from core.distiller import PHASE_DEPENDENT_GROUPS
     assert FORMAT_GROUPS["G4"] == ("psyche",), f"G4 还挂着别的字段：{FORMAT_GROUPS['G4']}"
-    assert "key_memories" in FORMAT_GROUPS["G6"]
-    assert "key_memories" not in FORMAT_GROUPS["G4"]
+    group = next(g for g, f in FORMAT_GROUPS.items() if "key_memories" in f)
+    assert group in PHASE_DEPENDENT_GROUPS, f"关键记忆所在的 {group} 拿不到阶段列表"
 
     from core.card_draft import draft_schema
-    ref = draft_schema("G6")["properties"]["key_memories"]["items"]["$ref"]
-    assert ref.endswith("/DraftMemory"), f"G6 的记忆不是草稿记忆类型：{ref}"
+    ref = draft_schema(group)["properties"]["key_memories"]["items"]["$ref"]
+    assert ref.endswith("/DraftMemory"), f"{group} 的记忆不是草稿记忆类型：{ref}"
 
 
 def test_u9_groups_union_equals_card_fields():

@@ -6,7 +6,7 @@ spec：docs/specs/arc-behaviors-s1.md、docs/specs/arc-behaviors-draft.md。做�
 """
 from core.card_quotes import retract_unverified
 from core.distiller import DISTILL_PROMPT_AFTER_NAME, format_prompt_after
-from core.schema import CharacterCard
+from core.schema import FORMAT_GROUPS, CharacterCard
 
 
 # ── 形态与旧卡兼容 ────────────────────────────────────────────────────
@@ -57,16 +57,26 @@ def test_dump_roundtrip_is_stable_and_canonicalizes_legacy_arc():
 
 # ── 提示词片段归属 ────────────────────────────────────────────────────
 
-def test_g6_prompt_carries_arc_and_behaviors_together():
-    """做法标的是阶段编号：弧线与情境→行为必须在同一组（同一次调用）里产出。
+def test_arc_first_then_behaviors_with_the_phase_list():
+    """弧线组只出弧线；情境→行为在依赖组里、拿着弧线定出的阶段列表再写。
 
-    模板是草稿形态：阶段下没有做法（做法各带 phases 那一半由 test_card_draft 守）。
+    原判据「弧线与情境→行为必须在同一组（同一次调用）里产出」被 S2 的线上数据推翻：同一次
+    调用里做法几乎全标同一个阶段（longctx-focused-calls §8、跟踪文档 10-21）。改守新结构：
+    弧线组提示词只有弧线（维度 L、弧线模板与形态规则），做法所在组是依赖组、带维度 O 与
+    做法形态规则；G4 两者都没有。模板是草稿形态：阶段下没有做法。
     """
-    g6, g4 = format_prompt_after("G6"), format_prompt_after("G4")
-    assert "L. 角色弧线" in g6 and "O. 情境→行为" in g6
-    assert '"axis"' in g6 and '"phases"' in g6 and '"situation_behaviors"' in g6
-    assert '"behaviors"' not in g6   # 做法的阶段编号见 test_card_draft 的 G6 模板用例
-    assert "character_arc 是【对象】" in g6 and "situation_behaviors / key_memories 的每个元素是【对象】" in g6
+    from core.distiller import _PHASE_SOURCE_GROUP, PHASE_DEPENDENT_GROUPS
+
+    behaviors_group = next(g for g, f in FORMAT_GROUPS.items() if "situation_behaviors" in f)
+    assert behaviors_group != _PHASE_SOURCE_GROUP and behaviors_group in PHASE_DEPENDENT_GROUPS
+    arc, beh, g4 = (format_prompt_after(_PHASE_SOURCE_GROUP),
+                    format_prompt_after(behaviors_group), format_prompt_after("G4"))
+    assert "L. 角色弧线" in arc and '"axis"' in arc and '"phases"' in arc
+    assert "character_arc 是【对象】" in arc
+    assert "O. 情境→行为" not in arc and '"situation_behaviors"' not in arc
+    assert "O. 情境→行为" in beh and '"situation_behaviors"' in beh
+    assert "situation_behaviors / key_memories 的每个元素是【对象】" in beh
+    assert '"behaviors"' not in arc and '"behaviors"' not in beh   # 做法的阶段编号见 test_card_draft
     assert "L. 角色弧线" not in g4 and "O. 情境→行为" not in g4
     assert '"character_arc"' not in g4 and '"situation_behaviors"' not in g4
 

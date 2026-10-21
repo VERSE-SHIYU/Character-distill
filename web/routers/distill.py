@@ -359,12 +359,10 @@ def _distill_to_draft(
     aliases: list[str], resume_candidates: dict[int, dict] | None,
     distiller: Distiller,
 ) -> dict | None:
-    """蒸馏 → 解析 JSON → 补关系；失败时已 `_set_task`，返回 None。"""
+    """蒸馏 → 解析 JSON（草稿交出时关系已在 distiller 内补全）；失败时已 `_set_task`，返回 None。"""
     # Step 2: run incremental distill (synchronous, collect full output)
     full = ""
-    full_format = ""
     cur_phase = None
-    EXPECT_CHARS = 3500
 
     def _persist_chunk(index: int, result: str, fingerprint: str) -> None:
         """每片 Map 完成即落库（ON CONFLICT DO NOTHING，重写同 index 是 no-op）。
@@ -399,6 +397,10 @@ def _distill_to_draft(
                 _set_task(task_id, {"status": "error", "message": piece["error"], "character": name})
                 return None
             if piece.get("heartbeat"):
+                # 格式化阶段每组回来一次心跳，带组进度：40% → 95%（复审发现 4）
+                if cur_phase == "formatting" and piece.get("total"):
+                    _set_task(task_id, {"progress_pct":
+                                        40 + 55 * piece.get("current", 0) // piece["total"]})
                 continue
             cur_phase = piece.get("status", cur_phase)
             current = piece.get("current", 0)
@@ -411,7 +413,6 @@ def _distill_to_draft(
                 pct = 70 + int((current / total) * 20) if total > 0 else 75
                 msg = f"合并角色信息 {current}/{total}"
             elif status == "formatting":
-                full_format = ""
                 pct = 40
                 msg = "生成角色卡…"
             else:
@@ -426,11 +427,6 @@ def _distill_to_draft(
                 "message": msg,
             })
         else:
-            if cur_phase == "formatting":
-                full_format += piece
-                f_len = len(full_format)
-                f_pct = 40 + min(int(f_len / EXPECT_CHARS * 55), 55)
-                _set_task(task_id, {"progress_pct": f_pct})
             full += piece
 
     # Step 3: parse + validate — 健壮处理 LLM 可能的格式问题
@@ -475,15 +471,6 @@ def _distill_to_draft(
         else:
             logger.error("JSON parse failed for %s (first 200 chars): %r", name, stripped[:200])
             _set_task(task_id, {"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
-        return None
-
-    try:
-        # 主调用（维度 F）只出关系名单，细节在转卡前按批补齐（§4.5）。本通道的草稿在
-        # 消费方成型，补关系也只能在这里做 —— 前缀与主调用同源（`_longcontext_prompt`）。
-        distiller.fill_relationships(data, content, name)
-    except Exception as exc:
-        logger.error("Relationship batching failed for %s: %s", name, exc, exc_info=True)
-        _set_task(task_id, {"status": "error", "message": "蒸馏失败：关系生成失败，请重试", "character": name})
         return None
     return data
 
@@ -1226,15 +1213,6 @@ async def distill_stream(
 
         if data is None:
             yield f"data: {json.dumps({'error': '蒸馏失败：LLM 返回格式不正确'}, ensure_ascii=False, default=str)}\n\n"
-            return
-
-        try:
-            # 主调用（维度 F）只出关系名单，细节在转卡前按批补齐（§4.5）。本通道的草稿在
-            # 消费方成型，补关系也只能在这里做 —— 前缀与主调用同源（`_longcontext_prompt`）。
-            await asyncio.to_thread(distiller.fill_relationships, data, content, char_name)
-        except Exception as exc:
-            logger.error("Relationship batching failed: %s", exc, exc_info=True)
-            yield f"data: {json.dumps({'error': '蒸馏失败：关系生成失败，请重试'}, ensure_ascii=False, default=str)}\n\n"
             return
 
         # 同 /start：锚点核对不过时重新找起点；一批并发短调用，挪进线程不堵事件循环。

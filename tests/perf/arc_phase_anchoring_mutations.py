@@ -155,8 +155,8 @@ MUTATIONS = [
         "\n\ndef _mutation_extra_call(data=None, text=None):\n"
         "    return card_from_draft(data, text, retro=NOT_DETECTED)\n")], "RED"),
     ('M29 某一调用点只传一个参数（丢掉原文）', TARGET, [("repl", DIST, [
-        ("            card = card_from_draft(data, text, retro=NOT_DETECTED)",
-         "            card = card_from_draft(data, retro=NOT_DETECTED)")])], "RED"),
+        ("            card = card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)",
+         "            card = card_from_draft(draft.model_dump(), retro=NOT_DETECTED)")])], "RED"),
     ('M30 草稿做法多出一个 phases 字段（存卡形态被草稿字段污染）', TARGET, [("repl", DRAFT, [
         ("    \"\"\"情境→行为：此人遇到某类情境时的具体做法；occurrences 是它在各阶段的原文摘录。\"\"\"\n"
          "    occurrences: list[DraftOccurrence] = []\n",

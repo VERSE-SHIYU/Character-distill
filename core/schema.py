@@ -341,9 +341,11 @@ FORMAT_GROUPS: dict[str, tuple[str, ...]] = {
     # 拆开后关系再长也只挤自己那一组。
     "G4": ("psyche",),
     "G5": ("relationships",),
-    # 弧线与情境→行为、关键记忆同组：做法/记忆标的是阶段编号，必须和阶段在同一次调用
-    # 里产出（key_memories 从 G4 挪来这里，D8/本段 §3.2）。单独成组的理由同 G5。
-    "G6": ("character_arc", "situation_behaviors", "key_memories"),
+    # 弧线单独成组：它先发，其余组等它定出阶段号再发（longctx-focused-calls §8.2）。
+    # 做法/记忆标的是阶段编号，不能和弧线挤在同一次调用 —— 一次输出越多字段，阶段规则
+    # 越容易被挤掉（§0 出处表：instruction density / 0% valid output）。
+    "G6": ("character_arc",),
+    "G7": ("situation_behaviors", "key_memories"),
 }
 
 # 后置步骤产出的字段（_auto_tag / _generate_awakening / 挑选对话示例），不进分组。

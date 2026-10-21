@@ -49,13 +49,14 @@ _DRAFT_ONLY = "越界阶段才有的独有做法串"
 
 
 def _draft() -> dict:
-    """有阶段、有关系的草稿（`CardDraft` 真实形态）。关系不写 relation —— 由
-    `fill_relationships` 在转卡前补上，好让「存了补关系之前的副本」的变异可辨。"""
+    """有阶段、有关系的草稿（`CardDraft` 真实形态）。S2 起蒸馏流交出的草稿关系已补全
+    （关系分批在 distiller 内部做），故关系带 relation。阶段 2 的锚点留空，由路由转卡前的
+    `locate_phase_starts`（替身）就地补上 —— 好让「存了转卡前最后改动之前的副本」的变异可辨。"""
     return {
         "name": _CARD_NAME,
         "character_arc": {"axis": "从死要面子到不再分辩", "phases": [
             {"label": "死要面子", "state": "断腿之前，常来店里喝酒", "anchor": ""},
-            {"label": "不再分辩", "state": "被打折腿之后，坐着用手走来", "anchor": _Q3},
+            {"label": "不再分辩", "state": "被打折腿之后，坐着用手走来", "anchor": ""},
         ]},
         "situation_behaviors": [
             {"situation": "被人当众取笑", "behavior": "涨红了脸争辩",
@@ -64,7 +65,7 @@ def _draft() -> dict:
              "occurrences": [{"phase": 9, "quote": _Q1}]},
         ],
         "relationships": [
-            {"target": "我", "attitudes": [
+            {"target": "我", "relation": "酒客与伙计", "attitudes": [
                 {"phase": 1, "attitude": "不屑", "quote": _Q1},
             ]},
         ],
@@ -77,7 +78,7 @@ class _DraftStub:
 
     def __init__(self, draft: dict):
         self.draft = draft
-        self.fill_calls = 0
+        self.locate_calls = 0
 
     def effective_chunk_size(self, text_type="story"):
         return 3000
@@ -91,15 +92,17 @@ class _DraftStub:
         yield {"status": "formatting", "current": 1, "total": 1}
         yield json.dumps(self.draft, ensure_ascii=False)
 
-    def fill_relationships(self, draft, text, character_name):
-        # 真实现此处会改 data（补关系详情）。让「存补关系之前的副本」这一变异有判别力。
-        self.fill_calls += 1
-        for r in draft.get("relationships", []):
-            r["relation"] = "酒客与伙计"
-        return None
-
     def locate_phase_starts(self, draft, text, character_name, retro):
-        return None      # 路由在转卡前重新找阶段起点；本替身的草稿不需要（真实现核对得过即不调模型）
+        # 照生产行为：就地改草稿里的阶段锚点（真实现重新定位起点后写回 `anchor`）。
+        # 这是路由在转卡前对草稿的最后一次改动 —— 让「存改动之前的副本」这一变异有判别力。
+        # 真实现对形态不对的草稿什么都不改、也不抛（core/distiller.py `locate_phase_starts`
+        # 开头的形态判断）—— 替身照做，否则「转卡失败」那类用例会先死在这里。
+        self.locate_calls += 1
+        arc = draft.get("character_arc") if isinstance(draft, dict) else None
+        phases = arc.get("phases") if isinstance(arc, dict) else None
+        if isinstance(phases, list) and len(phases) >= 2 and isinstance(phases[1], dict):
+            phases[1]["anchor"] = _Q3
+        return None
 
     def _auto_tag(self, card_dict):
         return []
@@ -230,9 +233,9 @@ def test_start_persists_the_draft_with_the_distill_time_character(monkeypatch, s
     payload = _load_payload(store, card_id, uid)
     assert set(payload) == {"character", "draft"}
     assert payload["character"] == _DISTILL_NAME, "存的是蒸馏时的角色名，不是卡上的 name"
-    # 存的就是转卡前那份 data（fill_relationships 补过的 relation 在里面）
-    assert payload["draft"]["relationships"][0]["relation"] == "酒客与伙计"
-    assert distiller.fill_calls == 1
+    # 存的就是转卡前那份 data（locate_phase_starts 就地补上的锚点在里面）
+    assert payload["draft"]["character_arc"]["phases"][1]["anchor"] == _Q3
+    assert distiller.locate_calls == 1
 
 
 def test_run_stream_persists_the_draft(monkeypatch, store):

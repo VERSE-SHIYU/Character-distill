@@ -63,7 +63,9 @@ class _NoRedistillStub(_DraftStub):
     def distill_incremental_stream(self, *_a, **_kw):
         raise AssertionError("重新出卡不应重蒸")
 
-    def fill_relationships(self, *_a, **_kw):
+    def _relationships_batched(self, *_a, **_kw):
+        # 段 2 起关系在 distiller 内补全（`fill_relationships` 已删）；守的仍是
+        # 「重新出卡不补关系」，只是名字换成真正干这件事的方法（复审发现 7）。
         raise AssertionError("重新出卡不应补关系")
 
     def locate_phase_starts(self, draft, text, character_name, retro):

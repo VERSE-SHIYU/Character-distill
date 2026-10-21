@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""§6.2 E11–E14、E18：4 个蒸馏入口与苏醒台词都过同一个关系分批钩子与同一个开场白模块。
+"""§6.2 E11–E14、E14b、E18：4 个蒸馏入口（E14 拆出一次读完那一支）与苏醒台词都过同一个关系分批钩子与同一个开场白模块。
 
 这四个入口的「草稿 → overlay / 经历 1..k / 关系口径」由 Commit 3/4 的 `card_from_draft`
 用例覆盖（U11/U7）；这里只钉**调用点**：每个入口在 `card_from_draft` 之前都调了
@@ -23,17 +23,26 @@ def _entry_sources(name: str) -> list[str]:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name]
 
 
+def _batching_functions() -> set[str]:
+    """distiller.py 里「会走到关系分批」的函数名：直接调 `_relationships_batched(` 的，
+    加上（传递地）调用了这些函数的。S1/S2 起入口交给共用流程（`_format_groups`，流式再包一层
+    `_format_groups_stream`），按调用链认，不按函数名单写死。"""
+    text = (_REPO / "core" / "distiller.py").read_text(encoding="utf-8")
+    funcs = {n.name: ast.get_source_segment(text, n) or ""
+             for n in ast.walk(ast.parse(text))
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    found = {name for name, src in funcs.items() if "self._relationships_batched(" in src}
+    while True:
+        more = {name for name, src in funcs.items() if name not in found
+                and any(f"self.{f}(" in src for f in found)}
+        if not more:
+            return found
+        found |= more
+
+
 def _assert_batched(name: str) -> None:
-    srcs = _entry_sources(name)
-    assert srcs, f"distiller.py 里找不到入口 {name}"
-    # 直接调，或交给共用流程 `_format_groups`（它内部调）——两种都算走了关系分批。
-    shared_batches = any(
-        "_relationships_batched(" in s for s in _entry_sources("_format_groups"))
-    assert any(
-        "_relationships_batched(" in s
-        or ("_format_groups(" in s and shared_batches)
-        for s in srcs
-    ), f"{name} 未走关系分批"
+    assert _entry_sources(name), f"distiller.py 里找不到入口 {name}"
+    assert name in _batching_functions(), f"{name} 未走关系分批"
 
 
 # ── E11 `distill` ──────────────────────────────────────────────────────────
@@ -54,6 +63,13 @@ def test_entry_incremental_fields():
 # ── E14 `distill_incremental_stream`（一次读完 / 分组两支） ──────────────────
 def test_entry_stream_fields():
     _assert_batched("distill_incremental_stream")
+
+
+# ── E14b `_distill_longcontext_stream`（E14 的一次读完那一支）────────────────
+# E14 的入口同时包着 F1 分组与 F4 一次读完；F1 那支走到分批就让 E14 绿，F4 那支漏了也认不出
+# （复审发现 8）。F4 单独钉一次。
+def test_entry_longctx_stream_fields():
+    _assert_batched("_distill_longcontext_stream")
 
 
 # ── E18 苏醒台词走 `core/opening.py`（最后阶段投影） ─────────────────────────

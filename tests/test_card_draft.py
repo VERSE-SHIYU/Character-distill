@@ -135,7 +135,9 @@ def test_u7_wrong_shape_raises_validation_error():
 
 
 def test_u8_schema_sent_to_the_model_is_the_draft():
-    full, g6 = draft_schema(), draft_schema("G6")
+    # S2：情境→行为从弧线组 G6 拆进 G7 —— 按字段找组，不写死组名。
+    behaviors_group = next(g for g, f in FORMAT_GROUPS.items() if "situation_behaviors" in f)
+    full, g6 = draft_schema(), draft_schema(behaviors_group)
     assert full["title"] == "CharacterCard"
     assert "occurrences" in full["$defs"]["DraftBehavior"]["properties"]
     assert "anchor" in full["$defs"]["DraftPhase"]["properties"]
@@ -211,13 +213,33 @@ def _distiller(monkeypatch, *, chunked: bool) -> Distiller:
 
 
 def _reply(monkeypatch, d: Distiller, payload) -> None:
-    """同步入口的格式化调用一律回 `payload`（模型原文）。"""
-    text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
-    monkeypatch.setattr(d, "_chat_accounted", lambda *a, **kw: (text, False))
+    """同步入口的格式化调用回 `payload`（模型原文）。
+
+    S2 起一次读完与分片的同步格式化都按字段组调用（`_format_groups`）：组调用（system 里有
+    `CharacterCard[Gn]`）回本组的字段（缺的用草稿默认值补齐，`payload` 里的坏值原样保留），
+    其余调用（`distill` 短文本模式仍一次出整卡）回整份 `payload`。"""
+    full = {**CardDraft(name=payload.get("name", "")).model_dump(), **payload}
+
+    def _chat(system, *a, **kw):
+        m = re.search(r"CharacterCard\[(G\d)\]", system)
+        body = {k: full[k] for k in FORMAT_GROUPS[m.group(1)]} if m else payload
+        return json.dumps(body, ensure_ascii=False), False
+
+    monkeypatch.setattr(d, "_chat_accounted", _chat)
     monkeypatch.setattr(d, "_do_reduce", lambda *a, **kw: "合并档案")
 
 
 _BAD = {"name": "孔乙己", "situation_behaviors": "不是列表"}
+
+
+def _accepted(call):
+    """合法草稿必须出卡。S2 起同步入口按组合并出 `CardDraft` 再转卡：入口若绕过
+    `card_from_draft`（退回 `CharacterCard.model_validate`），合法草稿会在入口里被当成
+    「格式不正确」抛 `DistillError` —— 这一条把它变成断言失败，而不是一个说不清红源的异常。"""
+    try:
+        return call()
+    except DistillError as exc:
+        assert False, f"合法草稿被入口拒绝：{exc}"
 
 
 class TestEntries:
@@ -232,7 +254,7 @@ class TestEntries:
     def test_longcontext_sync(self, monkeypatch):
         d = _distiller(monkeypatch, chunked=False)
         _reply(monkeypatch, d, KONG_DRAFT)
-        _assert_kong(d.distill_incremental(_TEXT, "AB"))
+        _assert_kong(_accepted(lambda: d.distill_incremental(_TEXT, "AB")))
         _reply(monkeypatch, d, _BAD)
         with pytest.raises(DistillError):
             d.distill_incremental(_TEXT, "AB")
@@ -240,29 +262,28 @@ class TestEntries:
     def test_incremental_format_sync(self, monkeypatch):
         d = _distiller(monkeypatch, chunked=True)
         _reply(monkeypatch, d, KONG_DRAFT)
-        _assert_kong(d.distill_incremental(_TEXT, "AB"))
+        _assert_kong(_accepted(lambda: d.distill_incremental(_TEXT, "AB")))
         _reply(monkeypatch, d, _BAD)
         with pytest.raises(DistillError):
             d.distill_incremental(_TEXT, "AB")
 
     def test_stream_longcontext_yields_draft(self, monkeypatch):
-        d = _distiller(monkeypatch, chunked=False)
-        body = json.dumps(KONG_DRAFT, ensure_ascii=False)
-
-        def _stream(system, messages, max_tokens=None, **kw):
-            for i in range(0, len(body), 50):
-                yield body[i:i + 50]
-            return _USAGE
-
-        d._llm.chat_stream_long = _stream
-        out = "".join(p for p in d.distill_incremental_stream(_TEXT, "AB") if isinstance(p, str))
-        assert json.loads(out) == KONG_DRAFT          # 原样交出草稿，occurrences 未被转换
-        _assert_kong(card_from_draft(json.loads(out), _SRC, retro=NOT_DETECTED))
+        # S2：一次读完流式也按组调用、最后交出一个草稿 JSON 串（与分组流式同协议）。
+        pieces = self._grouped(monkeypatch, KONG_DRAFT, chunked=False)
+        out = [p for p in pieces if isinstance(p, str)]
+        assert len(out) == 1
+        draft = json.loads(out[0])
+        # 原样交出草稿（整份相等，occurrences 未被转换）：期望值 = 替身按组回包的同一份
+        # 「默认值补齐后的草稿」再过一遍 CardDraft。
+        expected = CardDraft.model_validate(
+            {**CardDraft(name=KONG_DRAFT["name"]).model_dump(), **KONG_DRAFT}).model_dump()
+        assert draft == expected
+        _assert_kong(card_from_draft(draft, _SRC, retro=NOT_DETECTED))
 
     @staticmethod
-    def _grouped(monkeypatch, draft):
+    def _grouped(monkeypatch, draft, *, chunked: bool = True):
         """每组回本组全部字段（缺的用草稿默认值补齐），同 test_distiller_routing 的按组回包。"""
-        d = _distiller(monkeypatch, chunked=True)
+        d = _distiller(monkeypatch, chunked=chunked)
         draft = {**CardDraft(name=draft["name"]).model_dump(), **draft}
 
         def _stream(system, messages, max_tokens=None, **kw):
@@ -367,8 +388,11 @@ class TestDraftConversion:
 
 
 def test_g6_template_tags_behaviors_with_phase_numbers():
-    """G6 提示词模板里的示例做法带 `occurrences` 的阶段编号 —— 模型照模板写草稿。"""
-    assert '"phase": 1' in format_prompt_after("G6")
+    """做法所在组的提示词模板里，示例做法带 `occurrences` 的阶段编号 —— 模型照模板写草稿。
+
+    S2：情境→行为从 G6 拆进 G7，按字段找组。"""
+    group = next(g for g, f in FORMAT_GROUPS.items() if "situation_behaviors" in f)
+    assert '"phase": 1' in format_prompt_after(group)
 
 
 # ── 4.3 结构：两处唯一出处 ─────────────────────────────────────────────
