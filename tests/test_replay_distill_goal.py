@@ -21,11 +21,12 @@ import pytest
 
 from conftest import TEST_DATABASE_URL  # noqa: E402
 from adapters.llm_adapter import IncompleteResponseError  # noqa: E402
-from core import phase_anchoring  # noqa: E402
+from core import phase_anchoring, phase_locate  # noqa: E402
 from core.card_draft import CardDraft, _GENERIC_PATHS, _valid_number_rows  # noqa: E402
 from core.distiller import Distiller  # noqa: E402
+from core.request_context import LLM_CALLER, SYSTEM  # noqa: E402
 from core.retro_cache import RETRO_VERSION  # noqa: E402
-from core.retro_regions import RetroRegions  # noqa: E402
+from core.retro_regions import ChapterRange, RetroRegions  # noqa: E402
 from core.card_layers import REGISTRY  # noqa: E402
 from storage.postgres_store import PostgresStore  # noqa: E402
 from tests.test_longctx_focused_calls_goal import _USAGE, _group_llm  # noqa: E402
@@ -37,11 +38,17 @@ _NAME = "祈灼"
 
 
 def _text(chapter_of: dict[str, int], chapters: int = 350) -> str:
-    """`chapter_of`：唯一锚点句 → 它所在的章号。每章都有标题与一行正文。"""
+    """`chapter_of`：唯一锚点句 → 它所在的章号。每章都有标题与一行正文。
+
+    前 25 章各多一句独有句子（S2），供重定位的判定替身选中，保证换上的锚点逐章唯一。
+    """
     by_chapter = {n: sentence for sentence, n in chapter_of.items()}
     parts: list[str] = []
     for n in range(1, chapters + 1):
         parts.append(f"第{n}章\n这是本章的正文。\n")
+        if n <= 25:
+            # 行首不能是「第N章」：那样会被当成第二个章节标题（章号重复 → 全书无标题）。
+            parts.append(f"独有句第{n}章。\n")
         if n in by_chapter:
             parts.append(by_chapter[n] + "\n")
     return "".join(parts)
@@ -62,23 +69,41 @@ _ENTRY_QUOTES = {
 }
 
 
-#: 阶段 2 可用的两种锚点 → 它们各自落在第几章。起点「落在真值外」只能靠换一句原文里
-#: 真实存在的锚点，替身改章号本身对起点没有影响。
-_PHASE2_ANCHORS = {12: "他第一次看见她笑", 10: "他在第十章才看见她笑"}
+#: 阶段 2 / 4 可用的锚点 → 它们各自落在第几章。起点「落在真值外」只能靠换一句原文里
+#: 真实存在的锚点，替身改章号本身对起点没有影响。真值：阶段 2 = 12–13，阶段 4 = 343–344；
+#: 508 落在固定回忆区（491–504、508–509），399 落在章内回忆。
+_PHASE2_ANCHORS = {
+    12: "他第一次看见她笑",
+    10: "他在第十章才看见她笑",
+    13: "他在第十三章才看见她笑",
+    14: "他在第十四章才看见她笑",
+}
+_PHASE4_ANCHORS = {
+    344: "他终于转身走了",
+    345: "他在第三百四十五章才转身走了",
+    399: "他在第三百九十九章才转身走了",
+    508: "他在第五百零八章才转身走了",
+}
 
 
-def _arc(chapter2: int) -> dict:
+def _arc(chapter2: int = 12, *, chapter4: int = 344,
+         phase2_anchor: str | None = None) -> dict:
     arc = {**_ARC, "phases": [{**p} for p in _ARC["phases"]]}
-    arc["phases"][1]["anchor"] = _PHASE2_ANCHORS[chapter2]
+    arc["phases"][1]["anchor"] = phase2_anchor or _PHASE2_ANCHORS[chapter2]
+    arc["phases"][3]["anchor"] = _PHASE4_ANCHORS[chapter4]
     return arc
 
 
-def _chapter_map(chapter2: int) -> dict[str, int]:
+def _chapter_map(chapter2: int = 12, chapter4: int = 344) -> dict[str, int]:
     return {
         _PHASE2_ANCHORS[chapter2]: chapter2,
+        _PHASE2_ANCHORS[13]: 13,
+        _PHASE2_ANCHORS[14]: 14,
         _PHASE2_ANCHORS[10]: 10,
+        _PHASE4_ANCHORS[chapter4]: chapter4,
+        _PHASE4_ANCHORS[345]: 345,
         "他把她护在身后": 122,
-        "他终于转身走了": 344,
+        "日记里的那句话": 205,
     }
 
 
@@ -89,8 +114,10 @@ def _payload(group: str, *, relationships: tuple[str, ...] = (),
         base["character_arc"] = _arc(12)
     if group == "G7":
         if entries is not None:
-            base["situation_behaviors"] = entries["situation_behaviors"]
-            base["key_memories"] = entries["key_memories"]
+            if "situation_behaviors" in entries:
+                base["situation_behaviors"] = entries["situation_behaviors"]
+            if "key_memories" in entries:
+                base["key_memories"] = entries["key_memories"]
         else:
             base["situation_behaviors"] = [{
                 "situation": "见到她", "behavior": "沉默",
@@ -106,18 +133,43 @@ def _payload(group: str, *, relationships: tuple[str, ...] = (),
     return {k: base[k] for k in FORMAT_GROUPS[group]}
 
 
-def _stub(*, arcs: list[int] | None = None, truncate_group: str | None = None,
+def _stub(*, arcs: list[int] | None = None, chapter4: int = 344,
+          phase2_anchor: str | None = None, truncate_group: str | None = None,
           entries: dict | None = None):
     """组感知替身：弧线组按 `arcs` 轮换起点章号；可让某组在完整回包后报 `length` 截断。
 
+    `invoked` / `callers` 是**替身自己**的调用计数与身份记录（复审 F7/F10）：T1 拿它
+    对 recorder 的 `calls.jsonl` 行数，身份测试断言每条都读到 `SYSTEM`。
     截断分支照生产形态：上游以 `length` 终态结束（`IncompleteResponseError`），
     工具必须复用 `_truncation_evidence` 判，不许自己数 token。
     """
     llm, calls, _events = _group_llm()
     arcs = list(arcs or [12])
     state = {"i": 0}
+    invoked: list[str] = []
+    callers: list = []
+
+    def mark(kind: str) -> None:
+        invoked.append(kind)
+        callers.append(LLM_CALLER.get(None))
+
+    def chat(self, system, messages, max_tokens=None, **kw):
+        mark("chat")
+        if system == phase_locate.JUDGE_SYSTEM:
+            user = messages[0]["content"]
+            chapter = int(re.search(r"### 第(\d+)章", user).group(1))
+            sent = next((line.split("：")[0] for line in user.splitlines()
+                         if line.startswith("S") and f"独有句第{chapter}章。" in line), "")
+            return json.dumps({"happens": bool(sent), "sent": sent, "why": "stub"},
+                              ensure_ascii=False)
+        return json.dumps(CardDraft(name=_NAME).model_dump(), ensure_ascii=False)
+
+    async def async_chat(self, system, messages, max_tokens=None, client=None, **kw):
+        mark("async_chat")
+        return ("片段分析", _USAGE)
 
     def chat_stream_long(self, system, messages, max_tokens=None, **kw):
+        mark("chat_stream_long")
         match = re.search(r"CharacterCard\[(G\d)\]", system)
         if match is None:
             yield json.dumps(_payload("G1") if "CharacterCard[G1]" in system
@@ -129,7 +181,9 @@ def _stub(*, arcs: list[int] | None = None, truncate_group: str | None = None,
             state["i"] += 1
             calls.append({"group": group, "system": system, "messages": messages,
                           "max_tokens": max_tokens})
-            yield json.dumps({"character_arc": _arc(chapter)}, ensure_ascii=False)
+            yield json.dumps({"character_arc": _arc(
+                chapter, chapter4=chapter4, phase2_anchor=phase2_anchor)},
+                ensure_ascii=False)
             return _USAGE
         calls.append({"group": group, "system": system, "messages": messages,
                       "max_tokens": max_tokens})
@@ -145,21 +199,27 @@ def _stub(*, arcs: list[int] | None = None, truncate_group: str | None = None,
             raise IncompleteResponseError("length", "chat_stream", "")
         return _USAGE
 
+    llm.chat = types.MethodType(chat, llm)
+    llm.async_chat = types.MethodType(async_chat, llm)
     llm.chat_stream_long = types.MethodType(chat_stream_long, llm)
+    llm._stub_invoked = invoked
+    llm._stub_callers = callers
     return llm
 
 
-async def _prepare(chapter2: int = 12):
+async def _prepare(chapter2: int = 12, *, chapter4: int = 344, chapters: int = 350,
+                   retro: RetroRegions | None = None):
     store = PostgresStore(TEST_DATABASE_URL)
     await store._ensure_initialized()
     tag = uuid.uuid4().hex[:10]
     user = await store.create_user(f"u_{tag}", f"n_{tag}", "x")
     text = await store.save_text(
-        f"t_{tag}", "f.txt", _text(_chapter_map(chapter2)), user_id=user["id"])
+        f"t_{tag}", "f.txt", _text(_chapter_map(chapter2, chapter4), chapters),
+        user_id=user["id"])
     await store.save_characters(
         text["id"], [{"name": _NAME, "aliases": []}], version=Distiller.IDENTIFY_VERSION)
     await store.save_retro_regions(
-        text["id"], RetroRegions("marked").to_json(), version=RETRO_VERSION)
+        text["id"], (retro or RetroRegions("marked")).to_json(), version=RETRO_VERSION)
     return store, user, text
 
 
@@ -173,13 +233,14 @@ async def _run(store, text_id: str, out_dir: Path, llm, *, runs: int = 1, truth:
 def test_t1_one_run_writes_six_files_and_no_writes(monkeypatch, tmp_path):
     async def go():
         store, user, text = await _prepare()
+        llm = _stub()
         try:
-            summary = await _run(store, text["id"], tmp_path, _stub())
-            return store, user, text, summary
+            summary = await _run(store, text["id"], tmp_path, llm)
+            return store, user, text, summary, llm
         finally:
             await store.close()
 
-    store, user, text, summary = asyncio.run(go())
+    store, user, text, summary, llm = asyncio.run(go())
     run_dir = tmp_path / "run-1"
     names = {p.name for p in run_dir.iterdir()}
     assert names == {
@@ -187,7 +248,9 @@ def test_t1_one_run_writes_six_files_and_no_writes(monkeypatch, tmp_path):
         "retro.json", "phase_starts.json", "entries.tsv"}, names
     lines = [json.loads(x) for x in (run_dir / "calls.jsonl").read_text(
         encoding="utf-8").splitlines() if x.strip()]
-    assert len(lines) == summary["runs"][0]["calls"] > 0
+    # 期望次数由替身自己数（复审 F7）：不再拿 recorder 的计数对它的产物。
+    assert len(lines) == len(llm._stub_invoked) > 0
+    assert summary["runs"][0]["calls"] == len(llm._stub_invoked)
 
     async def check():
         s = PostgresStore(TEST_DATABASE_URL)
@@ -412,3 +475,177 @@ def test_t7_entry_verdicts_match_core_verify_counts(tmp_path):
         assert got == ["一致", "改挂", "未定位"], (name, got)
         assert got.count("改挂") == result.rehung, (name, got, result.rehung)
         assert got.count("未定位") == len(result.unlocated), (name, got, result.unlocated)
+
+
+# ── 复审补充：H4 触发 / 不触发（M2、M13）────────────────────────────────────
+
+def _run_calls(run_dir: Path) -> list[dict]:
+    return [json.loads(x) for x in (run_dir / "calls.jsonl").read_text(
+        encoding="utf-8").splitlines() if x.strip()]
+
+
+def test_h4_not_triggered_when_anchors_pass(tmp_path):
+    async def go():
+        store, user, text = await _prepare()
+        try:
+            return await _run(store, text["id"], tmp_path, _stub())
+        finally:
+            await store.close()
+
+    summary = asyncio.run(go())
+    h4 = summary["H4"]["runs"][0]
+    starts = json.loads((tmp_path / "run-1" / "phase_starts.json").read_text(
+        encoding="utf-8"))
+    assert h4["triggered"] is False, h4
+    assert starts["relocated"] is False, starts
+    assert h4["before"] == h4["after"], h4
+    assert not [c for c in _run_calls(tmp_path / "run-1")
+                if c["action"] == "distill_phase_locate"]
+
+
+def test_h4_triggered_when_anchor_unlocatable(tmp_path):
+    async def go():
+        store, user, text = await _prepare()
+        try:
+            return await _run(store, text["id"], tmp_path,
+                              _stub(phase2_anchor="原文里没有这句话"))
+        finally:
+            await store.close()
+
+    summary = asyncio.run(go())
+    h4 = summary["H4"]["runs"][0]
+    starts = json.loads((tmp_path / "run-1" / "phase_starts.json").read_text(
+        encoding="utf-8"))
+    assert h4["triggered"] is True, h4
+    assert starts["relocated"] is True, starts
+    assert h4["before"][1] == "原文里没有这句话", h4
+    assert h4["after"][1] == "独有句第1章。", h4
+    assert [p["chapter"] for p in starts["phases"]] == [0, 1, 2, 3], starts
+    assert [c for c in _run_calls(tmp_path / "run-1")
+            if c["action"] == "distill_phase_locate"]
+
+
+# ── 复审补充：回忆区（M3）───────────────────────────────────────────────────
+
+def test_retro_regions_reach_card_from_draft(monkeypatch, tmp_path):
+    import scripts.replay_distill as replay
+    seen: dict = {}
+    real = replay.card_from_draft
+
+    def spy(draft, content, *, retro):
+        seen["retro"] = retro
+        return real(draft, content, retro=retro)
+
+    monkeypatch.setattr(replay, "card_from_draft", spy)
+    retro = RetroRegions("marked", (ChapterRange(200, 210, "日记"),))
+    entries = {"situation_behaviors": [{
+        "situation": "回忆区条目", "behavior": "沉默",
+        "occurrences": [{"phase": 2, "quote": "日记里的那句话"}],
+    }]}
+
+    async def go():
+        store, user, text = await _prepare(retro=retro)
+        try:
+            await _run(store, text["id"], tmp_path, _stub(entries=entries))
+        finally:
+            await store.close()
+
+    asyncio.run(go())
+    rows = [line.split("\t") for line in (tmp_path / "run-1" / "entries.tsv").read_text(
+        encoding="utf-8").splitlines()[1:]]
+    row = next(r for r in rows if r[1] == "回忆区条目")
+    # 摘录只在回忆区（第 205 章）里出现：不作位置证据 → 保留模型标注，不改挂。
+    assert row[4] == "一致", row
+    assert seen["retro"].ranges == retro.ranges, seen
+
+
+# ── 复审补充：真值边界（M4b）───────────────────────────────────────────────
+
+def test_truth_boundary_phase2_13_passes_14_fails(tmp_path):
+    async def go():
+        store, user, text = await _prepare()
+        try:
+            return await _run(store, text["id"], tmp_path, _stub(arcs=[13, 14]), runs=2)
+        finally:
+            await store.close()
+
+    summary = asyncio.run(go())
+    got = [r["items"][2] for r in summary["H2"]["runs"]]
+    assert [i["verdict"] for i in got] == ["过", "不过"], got
+
+
+def test_truth_boundary_phase4_344_passes_345_fails(tmp_path):
+    async def go():
+        store, user, text = await _prepare()
+        try:
+            inside = await _run(store, text["id"], tmp_path / "a",
+                                _stub(arcs=[12], chapter4=344))
+            outside = await _run(store, text["id"], tmp_path / "b",
+                                 _stub(arcs=[12], chapter4=345))
+        finally:
+            await store.close()
+        return inside, outside
+
+    inside, outside = asyncio.run(go())
+    assert inside["H2"]["runs"][0]["items"][2]["verdict"] == "过"
+    assert outside["H2"]["runs"][0]["items"][2]["verdict"] == "不过"
+
+
+# ── 复审补充：固定回忆章（M6、M7）──────────────────────────────────────────
+
+def test_fixed_retro_chapter_508_fails_checklist_item2(tmp_path):
+    async def go():
+        store, user, text = await _prepare(chapter4=508, chapters=520)
+        try:
+            return await _run(store, text["id"], tmp_path,
+                              _stub(arcs=[12], chapter4=508))
+        finally:
+            await store.close()
+
+    item2 = asyncio.run(go())["H2"]["runs"][0]["items"][1]
+    assert item2["verdict"] == "不过", item2
+    assert "第508章" in item2["detail"], item2
+
+
+def test_in_chapter_recall_chapter_399_fails_checklist_item2(tmp_path):
+    async def go():
+        store, user, text = await _prepare(chapter4=399, chapters=520)
+        try:
+            return await _run(store, text["id"], tmp_path,
+                              _stub(arcs=[12], chapter4=399))
+        finally:
+            await store.close()
+
+    item2 = asyncio.run(go())["H2"]["runs"][0]["items"][1]
+    assert item2["verdict"] == "不过", item2
+    assert "第399章" in item2["detail"], item2
+
+
+# ── 复审补充：H5 通过路（M12）与身份（M10）────────────────────────────────
+
+def test_h5_passes_without_truncation(tmp_path):
+    async def go():
+        store, user, text = await _prepare()
+        try:
+            return await _run(store, text["id"], tmp_path, _stub())
+        finally:
+            await store.close()
+
+    h5 = asyncio.run(go())["H5"]
+    assert h5["verdict"] == "过", h5
+    assert h5["truncated_calls"] == [], h5
+
+
+def test_every_llm_call_sees_system_caller(tmp_path):
+    async def go():
+        store, user, text = await _prepare()
+        llm = _stub()
+        try:
+            await _run(store, text["id"], tmp_path, llm)
+        finally:
+            await store.close()
+        return llm
+
+    llm = asyncio.run(go())
+    assert llm._stub_callers, "替身一次都没被调用"
+    assert all(c is SYSTEM for c in llm._stub_callers), llm._stub_callers
