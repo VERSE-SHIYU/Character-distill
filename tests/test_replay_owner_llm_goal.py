@@ -12,9 +12,6 @@ import pytest
 
 from tests.test_replay_distill_goal import _NAME, _prepare, _stub
 
-#: 实现提交里删除本行；strict 保证「忘了删」当场红。
-pytestmark = pytest.mark.xfail(strict=True, reason="实现前：工具仍取全局 LLM")
-
 
 def _args(text_id: str, out: str):
     import scripts.replay_distill as replay

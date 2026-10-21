@@ -231,9 +231,21 @@ async def _prepare(chapter2: int = 12, *, chapter4: int = 344, chapters: int = 3
 
 async def _run(store, text_id: str, out_dir: Path, llm, *, runs: int = 1, truth: str = _NAME):
     import scripts.replay_distill as replay
-    return await replay.run_replay(
-        store, llm, text_id=text_id, name=_NAME, runs=runs, out_dir=out_dir,
-        truth_name=truth)
+    from web import deps as web_deps
+
+    # 工具现在走生产出口；替身从这里注入，与 `test_replay_owner_llm_goal.py` 同一口径。
+    original = web_deps.get_user_llm
+
+    async def fake_user_llm(user_id, storage=None):
+        return llm
+
+    web_deps.get_user_llm = fake_user_llm
+    try:
+        return await replay.run_replay(
+            store, text_id=text_id, name=_NAME, runs=runs, out_dir=out_dir,
+            truth_name=truth)
+    finally:
+        web_deps.get_user_llm = original
 
 
 def test_t1_one_run_writes_six_files_and_no_writes(monkeypatch, tmp_path):
