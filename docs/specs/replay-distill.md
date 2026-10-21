@@ -194,8 +194,8 @@ grep 到的本链写点（原始输出见报告）：
 
 | 问题 | 结论 | 依据 |
 |---|---|---|
-| 同一条规则写了几处 | 运行期只有一处：`scripts/replay_distill.py` 顶部 `ACCEPTANCE_CHECKLIST` / `TRUTH`；spec 里是文档副本，由 T6 逐字锁住，二者不会各自演化 | T6 直接比较脚本常量与 spec §5 第 4 条原文 |
-| 调用方是否被迫知道不该知道的事 | 不需要：CLI 只知道 `--text-id/--name/--runs/--out`；组提示词、JSON 解析、位置核对、截断判定都在生产函数背后。仅只读地重写 `_chat_accounted` 取 action/label/truncated，不改其行为 | `core/distiller.py:1183`、`adapters/llm_adapter.py:1104` |
+| 同一条规则写了几处 | 运行期只有一处：验收清单 / 真值只在 `scripts/replay_distill.py` 顶部 `ACCEPTANCE_CHECKLIST` / `TRUTH`（spec 是文档副本，由 T6 逐字锁住）；逐条「一致 / 改挂 / 未定位」的唯一实现在 core `verify`，脚本只读 `Verification.rehung_items` / `unlocated` 做映射（复审 F4/F9） | T6 直接比较脚本常量与 spec §5 第 4 条原文；`core/phase_anchoring.py:44-68`、`scripts/replay_distill.py:279-287` |
+| 调用方是否被迫知道不该知道的事 | 不需要：CLI 只知道 `--text-id/--name/--runs/--out`；组提示词、JSON 解析、位置核对、截断判定都在生产函数背后。逐条判定消费的是 core 的只读字段，脚本不知道 core 的规则；`calls.jsonl` 的 `stage` 只区分 setup / run。仅只读地重写 `_chat_accounted` 取 action/label/truncated，不改其行为 | `core/distiller.py:1183`、`adapters/llm_adapter.py:1104`、`core/phase_anchoring.py:51-53` |
 | 以后加一个角色真值 / 一个假设要改几处 | 角色真值：一处（`TRUTH` 加一项）。新假设：在 `_replay` 的 `summary` 加一个 `Hn` 键 + 一个纯函数；判定逻辑集中在 `_checklist`（H2）/ `_h1` / `_h5`，不散落在输出层 | `scripts/replay_distill.py` 的 `_checklist`、`_h1`、`_h5` |
 | 运行路径 | 测试文本 3,166 tokens < 900,000，走生产的一次读完路径（7 个组调用）；判定逻辑与分片路径无关 | `core/distiller.py:1900-1905`、`core/length_budget.py:49` |
 
@@ -205,3 +205,28 @@ grep 到的本链写点（原始输出见报告）：
 - Shiyu 2026-10-21 选定：用 `docker compose -f docker-compose.test.yml up -d --wait` 起 55432 的 `charsim_test`。这不改测试语义（`tests/conftest.py` 只在会话开始核库名以 `_test` 结尾）。
 - 跟踪文档「祈灼卡修复 · 当前问题」不在仓库里；验收清单原文只能取自本提示词，真值表另与 `docs/specs/phase-locate.md:38-44` 交叉核对一致。spec 里注明来源。
 - ~~`tests/perf/evidence_writer.write_evidence` 拒绝未注册 id；本 PR 注册 `replay-distill` 白名单（只收统计量），否则 `--evidence` 无出口。~~ **已删除（复审 F1/F2）**：白名单与 `--evidence` 一并撤回，`write_evidence` 对本工具回到未注册状态。
+
+---
+
+# 补充（复审 10-21）
+
+复审（10-21 16:53，基线 `c6858804`）不通过：阻断 1、非阻断 13。逐条处理如下，每条一个提交。
+
+| # | 发现 | 根因 | 处理 | 守护测试 |
+|---|---|---|---|---|
+| F1（阻断） | `--evidence` 把 H4 的原文锚点（`anchor_before` / `anchor_after`）与 H6 的条目正文写进 `docs/evidence/` | 证据出口本不该承载含原文的产物：数字入证据库，原文只该留在服务器 `--out` | 删 `--evidence` 参数与 `_write_evidence`；summary 只落 `--out` | `tests/test_evidence_integrity.py` 绿；`git diff f92aa456 -- tests/perf/evidence_writer.py` 为空 |
+| F2 | 为 `--evidence` 给 `tests/perf/evidence_writer.py` 注册了 `replay-distill` 白名单 | 同上：为保证一个不需要的出口而放宽了证据入口 | 撤回白名单，`write_evidence` 对本工具回到未注册状态 | 同上两条 |
+| F3 | 名单、回忆区的 setup 调用只记了一个计数，没进 `calls.jsonl` 与 usage 汇总 | 记录器只挂在蒸馏 run 上，setup 段在 run 之外 | setup 调用写入 `--out/calls.jsonl` 并标 `stage: "setup"`；usage 汇总计入 setup | `test_setup_calls_land_in_calls_jsonl` |
+| F4 | 工具把「该阶段没有位置证据」误判成「改挂」 | 工具自写的判据 `any(targets.get(p) != [p] ...)` 漏了 core 的 `ts and` 条件 | 不另写判定：取 core `Verification.rehung_items` / `unlocated`（Shiyu 定：给 core 加只读字段） | `test_t7_entry_verdicts_match_core_verify_counts`（M8 用模型原标代替 verify 必红） |
+| F9 | 同一条「一致 / 改挂 / 未定位」规则在 core 与工具各写一份，已经漂移 | 一条规则两处实现 | 同上：唯一来源改为 core，脚本只做逐条映射 | 同 F4 |
+| F5 | summary 没记实际调用的模型与地址 | 只汇总了 usage，没记录端点 | summary 增加 `model` 与 `base_url`（不记 key） | `test_summary_records_model_and_base_url` |
+| F6 | 截断 / 失败的调用拿不到 usage，汇总里被当成 0 计入成本 | 缺失值与 0 不可分辨 | `calls.jsonl` 写 `usage: null` + `truncated: true`；汇总单列 `unknown_usage_calls` 并注明「N 次调用用量未知」 | `test_t4_length_terminal_state_marks_h5_suspected_truncation` |
+| F7 | T1 的期望调用次数拿 recorder 自己对自己 | 判据与被测对象同源，漏记 / 多记都测不出 | 由替身独立计数，断言 `calls.jsonl` 行数与 `summary["runs"][0]["calls"]` 都等于它 | `test_t1_one_run_writes_six_files_and_no_writes` |
+| F8 | H4 只有单侧样本，触发与不触发都测不到 | 目标检查只测了一个值 | 补两条样本：锚点核对通过 → 不触发；锚点不可定位 → 触发 | `test_h4_not_triggered_when_anchors_pass`、`test_h4_triggered_when_anchor_unlocatable`（M2 / M13 红） |
+| F10 | 回忆区解析结果没有断言真的送达 `card_from_draft` | 只测了工具自己的中间值 | spy `card_from_draft`，断言收到的 `retro.ranges` 与解析结果一致 | `test_retro_regions_reach_card_from_draft`（M3 红） |
+| F11 | 真值边界只有单侧样本，上界没测 | 同 F8 | 阶段 2 起点 13 过 / 14 不过；阶段 4 起点 344 过 / 345 不过 | `test_truth_boundary_phase2_13_passes_14_fails`、`test_truth_boundary_phase4_344_passes_345_fails`（M4b 红） |
+| F12 | 清单第 2 条的固定回忆章（508–509）与章内回忆（383、399）没测 | 同上 | 两个样本分别把起点放进第 508、399 章，断言清单第 2 条不过 | `test_fixed_retro_chapter_508_fails_checklist_item2`、`test_in_chapter_recall_chapter_399_fails_checklist_item2`（M6 / M7 红） |
+| F13 | H5 只有失败路，无截断时是否判「过」没人守 | 同上 | 补无截断样本，断言 H5 为「过」 | `test_h5_passes_without_truncation`（M12 红） |
+| F14 | `tests/test_replay_distill_goal.py` 里有未使用的 `pytest` 导入与 `_GENERIC_PATHS` | 写测试时留下的死代码 | 删除两者 | 无专门测试（静态卫生）；`grep -n 'pytest\|_GENERIC_PATHS' tests/test_replay_distill_goal.py` 零命中 |
+
+第 3 项另补一条身份断言（复审 M3 存活）：替身记录每次被调用时的 `LLM_CALLER`，断言全为 `SYSTEM`（`core/request_context.py`）——`test_every_llm_call_sees_system_caller`（去掉 `system_llm_context()` 必红）。
