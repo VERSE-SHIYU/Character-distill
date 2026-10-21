@@ -519,6 +519,9 @@ async def _replay(storage: Any, llm: Any, *, text_id: str, name: str, runs: int,
         "text_id": text_id,
         "name": name,
         "truth": truth_name,
+        # 实际在跟谁说话（F5）：只记模型与地址，**不记 key**。
+        "model": str(getattr(llm, "model", "") or ""),
+        "base_url": str(getattr(llm, "base_url", "") or ""),
         "runs": [{"run": r["run"], "calls": r["calls"], "relocated": r["relocated"]}
                  for r in run_summaries],
         "setup_calls": len(setup.calls),
@@ -552,7 +555,8 @@ async def _replay(storage: Any, llm: Any, *, text_id: str, name: str, runs: int,
 
 def _print_table(summary: dict) -> None:
     print(f"text={summary['text_id']}  name={summary['name']}  "
-          f"runs={len(summary['runs'])}")
+          f"runs={len(summary['runs'])}  model={summary['model']}  "
+          f"base_url={summary['base_url']}")
     for run in summary["runs"]:
         print(f"  run {run['run']}: calls={run['calls']} relocated={run['relocated']}")
     print(f"H1 一致率/分布（只出数据）: {json.dumps(summary['H1']['runs'], ensure_ascii=False)}")

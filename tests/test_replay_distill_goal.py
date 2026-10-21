@@ -204,6 +204,7 @@ def _stub(*, arcs: list[int] | None = None, chapter4: int = 344,
             raise IncompleteResponseError("length", "chat_stream", "")
         return _USAGE
 
+    llm.base_url = "https://stub.invalid"
     llm.chat = types.MethodType(chat, llm)
     llm.async_chat = types.MethodType(async_chat, llm)
     llm.chat_stream_long = types.MethodType(chat_stream_long, llm)
@@ -683,3 +684,16 @@ def test_setup_calls_land_in_calls_jsonl(tmp_path):
     assert actions == {"chat", "chat_stream_long"}, actions
     assert summary["setup_calls"] == len(rows)
     assert summary["usage"]["calls"] == len(rows) + summary["runs"][0]["calls"]
+
+
+def test_summary_records_model_and_base_url(tmp_path):
+    async def go():
+        store, user, text = await _prepare()
+        try:
+            return await _run(store, text["id"], tmp_path, _stub())
+        finally:
+            await store.close()
+
+    summary = asyncio.run(go())
+    assert summary["model"] == "stub"
+    assert summary["base_url"] == "https://stub.invalid"
