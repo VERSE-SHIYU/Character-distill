@@ -359,7 +359,7 @@ def _distill_to_draft(
     aliases: list[str], resume_candidates: dict[int, dict] | None,
     distiller: Distiller,
 ) -> dict | None:
-    """蒸馏 → 解析 JSON → 补关系；失败时已 `_set_task`，返回 None。"""
+    """蒸馏 → 解析 JSON（草稿交出时关系已在 distiller 内补全）；失败时已 `_set_task`，返回 None。"""
     # Step 2: run incremental distill (synchronous, collect full output)
     full = ""
     full_format = ""

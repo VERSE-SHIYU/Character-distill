@@ -566,7 +566,7 @@ def _run_format_groups(gen) -> Any:
     except StopIteration as stop:
         return stop.value
     except _FormatGroupError as err:
-        raise err.cause from err.cause
+        raise err.cause
 
 
 def _shape_ok(data: Any, required_keys: tuple[str, ...]) -> bool:
@@ -2649,8 +2649,10 @@ class Distiller:
     ):
         """F1/F4 共用的上屏协议：formatting 帧 → 每组一次心跳 → 一个草稿 JSON 串。
 
-        流程（阶段依赖、合并、关系分批、校验）只在 `_format_groups` 一处；失败一律收成
-        **一个** error 帧，不交半张卡。同步路径不经过这里，自己解包 `_FormatGroupError`。
+        流程（阶段依赖、合并、关系分批、校验）只在 `_format_groups` 一处；已知失败（组失败
+        `_FormatGroupError`、草稿校验 `ValidationError`、关系分批 `DistillError`）收成**一个**
+        error 帧，不交半张卡；其余异常照常上抛，由路由的统一出口处理。同步路径不经过这里，
+        自己解包 `_FormatGroupError`。
         """
         yield {"status": "formatting"}
 

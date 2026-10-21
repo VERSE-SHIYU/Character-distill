@@ -191,11 +191,6 @@
       ],
       [
         "tests/test_card_draft.py",
-        "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
-        1
-      ],
-      [
-        "tests/test_card_draft.py",
         "assert len(saved) == 1",
         0
       ],
@@ -291,13 +286,13 @@
     "M23  长文流式改写了模型原文（交出的草稿被改动）": [
       [
         "tests/test_card_draft.py",
-        "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
+        "assert draft == expected",
         0
       ],
       [
         "tests/test_card_draft.py",
         "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
-        1
+        0
       ]
     ],
     "M24  分组流式每组回来就交出一段 JSON：交出的字符串不止一个": [
@@ -315,11 +310,21 @@
     "M25  分组流式交出的 JSON 不是合法草稿（character_arc 被写成字符串）": [
       [
         "tests/test_card_draft.py",
+        "assert draft == expected",
+        0
+      ],
+      [
+        "tests/test_card_draft.py",
         "assert CardDraft.model_validate(draft)",
         0
       ]
     ],
     "M26  分组流式合并后不校验（model_construct）：坏草稿也交出字符串、不再产错误帧": [
+      [
+        "tests/test_card_draft.py",
+        "assert draft == expected",
+        0
+      ],
       [
         "tests/test_card_draft.py",
         "assert not [p for p in bad if isinstance(p, str)]",
@@ -336,13 +341,13 @@
     "M28  分组流式在 distiller 里就转成卡，交出的不再是草稿（occurrences 已丢）": [
       [
         "tests/test_card_draft.py",
-        "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
+        "assert draft == expected",
         0
       ],
       [
         "tests/test_card_draft.py",
         "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
-        1
+        0
       ]
     ],
     "M29  路由 R1（/start 后台任务）退回 CharacterCard.model_validate": [

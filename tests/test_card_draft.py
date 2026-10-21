@@ -273,8 +273,11 @@ class TestEntries:
         out = [p for p in pieces if isinstance(p, str)]
         assert len(out) == 1
         draft = json.loads(out[0])
-        # 原样交出草稿，occurrences 未被转换
-        assert draft["situation_behaviors"] == KONG_DRAFT["situation_behaviors"]
+        # 原样交出草稿（整份相等，occurrences 未被转换）：期望值 = 替身按组回包的同一份
+        # 「默认值补齐后的草稿」再过一遍 CardDraft。
+        expected = CardDraft.model_validate(
+            {**CardDraft(name=KONG_DRAFT["name"]).model_dump(), **KONG_DRAFT}).model_dump()
+        assert draft == expected
         _assert_kong(card_from_draft(draft, _SRC, retro=NOT_DETECTED))
 
     @staticmethod

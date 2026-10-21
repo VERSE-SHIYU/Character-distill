@@ -242,3 +242,16 @@ C2 在基线本来就绿（它是回归护栏，不是「达成目标」检查�
 | 弧线组的阶段没传给依赖组 | 红 | C2 |
 | M21 / M22 / M23 / M29（新锚点） | 均红 | test_card_draft / test_phase_anchoring |
 
+
+### 8.10 补充（复核，10-21 本地静态复核 + 作者处理）
+
+本地复核因测试库不可用只做了静态复核：0 阻断，6 条非阻断。处理如下（远端沙箱改、跑）：
+
+| 复核发现 | 处理 |
+|---|---|
+| F2 用户消息里两句约束（「catchphrases 必须是原文中的真实口癖，不要编造」「personality_traits 每条必须附带具体场景证据」）不再出现 | **不是内容损失**：两条规则本来就在组提示词里——G2 维度 B「每个特质 + 原文中的具体场景作为证据」、G3 维度 C「口癖（直接从原文对话提取）」与原话规则「原文里的原话，逐字照抄」（`format_prompt_after("G2")` / `("G3")` 实测包含）。旧 F2 的 user 消息是重复写了一遍；F1 从来没有。记为有意变更，提示词不改（§8.2 第 4 条：写法不动） |
+| `raise err.cause from err.cause` 的 `__cause__` 指向自身 | 改为 `raise err.cause` |
+| `_distill_to_draft` 文档串仍写「补关系」 | 改为「草稿交出时关系已在 distiller 内补全」 |
+| `_format_groups_stream` 文档写「失败一律收成一个 error 帧」 | 收窄为「已知失败」，写明其余异常交路由统一出口 |
+| `test_stream_longcontext_yields_draft` 只比 `situation_behaviors` | 收紧为整份相等（期望值 = 默认值补齐后的同一份草稿过 `CardDraft`）；`card_draft_red_lines.json` 随之重跑刷新 |
+| AST 匹配弱点（别名调用、重新绑名可绕过）、SSE 双 error 帧 | 既有问题，非本 PR 引入，目标外，记跟踪文档 |
