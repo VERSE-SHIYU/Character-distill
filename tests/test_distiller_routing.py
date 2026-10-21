@@ -3,6 +3,7 @@
 import asyncio
 import json
 import math
+import re
 import threading
 import time
 import uuid
@@ -274,6 +275,14 @@ class TestRouting:
         mock_llm.last_usage = None
         mock_llm.chat_stream.return_value = iter([])
 
+        # 照生产行为：流有终点（真适配器读到 max_tokens 或 finish 即停）。裸 MagicMock 的
+        # `chat_stream_long` 返回的对象 `next()` 永不结束 —— 分组格式化改走流式后，
+        # `_collect_stream` 会无限 append（10-21 实测约 75MB/s 吃满内存）。
+        def finite_stream(system, messages, max_tokens=None, **kw):
+            yield '{"name": "T", "identity": "T"}'
+            return None
+        mock_llm.chat_stream_long.side_effect = finite_stream
+
         async def fake_async(*args, **kwargs):
             return ("分析结果", None)
         mock_llm.async_chat = fake_async
@@ -371,11 +380,13 @@ class TestRouting:
         with patch("core.distiller.count_tokens", return_value=1_000):
             list(d.distill_incremental_stream(text, name))
 
+        # S2：一次读完按组调用，第一次是弧线组；每组输出上限是组的上限 CARD_MAX_TOKENS
+        # （与分组路径同一函数 `_format_groups`），不再是单次整卡的 LONG_OUTPUT_MAX_TOKENS。
         system, messages, max_tokens = seen[0]
         assert text in system, "全文不在一次读完请求里"
         assert system.index(text) < system.index(name), "角色名出现在全文之前，前缀无法共享"
         assert text not in "".join(m["content"] for m in messages), "全文被送了两遍（system 里一份、user 里又一份）"
-        assert max_tokens == Distiller.LONG_OUTPUT_MAX_TOKENS
+        assert max_tokens == Distiller.CARD_MAX_TOKENS
 
     def test_the_sync_one_pass_request_uses_the_same_prompt(self):
         """同步那条一次读完与流式共用同一个提示词构造函数 —— 顺序不能只对流式成立。
@@ -386,19 +397,23 @@ class TestRouting:
         llm = MagicMock()
         llm.last_usage = None
         seen: list[tuple] = []
-        llm.chat.side_effect = lambda system, messages, max_tokens=None: (
-            seen.append((system, messages, max_tokens)), '{"name": "T", "identity": "T"}'
-        )[1]
+        # S2：同步一次读完与流式同走 `_format_groups`（流式取回包）。替身照生产行为：流有终点。
+        def finite_stream(system, messages, max_tokens=None):
+            seen.append((system, messages, max_tokens))
+            yield '{"name": "T", "identity": "T"}'
+            return None
+        llm.chat_stream_long.side_effect = finite_stream
         d = Distiller(llm=llm, config_path=None)
         text = "此处是正文。" * 40
         name = "独一无二的测试角色"
         with patch("core.distiller.count_tokens", return_value=1_000):
-            d.distill_incremental(text, name)
+            with pytest.raises(DistillError):   # 回包缺弧线组字段 → 整步失败（不出半张卡）
+                d.distill_incremental(text, name)
 
         system, messages, max_tokens = seen[0]
         assert system.index(text) < system.index(name), "角色名出现在全文之前，前缀无法共享"
         assert text not in "".join(m["content"] for m in messages), "全文被送了两遍"
-        assert max_tokens == Distiller.LONG_OUTPUT_MAX_TOKENS
+        assert max_tokens == Distiller.CARD_MAX_TOKENS
 
 
 class TestAsyncChatClientParam:
@@ -786,17 +801,11 @@ class _FakeAsyncClient:
         pass
 
 
-# 组模板里的键名互不重叠，故拿它认「这条调用是哪一组」。key_memories 已随阶段编号从
-# G4 挪到 G6（本段 §3.2），G4 只剩 psyche。
-_FORMAT_GROUP_MARKERS = (
-    ("G1", '"name": "角色名"'),
-    ("G2", '"personality_traits"'),
-    ("G3", '"speaking_style"'),
-    ("G4", '"psyche"'),
-    ("G5", '"relationships"'),
-    ("G6", '"situation_behaviors"'),
-)
-_FORMAT_GROUP_ORDER = [g for g, _ in _FORMAT_GROUP_MARKERS]
+# 认「这条调用是哪一组」：组提示词末尾是该组子 schema，标题 `CharacterCard[Gn]` 由
+# `draft_schema(group)` 生成（core/card_draft.py）—— 组表只在 `FORMAT_GROUPS` 一处，这里
+# 不另抄一份键名清单（S2 拆出 G7 时，手抄的键名表跟着失效过一次）。
+_FORMAT_GROUP_TITLE = re.compile(r"CharacterCard\[(G\d+)\]")
+_FORMAT_GROUP_ORDER = list(FORMAT_GROUPS)
 
 
 # 关系分批的提示词不是任何一个字段组（§4.5）：主调用只出名单，细节这一跳按 10 人一批补。
@@ -809,9 +818,9 @@ def _format_group_of(system: str) -> str | None:
     """从格式化系统提示词认出组别；关系分批那一跳返回 `REL_BATCH_GROUP`；认不出返回 None。"""
     if _REL_BATCH_MARKER in system:
         return REL_BATCH_GROUP
-    for group, marker in _FORMAT_GROUP_MARKERS:
-        if marker in system:
-            return group
+    m = _FORMAT_GROUP_TITLE.search(system)
+    if m:
+        return m.group(1)
     return None
 
 
@@ -881,30 +890,30 @@ def _group_reply(group: str) -> str:
 
 
 class TestFormatGroupsRunInParallel:
-    """WP7 F1 + 本段 §4.4：不依赖阶段的组（G1/G5/G6）先并行，依赖组（G2/G3/G4）等 G6 返回后并行。
+    """WP7 F1 + S2（longctx-focused-calls §8.2）：弧线组（G6）单独先发；它返回后其余所有组
+    并行，依赖组（`PHASE_DEPENDENT_GROUPS`）带阶段列表，其余组不带。
 
-    并行判据是两批各自的 `threading.Barrier`：串行实现等不齐、2 s 后破障、该组失败，
-    成品卡出不来（无 str 帧）。依赖判据是 G6 的事件早于依赖组的第一条事件，且依赖组的提示词
-    带上了 G6 定出的阶段列表（G6 没先返回两者都拿不到）。记账判据是每组一条 `distill_format`、
-    各带不同 usage。组划分从 `PHASE_DEPENDENT_GROUPS`（登记表推导）读，组数从 `FORMAT_GROUPS`
+    并行判据是「其余组」那一批的 `threading.Barrier`：串行实现等不齐、2 s 后破障、该组失败，
+    成品卡出不来（无 str 帧）。先发判据是 G6 的事件早于其余每一组的事件。阶段列表判据：依赖组
+    的提示词带 G6 定出的阶段，非依赖组的不带。记账判据是每组一条 `distill_format`、各带不同
+    usage。组划分从 `PHASE_DEPENDENT_GROUPS` / `_PHASE_SOURCE_GROUP` 读，组数从 `FORMAT_GROUPS`
     读，都不写死。
 
-    变异：① 所有组改回串行 ② 依赖组不等 G6 就启动（提示词缺 G6 的阶段列表）。
+    变异：① 其余组改回串行 ② 其余组不等 G6 就启动 ③ 依赖组缺阶段列表 ④ 非依赖组也带阶段列表。
     """
 
     CHUNK = 3000
     TEXT = "AB" * (1500 * 50)   # 150000 字符 → 50 片（≤80，走单次合并）
 
     def test_dependent_groups_wait_for_g6_and_both_batches_run_parallel(self, monkeypatch):
-        from core.distiller import PHASE_DEPENDENT_GROUPS
+        from core.distiller import _PHASE_SOURCE_GROUP, PHASE_DEPENDENT_GROUPS
 
         n_groups = len(FORMAT_GROUPS)
-        first = [g for g in FORMAT_GROUPS if g not in PHASE_DEPENDENT_GROUPS]
-        second = sorted(PHASE_DEPENDENT_GROUPS)
-        barriers = {"first": threading.Barrier(len(first), timeout=2),
-                    "second": threading.Barrier(len(second), timeout=2)}
+        rest = [g for g in FORMAT_GROUPS if g != _PHASE_SOURCE_GROUP]
+        barrier = threading.Barrier(len(rest), timeout=2)
         events: list[str] = []
         dep_systems: list[str] = []
+        other_systems: list[str] = []
         rows: list[tuple[str, dict | None]] = []
 
         def _record(*, storage, llm, action, usage, source):
@@ -933,7 +942,10 @@ class TestFormatGroupsRunInParallel:
                 group = _format_group_of(system)
                 if group in PHASE_DEPENDENT_GROUPS:
                     dep_systems.append(system)
-                barriers["first" if group in first else "second"].wait()
+                elif group != _PHASE_SOURCE_GROUP:
+                    other_systems.append(system)
+                if group != _PHASE_SOURCE_GROUP:
+                    barrier.wait()
                 events.append(f"group:{group}")
                 yield _group_reply(group)
                 idx = _FORMAT_GROUP_ORDER.index(group)
@@ -960,12 +972,14 @@ class TestFormatGroupsRunInParallel:
         assert events[0] == "formatting", f"formatting 帧不在各组调用之前：{events}"
         assert sum(1 for e in events if e.startswith("group:")) == n_groups, events
         assert sum(1 for f in frames if isinstance(f, str)) == 1, "成品卡不是恰 1 个 str 帧"
-        # 依赖组等到了 G6：G6 的事件在前，且提示词带上了 G6 定出的阶段
-        g6_at = events.index("group:G6")
-        assert all(events.index(f"group:{g}") > g6_at for g in second), (
-            f"依赖组没等 G6：{events}")
+        # 弧线组先发：其余每组都在它之后；依赖组带阶段列表，非依赖组不带
+        g6_at = events.index(f"group:{_PHASE_SOURCE_GROUP}")
+        assert all(events.index(f"group:{g}") > g6_at for g in rest), (
+            f"其余组没等弧线组：{events}")
         assert dep_systems and all("阶段一" in s for s in dep_systems), (
-            f"依赖组的提示词没带 G6 的阶段列表：{dep_systems[:1]}")
+            f"依赖组的提示词没带弧线组的阶段列表：{dep_systems[:1]}")
+        assert other_systems and not any("阶段一" in s for s in other_systems), (
+            "非依赖组的提示词带上了阶段列表")
         # 关系分批在依赖组之后跑（它要 G5 的名单 + G6 的阶段）
         assert events.index("rel") > g6_at, events
 

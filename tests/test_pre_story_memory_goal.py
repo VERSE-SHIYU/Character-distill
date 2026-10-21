@@ -123,11 +123,16 @@ def test_p6_attitude_tagged_zero_is_still_retracted(caplog):
 
 
 def test_p7_prompt_states_pre_story_policy_in_e_and_g6():
+    """关键记忆所在组的提示词写明「故事开始前填 0」（维度 E 与重要事项两处）。
+
+    S2 起关键记忆从 G6 拆进 G7，按字段找组；原句逐字不变。"""
     from core.distiller import format_prompt_after
-    g6 = format_prompt_after("G6")
+    from core.schema import FORMAT_GROUPS
+    group = next(g for g, f in FORMAT_GROUPS.items() if "key_memories" in f)
+    gm = format_prompt_after(group)
     assert ("故事开始之前就发生的经历（如童年、身世），phase 填 0；"
-            "故事里发生的，用维度 L 的阶段编号。") in g6, "维度 E 没写「故事开始前填 0」"
-    assert "关键记忆发生在故事开始之前的填 0；" in g6, "G6 重要事项没写「故事开始前填 0」"
+            "故事里发生的，用维度 L 的阶段编号。") in gm, "维度 E 没写「故事开始前填 0」"
+    assert "关键记忆发生在故事开始之前的填 0；" in gm, f"{group} 重要事项没写「故事开始前填 0」"
 
 
 def test_p8_zero_plus_out_of_range_still_warns_and_lands_at_top_level(caplog):

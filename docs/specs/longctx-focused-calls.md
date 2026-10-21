@@ -184,39 +184,61 @@ C2 在基线本来就绿（它是回归护栏，不是「达成目标」检查�
 | F3 一次读完·同步 | 同 F2 | `_distill_longcontext` → `_format_groups` | `test_distiller_routing.py`（同步一次读完提示词）、`test_distill_usage_accounting.py::TestInitialCallAccounting`、`test_arc_phase_fields_entries.py::test_entry_longctx_fields` | — |
 | F4 一次读完·流式 | 后台 `/start`（`web/routers/distill.py:357` 起）、SSE（`:1188` 起） | `_distill_longcontext_stream` → `_format_groups_stream` → `_format_groups` | `test_distill_draft_persist.py`、`test_distill_resume.py`、`test_error_user_facing.py`、`test_phase_anchoring.py`、`test_distill_usage_accounting.py::TestStreamReturnValueAccounting` | `test_identify_failure_channels.py` |
 
-### 8.6 失效的锁、替身与 fixture（逐处理由）
+### 8.6 失效的锁、替身与 fixture（逐处理由；10-21 远端沙箱实做）
 
-- **提醒：11. 评审方判定通过；这里是实现方清单，不是结论。**
+每处都只跟新结构改写法，守的东西不变；改过的锁 / 断言都在 8.9 注入原缺陷复核仍红。
 
-| 落点 | 改动 | 理由 |
-|---|---|---|
-| `tests/perf/card_draft_mutations.py` M24–M28 | 锚点文本不变（`_format_groups` 的「每组心跳」段、`_format_groups_stream` 的草稿帧/错误帧段各只出现一次）；M24 锚定带注释的第二段 while；M28 的替换代码改用新结构可见的 `draft.model_dump()` | 协议抽进一个方法后同一文本只出现一次，`test_mutation_anchors.py` 的「恰命中一次」仍成立；变异意图不变 |
-| `tests/perf/card_draft_mutations.py` M17、M35 标签 | 标签文案 G6 → G7（锚点不动） | 字段已搬组；锚点文本（模板示例）本身未改 |
-| `tests/test_arc_phase_fields_locks.py::test_s14_batch_prefix_only_from_shared_prefix` | 前缀来源追踪多一层：`_format_groups(rel_prefix=…)` 可透传 `rel_prefix`，再要求 `_format_groups_stream(rel_prefix=…)` 的每个实参是 `book_prefix` / `format_prompt_shared` | F1/F4 经共用协议方法调用；判据（分批前缀只能出自共享前缀函数）不变 |
-| `tests/test_arc_phase_fields_entries.py::_assert_batched` | 接受「入口委托 `_format_groups_stream`，且该方法体委托 `_format_groups`」 | F1/F4 多一层共用协议；红源不删：任一环丢掉关系分批仍红 |
-| `tests/test_arc_phase_fields_unit.py:432` | 期望集合加 `"G7"` | `key_memories` 是 experience 叶子，G7 由登记表自动成为依赖组 |
-| `tests/test_distiller_routing.py` 组 marker | G6 → `'"character_arc"'`；新增 G7 → `'"situation_behaviors"'` | 组字段拆开了 |
-| `tests/test_distiller_routing.py::TestFormatGroupsRunInParallel` | 重写调度判据：G6 单独先到；其余 6 组各自在 G6 事件之后、彼此并行（barrier=6）；依赖组带阶段列表、G1/G5 不带 | 新调度是「弧线先单发，其余全并行」，旧判据（首批 = G1/G5/G6）不再成立 |
-| `tests/test_distiller_routing.py` 提示词顺序用例（`:354` 起） | 改为组感知替身；断言每次组调用 `system` 以 `book_prefix(text)` 开头、全文先于角色名、user 不含全文、`max_tokens == CARD_MAX_TOKENS`；同步/流式按组逐字比对 system | F3/F4 不再有「一次主调用」，旧断言看的是空调用序列 |
-| `tests/test_distill_usage_accounting.py` | `distill_longcontext` 与 `distill_format` 的期望由 1 条改为每组 1 条（`len(FORMAT_GROUPS)`），仍断言「每次调用恰一条、不重记」；替身补 `chat_stream_long` 组回复 | 一次读完与格式化都按组发起调用；「不重记」的原意保留 |
-| `tests/fixtures/longctx_focused_calls_f1_baseline.json` | 按新期望重录（`_payload_for` G6 只回弧线、G7 回做法+记忆） | F1 行为有意改变（8.4） |
-| `tests/test_distill_draft_persist.py` | `_draft()` 里直接带上 `relation`；删 `fill_relationships` 替身、`fill_calls` 计数器与断言；注释改为「草稿离开 distiller 时关系已补全」 | 路由不再补关系；「存的是转卡前那份」的判据不变 |
-| `tests/test_card_redraft_goal.py:66`、`tests/test_distill_task_api.py:284`、`tests/test_identify_failure_channels.py:630`、`tests/test_phase_anchoring.py:513` | 删替身的 `fill_relationships` | 生产代码不再调用 |
-| `tests/test_arc_phase_fields_unit.py:666`、`:837` | 直接调改为 `_relationships_batched(draft, prefix=book_prefix(src), character_name="甲", material="")` | 方法已删；测的是分批前缀与 user 消息，判据不变 |
-| `tests/test_distill_diagnostic_logs_goal.py:281` | 函数名单去掉 `"fill_relationships"` | 函数已删 |
-| `tests/test_arc_phase_select.py` U9 / U20 | U9 断言 `key_memories` 在 G7、模板取自 `draft_schema("G7")`；U20 屏障仍对依赖组（现含 G7），断言不变 | 字段搬组；调度仍是「依赖组等 G6 后并行」 |
-| `tests/test_card_arc_behaviors.py:60` 起 | G6 只含维度 L / `character_arc`；G7 含维度 O / `situation_behaviors` | 提示词片段随 owner 搬组 |
-| `tests/test_card_draft.py` U8 / G6 模板用例 | `situation_behaviors` 的 schema 与模板断言改 `draft_schema("G7")` / `format_prompt_after("G7")` | 同上 |
-| `tests/test_distill_output_bounds.py:87` 起 | `key_memories` 的组断言改 G7 | 同上 |
-| `tests/test_pre_story_memory_goal.py:125` 起 | 维度 E 与「重要事项」的阶段 0 口径改从 `format_prompt_after("G7")` 读 | 两处 owner 都改成 G7 |
-| `tests/test_exception_pickle_lock.py` | 不动 | `_FormatGroupError` 类名与字段不变 |
+| 落点 | 原来守什么 | 为什么红（8.2 哪一项） | 怎么改 |
+|---|---|---|---|
+| `tests/test_distiller_routing.py::TestRouting.setup_method` | 路由按阈值分流 | 2/3：分片同步改走流式 `_collect_stream`；替身是裸 `MagicMock`，`chat_stream_long` 的 `next()` 永不结束 → 无限 append（实测约 75MB/s，吃满内存致 Tracy 电脑黑屏） | 补一个有终点的 `chat_stream_long`（照生产：流读完即止） |
+| 同文件 `test_the_one_pass_request_puts_the_whole_text_before_the_character_name` | 全文在角色名前、user 不含全文、输出上限 | 3：输出上限由单次整卡 `LONG_OUTPUT_MAX_TOKENS` 变为每组 `CARD_MAX_TOKENS` | 只改上限断言 |
+| 同文件 `test_the_sync_one_pass_request_uses_the_same_prompt` | 同步一次读完同一提示词顺序 | 3：同步改走流式；替身只配了 `chat`（同上无限 append） | 替身改成有终点的 `chat_stream_long`；回包缺弧线字段 → 断言整步抛 `DistillError`；上限同上 |
+| 同文件组识别 `_format_group_of` | 认出调用属于哪一组 | 1：手抄的键名表 G6=`"situation_behaviors"` 拆组后失效 | 改读子 schema 标题 `CharacterCard[Gn]`（`draft_schema` 生成），组表只认 `FORMAT_GROUPS` |
+| 同文件 `TestFormatGroupsRunInParallel` | 并行、依赖组等弧线组、依赖组带阶段列表、每组一条账 | 2：首批不再是 G1/G5/G6 | 弧线组先到；其余 6 组同一个 barrier 并行；依赖组带阶段列表、**非依赖组不带**（新增断言） |
+| `tests/test_arc_phase_select.py` U9 | 关键记忆拿得到阶段编号 | 1：原写「在 G6」 | 改守「所在组 ∈ `PHASE_DEPENDENT_GROUPS`」，按字段找组 |
+| `tests/test_arc_phase_fields_unit.py` U13 | 依赖组由登记表推导 | 1 | 期望集合加 `G7` |
+| 同文件 U22、R1 | 一次读完的关系分批：前缀是 `book_prefix`、不含「只出名单」；user 是本步请求 | 4：`fill_relationships` 已删 | 新助手 `_one_pass_rel_calls` **真跑** `_distill_longcontext`，从它发出的关系分批调用上取 system / messages（不改成直接传参，否则守不住「一次读完路径传的是什么」） |
+| `tests/test_arc_phase_fields_entries.py::_assert_batched` | 每个入口都走关系分批 | 3：入口多一层 `_format_groups_stream` | 改为按调用链传递闭包认「会走到 `_relationships_batched` 的函数」，不写死中间函数名 |
+| `tests/test_arc_phase_fields_locks.py` S14 | 分批前缀只出自共享前缀函数 | 3：`_format_groups_stream` 原样转交 `rel_prefix` | AST 认出「实参就是外层函数自己的 `rel_prefix` 形参」的转交并放行，其余实参仍须是产出者 |
+| `tests/perf/card_draft_mutations.py` M21、M22、M23 | 同步两入口只经 `card_from_draft`；流式原样交出草稿 | 3：调用点文本变了；长文流式不再逐 token 转交 | 锚点跟新行；M23 落点移到 `_format_groups_stream` 交出草稿那一行 |
+| `tests/perf/card_draft_mutations.py` M28 | 分组流式不在 distiller 里转成卡 | 3：交出草稿那一行搬进 `_format_groups_stream`，那里没有原文变量，原变异变成 NameError（空转） | 变异改传空原文，意图不变 |
+| `tests/perf/card_draft_mutations.py` 新增 M39、M40；`tests/test_card_draft.py` 新增 `_accepted` | 同步两入口：坏草稿抛 `DistillError`、合法草稿出卡 | 3：坏草稿现在先被 `CardDraft.model_validate` 拦下，原来撞这两条 `pytest.raises` 的 M10 到不了；M21/M22 的变异体在入口内抛异常而不是断言失败（空转） | M39/M40 直接变异入口口径（格式错误被吞成空卡）；`_accepted` 把「合法草稿被入口拒绝」变成断言失败。产物 `card_draft_red_lines.json` 按驱动重跑刷新 |
+| `tests/perf/arc_phase_anchoring_mutations.py` M29 | 分片同步转卡带原文 | 3：调用点文本变了 | 锚点跟新行 |
+| `tests/test_card_draft.py` `_reply`、U8、G6 模板用例、`test_stream_longcontext_yields_draft` | 同步/流式入口交出草稿、occurrences 不被转换 | 1/3：同步按组调用；替身对每次调用回整份草稿 | `_reply` 按 `CharacterCard[Gn]` 回本组字段（坏值原样保留）；U8/模板用例按字段找组；流式用例复用 `_grouped(chunked=False)` |
+| `tests/test_phase_anchoring.py` `_distiller`、`_reply` | 同上 | 同上 | 删掉与 test_card_draft 一模一样的副本，改为导入那一份（两份只改一份会再分叉） |
+| `tests/test_distill_usage_accounting.py` 3 条 | 每次调用恰一条账、不重记、账取返回值 | 3：一次读完与分片同步都按组调用 | 期望改为 `len(FORMAT_GROUPS)` 条；替身用已有的按组回包 `_FormatGroupReturnUsageLLM` |
+| `tests/test_distill_draft_persist.py` | 存的是转卡前**最后改动后**那份 data | 4：路由不再补关系，原判别点（`fill_relationships` 写 relation）消失 | 判别点移到路由转卡前仍会改草稿的 `locate_phase_starts`：替身就地补阶段 2 锚点（形态不对时不改不抛，照生产），断言存下的锚点是补后的 |
+| `tests/test_card_arc_behaviors.py` 原 `test_g6_prompt_carries_arc_and_behaviors_together` | 原判据「弧线与做法同组同调用」 | **设计前提被 S2 数据推翻**（§0、跟踪文档 10-21） | 改为 `test_arc_first_then_behaviors_with_the_phase_list`：弧线组只有弧线；做法组 ∈ 依赖组且带维度 O 与形态规则；G4 两者都无 |
+| `tests/test_distill_output_bounds.py`、`tests/test_pre_story_memory_goal.py` | 记忆在拿得到阶段编号的组；「故事前填 0」两处原句 | 1 | 按字段找组；原句逐字不变 |
+| `tests/test_distill_diagnostic_logs_goal.py` g7 | 链上无 print | 4 | 名单去掉 `fill_relationships`，加 `_format_groups`、`_format_groups_stream` |
+| `tests/test_card_redraft_goal.py`、`tests/test_distill_task_api.py`、`tests/test_identify_failure_channels.py` 替身 | — | 4 | 删掉不再被调用的 `fill_relationships` |
 
-### 8.7 测试（本地只跑这些）
+### 8.7 测试（只在远端沙箱跑，带内存上限）
 
-`tests/test_longctx_focused_calls_goal.py tests/test_distiller_routing.py tests/test_arc_phase_select.py tests/test_arc_phase_fields_unit.py tests/test_arc_phase_fields_entries.py tests/test_arc_phase_fields_locks.py tests/test_card_draft.py tests/test_distill_usage_accounting.py tests/test_failure_alerting.py tests/test_mutation_anchors.py tests/test_exception_pickle_lock.py tests/test_distill_task_api.py tests/test_distill_draft_persist.py tests/test_card_redraft_goal.py tests/test_phase_anchoring.py tests/test_distill_resume.py tests/test_error_user_facing.py` + `npm test` + `scripts/check.sh preflight`。PG 用 Docker（`tests/conftest.py:31` 的 55432 测试库）。全量只看分支 CI；CI 抓到本地漏跑的锁，补进清单、只重跑那几个文件。
+本机不跑（10-21 黑屏事故，返工经验第 40、41 条）。沙箱逐文件、`ulimit -v 8000000`、`--timeout=60`：
+`test_longctx_focused_calls_goal test_distiller_routing test_arc_phase_select test_arc_phase_fields_unit test_arc_phase_fields_entries test_arc_phase_fields_locks test_card_draft test_distill_usage_accounting test_failure_alerting test_mutation_anchors test_exception_pickle_lock test_distill_task_api test_distill_draft_persist test_card_redraft_goal test_phase_anchoring test_distill_resume test_error_user_facing test_card_arc_behaviors test_distill_diagnostic_logs_goal test_distill_output_bounds test_domain_exception_exit test_evidence_format_goal test_identify_failure_channels test_length_budget test_personality_distill_goal test_pre_story_memory_goal test_scalar_one_per_phase_goal test_usage_identity_context`（原清单 17 个 + grep 出的 11 个：凡引用 `fill_relationships` / `_longcontext_prompt` / `distill_instruction` / `FORMAT_GROUPS` / `PHASE_DEPENDENT_GROUPS` / `_distill_longcontext` / `distill_incremental` 的测试文件）。全量看分支 CI。
 
 ### 8.8 未核实
 
 - 一次读完路径按 7 次组调用计费后的真实成本曲线（缓存命中率取决于回忆区是否已缓存该书）；本段不调真模型，**未核实**。付费小重放留到部署前（不在本 PR）。
 - 本清单外测试的静态改动（8.6 后四行）只在分支 CI 上验证。
 - 段 1 §7 的 C2 稳定性结论沿用；重录后的 fixture 首次在 CI 上跑。
+
+### 8.9 沙箱复核（10-21，远端沙箱，本地 PG 55432）
+
+- 28 个文件逐个跑：全部通过（见 PR 描述原始输出）。
+- 改过的锁注入原缺陷，确认仍红（对照：未变异 338 passed）：
+
+| 注入的缺陷 | 结果 | 打红的检查 |
+|---|---|---|
+| 其余组改回串行 | 红 | `TestFormatGroupsRunInParallel` |
+| 其余组不等弧线组 | 红 | 同上（barrier 超时） |
+| 依赖组缺阶段列表 | 红 | `TestFormatGroupsRunInParallel`、U20 |
+| 非依赖组也带阶段列表 | 红 | `TestFormatGroupsRunInParallel`（新增断言） |
+| 共用流程漏掉关系分批 | 红 | G3、E12–E14、`TestFormatGroupsRunInParallel` 等 6 条 |
+| 一次读完关系前缀退回 `book_prefix + 全量模板` | 红 | U22（S14 只看前缀以 `book_prefix(` 开头，拦不住这一种——既有弱点，非本段引入，目标外） |
+| 整本蒸外面再记一笔账 | 红 | `test_longcontext_records_once_not_twice` |
+| 路由存重定位之前的草稿副本 | 红 | `test_start_persists_the_draft_with_the_distill_time_character` |
+| 弧线组的阶段没传给依赖组 | 红 | C2 |
+| M21 / M22 / M23 / M29（新锚点） | 均红 | test_card_draft / test_phase_anchoring |
+

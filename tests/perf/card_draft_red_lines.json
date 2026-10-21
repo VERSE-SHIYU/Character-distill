@@ -125,16 +125,6 @@
       ],
       [
         "tests/test_card_draft.py",
-        "with pytest.raises(DistillError):",
-        1
-      ],
-      [
-        "tests/test_card_draft.py",
-        "with pytest.raises(DistillError):",
-        2
-      ],
-      [
-        "tests/test_card_draft.py",
         "assert saved == []",
         0
       ],
@@ -198,6 +188,11 @@
         "tests/test_card_draft.py",
         "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
         0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
+        1
       ],
       [
         "tests/test_card_draft.py",
@@ -282,22 +277,27 @@
     "M21  distiller 长文同步入口（distill_incremental 长文分支）退回 model_validate": [
       [
         "tests/test_card_draft.py",
-        "assert dump[\"situation_behaviors\"] == [_B]",
+        "assert False, f\"合法草稿被入口拒绝：{exc}\"",
         0
       ]
     ],
     "M22  distiller 分片同步入口（distill_incremental 最终格式化）退回 model_validate": [
       [
         "tests/test_card_draft.py",
-        "assert dump[\"situation_behaviors\"] == [_B]",
+        "assert False, f\"合法草稿被入口拒绝：{exc}\"",
         0
       ]
     ],
     "M23  长文流式改写了模型原文（交出的草稿被改动）": [
       [
         "tests/test_card_draft.py",
-        "assert json.loads(out) == KONG_DRAFT",
+        "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
         0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
+        1
       ]
     ],
     "M24  分组流式每组回来就交出一段 JSON：交出的字符串不止一个": [
@@ -305,6 +305,11 @@
         "tests/test_card_draft.py",
         "assert len(out) == 1",
         0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert len(out) == 1",
+        1
       ]
     ],
     "M25  分组流式交出的 JSON 不是合法草稿（character_arc 被写成字符串）": [
@@ -333,6 +338,11 @@
         "tests/test_card_draft.py",
         "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
         0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
+        1
       ]
     ],
     "M29  路由 R1（/start 后台任务）退回 CharacterCard.model_validate": [
@@ -380,7 +390,7 @@
     "M35  G6 提示词模板（含维度 O 示例）去掉 occurrences 的阶段编号": [
       [
         "tests/test_card_draft.py",
-        "assert '\"phase\": 1' in format_prompt_after(\"G6\")",
+        "assert '\"phase\": 1' in format_prompt_after(group)",
         0
       ]
     ],
@@ -413,6 +423,20 @@
         "tests/test_card_draft.py",
         "assert [len(p.behaviors) for p in card.character_arc.phases] == [1, 0]",
         0
+      ]
+    ],
+    "M39  长文同步入口吞掉格式错误，交出空卡（不再抛 DistillError）": [
+      [
+        "tests/test_card_draft.py",
+        "with pytest.raises(DistillError):",
+        1
+      ]
+    ],
+    "M40  分片同步入口吞掉格式错误，交出空卡（不再抛 DistillError）": [
+      [
+        "tests/test_card_draft.py",
+        "with pytest.raises(DistillError):",
+        2
       ]
     ]
   },

@@ -141,12 +141,16 @@ class TestInitialCallAccounting:
     def test_longcontext_records_once_not_twice(self, usage):
         """整本蒸原本记**两条**（外部一条 + 新增出口一条）。
 
-        变异：把 `_distill_longcontext` 里随本轮删掉的那条外部
-        `_try_record_usage("distill_longcontext")` 加回来 → 变成 2 条，本用例红。
-        这是本轮唯一的**多记**风险点。
+        S2 起整本蒸按字段组调用（`_format_groups`）：判据改为「每组一次调用恰一条
+        `distill_longcontext`」—— 多记（入口外再补一条）或漏记都红。替身按组回包，免得重修
+        环把每组记成多条（见 `_FormatGroupReturnUsageLLM`）。
+
+        变异：在 `_distill_longcontext` 外再加一条 `_try_record_usage("distill_longcontext")`
+        → 变成组数 + 1 条，本用例红。
         """
-        _distiller([CARD])._distill_longcontext("全文", "角色")
-        assert usage == ["distill_longcontext"]
+        Distiller(_FormatGroupReturnUsageLLM([]), config_path=None)._distill_longcontext(
+            "全文", "角色")
+        assert usage.count("distill_longcontext") == len(FORMAT_GROUPS), usage
 
     def test_truncated_initial_call_is_still_recorded(self, usage):
         """`length` 截断那一路也是成功调用：token 已烧、半截正文还要进重修环 → 记。
@@ -315,14 +319,15 @@ class TestIncrementalFormatAccounting:
         变异：把格式化站点原来那条外部 `_try_record_usage("distill_format")` 加回来
         （而出口也记）→ 本断言变 2 → 红。
         """
-        d = _distiller(["这是一份档案草稿。", CARD, "[]"])
+        # S2：分片同步的格式化也按字段组调用 —— 判据改为「每组恰一条 `distill_format`」。
+        d = Distiller(_FormatGroupReturnUsageLLM(["这是一份档案草稿。", "[]"]), config_path=None)
         d._longctx_threshold = 1
         d._chunk_size = 200
 
         card = d.distill_incremental(TEXT, "角色", text_type="story")
 
         assert card.name == "角色"
-        assert usage.count("distill_format") == 1, usage
+        assert usage.count("distill_format") == len(FORMAT_GROUPS), usage
 
 
 # ── R4：并发流式各记各的账（usage 随调用返回，不读共享属性） ────────────────────
@@ -438,11 +443,15 @@ class TestStreamReturnValueAccounting:
         self._assert_404(records, "distill_stream")
 
     def test_longcontext_stream_accounts_returned_usage(self, records):
-        """`_distill_longcontext_stream`：滤思考态的是显式 `next()` 环，值照样要接住。"""
-        d = Distiller(_ReturnUsageLLM([]), config_path=None)
-        tokens = [t for t in d._distill_longcontext_stream("全文", "角色") if isinstance(t, str)]
-        assert tokens == ["x"], tokens
-        self._assert_404(records, "distill_longcontext")
+        """`_distill_longcontext_stream`：S2 起按组调用、每组经 `_collect_stream` 记账，
+        账取各组流的返回值；交出恰一个草稿串。"""
+        d = Distiller(_FormatGroupReturnUsageLLM([]), config_path=None)
+        drafts = [t for t in d._distill_longcontext_stream("全文", "角色") if isinstance(t, str)]
+        assert len(drafts) == 1, drafts
+        rows = [u for a, u in records if a == "distill_longcontext"]
+        assert len(rows) == len(FORMAT_GROUPS), records
+        assert all(u is not None and u["completion_tokens"] == 404 for u in rows), (
+            f"记的是共享属性（999）或没传返回值：{rows}")
 
     def test_single_reduce_stream_accounts_returned_usage(self, records):
         """`_single_reduce_stream`：归并流式版，账取返回值。"""

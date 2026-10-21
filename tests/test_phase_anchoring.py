@@ -440,35 +440,9 @@ def _assert_anchored(card):
             by[0][0]["source_quote"], by[2][0]["source_quote"]) == _ANCHORED
 
 
-def _distiller(monkeypatch, *, chunked):
-    from unittest.mock import MagicMock
-
-    from core.distiller import Distiller
-    monkeypatch.setattr("core.distiller.try_record_usage", lambda **kw: None)
-
-    async def _close():
-        return None
-
-    async def _map(system, messages, max_tokens=None, client=None, **kw):
-        return ("片段分析", {"prompt_tokens": 1, "completion_tokens": 1})
-
-    client = MagicMock()
-    client.close = _close
-    llm = MagicMock()
-    llm.last_usage = None
-    llm.model = "m"
-    llm._make_async_client = MagicMock(return_value=client)
-    llm.async_chat = _map
-    d = Distiller(llm=llm, config_path=None)
-    d._chunk_size = 3000
-    d._longctx_threshold = 0 if chunked else 10 ** 9
-    return d
-
-
-def _reply(monkeypatch, d, payload):
-    text = json.dumps(payload, ensure_ascii=False)
-    monkeypatch.setattr(d, "_chat_accounted", lambda *a, **kw: (text, False))
-    monkeypatch.setattr(d, "_do_reduce", lambda *a, **kw: "合并档案")
+# 真 Distiller + 打桩 LLM、格式化回包：与 test_card_draft 共用同一份（S2 起格式化按组调用，
+# 回包要按组切 —— 两份副本只改一份就会再分叉）。
+from test_card_draft import _distiller, _reply  # noqa: E402
 
 
 class TestEntries:
@@ -509,10 +483,6 @@ class _DraftStubDistiller:
 
     def finalize_card(self, card, content, name, aliases=(), roster=()):
         return card
-
-    def fill_relationships(self, draft, text, character_name):
-        # 路由在转卡前补关系（§4.5）。本 stub 的草稿没有关系名单，真实现此处也直接返回。
-        return None
 
     def locate_phase_starts(self, draft, text, character_name, retro):
         return None      # 路由在转卡前重新找阶段起点；本替身的草稿不需要（真实现核对得过即不调模型）

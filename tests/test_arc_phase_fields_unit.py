@@ -428,10 +428,13 @@ def test_timed_draft_fields_convert_to_overlay_and_top():
 # ── U13 依赖组推导 ──────────────────────────────────────────────────────
 
 def test_phase_dependent_groups_derived():
-    """U13：依赖组由登记表推导 —— G2、G3、G4 依赖；G1、G5 不依赖。"""
+    """U13：依赖组由登记表推导 —— G2、G3、G4、G7 依赖；G1、G5 与弧线组 G6 不依赖。
+
+    S2 起情境→行为、关键记忆从弧线组拆进 G7（longctx-focused-calls §8），G7 按登记表自动成为依赖组。
+    """
     from core.distiller import PHASE_DEPENDENT_GROUPS
 
-    assert PHASE_DEPENDENT_GROUPS == {"G2", "G3", "G4"}
+    assert PHASE_DEPENDENT_GROUPS == {"G2", "G3", "G4", "G7"}
 
 
 # ── U14 审核覆盖 overlay ────────────────────────────────────────────────
@@ -633,6 +636,32 @@ def test_anchors_built_once_per_card(monkeypatch):
     assert calls == 1
 
 
+def _one_pass_rel_calls(src: str, name: str) -> list:
+    """真跑一次读完同步路径，返回其中关系分批那几次调用的 (system, messages)。
+
+    按组回包复用 WP7 那批桩（`_format_group_of` / `_group_reply`，组表从 schema 读）；
+    替身的流有终点（返工经验第 35 条）。G5 名单里是「某人」，分批点名的就是它。
+    """
+    from core.distiller import Distiller
+    from test_distiller_routing import REL_BATCH_GROUP, _format_group_of, _group_reply
+
+    seen: list = []
+
+    class _LLM:
+        model = "stub-groups"
+        last_usage = None
+
+        def chat_stream_long(self, system, messages, max_tokens=None, **kw):
+            group = _format_group_of(system)
+            if group == REL_BATCH_GROUP:
+                seen.append((system, messages))
+            yield _group_reply(group)
+            return {"prompt_tokens": 1, "completion_tokens": 1}
+
+    Distiller(llm=_LLM(), config_path=None)._distill_longcontext(src, name)
+    return seen
+
+
 # ── U22/U23 提示词 = 共享前缀 + 本步指令（B2 提示词、B7）────────────────
 
 def test_relationship_batch_prefix_is_shared_step_free():
@@ -642,33 +671,16 @@ def test_relationship_batch_prefix_is_shared_step_free():
     后续单独生成，这里不要写」——分批把整段主提示当前缀，等于把「不要写」带进了「给我写」。
     前缀只能是共享的、不含本步指令的那一段（`book_prefix`：正文）。
     """
-    import json
-    from core.distiller import Distiller, book_prefix
+    from core.distiller import book_prefix
 
-    systems: list[str] = []
-
-    class _LLM:
-        model = "stub-rel"
-        last_usage = None
-
-        def chat_stream_long(self, system, messages, max_tokens=None, **kw):
-            systems.append(system)
-            yield json.dumps([{
-                "target": "乙", "relation": "同窗", "attitude": "亲近", "note": "老同学",
-                "attitudes": [{"phase": 1, "attitude": "亲近", "quote": "开头甲甲甲",
-                               "note": "老同学"}],
-            }], ensure_ascii=False)
-            return {"prompt_tokens": 1, "completion_tokens": 1}
-
+    # S2：`fill_relationships` 已删，关系分批在一次读完路径内部做 —— 改为真跑一次读完同步
+    # 路径（`_distill_longcontext`），从它发出的关系分批调用上取 system，守的东西不变。
     src = "开头甲甲甲。中间乙乙乙。"
-    d = Distiller(llm=_LLM(), config_path=None)
-    draft = {"name": "甲", "relationships": [{"target": "乙"}]}
-    d.fill_relationships(draft, src, "甲")
+    systems = [system for system, _ in _one_pass_rel_calls(src, "甲")]
 
     assert systems, "关系分批没调模型（判据失去意义）"
     assert systems[0].startswith(book_prefix(src)), "分批前缀不是共享前缀（缓存命中不上）"
     assert "只出名单" not in systems[0], "分批前缀把维度 F 的「只出名单」带进来了"
-    assert draft["relationships"][0]["relation"] == "同窗", "分批结果没写回草稿"
 
 
 def test_relationship_note_flows_from_draft_to_projection():
@@ -831,16 +843,14 @@ def test_r1_batch_user_message_is_the_steps_own_longcontext():
     """
     from core.distiller import Distiller
 
-    seen: list = []
-    d = Distiller(llm=_capture_llm(seen), config_path=None)
-    draft = {"name": "甲", "relationships": [{"target": "乙"}]}
-    d.fill_relationships(draft, "开头甲甲甲。中间乙乙乙。", "甲")
+    # S2：`fill_relationships` 已删 —— 真跑一次读完同步路径，取它发出的关系分批调用。
+    seen = _one_pass_rel_calls("开头甲甲甲。中间乙乙乙。", "甲")
 
     assert seen, "关系分批没调模型（判据失去意义）"
     system, messages = seen[0]
     user = messages[-1]["content"]
     assert "角色卡" not in user, f"分批的 user 消息带着主调用的指令：{user}"
-    assert "「甲」" in user and "乙" in user, "user 消息没点名主角与本批人物"
+    assert "「甲」" in user and "某人" in user, "user 消息没点名主角与本批人物"
     assert "主角是「甲」" in system, "system 里没写主角是谁（正文前缀之后只剩关系规则）"
 
 

@@ -23,17 +23,26 @@ def _entry_sources(name: str) -> list[str]:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name]
 
 
+def _batching_functions() -> set[str]:
+    """distiller.py 里「会走到关系分批」的函数名：直接调 `_relationships_batched(` 的，
+    加上（传递地）调用了这些函数的。S1/S2 起入口交给共用流程（`_format_groups`，流式再包一层
+    `_format_groups_stream`），按调用链认，不按函数名单写死。"""
+    text = (_REPO / "core" / "distiller.py").read_text(encoding="utf-8")
+    funcs = {n.name: ast.get_source_segment(text, n) or ""
+             for n in ast.walk(ast.parse(text))
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    found = {name for name, src in funcs.items() if "self._relationships_batched(" in src}
+    while True:
+        more = {name for name, src in funcs.items() if name not in found
+                and any(f"self.{f}(" in src for f in found)}
+        if not more:
+            return found
+        found |= more
+
+
 def _assert_batched(name: str) -> None:
-    srcs = _entry_sources(name)
-    assert srcs, f"distiller.py 里找不到入口 {name}"
-    # 直接调，或交给共用流程 `_format_groups`（它内部调）——两种都算走了关系分批。
-    shared_batches = any(
-        "_relationships_batched(" in s for s in _entry_sources("_format_groups"))
-    assert any(
-        "_relationships_batched(" in s
-        or ("_format_groups(" in s and shared_batches)
-        for s in srcs
-    ), f"{name} 未走关系分批"
+    assert _entry_sources(name), f"distiller.py 里找不到入口 {name}"
+    assert name in _batching_functions(), f"{name} 未走关系分批"
 
 
 # ── E11 `distill` ──────────────────────────────────────────────────────────

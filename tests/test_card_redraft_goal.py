@@ -63,9 +63,6 @@ class _NoRedistillStub(_DraftStub):
     def distill_incremental_stream(self, *_a, **_kw):
         raise AssertionError("重新出卡不应重蒸")
 
-    def fill_relationships(self, *_a, **_kw):
-        raise AssertionError("重新出卡不应补关系")
-
     def locate_phase_starts(self, draft, text, character_name, retro):
         self.locate_calls += 1
         draft["background"] = _RELOCATED
