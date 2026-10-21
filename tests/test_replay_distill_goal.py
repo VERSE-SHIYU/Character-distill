@@ -23,7 +23,7 @@ from conftest import TEST_DATABASE_URL  # noqa: E402
 from adapters.llm_adapter import IncompleteResponseError  # noqa: E402
 from core import phase_anchoring, phase_locate  # noqa: E402
 from core.card_draft import CardDraft, _GENERIC_PATHS, _valid_number_rows  # noqa: E402
-from core.distiller import Distiller  # noqa: E402
+from core.distiller import IDENTIFY_SYSTEM_PROMPT, Distiller  # noqa: E402
 from core.request_context import LLM_CALLER, SYSTEM  # noqa: E402
 from core.retro_cache import RETRO_VERSION  # noqa: E402
 from core.retro_regions import ChapterRange, RetroRegions  # noqa: E402
@@ -155,6 +155,8 @@ def _stub(*, arcs: list[int] | None = None, chapter4: int = 344,
 
     def chat(self, system, messages, max_tokens=None, **kw):
         mark("chat")
+        if system.startswith(IDENTIFY_SYSTEM_PROMPT):
+            return json.dumps([{"name": _NAME, "aliases": []}], ensure_ascii=False)
         if system == phase_locate.JUDGE_SYSTEM:
             user = messages[0]["content"]
             chapter = int(re.search(r"### 第(\d+)章", user).group(1))
@@ -170,6 +172,9 @@ def _stub(*, arcs: list[int] | None = None, chapter4: int = 344,
 
     def chat_stream_long(self, system, messages, max_tokens=None, **kw):
         mark("chat_stream_long")
+        if "标出倒叙的章节" in system:
+            yield '{"ranges": []}'
+            return _USAGE
         match = re.search(r"CharacterCard\[(G\d)\]", system)
         if match is None:
             yield json.dumps(_payload("G1") if "CharacterCard[G1]" in system
@@ -208,7 +213,8 @@ def _stub(*, arcs: list[int] | None = None, chapter4: int = 344,
 
 
 async def _prepare(chapter2: int = 12, *, chapter4: int = 344, chapters: int = 350,
-                   retro: RetroRegions | None = None):
+                   retro: RetroRegions | None = None, seed: bool = True):
+    """`seed=False` 时不写名单 / 回忆区缓存，让这两步真的调模型（复审 F3）。"""
     store = PostgresStore(TEST_DATABASE_URL)
     await store._ensure_initialized()
     tag = uuid.uuid4().hex[:10]
@@ -216,10 +222,11 @@ async def _prepare(chapter2: int = 12, *, chapter4: int = 344, chapters: int = 3
     text = await store.save_text(
         f"t_{tag}", "f.txt", _text(_chapter_map(chapter2, chapter4), chapters),
         user_id=user["id"])
-    await store.save_characters(
-        text["id"], [{"name": _NAME, "aliases": []}], version=Distiller.IDENTIFY_VERSION)
-    await store.save_retro_regions(
-        text["id"], (retro or RetroRegions("marked")).to_json(), version=RETRO_VERSION)
+    if seed:
+        await store.save_characters(
+            text["id"], [{"name": _NAME, "aliases": []}], version=Distiller.IDENTIFY_VERSION)
+        await store.save_retro_regions(
+            text["id"], (retro or RetroRegions("marked")).to_json(), version=RETRO_VERSION)
     return store, user, text
 
 
@@ -346,7 +353,12 @@ def test_t4_length_terminal_state_marks_h5_suspected_truncation(monkeypatch, tmp
     assert "疑似截断" in summary["H5"]["note"]
     calls = [json.loads(x) for x in (tmp_path / "run-1" / "calls.jsonl").read_text(
         encoding="utf-8").splitlines() if x.strip()]
-    assert any(c["truncated"] for c in calls), calls
+    truncated = [c for c in calls if c["truncated"]]
+    assert truncated, calls
+    # F6：截断拿不到 usage —— 写 null，不许当 0 计入成本；汇总注明未知次数。
+    assert all(c["usage"] is None for c in truncated), truncated
+    assert summary["usage"]["unknown_usage_calls"] == len(truncated)
+    assert f"{len(truncated)} 次调用用量未知" in summary["usage"]["note"]
 
 
 def test_t5_no_write_path_names_and_db_untouched(monkeypatch, tmp_path):
@@ -649,3 +661,25 @@ def test_every_llm_call_sees_system_caller(tmp_path):
     llm = asyncio.run(go())
     assert llm._stub_callers, "替身一次都没被调用"
     assert all(c is SYSTEM for c in llm._stub_callers), llm._stub_callers
+
+
+# ── 复审补充：名单 / 回忆区调用记全（F3）──────────────────────────────────
+
+def test_setup_calls_land_in_calls_jsonl(tmp_path):
+    async def go():
+        store, user, text = await _prepare(chapters=2, seed=False)
+        try:
+            return await _run(store, text["id"], tmp_path, _stub())
+        finally:
+            await store.close()
+
+    summary = asyncio.run(go())
+    path = tmp_path / "calls.jsonl"
+    rows = [json.loads(x) for x in path.read_text(
+        encoding="utf-8").splitlines() if x.strip()]
+    assert rows and all(r["stage"] == "setup" for r in rows), rows
+    actions = {r["action"] for r in rows}
+    # 名单走 adapter.chat；回忆区走 _collect_stream（直连 adapter，无 annotate 的 label）。
+    assert actions == {"chat", "chat_stream_long"}, actions
+    assert summary["setup_calls"] == len(rows)
+    assert summary["usage"]["calls"] == len(rows) + summary["runs"][0]["calls"]

@@ -90,7 +90,6 @@ class _Recorder:
         label = getattr(self._local, "label", "") or ""
         action = getattr(self._local, "action", "") or (
             "format:" + group.group(1) if group else method)
-        usage = usage or {}
         with self._lock:
             self.calls.append({
                 "n": len(self.calls) + 1,
@@ -98,11 +97,8 @@ class _Recorder:
                 "action": action,
                 "label": label,
                 "output": output,
-                "prompt_tokens": usage.get("prompt_tokens"),
-                "prompt_cache_hit_tokens": usage.get(CACHE_HIT_FIELD),
-                "prompt_cache_miss_tokens": usage.get(CACHE_MISS_FIELD),
-                "completion_tokens": usage.get("completion_tokens"),
-                "estimated": bool(usage.get("estimated", False)),
+                # 拿不到用量写 null（截断 / 调用失败）：null 与「0 token」必须可分辨。
+                "usage": usage or None,
                 "duration_s": round(seconds, 3),
                 "truncated": truncated,
                 "error": error,
@@ -321,6 +317,12 @@ def _tsv(rows: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _write_calls(path: Path, calls: list[dict], *, stage: str) -> None:
+    path.write_text("".join(
+        json.dumps({**c, "stage": stage}, ensure_ascii=False) + "\n" for c in calls),
+        encoding="utf-8")
+
+
 def _in_fixed_retro(chapter: int | None) -> bool:
     return chapter is not None and any(lo <= chapter <= hi
                                        for lo, hi in RETRO_CHAPTER_RANGES)
@@ -425,6 +427,8 @@ async def _replay(storage: Any, llm: Any, *, text_id: str, name: str, runs: int,
     retro = await resolve_retro_regions(storage, setup_distiller, text_id, user_id, content)
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    # 名单 / 回忆区是整本书的属性，整场只调一次：记在 run 之外，标 stage=setup（F3）。
+    _write_calls(out_dir / "calls.jsonl", setup.calls, stage="setup")
     run_summaries: list[dict] = []
 
     for n in range(1, runs + 1):
@@ -456,9 +460,7 @@ async def _replay(storage: Any, llm: Any, *, text_id: str, name: str, runs: int,
         entry_rows = _entries(model, anchors, content)
         await asyncio.to_thread(card_from_draft, draft, content, retro=retro)
 
-        (run_dir / "calls.jsonl").write_text(
-            "".join(json.dumps(c, ensure_ascii=False) + "\n" for c in recorder.calls),
-            encoding="utf-8")
+        _write_calls(run_dir / "calls.jsonl", recorder.calls, stage="run")
         (run_dir / "draft_before_locate.json").write_text(before_text, encoding="utf-8")
         (run_dir / "draft_after_locate.json").write_text(
             json.dumps(draft, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -489,16 +491,19 @@ async def _replay(storage: Any, llm: Any, *, text_id: str, name: str, runs: int,
     h2_overall = ("过" if all(r["verdict"] == "过" for r in h2_runs)
                   else "不过" if any(r["verdict"] == "不过" for r in h2_runs) else "看不出")
 
+    all_calls = setup.calls + [c for r in run_summaries for c in r["calls_detail"]]
+    known = [c["usage"] for c in all_calls if c["usage"]]
+    unknown = len(all_calls) - len(known)
     usage = {
-        "prompt_tokens": sum(c["prompt_tokens"] or 0 for r in run_summaries
-                             for c in r["calls_detail"]),
-        CACHE_HIT_FIELD: sum(c[CACHE_HIT_FIELD] or 0 for r in run_summaries
-                             for c in r["calls_detail"]),
-        CACHE_MISS_FIELD: sum(c[CACHE_MISS_FIELD] or 0 for r in run_summaries
-                              for c in r["calls_detail"]),
-        "completion_tokens": sum(c["completion_tokens"] or 0 for r in run_summaries
-                                 for c in r["calls_detail"]),
-        "calls": sum(r["calls"] for r in run_summaries),
+        "prompt_tokens": sum(u.get("prompt_tokens") or 0 for u in known),
+        CACHE_HIT_FIELD: sum(u.get(CACHE_HIT_FIELD) or 0 for u in known),
+        CACHE_MISS_FIELD: sum(u.get(CACHE_MISS_FIELD) or 0 for u in known),
+        "completion_tokens": sum(u.get("completion_tokens") or 0 for u in known),
+        "calls": len(all_calls),
+        # F6：拿不到用量的调用（截断 / 失败）单列，成本是**下界**，不把它们当 0 混进去。
+        "unknown_usage_calls": unknown,
+        "note": (f"{unknown} 次调用用量未知（截断或调用失败），未计入成本"
+                 if unknown else ""),
     }
 
     cost = None
