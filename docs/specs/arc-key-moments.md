@@ -126,3 +126,42 @@
 | 35 替身照生产、有终点 | §6 末；G5 替身按提示词里那件事作答，和生产判断同一口径 |
 | 39 环境硬规则 | §1 |
 | 43 根因清楚才给修法 | §0 根因两处代码 + 两个实例 |
+
+---
+
+## 10. S0 复核与结构自检（写代码之前）
+
+### 10.1 K1–K10 复核（@ `f555a7bf`，逐条贴读到的行）
+
+| # | 结论 | 依据（本轮读到的行 / 命令） |
+|---|---|---|
+| K1 | 成立 | `card_draft.py:145-148` `class DraftPhase(PhaseState)` + `anchor` / `boundary_examples`；`schema.py:154-157` `label` / `state` |
+| K2 | 成立 | `card_draft.py:211` `full = CardDraft.model_json_schema()`；`:215-221` 按组裁剪，`$defs` 整体带上 |
+| K3 | 成立 | `schema.py:172-180` `ArcPhase` 字段 behaviors / overlay / start / boundary_examples，无 anchor |
+| K4 | 成立 | `distiller.py:291-301` 维度 L（state 规则 `:296`、anchor `:297`）；模板 `:370`；`_FORMAT_IMPORTANCE` G6 `:418` |
+| K5 | 成立 | `phase_locate.py:106-107` `phase_query` = label + state；`:113` 提示词用它；`:196` `index.rank(state)` |
+| K6 | 成立 | 上列 4 个测试文件均存在，grep `phase_locate\|judge_prompt\|取最后发生` 命中 |
+| K7 | 成立（实跑） | `card_draft.py:491` `card = draft.model_dump()`；`:577` `CharacterCard.model_validate(card)`；实跑 `ArcPhase.model_validate({...,'anchor':'x','key_moments':['k']}).model_dump()` 的键 = behaviors / boundary_examples / label / overlay / start / state |
+| K8 | 成立 | `distiller.py:510-522` `_phase_list_note` 只渲染 编号 · label · state · 起始原句 |
+| K9 | 成立 | `distill.py:1444-1465` redraft 读存档草稿 → `_distill_start_impl(draft=...)`；`:556-567` `draft is None` 分支跳过蒸馏但同样走 `locate_phase_starts` |
+| K10 | 成立 | grep `tests/perf/*.py` 无 `phase_locate` / 维度 L 文字锚点（唯一相关是 `card_draft_mutations.py:147` 的 `class DraftPhase(PhaseState)` 基类替换，不受加字段影响）；`docs/evidence` 无命中 |
+| K10' | 成立，另多出 4 个文件 | `test_arc_phase_fields_unit.py:1017`（只查 DraftOccurrence/Attitude 的 phase 类型）、`test_arc_phase_select.py:99`（key_memories `$ref`）、`test_distiller_routing.py:779`（组顶层字段集）、`test_card_draft.py:140-146`（只断言 anchor 在、behaviors 不在）——均不依赖被改的字面量，纳入回归运行 |
+
+`origin/main = f555a7bf`（本地 `main` 停在 `58215653`，落后 71 个提交）；工作树从 `origin/main` 同 sha 新建。
+
+### 10.2 结构自检三问
+
+1. **同一规则几处？** 改前两处、前提相反：维度 L 的 state 规则（`distiller.py:296`）让 state 句首写事件；判断提示词（`phase_locate.py:114`）让模型「取最后发生的那一件」。改后该判定只由 `core/phase_locate.py` 的常量 `KEY_MOMENT_START` 定义一次；维度 L 规则与 `judge_prompt` 都拼接它，G3 源码锁守全仓 `.py` 只出现一次。
+2. **调用方是否被迫知道不该知道的事？** 否。`locate()` 的入参仍是草稿阶段 dict，只新增读取 `key_moments[0]`；签名不变。依赖组的 `_phase_list_note`（`distiller.py:510-522`）不渲染 key_moments（D1）；`ArcPhase` / 卡 / 存库 JSON 仍看不到它（K7 实跑，G4 锁）。`judge_prompt` 签名不变，label + state 仍作背景。
+3. **加一个阶段字段要改几处？** 4 处生产代码 + 夹具：① `card_draft.py` `DraftPhase` 字段与 `json_schema_extra`（必填）；② `distiller.py` 维度 L 规则；③ `distiller.py` JSON 模板 + `_FORMAT_IMPORTANCE` G6 形态规则；④ `phase_locate.py` 常量、提示词、空列表跳过。夹具：`test_phase_locate_goal._PHASES`、`test_replay_distill_goal._ARC`、`test_longctx_focused_calls_goal._ARC`、F1 fixture（重录）。转卡无需改（K7）。
+
+### 10.3 失效的锁与夹具（D4）
+
+| 文件 | 守什么 | 为什么失效 | 怎么改（守的东西不变） |
+|---|---|---|---|
+| `tests/test_phase_locate_goal.py` `_PHASES` | 阶段 2..n 用它定位 | 新契约下无 key_moments 的阶段不再回落 state | 给阶段 2/3 补 `key_moments`（取该阶段起点事件） |
+| 同上 `_Judge` 正则 | 从提示词取 label 作替身键 | 提示词仍保留 `角色弧线的一个阶段：{label}：{state}` 一行，**不失效** | 不改 |
+| `tests/test_replay_distill_goal.py` `_ARC` | 重定位按阶段起点章走 | 同上，无 key_moments 不重定位 | 给阶段 2–4 补 key_moments |
+| `tests/test_longctx_focused_calls_goal.py` `_ARC` + fixture | G6 system 逐字与组调用形态 | G6 规则 / 模板新增 key_moments 行 | 补 `_ARC` 的 key_moments，按 D5 重录 fixture |
+| `tests/test_phase1_anchor_not_checked_goal.py` | 阶段 1 锚点不参与核对 | 直接用上面的 `_PHASES` | 随 `_PHASES` 更新，无需改代码 |
+| `tests/test_distill_diagnostic_logs_goal.py` | 候选明细日志 | 同上（import PL） | 随 `_PHASES` 更新，无需改代码 |
