@@ -91,6 +91,10 @@ _ALLOWED_BY_ID: dict[str, frozenset[str]] = {
          "stats", "chunksInDb", "chunkLengths", "allNonEmpty", "allEqualTruncated",
          "chunkParsesAsJson", "resumeStartStatus", "resumeFinalStatus", "resumeStats",
          "resumeMapCalls", "truncatedReusedByGate2", "ok"}),
+    # replay_distill.py —— 小重放的判据数字；原文摘录与草稿只留在 --out，不入库。
+    "replay-distill": frozenset(
+        {"probe", "text_id", "name", "runs", "H1", "H2", "H3", "H4", "H5", "H6",
+         "usage", "cost"}),
     # ── 以下三条**没有产物**（status = runtime-measured / unverifiable）：空白名单是它们的
     # 正确登记形态 —— 注册一个空集，结构上就堵死了「哪天有人往里写产物」这条路。
     # write_evidence 只在**调用时**拒绝空集（见其 docstring），注册时不拦，正是为此。

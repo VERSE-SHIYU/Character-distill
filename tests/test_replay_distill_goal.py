@@ -19,9 +19,6 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="T1–T6: replay tool not implemented yet (first commit)")
-
 from conftest import TEST_DATABASE_URL  # noqa: E402
 from adapters.llm_adapter import IncompleteResponseError  # noqa: E402
 from core import phase_anchoring  # noqa: E402
@@ -44,7 +41,7 @@ def _text(chapter_of: dict[str, int], chapters: int = 350) -> str:
     by_chapter = {n: sentence for sentence, n in chapter_of.items()}
     parts: list[str] = []
     for n in range(1, chapters + 1):
-        parts.append(f"第{n}章\n第{n}章的正文。\n")
+        parts.append(f"第{n}章\n这是本章的正文。\n")
         if n in by_chapter:
             parts.append(by_chapter[n] + "\n")
     return "".join(parts)
@@ -65,19 +62,21 @@ _ENTRY_QUOTES = {
 }
 
 
-def _arc_with_phase2(chapter: int) -> dict:
-    return {**_ARC, "phases": [{**p} for p in _ARC["phases"]]}
+#: 阶段 2 可用的两种锚点 → 它们各自落在第几章。起点「落在真值外」只能靠换一句原文里
+#: 真实存在的锚点，替身改章号本身对起点没有影响。
+_PHASE2_ANCHORS = {12: "他第一次看见她笑", 10: "他在第十章才看见她笑"}
 
 
 def _arc(chapter2: int) -> dict:
-    arc = _arc_with_phase2(chapter2)
-    arc["phases"][1]["anchor"] = "他第一次看见她笑"
+    arc = {**_ARC, "phases": [{**p} for p in _ARC["phases"]]}
+    arc["phases"][1]["anchor"] = _PHASE2_ANCHORS[chapter2]
     return arc
 
 
 def _chapter_map(chapter2: int) -> dict[str, int]:
     return {
-        "他第一次看见她笑": chapter2,
+        _PHASE2_ANCHORS[chapter2]: chapter2,
+        _PHASE2_ANCHORS[10]: 10,
         "他把她护在身后": 122,
         "他终于转身走了": 344,
     }

@@ -196,7 +196,8 @@ grep 到的本链写点（原始输出见报告）：
 |---|---|---|
 | 同一条规则写了几处 | 运行期只有一处：`scripts/replay_distill.py` 顶部 `ACCEPTANCE_CHECKLIST` / `TRUTH`；spec 里是文档副本，由 T6 逐字锁住，二者不会各自演化 | T6 直接比较脚本常量与 spec §5 第 4 条原文 |
 | 调用方是否被迫知道不该知道的事 | 不需要：CLI 只知道 `--text-id/--name/--runs/--out`；组提示词、JSON 解析、位置核对、截断判定都在生产函数背后。仅只读地重写 `_chat_accounted` 取 action/label/truncated，不改其行为 | `core/distiller.py:1183`、`adapters/llm_adapter.py:1104` |
-| 以后加一个角色真值 / 一个假设要改几处 | 角色真值：一处（`TRUTH` 加一项）。新假设：一个 `_hN()` 函数 + `HYPOTHESES` 元组一行登记；判定逻辑不散落在输出层 | 脚本 `_h1`…`_h6` 与 `HYPOTHESES` |
+| 以后加一个角色真值 / 一个假设要改几处 | 角色真值：一处（`TRUTH` 加一项）。新假设：在 `_replay` 的 `summary` 加一个 `Hn` 键 + 一个纯函数；判定逻辑集中在 `_checklist`（H2）/ `_h1` / `_h5`，不散落在输出层 | `scripts/replay_distill.py` 的 `_checklist`、`_h1`、`_h5` |
+| 运行路径 | 测试文本 3,166 tokens < 900,000，走生产的一次读完路径（7 个组调用）；判定逻辑与分片路径无关 | `core/distiller.py:1900-1905`、`core/length_budget.py:49` |
 
 ## 环境偏离（必须报告）
 
