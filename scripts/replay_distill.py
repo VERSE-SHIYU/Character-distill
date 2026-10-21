@@ -30,12 +30,14 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from core.card_draft import CardDraft, _valid_number_rows, card_from_draft  # noqa: E402
-from core.card_layers import REGISTRY  # noqa: E402
+from core.card_draft import (  # noqa: E402
+    CardDraft, DraftMemory, DraftOccurrence, _GENERIC_PATHS, _valid_number_rows,
+    card_from_draft)
+from core.card_layers import REGISTRY, get_path  # noqa: E402
 from core.character_roster import aliases_for, resolve_characters  # noqa: E402
 from core.distiller import Distiller  # noqa: E402
 from core.llm_json import loads_llm_json  # noqa: E402
-from core.phase_anchoring import build_anchors, chapter_labels, verify  # noqa: E402
+from core.phase_anchoring import Placement, build_anchors, chapter_labels, verify  # noqa: E402
 from core.quotes import locate_in_normalized, raw_offsets  # noqa: E402
 from core.request_context import system_llm_context  # noqa: E402
 from core.retro_cache import resolve_retro_regions  # noqa: E402
@@ -266,33 +268,52 @@ def _quote_chapters(quotes: list[str], anchors, content: str) -> list[str]:
 
 
 def _entries(model: CardDraft, anchors, content: str) -> list[dict]:
+    """`card_from_draft` 送进 `verify` 的每一类条目各一行。
+
+    类别清单与 core 同源：做法 / 记忆、关系态度（`Placement.KEEP_TAGGED`）以及
+    `_GENERIC_PATHS`（状态 / 经历类字段）。判定仍只读 `verify` 的结果 ——
+    `valid` 为空（只标 0 / 编号非法）单列「无合法标注」。
+    """
     count = len(model.character_arc.phases)
+    attitude_items = [
+        DraftMemory(memory=f"{rel.target}：{attitude.attitude}",
+                    occurrences=[DraftOccurrence(phase=attitude.phase,
+                                                 quote=attitude.quote)])
+        for rel in model.relationships for attitude in rel.attitudes
+    ]
+    sources = [
+        ("situation_behaviors", model.situation_behaviors, "做法",
+         REGISTRY["situation_behaviors"].layer, Placement.RELOCATE),
+        ("key_memories", model.key_memories, "记忆",
+         REGISTRY["key_memories"].layer, Placement.RELOCATE),
+        ("relationships.attitudes", attitude_items, "态度",
+         REGISTRY["relationships"].layer, Placement.KEEP_TAGGED),
+        *((path, get_path(model, path), path, spec.layer, Placement.RELOCATE)
+          for path, spec in _GENERIC_PATHS),
+    ]
     rows: list[dict] = []
-    fields = (
-        ("situation_behaviors", model.situation_behaviors, "做法"),
-        ("key_memories", model.key_memories, "记忆"),
-    )
-    for name, items, kind in fields:
-        layer = REGISTRY[name].layer
+    for field, items, kind, layer, placement in sources:
+        if not items:
+            continue
         valid = _valid_number_rows(items, count, kind, layer=layer).valid
-        result = verify(items, valid, anchors, kind=kind)
+        result = verify(items, valid, anchors, kind=kind, placement=placement)
         rehung_items = set(result.rehung_items)
         unlocated = set(result.unlocated)
         for i, item in enumerate(items):
-            tagged = sorted({occ.phase for occ in item.occurrences})
-            targets = result.tag_targets[i]
-            located = sorted({t for ts in targets.values() for t in ts})
-            if i in unlocated:
+            if not valid[i]:
+                verdict = "无合法标注"
+            elif i in unlocated:
                 verdict = "未定位"
             elif i in rehung_items:
                 verdict = "改挂"
             else:
                 verdict = "一致"
             rows.append({
-                "field": name,
-                "item": getattr(item, "situation", "") or getattr(item, "memory", ""),
-                "tagged": tagged,
-                "located": located,
+                "field": field,
+                "item": (getattr(item, "situation", "") or getattr(item, "memory", "")
+                         or getattr(item, "value", "")),
+                "tagged": sorted({occ.phase for occ in item.occurrences}),
+                "located": sorted({t for ts in result.tag_targets[i].values() for t in ts}),
                 "verdict": verdict,
                 "chapters": _quote_chapters(
                     [occ.quote for occ in item.occurrences], anchors, content),
@@ -379,6 +400,7 @@ def _h1(entries: list[dict], count: int) -> dict:
     consistent = sum(1 for row in entries if row["verdict"] == "一致")
     rehung = sum(1 for row in entries if row["verdict"] == "改挂")
     unlocated = sum(1 for row in entries if row["verdict"] == "未定位")
+    no_valid_tag = sum(1 for row in entries if row["verdict"] == "无合法标注")
     judged = consistent + rehung
     return {
         "tagged_phase_counts": {str(k): tagged.get(k, 0) for k in range(1, count + 1)},
@@ -386,6 +408,9 @@ def _h1(entries: list[dict], count: int) -> dict:
         "consistent": consistent,
         "rehung": rehung,
         "unlocated": unlocated,
+        # 只标 0（状态类「全程」/ 经历类「故事开始前」）或编号非法的条目：没有阶段标注可比，
+        # 既不算「一致」也不进一致率分母（复审 N3）。
+        "no_valid_tag": no_valid_tag,
         "consistency_rate": round(consistent / judged, 4) if judged else None,
     }
 

@@ -488,6 +488,92 @@ def test_t7_entry_verdicts_match_core_verify_counts(tmp_path):
         assert got.count("未定位") == len(result.unlocated), (name, got, result.unlocated)
 
 
+def _entry_card() -> CardDraft:
+    """一份每类被核对的条目各一条的草稿：两类专有 + 状态/经历类 + 关系态度。"""
+    data = CardDraft(name=_NAME).model_dump()
+    data["character_arc"] = _arc(12)
+    data["situation_behaviors"] = [{
+        "situation": "见到她", "behavior": "沉默",
+        "occurrences": [{"phase": 2, "quote": _ENTRY_QUOTES["行为"]}],
+    }]
+    data["key_memories"] = [{
+        "memory": "护她",
+        "occurrences": [{"phase": 3, "quote": _ENTRY_QUOTES["记忆"]}],
+    }]
+    data["values"] = [{
+        "value": "守护",
+        "occurrences": [{"phase": 3, "quote": _ENTRY_QUOTES["记忆"]}],
+    }]
+    data["cognitive"]["knowledge_scope"] = [{
+        "value": "只知道宗门",
+        "occurrences": [{"phase": 2, "quote": _ENTRY_QUOTES["行为"]}],
+    }]
+    data["relationships"] = [{
+        "target": "谢凛羽",
+        "attitudes": [{"phase": 2, "quote": _ENTRY_QUOTES["行为"],
+                       "attitude": "想靠近", "note": ""}],
+    }]
+    return CardDraft.model_validate(data)
+
+
+def test_t8_entries_cover_every_category_core_verifies():
+    """N2：`card_from_draft` 调 `verify` 的每一类都要进 entries.tsv / H1。"""
+    import scripts.replay_distill as replay
+    content = _text(_chapter_map())
+    model = _entry_card()
+    anchors = phase_anchoring.build_anchors(model.character_arc.phases, content)
+
+    rows = replay._entries(model, anchors, content)
+
+    fields = [row["field"] for row in rows]
+    assert fields == ["situation_behaviors", "key_memories", "relationships.attitudes",
+                      "values", "cognitive.knowledge_scope"], fields
+    assert [row["verdict"] for row in rows] == ["一致"] * len(fields), rows
+    h1 = replay._h1(rows, len(model.character_arc.phases))
+    assert h1["consistent"] == len(fields), h1
+    assert h1["no_valid_tag"] == 0, h1
+
+
+def test_t9_rows_without_legal_phase_are_not_counted_consistent():
+    """N3：只标 0 / 编号非法的条目不进「一致」，单列「无合法标注」。"""
+    import scripts.replay_distill as replay
+    content = _text(_chapter_map())
+    data = CardDraft(name=_NAME).model_dump()
+    data["character_arc"] = _arc(12)
+    data["values"] = [
+        {"value": "全程", "occurrences": [{"phase": 0, "quote": _ENTRY_QUOTES["记忆"]}]},
+        {"value": "写坏编号", "occurrences": [{"phase": 99, "quote": _ENTRY_QUOTES["行为"]}]},
+        {"value": "阶段三", "occurrences": [{"phase": 3, "quote": _ENTRY_QUOTES["记忆"]}]},
+    ]
+    model = CardDraft.model_validate(data)
+    anchors = phase_anchoring.build_anchors(model.character_arc.phases, content)
+
+    rows = replay._entries(model, anchors, content)
+
+    assert [row["verdict"] for row in rows] == ["无合法标注", "无合法标注", "一致"], rows
+    h1 = replay._h1(rows, len(model.character_arc.phases))
+    assert h1["no_valid_tag"] == 2, h1
+    assert h1["consistent"] == 1, h1
+
+
+def test_checklist_item1_fails_when_position_check_is_skipped():
+    """N5：锚点落进回忆区 → 整卡跳过 → 清单第 1 条必须判「不过」。"""
+    import scripts.replay_distill as replay
+    content = _text(_chapter_map())
+    phases = _arc(12)["phases"]
+    phases[1]["anchor"] = "日记里的那句话"          # 第 205 章
+    retro = RetroRegions("marked", (ChapterRange(200, 210, "日记"),))
+    anchors = phase_anchoring.build_anchors(phases, content, retro=retro.spans(content))
+    assert anchors.reason, anchors.reason
+
+    starts = replay._start_rows(phases, anchors, content,
+                                [p.get("anchor", "") for p in phases])
+    items = replay._checklist(starts, phases, anchors, _NAME)
+
+    assert items[0]["verdict"] == "不过", items[0]
+    assert items[0]["detail"] == anchors.reason, items[0]
+
+
 # ── 复审补充：H4 触发 / 不触发（M2、M13）────────────────────────────────────
 
 def _run_calls(run_dir: Path) -> list[dict]:

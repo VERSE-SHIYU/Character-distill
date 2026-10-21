@@ -194,7 +194,7 @@ grep 到的本链写点（原始输出见报告）：
 
 | 问题 | 结论 | 依据 |
 |---|---|---|
-| 同一条规则写了几处 | 运行期只有一处：验收清单 / 真值只在 `scripts/replay_distill.py` 顶部 `ACCEPTANCE_CHECKLIST` / `TRUTH`（spec 是文档副本，由 T6 逐字锁住）；逐条「一致 / 改挂 / 未定位」的唯一实现在 core `verify`，脚本只读 `Verification.rehung_items` / `unlocated` 做映射（复审 F4/F9） | T6 直接比较脚本常量与 spec §5 第 4 条原文；`core/phase_anchoring.py:44-68`、`scripts/replay_distill.py:279-287` |
+| 同一条规则写了几处 | 运行期只有一处：验收清单 / 真值只在 `scripts/replay_distill.py` 顶部 `ACCEPTANCE_CHECKLIST` / `TRUTH`（spec 是文档副本，由 T6 逐字锁住）；逐条「一致 / 改挂 / 未定位 / 无合法标注」的唯一实现在 core `verify` 与规则 0，脚本只读 `Verification.rehung_items` / `unlocated` 和 `valid` 做映射；类别清单（状态 / 经历类字段）也取 core 的 `_GENERIC_PATHS`（复审 F4/F9、N2/N3） | T6 直接比较脚本常量与 spec §5 第 4 条原文；`core/phase_anchoring.py:44-68`、`scripts/replay_distill.py:270-307` |
 | 调用方是否被迫知道不该知道的事 | 不需要：CLI 只知道 `--text-id/--name/--runs/--out`；组提示词、JSON 解析、位置核对、截断判定都在生产函数背后。逐条判定消费的是 core 的只读字段，脚本不知道 core 的规则；`calls.jsonl` 的 `stage` 只区分 setup / run。仅只读地重写 `_chat_accounted` 取 action/label/truncated，不改其行为 | `core/distiller.py:1183`、`adapters/llm_adapter.py:1104`、`core/phase_anchoring.py:51-53` |
 | 以后加一个角色真值 / 一个假设要改几处 | 角色真值：一处（`TRUTH` 加一项）。新假设：在 `_replay` 的 `summary` 加一个 `Hn` 键 + 一个纯函数；判定逻辑集中在 `_checklist`（H2）/ `_h1` / `_h5`，不散落在输出层 | `scripts/replay_distill.py` 的 `_checklist`、`_h1`、`_h5` |
 | 运行路径 | 测试文本 3,166 tokens < 900,000，走生产的一次读完路径（7 个组调用）；判定逻辑与分片路径无关 | `core/distiller.py:1900-1905`、`core/length_budget.py:49` |
@@ -230,3 +230,17 @@ grep 到的本链写点（原始输出见报告）：
 | F14 | `tests/test_replay_distill_goal.py` 里有未使用的 `pytest` 导入与 `_GENERIC_PATHS` | 写测试时留下的死代码 | 删除两者 | 无专门测试（静态卫生）；`grep -n 'pytest\|_GENERIC_PATHS' tests/test_replay_distill_goal.py` 零命中 |
 
 第 3 项另补一条身份断言（复审 M3 存活）：替身记录每次被调用时的 `LLM_CALLER`，断言全为 `SYSTEM`（`core/request_context.py`）——`test_every_llm_call_sees_system_caller`（去掉 `system_llm_context()` 必红）。
+
+## 补充（复审 10-21 第二轮）
+
+复审（10-21 22:01，head `9a9fa64e`）通过：阻断 0、非阻断 7（N1–N7）。只修影响段 2 判断（H1）与验收清单缺口的三条；其余记录不处理。
+
+| # | 发现 | 处理 | 理由 / 守护 |
+|---|---|---|---|
+| N1 | 工具不读取文行的 `text_type`（生产 `web/routers/distill.py:876` 读），CLI 固定默认 `story` | 不处理 | chat / classic 文本会走错分支；祈灼、谢凛羽两本都是 story，结果不受影响。换文本类型前先补 |
+| N2 | `entries.tsv` / H1 只覆盖做法、记忆两类，core 还核对关系态度与状态 / 经历类字段 | 已处理：类别清单取 core 同一来源 —— 做法 / 记忆、关系态度（`KEEP_TAGGED`）、`_GENERIC_PATHS` | 与 `core/card_draft.py:402-406`、`:474-483`、`:497-499` 的 `verify` 调用点一一对应；判定仍只读 `verify`。守护 `test_t8_entries_cover_every_category_core_verifies` |
+| N3 | 只标 0 / 编号非法的条目被算「一致」，虚高一致率 | 已处理：单列「无合法标注」，H1 增 `no_valid_tag`；一致率分母仍为一致 + 改挂 | 守护 `test_t9_rows_without_legal_phase_are_not_counted_consistent` |
+| N4 | 清单第 2 条的固定章号（491–504、508–509、383、399）取自祈灼，却对每本书生效 | 不处理 | 两本目标书不受影响；换书可能假「不过」，将来按已检测的 retro / `IN_RETRO` 替换 |
+| N5 | 清单第 1 条（整卡跳过）的失败路径没有用例 | 已处理：补跳过场景的用例 | 复审变异 R17「第 1 条恒过」现在必红。守护 `test_checklist_item1_fails_when_position_check_is_skipped` |
+| N6 | 两套 JSON 解析在不可达边界（后缀含 `}`、尾逗号）结果不同 | 不处理 | 工具解析的是 `core/distiller.py:2685` 的 `json.dumps(model_dump())` 帧，不是模型散文；流契约改动时才需重评 |
+| N7 | 并发非流式 locate 调用共用 `llm.last_usage`，用量可能串到别的调用上 | 不处理 | 与生产 `try_record_usage` 同口径，只影响成本展示，不影响判定 |
