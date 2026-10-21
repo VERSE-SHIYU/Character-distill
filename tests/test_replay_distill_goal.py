@@ -17,12 +17,10 @@ import types
 import uuid
 from pathlib import Path
 
-import pytest
-
 from conftest import TEST_DATABASE_URL  # noqa: E402
 from adapters.llm_adapter import IncompleteResponseError  # noqa: E402
 from core import phase_anchoring, phase_locate  # noqa: E402
-from core.card_draft import CardDraft, _GENERIC_PATHS, _valid_number_rows  # noqa: E402
+from core.card_draft import CardDraft, _valid_number_rows  # noqa: E402
 from core.distiller import IDENTIFY_SYSTEM_PROMPT, Distiller  # noqa: E402
 from core.request_context import LLM_CALLER, SYSTEM  # noqa: E402
 from core.retro_cache import RETRO_VERSION  # noqa: E402
