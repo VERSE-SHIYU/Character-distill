@@ -73,6 +73,9 @@ UNSCOPED_ALLOWLIST = {
     "scripts/demo_seed.py:build_bundle":
         "导出脚本无登录语境：text_id 由命令行传入，读它是为了先拿到属主，随后按属主读名单"
         "（get_characters_owned）与卡（list_cards）—— 只有这一次引导读没有身份可用",
+    "scripts/replay_distill.py:_replay":
+        "重放工具无登录语境：text_id 由命令行传入，这一次引导读只为拿到属主，随后名单与"
+        "回忆区都按属主读；传 --user-id 时在同一处核对属主，不符即退出 —— 与 demo_seed 同一形态",
     "scripts/diag_tool_use.py:load_card":
         "诊断脚本，card_id 由命令行传入，无登录语境",
     "scripts/run_agent_eval.py:load_card":
