@@ -13,16 +13,12 @@ import json
 import re
 from pathlib import Path
 
-import pytest
-
 from core import phase_locate
 from core.card_draft import CardDraft, card_from_draft, draft_schema
 from core.distiller import Distiller, format_prompt_after
 from core.retro_regions import NOT_DETECTED, RetroRegions
 
 KEY_MOMENT_START = getattr(phase_locate, "KEY_MOMENT_START", None)
-
-pytestmark = pytest.mark.xfail(strict=True, reason="实现前：key_moments 尚未落地")
 
 
 def test_g1_g6_schema_and_arc_rule_carry_key_moments():
@@ -51,11 +47,14 @@ def test_g3_start_rule_defined_once_and_used_by_both():
         "他", {"label": "l", "state": "s", "key_moments": ["m"]}, 1, ["m。"])
     root = Path(__file__).resolve().parents[1]
     skip = {".git", ".claude", "node_modules", ".venv", "__pycache__"}
-    hits = sorted(
-        p.relative_to(root).as_posix()
-        for p in root.rglob("*.py")
-        if not (set(p.parts) & skip) and KEY_MOMENT_START in p.read_text(encoding="utf-8")
-    )
+    hits = []
+    for path in root.rglob("*.py"):
+        rel = path.relative_to(root)
+        if set(rel.parts) & skip:
+            continue
+        if KEY_MOMENT_START in path.read_text(encoding="utf-8"):
+            hits.append(rel.as_posix())
+    hits.sort()
     assert hits == ["core/phase_locate.py"], hits
 
 

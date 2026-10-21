@@ -10,12 +10,13 @@ spec：`docs/specs/phase-locate.md`。本模块**只做计算**（检索、拼�
 做法（检索 → 逐章判断 → 取最早，依据见 spec §2）：
 1. 每个阶段（2..n）用阶段描述（label + state）在回忆区外的各章里做 BM25（字二元组）检索，取前
    `TOP_K` 章为候选；
-2. 每个候选章单独判一次：阶段描述里标志开始的那件事，是否在**本章当下**发生（回忆 / 计划 /
-   之后的日常都答否），是则给句号；
+2. 每个候选章单独判一次：`key_moments` 第一件是否由此人本人做出或亲身经历、并在**本章当下**
+   发生（回忆 / 计划 / 之后的日常都答否），是则给句号；
 3. 按章号升序取第一个「是」、且晚于上一阶段起点的章为起点；锚点 = 该句原文（逐字），若这句在
    书里更早处也出现，向后拼接下一句直到全书首次出现就在本章（锚点按首次出现定位）。
 
-任一阶段找不到起点 → 不给结果（调用方保持原锚点，行为同今天：整卡跳过位置核对）。
+任一阶段找不到起点（含 `key_moments` 为空的旧草稿）→ 不给结果（调用方保持原锚点，行为同今天：
+整卡跳过位置核对）。
 """
 from __future__ import annotations
 
@@ -110,12 +111,17 @@ def phase_query(phase: dict) -> str:
     return f"{phase.get('label', '')}：{phase.get('state', '')}"
 
 
+def _first_key_moment(phase: dict) -> str:
+    moments = phase.get("key_moments") or []
+    return str(moments[0]).strip() if moments else ""
+
+
 def judge_prompt(name: str, phase: dict, chapter: int, sents: Sequence[str]) -> str:
     numbered = "\n".join(f"S{i}：{s}" for i, s in enumerate(sents, 1))
     return (f"### 第{chapter}章（已编号）\n{numbered}\n\n"
             f"「{name}」角色弧线的一个阶段：{phase_query(phase)}\n\n"
-            "这个阶段描述里有一件标志阶段开始的事（描述里有几件事时，取最后发生的那一件）。"
-            "请判断：这件事是否在**本章正文里当下发生**？\n"
+            f"{KEY_MOMENT_START}：{_first_key_moment(phase)}\n\n"
+            f"请判断：这件事是否由「{name}」本人做出或亲身经历，并在**本章正文里当下发生**？\n"
             "- 本章只是回忆、追述、提起这件事（例如「曾」「那时」「当年」），答否；\n"
             "- 本章只是在计划、商量、还没成，答否；\n"
             "- 本章只是这一阶段里的后续日常、而那件事已在前文发生，答否；\n"
@@ -195,7 +201,9 @@ def locate(phases: Sequence[dict], source_text: str, retro: RetroRegions, name: 
 
     jobs: list[tuple[int, int]] = []
     for k in range(2, len(phases) + 1):
-        # 检索只用 state（与 10-18 离线覆盖测试、探针 E2 同口径）；判断提示词带 label + state。
+        if not _first_key_moment(phases[k - 1]):
+            continue                      # 没有标志事件（旧草稿 / 空列表）→ 该阶段找不到起点
+        # 检索只用 state（与 10-18 离线覆盖测试、探针 E2 同口径）；判断提示词带 label + state 作背景。
         cands = sorted(index.rank(str(phases[k - 1].get("state", "")))[:TOP_K])
         jobs += [(k, n) for n in cands if sents[n]]
     replies = judge([judge_prompt(name, phases[k - 1], n, sents[n]) for k, n in jobs])
