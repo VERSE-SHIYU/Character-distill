@@ -56,9 +56,12 @@ _ARC = {
     "axis": "从孤冷到放手",
     "phases": [
         {"label": "孤冷求索", "state": "开头", "anchor": ""},
-        {"label": "一见倾心", "state": "动心", "anchor": "他第一次看见她笑"},
-        {"label": "甘为底牌", "state": "守候", "anchor": "他把她护在身后"},
-        {"label": "甘愿放手", "state": "离开", "anchor": "他终于转身走了"},
+        {"label": "一见倾心", "state": "动心", "anchor": "他第一次看见她笑",
+         "key_moments": ["他第一次看见她笑"]},
+        {"label": "甘为底牌", "state": "守候", "anchor": "他把她护在身后",
+         "key_moments": ["他把她护在身后"]},
+        {"label": "甘愿放手", "state": "离开", "anchor": "他终于转身走了",
+         "key_moments": ["他终于转身走了"]},
     ],
 }
 _ENTRY_QUOTES = {

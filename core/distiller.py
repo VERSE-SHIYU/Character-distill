@@ -295,6 +295,8 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
         '   - label：这一阶段的心态或立场（≤8字，如「隐忍不发」），不要写事件或结局（如「被逐出师门」「死去」）。\n'
         '   - state：一句话。句首用书里的具体事件或时段点明这是什么时候（如「被逐出师门之后」），不要写「前期」「中期」「后期」；再写此时的心态与行事方式。\n'
         '   - anchor：标志这一阶段开始的一句原文（10-40字，逐字照抄）；中间要省略时必须用「……」标出，省略号两边各至少 10 个字；阶段 1 可留空字符串。\n'
+        '   - key_moments：按发生顺序列 1-3 件此阶段的关键事件，每件一句、必须是此人本人做出或亲身经历的具体事；'
+        '第一件写' + phase_locate.KEY_MOMENT_START + '；阶段 1 可输出空数组 []。\n'
         '   - boundary_examples：每个阶段 2-4 组「此阶段不可能知道的提问 + 该阶段的回应」，'
         '写成 [{"ask": "…", "reply": "…"}]。提问只能是他这个时期不可能知道、书里也没有发生的事；'
         '**绝不能出现书里真实的后续情节**；回答用此阶段的口吻，只学应对方式、不照抄措辞。\n'
@@ -367,7 +369,8 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("character_arc",
         '  "character_arc": {\n'
         '    "axis": "从…到…",\n'
-        '    "phases": [{"label": "阶段心态", "state": "故事时期，此时的心态与行事方式", "anchor": "标志这一阶段开始的一句原文",\n'
+        '    "phases": [{"label": "阶段心态", "state": "故事时期，此时的心态与行事方式", "anchor": "标志这一阶段开始的一句原文", "key_moments": ["'
+        + phase_locate.KEY_MOMENT_START + '", "后续关键事件"],\n'
         '                "boundary_examples": [{"ask": "此阶段不可能知道的提问", "reply": "该阶段的回应"}]}]\n'
         '  }'
     ),
@@ -415,7 +418,7 @@ _FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
     (None, '- 写成 [{"value": …, "occurrences": […"phase"/"quote"…]}] 的字段，元素是【对象】；'
            'occurrences 的 phase 用维度 L 的阶段编号（1 起）；' + _BASELINE_ZERO_RULE),
     ("G5", '- relationships 只出【名单】：每个元素是【对象】，只含 target（对方的标准名）；relation/attitude/note/attitudes 由后续步骤生成，不要在这里写'),
-    ("G6", '- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state/anchor/boundary_examples'),
+    ("G6", '- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state/anchor/key_moments/boundary_examples'),
     ("G7", '- situation_behaviors / key_memories 的每个元素是【对象】；occurrences 的每个元素是【对象】，含 phase/quote'),
     ("G7", '- 有阶段时，occurrences 的 phase 用维度 L 的阶段编号（1 起）；关键记忆发生在故事开始之前的填 0；没有阶段时只写一条，phase 填 0'),
     ("G4", '- 数字字段（openness/conscientiousness 等）输出整数，不要加引号'),
@@ -503,7 +506,7 @@ def book_prefix(text: str) -> str:
 
 
 def _arc_phases(draft: dict) -> list[dict]:
-    """草稿里弧线的阶段列表（草稿原形，键 label / state / anchor）。"""
+    """草稿里弧线的阶段列表（草稿原形，键 label / state / anchor / key_moments）。"""
     return ((draft or {}).get("character_arc") or {}).get("phases") or []
 
 

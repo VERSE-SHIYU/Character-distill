@@ -38,8 +38,10 @@ _SRC = ("第1章\n他在家里读书。日子平平淡淡。\n"
         "第6章\n【日札】那年在桥边初遇阿月，从此心动。后来我决定远行求学。\n")
 _RETRO = RetroRegions("marked", (ChapterRange(6, 6, "日记"),))
 _PHASES = [{"label": "平淡读书", "state": "在家读书", "anchor": ""},
-           {"label": "初遇心动", "state": "在桥边初遇阿月之后心动", "anchor": "那年在桥边初遇阿月，从此心动"},
-           {"label": "远行求学", "state": "决定远行求学之后", "anchor": "后来我决定远行求学"}]
+           {"label": "初遇心动", "state": "在桥边初遇阿月之后心动", "anchor": "那年在桥边初遇阿月，从此心动",
+            "key_moments": ["那天他在桥边初遇阿月"]},
+           {"label": "远行求学", "state": "决定远行求学之后", "anchor": "后来我决定远行求学",
+            "key_moments": ["他终于决定远行求学"]}]
 
 
 def _draft(phases=None):
