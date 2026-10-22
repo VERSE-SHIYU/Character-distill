@@ -192,7 +192,7 @@ def _unique_anchor(source_text: str, source_norm: str, chapter_start: int, chapt
 
 def locate(phases: Sequence[dict], source_text: str, retro: RetroRegions, name: str,
            judge: Judge) -> LocateResult:
-    """为阶段 2..n 找起点。`phases` 是草稿里的阶段（含 label / state）。"""
+    """为阶段 2..n 找起点。`phases` 是草稿里的阶段（含 label / state / key_moments）。"""
     if len(phases) < 2:
         return LocateResult(None, reason="阶段不足 2 个")
     bodies = chapter_bodies(source_text)

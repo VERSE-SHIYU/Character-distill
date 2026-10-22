@@ -9,7 +9,7 @@ C2 是回归护栏（基线本来就绿）：用替身 LLM 跑 F1，把每次组
 与 formatting 之后的帧序列跟改前录下的 fixture 逐字比较。fixture 由基线
 `9200a502` 的同一段代码录制（`e2e/scratch/record_f1_calls.py`，不入库），期望值在
 第一个提交里随测试一起入库。段 2 有意改变 F1（G6 拆分、弧线先单发），fixture 在
-实现提交里按新期望重录（spec §8.4/§8.6），`baseline_commit` 记重录所用的提交 `b291122`。
+实现提交里按新期望重录（spec §8.4/§8.6），`baseline_commit` 记重录所用的提交（见 fixture 的同名字段）。
 
 G1–G4 是段 2 的目标检查，实现前全部 `xfail(strict=True)`（spec §8.4）：
 G1 一次读完每次调用以整书前缀开头、弧线组先单独一次、其余组在它之后并行、

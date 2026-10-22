@@ -59,7 +59,7 @@
 - D1 `_phase_list_note` **不带** key_moments：依赖组只需要阶段号与心态（K8），多给事件会诱导它按事件而非按摘录位置标阶段。
 - D2 `key_moments` 在发给模型的 schema 里**必填**（照 `core/card_draft.py:72-77` `_phase_stays_required` 的写法），模型类里默认 `[]`、解析宽容；阶段 1 允许空列表。
 - D3 **旧草稿没有 key_moments**（K9 重新出卡会遇到）：该阶段按「找不到起点」处理，不回落到 state。后果与 #185 之前相同：锚点核对不过就整卡跳过位置核对（D7）。不回落的理由：回落就是把「取哪件事」的第二套规则留在代码里（第 6 条）。旧卡要修本来就靠重蒸（P11）。
-- D5 **F1 fixture 重录方法**：录制脚本不在仓库（`tests/test_longctx_focused_calls_goal.py` 头注释写明 `e2e/scratch/record_f1_calls.py` 不入库）。用该文件里的 `_run_f1()`（:114）在新代码上产出 `group_calls` / `tail_frame_kinds` / `draft` 写回 fixture；`baseline_commit` 填重录所用提交。报告里贴新旧 fixture 的 diff，**差异只允许来自** G6 system 里维度 L 新增的 key_moments 规则与 JSON 模板、draft 里阶段多出的 `key_moments`；其余组一字不变。
+- D5 **F1 fixture 重录方法**：录制脚本不在仓库（`tests/test_longctx_focused_calls_goal.py` 头注释写明 `e2e/scratch/record_f1_calls.py` 不入库）。用该文件里的 `_run_f1()`（:114）在新代码上产出 `group_calls` / `tail_frame_kinds` / `draft` 写回 fixture；`baseline_commit` 填重录所用提交。报告里贴新旧 fixture 的 diff。`$defs` 由 `draft_schema()` **整体**带上（K2），因此**所有组**的 system 都会变：差异只允许来自 `$defs.DraftPhase`（description、`key_moments` 属性里去掉的 default、required）与 G6 system 里维度 L 规则 / JSON 模板 / 形态行；messages、`tail_frame_kinds`、draft 其余部分一字不变。
 - D6 **规模（第 11 条）**：10-22 小重放 G6 每次输出 522–692 token；每阶段加 1–3 句关键事件，约多 100–200 token，远低于每组 8192 上限。判断提示词每次约 1,800 token（同一产物 `usage`），只是把一段话换成一句，长度基本不变。
 - D4 K10 里依赖 `_PHASES` / 草稿夹具的测试，夹具补上 key_moments，`_Judge` 的取 label 正则若因提示词改写失效，改成从新提示词里取，**守的东西不变**；逐个写进 spec 的「失效的锁与夹具」表。
 
@@ -165,3 +165,21 @@
 | `tests/test_longctx_focused_calls_goal.py` `_ARC` + fixture | G6 system 逐字与组调用形态 | G6 规则 / 模板新增 key_moments 行 | 补 `_ARC` 的 key_moments，按 D5 重录 fixture |
 | `tests/test_phase1_anchor_not_checked_goal.py` | 阶段 1 锚点不参与核对 | 直接用上面的 `_PHASES` | 随 `_PHASES` 更新，无需改代码 |
 | `tests/test_distill_diagnostic_logs_goal.py` | 候选明细日志 | 同上（import PL） | 随 `_PHASES` 更新，无需改代码 |
+
+## 11. 补充（复审 10-22）
+
+独立复审（head `9b90bba2`）结论「不通过（阻断 1，非阻断 9）」；下列每条对应复审发现。
+
+| # | 复审发现 | 处理与守护 |
+|---|---|---|
+| 1 | G5 只有一件 key_moment，读端改 `[-1]` 仍全绿（阻断） | 已修：阶段 2 两件（首件只在第 4 章、次件只在更早的第 2 章），断言起点 = 第 4 章；变异 `[-1]` 必红。守护 `test_g5_relocation_uses_the_first_key_moment` |
+| 2 | G2 的断言可被章节正文满足，删提示词行仍绿 | 已修：用正文里没有的 key_moment，断言 `f"{KEY_MOMENT_START}：{值}"` 整行；删行必红。守护 `test_g2_judge_prompt_targets_first_key_moment_and_checks_subject` |
+| 3 | `_key_moments_stays_required` 未去掉 default | 已修：照 `_phase_stays_required` 加 `pop("default")`；G1 断言无 default、在 required、无 minItems |
+| 4 | D5「其余组一字不变」与 K2 矛盾 | 已修：D5 已改写；fixture 重录显示 7 组 system 均因共享 `$defs` 变化 |
+| 5 | 起点规则在常量外被复述，模板「事件」与常量「那件事」漂移 | 已修：模板由 `KEY_MOMENT_START` 拼出；`DraftPhase` docstring 删规则句；G3 加语义断言 + grep 收口 |
+| 6 | `test_phase_locate_goal` 对旧规则无分辨力 | 不处理：该文件只测重定位机制；「按哪件事判」由修好的 G5 守（第 37 条，不扩范围） |
+| 7 | 「本人做出或亲身经历」只有文本断言 | 不处理：替身无法判断施动者，只能由真模型验（§8 小重放） |
+| 8 | 「阶段 1 可为空」无目标检查 | 已修：G1 断言无 `minItems`；阶段 2 空列表不回落由 G5 守 |
+| 9 | longctx 头注释的 baseline_commit / `locate()` docstring 陈旧 | 已修：头注释指向 fixture 的同名字段；docstring 补 key_moments |
+| 10 | 读端把字符串当列表取首字符 | 已修：非 list（或首件非字符串）返回空串，按 D3 找不到起点；守护 `test_g5_non_list_key_moments_is_ignored` |
+| — | 背景风险：判断提示词仍给 label + state，可能把模型带到 state 里的后续事件 | 不处理：复审确认是显式推迟，真模型两次小重放验收（§8） |
