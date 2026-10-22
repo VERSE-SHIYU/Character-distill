@@ -32,11 +32,12 @@ def test_g1_g6_schema_and_arc_rule_carry_key_moments():
 
 
 def test_g2_judge_prompt_targets_first_key_moment_and_checks_subject():
+    moment = "她当众撕了他的信"
     phase = {"label": "认清心意",
              "state": "揽月台见她受伤后彻底认清心意，从此甘愿被她扇巴掌、被她拿捏",
-             "key_moments": ["他在揽月台见她受伤"]}
+             "key_moments": [moment]}
     prompt = phase_locate.judge_prompt("谢凛羽", phase, 424, ["她扇了别人一巴掌。", "他在揽月台见她受伤。"])
-    assert "他在揽月台见她受伤" in prompt
+    assert f"{KEY_MOMENT_START}：{moment}" in prompt
     assert "「谢凛羽」本人做出或亲身经历" in prompt
     assert "取最后发生的那一件" not in prompt
 
