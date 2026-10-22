@@ -143,7 +143,8 @@ class DraftRelationship(Relationship):
 
 
 def _key_moments_stays_required(schema: dict, cls) -> None:
-    """发给模型的结构里 key_moments 必填：阶段的关键事件要单独写，不能省。"""
+    """发给模型的结构不因默认值而变：key_moments 仍列在 required、不带 default。"""
+    schema.get("properties", {}).get("key_moments", {}).pop("default", None)
     required = schema.setdefault("required", [])
     if "key_moments" not in required:
         required.append("key_moments")

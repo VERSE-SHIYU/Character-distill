@@ -24,7 +24,10 @@ KEY_MOMENT_START = getattr(phase_locate, "KEY_MOMENT_START", None)
 
 def test_g1_g6_schema_and_arc_rule_carry_key_moments():
     phase = draft_schema("G6")["$defs"]["DraftPhase"]
-    assert phase["properties"]["key_moments"]["type"] == "array"
+    prop = phase["properties"]["key_moments"]
+    assert prop["type"] == "array"
+    assert "default" not in prop
+    assert "minItems" not in prop
     assert "key_moments" in phase.get("required", [])
     arc = format_prompt_after("G6")
     assert "key_moments" in arc
