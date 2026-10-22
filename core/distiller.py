@@ -369,7 +369,8 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("character_arc",
         '  "character_arc": {\n'
         '    "axis": "从…到…",\n'
-        '    "phases": [{"label": "阶段心态", "state": "故事时期，此时的心态与行事方式", "anchor": "标志这一阶段开始的一句原文", "key_moments": ["标志这一阶段开始的事件", "后续关键事件"],\n'
+        '    "phases": [{"label": "阶段心态", "state": "故事时期，此时的心态与行事方式", "anchor": "标志这一阶段开始的一句原文", "key_moments": ["'
+        + phase_locate.KEY_MOMENT_START + '", "后续关键事件"],\n'
         '                "boundary_examples": [{"ask": "此阶段不可能知道的提问", "reply": "该阶段的回应"}]}]\n'
         '  }'
     ),

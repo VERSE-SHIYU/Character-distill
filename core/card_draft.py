@@ -153,7 +153,7 @@ def _key_moments_stays_required(schema: dict, cls) -> None:
 class DraftPhase(PhaseState):
     """弧线上的一个阶段；anchor 是标志这一阶段开始的一句原文（阶段 1 可留空）。
 
-    key_moments 是按发生顺序的关键事件，第一件即标志阶段开始的事；只供重定位用，不进卡。
+    key_moments 只供重定位用，不进卡。
     """
     model_config = ConfigDict(json_schema_extra=_key_moments_stays_required)
     anchor: str = ""

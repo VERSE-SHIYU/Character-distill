@@ -50,6 +50,9 @@ def test_g3_start_rule_defined_once_and_used_by_both():
     assert KEY_MOMENT_START in format_prompt_after("G6")
     assert KEY_MOMENT_START in phase_locate.judge_prompt(
         "他", {"label": "l", "state": "s", "key_moments": ["m"]}, 1, ["m。"])
+    desc = draft_schema("G6")["$defs"]["DraftPhase"]["description"]
+    assert "第一件即标志阶段开始的事" not in desc
+    assert f'["{KEY_MOMENT_START}", "后续关键事件"]' in format_prompt_after("G6")
     root = Path(__file__).resolve().parents[1]
     skip = {".git", ".claude", "node_modules", ".venv", "__pycache__"}
     hits = []
