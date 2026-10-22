@@ -113,8 +113,10 @@ def phase_query(phase: dict) -> str:
 
 
 def _first_key_moment(phase: dict) -> str:
-    moments = phase.get("key_moments") or []
-    return str(moments[0]).strip() if moments else ""
+    moments = phase.get("key_moments")
+    if not isinstance(moments, list) or not moments or not isinstance(moments[0], str):
+        return ""
+    return moments[0].strip()
 
 
 def judge_prompt(name: str, phase: dict, chapter: int, sents: Sequence[str]) -> str:

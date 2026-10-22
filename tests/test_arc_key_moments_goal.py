@@ -151,6 +151,19 @@ def test_g5_relocation_uses_the_first_key_moment():
     assert _chapter_of(start) == 4
 
 
+def test_g5_non_list_key_moments_is_ignored():
+    assert phase_locate._first_key_moment({"key_moments": "他在揽月台见她受伤"}) == ""
+    assert phase_locate._first_key_moment({"key_moments": [None]}) == ""
+    phase = dict(_PHASE)
+    phase["key_moments"] = "他在揽月台见她受伤"
+    data = _draft(phase)
+    judge = _EventJudge()
+    Distiller(llm=judge, config_path=None).locate_phase_starts(
+        data, _SRC, "谢凛羽", _RETRO)
+    assert judge.asked == []
+    assert data["character_arc"]["phases"][1]["anchor"] == ""
+
+
 def test_g5_phase_without_key_moments_is_not_relocated():
     phase = dict(_PHASE)
     phase["key_moments"] = []
