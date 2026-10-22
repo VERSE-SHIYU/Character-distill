@@ -352,8 +352,7 @@ def _in_fixed_retro(chapter: int | None) -> bool:
                                        for lo, hi in RETRO_CHAPTER_RANGES)
 
 
-def _checklist(starts: list[dict], phases: list[dict], anchors,
-               truth_name: str | None) -> list[dict]:
+def _checklist(starts: list[dict], anchors, truth_name: str | None) -> list[dict]:
     item1 = "过" if not anchors.reason else "不过"
     detail1 = anchors.reason or "起点齐全、严格递增"
 
@@ -363,23 +362,27 @@ def _checklist(starts: list[dict], phases: list[dict], anchors,
     item2 = "过" if not bad2 else "不过"
     detail2 = "；".join(bad2) if bad2 else "起点都不在回忆区 / 章内回忆"
 
+    # 阶段名每次蒸馏都不同，只能按起点落在哪一章对真值（跟踪文档：阶段对准真实转折）。
     truth = TRUTH.get(truth_name) if truth_name else None
-    matched: list[str] = []
-    bad3: list[str] = []
+    item3, detail3 = "看不出", "没有与真值表对得上的阶段"
     if truth:
-        for k, (label, lo, hi) in truth.items():
-            if k > len(phases) or phases[k - 1].get("label") != label:
-                continue
-            matched.append(label)
-            chapter = starts[k - 1]["chapter"]
-            if chapter is None or not (lo <= chapter <= hi):
-                bad3.append(f"阶段{k}「{label}」起点第{chapter}章，真值 {lo}–{hi}")
-    if not truth or not matched:
-        item3, detail3 = "看不出", "没有与真值表对得上的阶段"
-    elif bad3:
-        item3, detail3 = "不过", "；".join(bad3)
-    else:
-        item3, detail3 = "过", "、".join(matched)
+        chapters = [s["chapter"] for s in starts]
+        found: list[str] = []
+        missing: list[str] = []
+        for label, lo, hi in truth.values():
+            if any(c is not None and lo <= c <= hi for c in chapters):
+                found.append(label)
+            else:
+                missing.append(f"真值「{label}」{lo}–{hi}：没有阶段起点落在这里")
+        item3, detail3 = (("不过", "；".join(missing)) if missing
+                          else ("过", "、".join(found)))
+        # 全书开头（阶段 1 固定在第 0 章）不是「多出来的阶段」，不列。
+        extras = sorted({s["chapter"] for s in starts
+                         if s["phase"] > 1 and s["chapter"] is not None
+                         and not any(lo <= s["chapter"] <= hi
+                                     for _label, lo, hi in truth.values())})
+        if extras:
+            detail3 += "；多出的起点：" + "、".join(str(c) for c in extras)
 
     return [
         {"text": ACCEPTANCE_CHECKLIST[0], "verdict": item1, "detail": detail1},
@@ -442,24 +445,24 @@ async def _replay(storage: Any, *, text_id: str, name: str, runs: int,
     if user_id and row["user_id"] != user_id:
         raise SystemExit(f"文本 {text_id!r} 不属于用户 {user_id!r}")
     content = row["content"]
-    user_id = row["user_id"]
+    owner_id = row["user_id"]
 
     # 与生产同一出口（web/deps.py:136）。局部 import 让测试能替换 web.deps.get_user_llm。
     from web.deps import get_user_llm
-    llm = await get_user_llm(user_id, storage=storage)
+    llm = await get_user_llm(owner_id, storage=storage)
     if llm is None:
         raise SystemExit(
-            f"属主未配置 LLM（user_id={user_id!r}）；生产蒸馏只认属主自己的 key，不回落全局")
+            f"属主未配置 LLM（user_id={owner_id!r}）；生产蒸馏只认属主自己的 key，不回落全局")
 
     setup = _Recorder()
     setup_distiller = _ReplayDistiller(_RecordingLLM(llm, setup), recorder=setup,
                                        storage=storage)
-    chars = await resolve_characters(storage, setup_distiller, text_id, user_id, content)
+    chars = await resolve_characters(storage, setup_distiller, text_id, owner_id, content)
     if not name:
         from core.character_roster import target_character_name
         name = target_character_name(chars)
     aliases = aliases_for(chars, name)
-    retro = await resolve_retro_regions(storage, setup_distiller, text_id, user_id, content)
+    retro = await resolve_retro_regions(storage, setup_distiller, text_id, owner_id, content)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     # 名单 / 回忆区是整本书的属性，整场只调一次：记在 run 之外，标 stage=setup（F3）。
@@ -507,7 +510,7 @@ async def _replay(storage: Any, *, text_id: str, name: str, runs: int,
         (run_dir / "entries.tsv").write_text(_tsv(entry_rows), encoding="utf-8")
 
         calls_detail = [{**c, "run": n} for c in recorder.calls]
-        items = _checklist(phase_rows, _phases(draft), anchors, truth_name)
+        items = _checklist(phase_rows, anchors, truth_name)
         run_summaries.append({
             "run": n,
             "calls": len(recorder.calls),

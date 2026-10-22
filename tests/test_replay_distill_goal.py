@@ -17,8 +17,6 @@ import types
 import uuid
 from pathlib import Path
 
-import pytest
-
 from conftest import TEST_DATABASE_URL  # noqa: E402
 from adapters.llm_adapter import IncompleteResponseError  # noqa: E402
 from core import phase_anchoring, phase_locate  # noqa: E402
@@ -585,7 +583,7 @@ def test_checklist_item1_fails_when_position_check_is_skipped():
 
     starts = replay._start_rows(phases, anchors, content,
                                 [p.get("anchor", "") for p in phases])
-    items = replay._checklist(starts, phases, anchors, _NAME)
+    items = replay._checklist(starts, anchors, _NAME)
 
     assert items[0]["verdict"] == "不过", items[0]
     assert items[0]["detail"] == anchors.reason, items[0]
@@ -721,18 +719,15 @@ class _NoSkip:
 def _item3(chapters, *, truth: str | None = _NAME) -> dict:
     """直接喂起点章号：判定只该看章，不该看阶段名 / 阶段数。"""
     import scripts.replay_distill as replay
-    phases = [{"label": f"阶段{n}"} for n in range(1, len(chapters) + 1)]
-    return replay._checklist(_synthetic_starts(*chapters), phases, _NoSkip(), truth)[2]
+    return replay._checklist(_synthetic_starts(*chapters), _NoSkip(), truth)[2]
 
 
-@pytest.mark.xfail(strict=True, reason="目标：阶段名不同、起点都在真值内 → 过")
 def test_truth_matches_by_start_chapter_not_phase_name():
     item = _item3([0, 13, 122, 343])
     assert item["verdict"] == "过", item
     assert "一见倾心" in item["detail"], item
 
 
-@pytest.mark.xfail(strict=True, reason="目标：缺真值转折判不过并点名")
 def test_missing_truth_transition_fails_and_names_it():
     # 祈灼 run2 的形态：3 个阶段，起点 0 / 122 / 343，12–13 这一转没对上
     item = _item3([0, 122, 343])
@@ -740,14 +735,12 @@ def test_missing_truth_transition_fails_and_names_it():
     assert "真值「一见倾心」12–13" in item["detail"], item
 
 
-@pytest.mark.xfail(strict=True, reason="目标：多出的起点只报告，不因此判不过")
 def test_extra_start_outside_truth_is_reported_but_passes():
     item = _item3([0, 13, 122, 343, 424])
     assert item["verdict"] == "过", item
     assert "424" in item["detail"], item
 
 
-@pytest.mark.xfail(strict=True, reason="目标：书名开头不算多出的起点")
 def test_book_start_is_not_reported_as_an_extra_start():
     # 谢凛羽 run2 的形态：0 / 29 / 424；唯一多出的起点是 424，不是全书开头
     item = _item3([0, 29, 424], truth="谢凛羽")
