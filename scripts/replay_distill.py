@@ -245,7 +245,8 @@ def _start_rows(phases: list[dict], anchors, content: str) -> list[dict]:
         out.append({
             "phase": st.k,
             "label": phase.get("label", "") if isinstance(phase, dict) else "",
-            "start": f"{st.kind}「{st.given}」",
+            "start_by": st.kind.value,
+            "start": st.given,
             "status": st.status.value,
             "chapter": chapter,
             "chapter_label": chapter_label,
@@ -474,7 +475,7 @@ async def _replay(storage: Any, *, text_id: str, name: str, runs: int,
 
         frames = await asyncio.to_thread(
             lambda: list(distiller.distill_incremental_stream(
-                content, name, aliases=aliases, text_type=text_type)))
+                content, name, aliases=aliases, text_type=text_type, retro=retro)))
         error = next((f["error"] for f in frames
                       if isinstance(f, dict) and "error" in f), None)
         if error:

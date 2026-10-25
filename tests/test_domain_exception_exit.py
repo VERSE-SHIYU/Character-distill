@@ -65,7 +65,7 @@ class _FakeDistiller:
     def identify_characters(self, content: str) -> list:
         return []
 
-    def distill_incremental_stream(self, content, name, aliases, text_type):
+    def distill_incremental_stream(self, content, name, aliases, text_type, retro=None):
         raise self._exc
         yield  # noqa: unreachable —— 只为把它变成 generator
 

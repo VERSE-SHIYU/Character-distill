@@ -163,7 +163,6 @@ def _no_usage_rows(monkeypatch):
 
 # ── S1 / S2：G6 读摘录、交章号 ─────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="PR 1 前：G6 读整本书")
 def test_s1_arc_group_reads_the_numbered_excerpt_with_aliases():
     from core.retro_regions import ChapterRange, RetroRegions
     retro = RetroRegions("marked", (ChapterRange(4, 4, "日记"),))
@@ -182,7 +181,6 @@ def test_s1_arc_group_reads_the_numbered_excerpt_with_aliases():
             assert _CH2 in call["system"], f"{group} 不再读整本书"
 
 
-@pytest.mark.xfail(strict=True, reason="PR 1 前：G6 交锚点与 key_moments")
 def test_s2_arc_group_is_asked_for_chapter_numbers_only():
     calls, _, _ = _run(_SRC, _CHAPTER_ARC)
     g6 = calls["G6"]["system"]
@@ -218,7 +216,6 @@ def test_s3b_missing_retro_or_unordered_chapters_skip_the_card():
 
 # ── S4：阶段列表写起始章 ──────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="PR 1 前：阶段列表写起始原句")
 def test_s4_dependent_groups_see_the_start_chapter():
     from core.distiller import PHASE_DEPENDENT_GROUPS
     calls, _, _ = _run(_SRC, _CHAPTER_ARC)
@@ -230,7 +227,6 @@ def test_s4_dependent_groups_see_the_start_chapter():
 
 # ── S5：缓存预热 ────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="PR 1 前：G6 单独先发")
 def test_s5_g1_warms_the_book_prefix_alongside_g6():
     calls, events, _ = _run(_SRC, _CHAPTER_ARC, first_batch=threading.Barrier(2, timeout=2))
     last_first = max(events.index("end:G6"), events.index("end:G1"))

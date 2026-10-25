@@ -158,8 +158,10 @@ MUTATIONS = [
     # 撞到 [142]
     ('M17  分组 schema 取自存卡 CharacterCard：G6 的做法引用变成 SituationBehavior',
      TARGET, [("repl", DRAFT, [
-         ('    full = CardDraft.model_json_schema()\n',
-          '    full = (CardDraft if group is None else CharacterCard).model_json_schema()\n'),
+         ('        "properties": {k: v for k, v in full["properties"].items() if k in fields},',
+          '        "properties": {k: v for k, v in CharacterCard.model_json_schema()["properties"].items() if k in fields},'),
+         ('        "$defs": full.get("$defs", {}),',
+          '        "$defs": {**full.get("$defs", {}), **CharacterCard.model_json_schema()["$defs"]},'),
      ])], "RED"),
     # 撞到 [126]
     ('M18  旧卡字符串阶段被当成 label 而不是 state',
@@ -191,7 +193,7 @@ MUTATIONS = [
     # 撞到 [68]
     ('M21  distiller 长文同步入口（distill_incremental 长文分支）退回 model_validate',
      TARGET, [("repl", DIST, [
-         ('            return card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)\n'
+         ('            return card_from_draft(draft.model_dump(), text, retro=retro)\n'
           '        except ValidationError as exc:\n'
           '            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n'
           '            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n'
@@ -214,17 +216,15 @@ MUTATIONS = [
     ('M23  长文流式改写了模型原文（交出的草稿被改动）',
      TARGET, [("repl", DIST, [
          ('        yield json.dumps(draft.model_dump(), ensure_ascii=False)',
-          '        yield json.dumps(draft.model_dump(), ensure_ascii=False).upper()'),
+          '        yield json.dumps({**draft.model_dump(), "name": draft.name + "x"}, ensure_ascii=False)'),
      ])], "RED"),
     # 撞到 [255, 262]
     ('M24  分组流式每组回来就交出一段 JSON：交出的字符串不止一个',
      TARGET, [("repl", DIST, [
-         ('            group_data[group] = payload\n'
-          '            # 每组回来一次心跳，不新增状态值\n'
-          '            yield {"heartbeat": True, "current": len(group_data), "total": len(FORMAT_GROUPS)}',
-          '            group_data[group] = payload\n'
-          '            # 每组回来一次心跳，不新增状态值\n'
-          '            yield json.dumps(payload, ensure_ascii=False)'),
+         ('                group_data[group] = payload\n'
+          '                yield {"heartbeat": True, "current": len(group_data), "total": len(FORMAT_GROUPS)}',
+          '                group_data[group] = payload\n'
+          '                yield json.dumps(payload, ensure_ascii=False)'),
      ])], "RED"),
     # 撞到 [258]
     ('M25  分组流式交出的 JSON 不是合法草稿（character_arc 被写成字符串）',
@@ -329,11 +329,11 @@ MUTATIONS = [
     # 宽容兜底）到不了这里了。补两条直接针对入口口径的变异：格式错误被吞成一张空卡。
     ('M39  长文同步入口吞掉格式错误，交出空卡（不再抛 DistillError）',
      TARGET, [("repl", DIST, [
-         ('            return card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)\n'
+         ('            return card_from_draft(draft.model_dump(), text, retro=retro)\n'
           '        except ValidationError as exc:\n'
           '            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n'
           '            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n',
-          '            return card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)\n'
+          '            return card_from_draft(draft.model_dump(), text, retro=retro)\n'
           '        except ValidationError as exc:\n'
           '            return CharacterCard(name=character_name)\n'),
      ])], "RED"),

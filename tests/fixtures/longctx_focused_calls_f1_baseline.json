@@ -1,5 +1,5 @@
 {
-  "baseline_commit": "f016c7c6",
+  "baseline_commit": "fe39b392",
   "character_name": "AB",
   "group_calls": {
     "G6": {
@@ -105,12 +105,14 @@
           "label": "阶段一",
           "state": "开头时的状态",
           "anchor": "",
+          "start_chapter": null,
           "boundary_examples": []
         },
         {
           "label": "阶段二",
           "state": "后来的状态",
           "anchor": "",
+          "start_chapter": null,
           "boundary_examples": []
         }
       ]
