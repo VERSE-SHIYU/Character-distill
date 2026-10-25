@@ -1,7 +1,8 @@
 """召回评测的指标与标注自检 —— **纯函数，零 IO**。
 
-命中按**原文位置区间重叠**判定，不按段 id：命中段只带文本（``meta.chunk_id``），
-标注写的是原文片段，两边都换算成原文的**连续**规范化区间，相交即算。这样不依赖场景
+命中看**块**是否进前 3：每块的完整区间由 ``core.rag.chunk_spans`` 从集合的
+``npos`` 算出（评测脚本传入 ``spans``），标注片段换算成原文的**连续**规范化区间，
+相交即算 —— 与返回文本截到多少字无关（场景集合只存前 800 字）。这样不依赖场景
 怎么切，以后重切场景 / 改成按事件入库，标注不用重做。
 
 不复用 ``core.quotes.locate_in_normalized``：那是为「省略号拼接核对」设计的，位置只取
@@ -62,8 +63,13 @@ def validate_cases(
         raise AnnotationError("标注未通过自检：\n" + "\n".join(problems))
 
 
-def score_case(source_norm: str, case: Mapping[str, Any], hits: Iterable[Any]) -> dict:
-    """一条查询的命中 / 越界判定；``hits`` 是 ``EvidenceItem`` 序列（前 3 段）。"""
+def score_case(
+    source_norm: str,
+    case: Mapping[str, Any],
+    hits: Iterable[Any],
+    spans: Mapping[str, tuple[int, int]],
+) -> dict:
+    """一条查询的命中 / 越界判定；``hits`` 是前 3 段，``spans`` 是块 id → 完整区间。"""
     should = [iv for f in case.get("should") or [] for iv in intervals_in_normalized(source_norm, f)]
     should_not = [iv for f in case.get("should_not") or [] for iv in intervals_in_normalized(source_norm, f)]
 
@@ -71,8 +77,9 @@ def score_case(source_norm: str, case: Mapping[str, Any], hits: Iterable[Any]) -
     unlocated = 0
     chunk_ids: list[str | None] = []
     for item in hits:
-        chunk_ids.append((item.meta or {}).get("chunk_id"))
-        hit_iv = intervals_in_normalized(source_norm, item.text)
+        chunk_id = (item.meta or {}).get("chunk_id")
+        chunk_ids.append(chunk_id)
+        hit_iv = [spans[chunk_id]] if chunk_id in spans else []
         if not hit_iv:
             unlocated += 1
         hit = hit or _overlaps(hit_iv, should)

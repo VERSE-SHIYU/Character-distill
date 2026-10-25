@@ -33,6 +33,25 @@ def positions_metadata(text: str) -> dict[str, Any]:
     return {POS_SCHEMA_KEY: POS_SCHEMA, FINGERPRINT_KEY: content_fingerprint(text)}
 
 
+def chunk_spans(collection: Collection, source_norm_len: int) -> dict[str, tuple[int, int]]:
+    """块 id → 该块在规范化原文里的完整区间 ``[本块 npos, 下一块 npos)``。
+
+    条目只存起点（``npos``），终点取**按 npos 排序后**的下一块起点，最后一块到
+    全文末尾。chroma 的 ``get`` 按写入顺序返回，不是 npos 顺序 —— 不排序终点会错。
+    没有 ``npos`` 的条目（不带位置的旧集合）没有区间，评测按「不在表里」处理。
+    """
+    got = collection.get(include=["metadatas"])
+    rows = [(meta["npos"], chunk_id)
+            for chunk_id, meta in zip(got["ids"], got["metadatas"])
+            if isinstance(meta, dict) and isinstance(meta.get("npos"), int)]
+    rows.sort()
+    spans: dict[str, tuple[int, int]] = {}
+    for i, (start, chunk_id) in enumerate(rows):
+        end = rows[i + 1][0] if i + 1 < len(rows) else source_norm_len
+        spans[chunk_id] = (start, end)
+    return spans
+
+
 def _set_hits(sp, result) -> None:
     """检索 span 收尾：记命中条数（canonical 短键，导出归一到 app.retrieval.hits）。"""
     if sp is None or result is None:

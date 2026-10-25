@@ -91,6 +91,7 @@ def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
     recall_eval.validate_cases(
         cases, source_norm, {phase: view.before for phase, view in views.items()})
 
+    spans = rag.chunk_spans(len(source_norm))
     rows = []
     for case in cases:
         hits = scene_retrieval.scene_hits(
@@ -98,7 +99,7 @@ def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
             character_name=card.name,
             window=views[case["phase"]].window,
         )
-        rows.append(recall_eval.score_case(source_norm, case, hits))
+        rows.append(recall_eval.score_case(source_norm, case, hits, spans))
     return recall_eval.aggregate(rows)
 
 

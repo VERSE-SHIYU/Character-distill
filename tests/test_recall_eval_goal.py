@@ -39,14 +39,20 @@ from core.schema import (  # noqa: E402
 )
 from evidence_fakes import build_ctx  # noqa: E402
 
-# 全部为汉字、无标点：规范化坐标 == 字符下标，方便算阶段边界。
-SOURCE = (
-    "满月宴那天祈灼在廊下听见了那支曲子"      # 0..17
-    "后来他独自去了后山没有告诉任何人"        # 18..34
-    "魏无羡在另一处杀了人这件事祈灼不知道"    # 35..54
-    "祈灼始终不知道这件事"                    # 55..64（重复，用于唯一性自检）
-    "祈灼始终不知道这件事"                    # 65..74
+# 全部为汉字、无标点：规范化坐标 == 字符下标，方便算阶段边界与块区间。
+SEGMENTS = (
+    "满月宴那天祈灼在廊下听见了那支曲子",      # [0,17)
+    "后来他独自去了后山没有告诉任何人",        # [17,33)
+    "魏无羡在另一处杀了人这件事祈灼不知道",    # [33,51)
+    "祈灼始终不知道这件事",                    # [51,61)（重复，用于唯一性自检）
+    "祈灼始终不知道这件事",                    # [61,71)
 )
+SOURCE = "".join(SEGMENTS)
+
+
+def seg_span(i: int) -> tuple[int, int]:
+    start = sum(len(seg) for seg in SEGMENTS[:i])
+    return start, start + len(SEGMENTS[i])
 
 QUERY = "你还记得满月宴那天吗"
 
@@ -83,7 +89,7 @@ class TestSameRetrievalCall:
         monkeypatch.setattr(sr, "scene_hits", recorder)
 
         card = _card()
-        rag = object()
+        rag = types.SimpleNamespace(chunk_spans=lambda _n: {})
         ctx = build_ctx(card=card, rag=rag)
         ctx.arc_view = arc_view(card, 1)
         ctx._scene_items(QUERY)
@@ -125,24 +131,26 @@ class TestSameRetrievalCall:
 
 
 class TestMetrics:
-    def _score(self, case, hits):
+    def _score(self, case, hits, spans):
         from core import recall_eval
 
-        return recall_eval.score_case(normalize(SOURCE), case, hits)
+        return recall_eval.score_case(normalize(SOURCE), case, hits, spans)
 
     def test_overlap_counts_as_hit(self):
         row = self._score(
             {"id": "q1", "should": ["在廊下听见了那支曲子"], "should_not": []},
             [_scene(SOURCE[:18])],
+            {"scene_0": seg_span(0)},
         )
         assert row == {"id": "q1", "hit": True, "leak": False,
                        "unlocated": 0, "top3_chunk_ids": ["scene_0"]}
 
     def test_truncated_hit_still_overlaps(self):
-        # 命中段只含片段前半（截断到 800 字内的自然形态），位置仍重叠。
+        # 返回文本只含片段前半（截到 800 字内的自然形态），块区间仍把它包住。
         row = self._score(
             {"id": "q2", "should": ["后来他独自去了后山没有告诉任何人"], "should_not": []},
             [_scene("后来他独自去了后山")],
+            {"scene_0": seg_span(1)},
         )
         assert row["hit"] is True
 
@@ -150,6 +158,7 @@ class TestMetrics:
         row = self._score(
             {"id": "q3", "should": [], "should_not": ["魏无羡在另一处杀了人"]},
             [_scene(SOURCE[35:55])],
+            {"scene_0": seg_span(2)},
         )
         assert row == {"id": "q3", "hit": False, "leak": True,
                        "unlocated": 0, "top3_chunk_ids": ["scene_0"]}
@@ -160,28 +169,32 @@ class TestMetrics:
              "should": ["满月宴那天祈灼在廊下听见了那支曲子"],
              "should_not": ["魏无羡在另一处杀了人"]},
             [_scene("后来他独自去了后山没有告诉任何人")],
+            {"scene_0": seg_span(1)},
         )
         assert row["hit"] is False and row["leak"] is False
 
-    def test_ellipsis_hit_does_not_overlap_the_gap(self):
-        # 命中段含「……」：位置只取最长一段、宽度按整段算时，区间会跨过中间无关段落
-        # （B 段）而假命中。评测只认连续原文，拼接文本在原文里找不到。
+    def test_hit_text_is_not_used_for_localization(self):
+        # 判定只看块 id 的完整区间：命中文本带「……」、在原文里找不到，也不影响
+        # 「这块是否命中」。若误按返回文本定位，这条会变成 unlocated。
         from core import recall_eval
 
-        source = (
-            "满月宴那天祈灼在廊下听见了那支曲子"      # 0..17
-            "后来他独自去了后山没有告诉任何人"        # 18..34
-            "魏无羡在另一处杀了人这件事祈灼不知道"    # 35..54
-            "最后他在渡口等到天亮"                    # 55..64
+        segs = (
+            "满月宴那天祈灼在廊下听见了那支曲子",
+            "后来他独自去了后山没有告诉任何人",
+            "魏无羡在另一处杀了人这件事祈灼不知道",
+            "最后他在渡口等到天亮",
         )
-        hit_text = source[:18] + "……" + source[55:65]
+        source = "".join(segs)
+        last_start = sum(len(seg) for seg in segs[:3])
+        hit_text = segs[0] + "……" + segs[3]
         row = recall_eval.score_case(
             normalize(source),
-            {"id": "q5", "should": [source[18:35]], "should_not": []},
+            {"id": "q5", "should": [segs[3]], "should_not": []},
             [_scene(hit_text)],
+            {"scene_0": (last_start, last_start + len(segs[3]))},
         )
-        assert row["hit"] is False, "省略号拼接的命中段被当成了与中间段落重叠"
-        assert row["unlocated"] == 1
+        assert row["hit"] is True
+        assert row["unlocated"] == 0
 
     def test_unlocated_hits_are_counted(self):
         from core import recall_eval
@@ -189,7 +202,8 @@ class TestMetrics:
         row = recall_eval.score_case(
             normalize(SOURCE),
             {"id": "q6", "should": [], "should_not": []},
-            [_scene(SOURCE[18:35]), _scene("这句话原文里根本没有啊")],
+            [_scene(SOURCE[18:35], "scene_0"), _scene("这句话原文里根本没有啊", "missing")],
+            {"scene_0": seg_span(1)},
         )
         assert row["unlocated"] == 1
 
@@ -359,7 +373,6 @@ def _tile(raw: dict[str, str]) -> tuple[str, dict[str, tuple[int, int]]]:
     return source_norm, spans
 
 
-@pytest.mark.xfail(strict=True, reason="0c 未实现：score_case 还不接受块区间")
 class TestBlockSpanRuler:
     def test_ideal_retrieval_hits_every_annotation(self):
         """含标注的那一块进前 3 就算命中；片段在块内 800 字之后也必须算（D1 原样复现）。"""
