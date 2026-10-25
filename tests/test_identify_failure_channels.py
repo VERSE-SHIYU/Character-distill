@@ -158,6 +158,12 @@ def _build_app(store, uid, monkeypatch, *, distiller, tm=None):
     monkeypatch.setattr(deps, "get_user_llm", _llm)
     monkeypatch.setattr(deps, "get_distiller", lambda *a, **kw: distiller)
     monkeypatch.setattr(deps, "get_text_manager", lambda *a, **kw: tm or _TM())
+
+    # 本文件测的是识别失败通道，不测 key：夹具用户配一个百炼 key，免得新门先给 400。
+    async def _with_embedding_key(_user_id):
+        return {"embedding_key": "k", "embedding_region": "cn"}
+
+    monkeypatch.setattr(store, "get_user_api_config", _with_embedding_key)
     return app
 
 

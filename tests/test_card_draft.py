@@ -335,7 +335,7 @@ class _DraftRouteStore:
         return {"id": text_id, "content": _SRC, "text_type": "story"} if user_id == self.uid else None
 
     async def get_user_api_config(self, user_id):
-        return {}
+        return {"embedding_key": "k", "embedding_region": "cn"}
 
 
 class TestDraftConversion:

@@ -27,7 +27,7 @@ from core.schema import evidence_snapshots, evidence_to_json
 from core.text_manager import session_identity
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
 from adapters.llm_adapter import llm_error_payload, user_facing_error
-from web.llm_resolution import resolve_embedding
+from web.user_keys import require_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -180,17 +180,7 @@ async def _ensure_session(
         existing_cards = await storage.list_cards(text_id, user_id)
         all_characters = await text_manager._build_all_characters(text_id, existing_cards, user_id)
 
-    try:
-        user_cfg = await storage.get_user_api_config(user_id) or {}
-    except Exception as exc:
-        user_cfg = {}
-        # 读不到用户配置 → 下面按「没配」处理：不检索、不回落全局。失败要留痕。
-        logger.warning(
-            "Session resume: per-user api config unreadable, treating as unconfigured "
-            "(user_id=%s session_id=%s): %r",
-            user_id, session_id, exc, exc_info=True,
-        )
-    emb = resolve_embedding(user_cfg)
+    emb = await require_embedding(user_id, storage)
 
     rag = text_manager._indexing_service.get_rag_for_session(
         text_id, card_id=card_id, embedding_key=emb.key, embedding_region=emb.region,

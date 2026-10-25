@@ -150,16 +150,7 @@ _ENTRIES = [
     "legacy_distill", "reindex",
 ]
 
-# reindex 今天已经是 400（原有的唯一一处拦截），所以它不算「待达成」的 xfail。
-_GATE_PARAMS = [
-    pytest.param(
-        name,
-        marks=[] if name == "reindex" else [
-            pytest.mark.xfail(strict=True, reason="PR A 未实现：该入口当前静默降级")
-        ],
-    )
-    for name in _ENTRIES
-]
+_GATE_PARAMS = _ENTRIES
 
 
 def _build(store: _Store):
@@ -246,11 +237,11 @@ def test_llm_503_precedes_embedding_400(name, monkeypatch):
     assert resp.status_code == 503, f"{name}: 先 LLM 503 再百炼 400：{resp.status_code} {resp.text}"
 
 
-@pytest.mark.xfail(strict=True, reason="PR A 未实现：reindex 把「服务未装配」也报成 400")
 def test_reindex_service_unassembled_is_503(monkeypatch):
     """服务没装配不是用户没配置 —— 两者原先混在同一个 400 里。"""
     store, _uid, _m, path, _body = _make_case("reindex")
     store.config = dict(_EMB_CONFIG)
+    monkeypatch.setattr(D, "get_indexing_service", lambda: None)
     client = _build(store)
     resp = client.post(path)
     assert resp.status_code == 503, resp.text
