@@ -74,7 +74,7 @@ MUTATIONS = [
         ("            out.append(PhaseStart(k, kind, given, StartStatus.NOT_FOUND))",
          "            out.append(PhaseStart(k, kind, given, StartStatus.LOCATED, len(source_norm)))")])], "RED"),
     ('M5b 去掉锚点「严格递增」检查', TARGET, [("repl", ANCH, [
-        ("        if b <= a:", "        if False:")])], "RED"),
+        ("        if cur.pos <= prev.pos:", "        if False:")])], "RED"),
     ('M6  锚点正常也整卡跳过', TARGET, [("repl", ANCH, [
         ("    skipped = bool(reason)", "    skipped = True")])], "RED"),
     ('M7  重复摘录要求所有位置都在所标阶段', TARGET, [("repl", ANCH, [
@@ -201,10 +201,10 @@ MUTATIONS = [
         ("    for st in starts:\n        template = _SKIP_REASONS.get(st.status)",
          "    for st in reversed(starts):\n        template = _SKIP_REASONS.get(st.status)")])], "RED"),
     ('M46 严格递增不含阶段 1 的起点 0', TARGET, [("repl", ANCH, [
-        ("    positions = [st.pos for st in starts]\n    for a, b in zip(positions, positions[1:]):",
-         "    positions = [st.pos for st in starts][1:]\n    for a, b in zip(positions, positions[1:]):")])], "RED"),
+        ("    for prev, cur in zip(starts, starts[1:]):",
+         "    for prev, cur in zip(starts[1:], starts[2:]):")])], "RED"),
     ('M47 相等位置不算不严格递增', TARGET, [("repl", ANCH, [
-        ("        if b <= a:", "        if b < a:")])], "RED"),
+        ("        if cur.pos <= prev.pos:", "        if cur.pos < prev.pos:")])], "RED"),
     # ── P15 省略号拼接档（**锚点专用**）──
     ('M40 省略号拼接档起点取末段而非首段', TARGET, [("repl", QUOTES, [
         ("    return [starts[0]]", "    return [starts[-1]]")])], "RED"),

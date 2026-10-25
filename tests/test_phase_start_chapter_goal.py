@@ -208,7 +208,7 @@ def test_s3b_missing_retro_or_unordered_chapters_skip_the_card():
     assert by[3] is phase_anchoring.StartStatus.NOT_FOUND, "不存在的第 9 章没判成查不到"
     by = {st.k: st.status for st in _starts(with_chapters(4, 5), retro=_retro_ch4()).starts}
     assert by[2] is phase_anchoring.StartStatus.IN_RETRO, "回忆区的第 4 章没判成回忆区"
-    assert "不严格递增" in _starts(with_chapters(5, 3)).reason
+    assert "起始章位置不严格递增" in _starts(with_chapters(5, 3)).reason
     chapterless = [{**p, "start_chapter": n} for p, n in zip(_CHAPTER_ARC["phases"][:2], (0, 1))]
     by = {st.k: st.status for st in _starts(chapterless, src=_CHAPTERLESS).starts}
     assert by[2] is phase_anchoring.StartStatus.NOT_FOUND, "没有章节的书给了章号却没判成查不到"
@@ -222,6 +222,7 @@ def test_s4_dependent_groups_see_the_start_chapter():
     for group in PHASE_DEPENDENT_GROUPS:
         system = calls[group]["system"]
         assert "第3章" in system and "第5章" in system, f"{group} 的阶段列表没写起始章"
+        assert "起始章：第3章" in system, f"{group} 的阶段列表叫法不是「起始章」"
         assert "起始原句" not in system, f"{group} 的阶段列表仍写起始原句"
 
 

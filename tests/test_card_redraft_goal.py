@@ -87,10 +87,19 @@ def test_g1_redraft_uses_stored_draft_without_redistilling(monkeypatch, store):
 
     record = _run_async(store.get_card_owned(card_id, uid))
     edited = json.loads(record["card_json"])
-    edited["background"] = "手工改过、与草稿不一致的背景"
+    hand_background = "手工改过、与草稿不一致的背景"
+    edited["background"] = hand_background
     updated = _run_async(
         store.update_card(card_id, edited, expected=record["card_json"]))
     assert updated is not None, "前置：手工改卡应写进库"
+
+    # 只在本用例里给存下的草稿一个独有背景（不碰共用的 `_draft()`）：
+    # 出卡必须取草稿的这个值，而不是手改卡上的值。
+    payload = _load_payload(store, card_id, uid)
+    draft_background = "只在这条用例里、存下的草稿背景"
+    payload["draft"]["background"] = draft_background
+    _run_async(store.save_card_draft(
+        card_id, json.dumps(payload, ensure_ascii=False)))
 
     stub = _NoRedistillStub(_draft())
     _llm, threads = _install(monkeypatch, store, stub)
@@ -107,7 +116,8 @@ def test_g1_redraft_uses_stored_draft_without_redistilling(monkeypatch, store):
 
     stored = _run_async(store.get_card_owned(card_id, uid))
     stored_card = CharacterCard.model_validate_json(stored["card_json"])
-    assert stored_card.background == _draft().get("background", ""), "出卡用的不是存下的草稿（手改没被盖掉）"
+    assert stored_card.background == draft_background, "出卡没取存下草稿的 background"
+    assert stored_card.background != hand_background, "手改的 background 没被存下的草稿盖掉"
 
     payload = _load_payload(store, card_id, uid)
     rebuilt, _ = dedupe_relationship_targets(

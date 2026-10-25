@@ -115,7 +115,7 @@ S1–S6 第 1 个提交带 `xfail(strict=True)`，哪段转绿就在那段的提
 |---|---|
 | `core/phase_excerpt.py`（新） | 「有章节的书的人物摘录」只在这里：`chapter_bodies(source_text)`（从 `phase_locate` 原样挪来）；`build_excerpt(source_text, terms, skip_chapters) -> str | None`（`chapter_starts` 为 None 或没有一段命中时返回 None；规则按 J5；`skip_chapters` 由调用方传 `retro.chapters(source_text)`）；`excerpt_prefix(name, excerpt)`；`chapter_body_start(source_text, chapter) -> int | None`（原文坐标，章不存在为 None）。纯计算，不 import 模型相关模块 |
 | `core/card_draft.py` | `DraftPhase` 删 `key_moments` 与 `_key_moments_stays_required`；加 `start_chapter: int | None = None`；文档串改。`draft_schema(group, *, start_by=…)`：起点用章号时从 `$defs.DraftPhase` 去掉 `anchor`、反之去掉 `start_chapter`（只此一处），默认按锚点 |
-| `core/distiller.py` | ① 维度 L、模板、`:421` 三处的锚点说法改为从一张「起点写法」表取（锚点 / 章号两行，章号那行的措辞照探针第六版 `NEW_ANCHOR_RULE`、`NEW_TPL`、`NEW_LIST`，去掉 key_moments 部分），`format_prompt_after(group, *, start_by=…)` 默认锚点；② `distill_incremental_stream`、`distill_incremental`、`_distill_longcontext(_stream)` 加 `retro: RetroRegions = NOT_DETECTED`；`_distill_longcontext(_stream)` 再加 `aliases`，调用方（F4）传下来；它们算一次摘录，建得出就让 G6 用摘录前缀 + 章号写法 + 用户句「请基于以上摘录为「…」输出模板中的字段」，其余组照旧；③ `_format_groups` 接一个「弧线组输入」参数（前缀、用户句、起点写法；缺省 = 与其余组相同、按锚点），首批发 G6 + 预热组（J7），两组都返回再发其余；④ `_phase_list_note` 按阶段数据写「起始：第N章」或「起始原句：…」（判断走 `phase_anchoring` 的同一处）；⑤ 删 `locate_phase_starts`（`:1124`）、`_judge_phase_starts`（`:1170`）、`LOCATE_MAX_TOKENS` 与 `:776` 的注释、`phase_locate` import |
+| `core/distiller.py` | ① 维度 L、模板、`:421` 三处的锚点说法改为从一张「起点写法」表取（锚点 / 章号两行，章号那行的措辞照探针第六版 `NEW_ANCHOR_RULE`、`NEW_TPL`、`NEW_LIST`，去掉 key_moments 部分），`format_prompt_after(group, *, start_by=…)` 默认锚点；② `distill_incremental_stream`、`distill_incremental`、`_distill_longcontext(_stream)` 加 `retro: RetroRegions = NOT_DETECTED`；`_distill_longcontext(_stream)` 再加 `aliases`，调用方（F4）传下来；它们算一次摘录，建得出就让 G6 用摘录前缀 + 章号写法 + 用户句「请基于以上摘录为「…」输出模板中的字段」，其余组照旧；③ `_format_groups` 接一个「弧线组输入」参数（前缀、用户句、起点写法；缺省 = 与其余组相同、按锚点），首批发 G6 + 预热组（J7），两组都返回再发其余；④ `_phase_list_note` 按阶段数据写「起始章：第N章」或「起始原句：…」（判断走 `phase_anchoring` 的同一处）；⑤ 删 `locate_phase_starts`（`:1124`）、`_judge_phase_starts`（`:1170`）、`LOCATE_MAX_TOKENS` 与 `:776` 的注释、`phase_locate` import |
 | `core/phase_anchoring.py` | `locate_starts`：阶段带 `start_chapter` → `chapter_body_start` → `normalized_starts` 换成规范化位置，None → NOT_FOUND，在回忆区 → IN_RETRO；否则照旧走锚点。`PhaseStart` 记下模型给的是什么（锚点原句或「第N章」），`_SKIP_REASONS`、`_DETAIL_NO_POSITION`、`log_phase_starts` 的文案按它写（不再一律写「锚点」）。`checked_anchors` 的「阶段 1 不用」规则不变，章号同样适用 |
 | `core/phase_locate.py` | 删 |
 | `web/routers/distill.py` | 删 `:566-567`、`:1218-1219` 两处重定位；`_distill_to_draft`（`:355`）加 `retro` 参数，`:380` 与 `:1175` 两处开流传 `retro=retro`（F26） |
@@ -127,7 +127,7 @@ S1–S6 第 1 个提交带 `xfail(strict=True)`，哪段转绿就在那段的提
 
 | 问 | 答（附行） |
 |---|---|
-| 同一条规则写了几处 | 「起点算不算数」：`locate_starts` 一处（F9，J1）。「问模型要哪种起点」：`build_excerpt` 建不建得出一处（J3）。「哪些章算回忆」：`RetroRegions.chapters` 一处（F25），摘录与位置核对共用。「章号 → 原文位置」：`chapter_body_start` 一处；→ 规范化位置：`normalized_starts` 一处（F14）。「起点写法的措辞」：distiller 的起点写法表一处，模板 / 规则 / schema 都从它取 |
+| 同一条规则写了几处 | 「起点算不算数」：`locate_starts` 一处（F9，J1）。「问模型要哪种起点」：`build_excerpt` 建不建得出一处（J3）。「哪些章算回忆」：`RetroRegions.chapters` 一处（F25），摘录与位置核对共用。「章号 → 原文位置」：`chapter_body_start` 一处；→ 规范化位置：`normalized_starts` 一处（F14）。「起点写法的措辞」：提示词在 distiller `_START_WORDING`、结构在 `card_draft._START_SCHEMA`，两表分工、各一处 |
 | 调用方是否被迫知道不该知道的事 | `_format_groups` 不知道章节，只收「弧线组输入」；路由不知道起点怎么定（重定位删了）；`card_from_draft` 不变（F17） |
 | 加一种情况要改几处 | 加一种起点写法（如段号）：起点写法表加一行 + `locate_starts` 加一个分支 + 摘录模块加一种编号。三处各管一件事：问法、换算、编号 |
 
@@ -226,3 +226,10 @@ tests/test_longctx_focused_calls_goal.py:245:    return list(Distiller(llm=llm, 
 2. 章节正文边界放在 `core/chapters.py`，不放 `phase_excerpt.py`。
 3. 变异驱动的 4 处锚点跟着改了：M5a、EMPTY 两处、M17。
 4. 草稿阶段多了 `start_chapter` 字段；锚点书（`StartBy.ANCHOR`）下它为 `null`。
+5. 审计问题 1–6 的处理：
+   - 问题 1（非递增原因硬编码「锚点」）：`_skip_reason` 的文案改从 `_START_NOUN` 取，名词用被破坏那一对里后一个阶段的写法；锚点模式文案逐字不变；S3b 改断「起始章位置不严格递增」。
+   - 问题 2（`_arc_importance` 不从写法表取）：`_StartWording` 加 `field` 字段，`_arc_importance` 从表取；`:265` 的注释与代码一致。
+   - 问题 3（自检表「模板 / 规则 / schema 都从它取」写错）：该格改为「提示词在 distiller `_START_WORDING`、结构在 `card_draft._START_SCHEMA`，两表分工、各一处」。
+   - 问题 4（§4 ④ 例文与实现不同）：例文改为「起始章：第N章」，与 `_START_WORDING[CHAPTER].note` 一致；S4 断依赖组提示词含「起始章：第3章」。
+   - 问题 5（夹具 `baseline_commit` 不可审计）：在当前分支重录，`baseline_commit` 写重录提交；`group_calls` / `tail_frame_kinds` / `draft` 与改前逐字相同。
+   - 问题 6（重新出卡用例的断言恒真）：用例里给存下的草稿放独有 `background`，断言出卡取草稿值且不等于手改值；共用 `_draft()` 未动。

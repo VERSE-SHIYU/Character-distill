@@ -256,11 +256,12 @@ def _timed_tpl(path: str) -> str:
 
 
 class _StartWording(NamedTuple):
-    """一种阶段起点写法在提示词里的三处说法（维度 L 的规则行、模板里的键值、「重要」里的字段名），
-    以及下游阶段列表里的叫法。"""
+    """一种阶段起点写法在提示词里的说法：维度 L 的规则行、模板里的键值、下游阶段列表里的叫法、
+    「重要」规则里的字段名。"""
     rule: str
     template: str
     note: str
+    field: str
 
 
 # 阶段起点写法 → 提示词说法。**只此一处**：维度 L、模板、「重要」规则、阶段列表都从这里取；
@@ -271,12 +272,14 @@ _START_WORDING: dict[phase_anchoring.StartBy, _StartWording] = {
         rule='   - anchor：标志这一阶段开始的一句原文（10-40字，逐字照抄）；中间要省略时必须用「……」标出，'
              '省略号两边各至少 10 个字；阶段 1 可留空字符串。\n',
         template='"anchor": "标志这一阶段开始的一句原文"',
-        note="起始原句"),
+        note="起始原句",
+        field="anchor"),
     phase_anchoring.StartBy.CHAPTER: _StartWording(
         rule='   - start_chapter：这一阶段从哪一章开始，填摘录里【第N章】标记的数字 N'
              '（整数，只能用摘录里出现过的章号）；阶段 1 填 0。\n',
         template='"start_chapter": 章号',
-        note="起始章"),
+        note="起始章",
+        field="start_chapter"),
 }
 
 # 随起点写法变的提示词条目：取值是 ``start_by → 文本`` 的函数（其余条目是定串）。
@@ -311,7 +314,7 @@ def _arc_template(start_by: phase_anchoring.StartBy) -> str:
 
 def _arc_importance(start_by: phase_anchoring.StartBy) -> str:
     return ('- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state/'
-            + start_by.value + '/boundary_examples')
+            + _START_WORDING[start_by].field + '/boundary_examples')
 
 
 _FORMAT_DIMS: tuple[tuple[str, str | _ByStart], ...] = (

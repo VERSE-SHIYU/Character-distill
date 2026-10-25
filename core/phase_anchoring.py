@@ -216,10 +216,9 @@ def _skip_reason(starts: Sequence[PhaseStart]) -> str:
         template = _SKIP_REASONS.get(st.status)
         if template is not None:
             return template.format(k=st.k, kind=_START_NOUN[st.kind], given=st.given, region=st.region)
-    positions = [st.pos for st in starts]
-    for a, b in zip(positions, positions[1:]):
-        if b <= a:
-            return f"锚点位置不严格递增：{a} → {b}"
+    for prev, cur in zip(starts, starts[1:]):
+        if cur.pos <= prev.pos:
+            return f"{_START_NOUN[cur.kind]}位置不严格递增：{prev.pos} → {cur.pos}"
     return ""
 
 
