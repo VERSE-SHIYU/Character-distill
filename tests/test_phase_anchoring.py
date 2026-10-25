@@ -474,7 +474,7 @@ class _DraftStubDistiller:
 
     def distill_incremental_stream(self, text, character_name, *, aliases=None,
                                    text_type="story", on_chunk_done=None,
-                                   resume_candidates=None):
+                                   resume_candidates=None, retro=None):
         yield {"status": "formatting", "current": 1, "total": 1}
         yield json.dumps(self.draft, ensure_ascii=False)
 
@@ -483,9 +483,6 @@ class _DraftStubDistiller:
 
     def finalize_card(self, card, content, name, aliases=(), roster=()):
         return card
-
-    def locate_phase_starts(self, draft, text, character_name, retro):
-        return None      # 路由在转卡前重新找阶段起点；本替身的草稿不需要（真实现核对得过即不调模型）
 
 
 async def _stub_roster(storage, distiller, text_id, user_id, content):

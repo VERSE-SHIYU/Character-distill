@@ -227,15 +227,14 @@ def _chapter_no(label: str | None) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _start_rows(phases: list[dict], anchors, content: str,
-                before_anchors: list[str]) -> list[dict]:
+def _start_rows(phases: list[dict], anchors, content: str) -> list[dict]:
     positions = [st.pos for st in anchors.starts
                  if st.k > 1 and st.pos is not None]
     raws = raw_offsets(content, anchors.source_norm, positions) if positions else []
     labels = chapter_labels(content, raws) if raws else []
     out: list[dict] = []
     it = iter(labels)
-    for st, phase, before in zip(anchors.starts, phases, before_anchors):
+    for st, phase in zip(anchors.starts, phases):
         if st.k == 1:
             chapter_label, chapter = "全书开头", 0
         elif st.pos is None:
@@ -243,13 +242,11 @@ def _start_rows(phases: list[dict], anchors, content: str,
         else:
             chapter_label = next(it)
             chapter = _chapter_no(chapter_label)
-        anchor = phase.get("anchor", "") if isinstance(phase, dict) else ""
         out.append({
             "phase": st.k,
             "label": phase.get("label", "") if isinstance(phase, dict) else "",
-            "anchor_before": before,
-            "anchor_after": anchor,
-            "relocated": before != anchor,
+            "start_by": st.kind.value,
+            "start": st.given,
             "status": st.status.value,
             "chapter": chapter,
             "chapter_label": chapter_label,
@@ -478,7 +475,7 @@ async def _replay(storage: Any, *, text_id: str, name: str, runs: int,
 
         frames = await asyncio.to_thread(
             lambda: list(distiller.distill_incremental_stream(
-                content, name, aliases=aliases, text_type=text_type)))
+                content, name, aliases=aliases, text_type=text_type, retro=retro)))
         error = next((f["error"] for f in frames
                       if isinstance(f, dict) and "error" in f), None)
         if error:
@@ -488,24 +485,18 @@ async def _replay(storage: Any, *, text_id: str, name: str, runs: int,
             raise RuntimeError(f"run-{n} 没有交出草稿")
         draft = loads_llm_json(draft_text)
 
-        before_anchors = [p.get("anchor", "") for p in _phases(draft)]
-        before_text = json.dumps(draft, ensure_ascii=False, indent=2)
-        await asyncio.to_thread(distiller.locate_phase_starts, draft, content, name, retro)
-
         anchors = build_anchors(_phases(draft), content, retro=retro.spans(content))
         model = CardDraft.model_validate(draft)
-        phase_rows = _start_rows(_phases(draft), anchors, content, before_anchors)
+        phase_rows = _start_rows(_phases(draft), anchors, content)
         entry_rows = _entries(model, anchors, content)
         await asyncio.to_thread(card_from_draft, draft, content, retro=retro)
 
         _write_calls(run_dir / "calls.jsonl", recorder.calls, stage="run")
-        (run_dir / "draft_before_locate.json").write_text(before_text, encoding="utf-8")
-        (run_dir / "draft_after_locate.json").write_text(
+        (run_dir / "draft.json").write_text(
             json.dumps(draft, ensure_ascii=False, indent=2), encoding="utf-8")
         (run_dir / "retro.json").write_text(retro.to_json(), encoding="utf-8")
-        relocated = any(p["relocated"] for p in phase_rows)
         (run_dir / "phase_starts.json").write_text(
-            json.dumps({"relocated": relocated, "phases": phase_rows},
+            json.dumps({"phases": phase_rows},
                        ensure_ascii=False, indent=2), encoding="utf-8")
         (run_dir / "entries.tsv").write_text(_tsv(entry_rows), encoding="utf-8")
 
@@ -517,7 +508,6 @@ async def _replay(storage: Any, *, text_id: str, name: str, runs: int,
             "calls_detail": calls_detail,
             "phases": phase_rows,
             "entries": entry_rows,
-            "relocated": relocated,
             "H1": _h1(entry_rows, len(model.character_arc.phases)),
             "H2": {"verdict": _run_verdict(items), "items": items},
         })
@@ -560,18 +550,13 @@ async def _replay(storage: Any, *, text_id: str, name: str, runs: int,
         # 实际在跟谁说话（F5）：只记模型与地址，**不记 key**。
         "model": str(getattr(llm, "model", "") or ""),
         "base_url": str(getattr(llm, "base_url", "") or ""),
-        "runs": [{"run": r["run"], "calls": r["calls"], "relocated": r["relocated"]}
-                 for r in run_summaries],
+        "runs": [{"run": r["run"], "calls": r["calls"]} for r in run_summaries],
         "setup_calls": len(setup.calls),
         "H1": {"runs": [{"run": r["run"], **r["H1"]} for r in run_summaries]},
         "H2": {"verdict": h2_overall, "runs": h2_runs},
         "H3": {"phase_counts": phase_counts, "starts": starts,
                "stable": len({tuple(s) for s in starts}) <= 1
                and len(set(phase_counts)) <= 1},
-        "H4": {"runs": [{"run": r["run"], "triggered": r["relocated"],
-                         "before": [p["anchor_before"] for p in r["phases"]],
-                         "after": [p["anchor_after"] for p in r["phases"]]}
-                        for r in run_summaries]},
         "H5": _h5(run_summaries),
         "H6": {"runs": []},
         "usage": usage,
@@ -596,14 +581,13 @@ def _print_table(summary: dict) -> None:
           f"runs={len(summary['runs'])}  model={summary['model']}  "
           f"base_url={summary['base_url']}")
     for run in summary["runs"]:
-        print(f"  run {run['run']}: calls={run['calls']} relocated={run['relocated']}")
+        print(f"  run {run['run']}: calls={run['calls']}")
     print(f"H1 一致率/分布（只出数据）: {json.dumps(summary['H1']['runs'], ensure_ascii=False)}")
     print(f"H2 起点对准真实转折: {summary['H2']['verdict']}")
     for run in summary["H2"]["runs"]:
         print(f"  run {run['run']}: {run['verdict']}")
     print(f"H3 两次稳定: {summary['H3']['phase_counts']} / {summary['H3']['starts']}"
           f" stable={summary['H3']['stable']}")
-    print(f"H4 重定位: {[r['triggered'] for r in summary['H4']['runs']]}")
     print(f"H5 8192 上限: {summary['H5']['verdict']}（{summary['H5']['note']}）")
     print(f"H6 章内回忆: {summary['H6']['runs']}")
     print(f"usage: {summary['usage']}  cost={summary['cost']}")

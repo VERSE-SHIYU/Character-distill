@@ -26,6 +26,7 @@ from core.arc_view import project_card, valid_phase
 from core.card_out import CARD_CONFLICT, card_revision, out_card
 from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.retro_cache import resolve_retro_regions
+from core.retro_regions import NOT_DETECTED, RetroRegions
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core import examples_pending
 from core import task_log
@@ -356,9 +357,11 @@ def _generate_awakening(llm, card: CharacterCard, storage=None) -> str:
 def _distill_to_draft(
     task_id: str, name: str, content: str, text_type: str,
     aliases: list[str], resume_candidates: dict[int, dict] | None,
-    distiller: Distiller,
+    distiller: Distiller, retro: RetroRegions = NOT_DETECTED,
 ) -> dict | None:
-    """蒸馏 → 解析 JSON（草稿交出时关系已在 distiller 内补全）；失败时已 `_set_task`，返回 None。"""
+    """蒸馏 → 解析 JSON（草稿交出时关系已在 distiller 内补全）；失败时已 `_set_task`，返回 None。
+
+    `retro`：这本书的回忆区（路由在蒸馏前已取到），交给 distiller 建弧线组的人物摘录。"""
     # Step 2: run incremental distill (synchronous, collect full output)
     full = ""
     cur_phase = None
@@ -380,6 +383,7 @@ def _distill_to_draft(
         content, name,
         aliases=aliases, text_type=text_type,
         on_chunk_done=_persist_chunk, resume_candidates=resume_candidates,
+        retro=retro,
     )
     for piece in stream:
         with _task_lock:
@@ -555,15 +559,11 @@ def _run_distill_task(
         if draft is None:
             with task_log.step("蒸馏"):
                 data = _distill_to_draft(
-                    task_id, name, content, text_type, aliases, resume_candidates, distiller)
+                    task_id, name, content, text_type, aliases, resume_candidates, distiller, retro)
         else:
             data = draft
         if data is None:
             return
-
-        # 模型写的阶段锚点核对不过时，按原文重新找起点（spec phase-locate）；不抛、找不到不动草稿。
-        with task_log.step("重定位"):
-            distiller.locate_phase_starts(data, content, name, retro)
 
         try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
@@ -1167,7 +1167,7 @@ async def distill_stream(
         # Incremental distillation with aliases for broader chunk matching
         full = ""
         stream = distiller.distill_incremental_stream(
-            content, char_name, aliases=aliases, text_type=text_type)
+            content, char_name, aliases=aliases, text_type=text_type, retro=retro)
         while True:
             try:
                 piece, done = await asyncio.to_thread(_next_piece, stream)
@@ -1208,9 +1208,6 @@ async def distill_stream(
         if data is None:
             yield f"data: {json.dumps({'error': '蒸馏失败：LLM 返回格式不正确'}, ensure_ascii=False, default=str)}\n\n"
             return
-
-        # 同 /start：锚点核对不过时重新找起点；一批并发短调用，挪进线程不堵事件循环。
-        await asyncio.to_thread(distiller.locate_phase_starts, data, content, char_name, retro)
 
         try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。

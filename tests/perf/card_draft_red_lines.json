@@ -236,6 +236,11 @@
         "tests/test_card_draft.py",
         "assert (props[\"warming_conditions\"][\"items\"][\"$ref\"].endswith(\"/DraftTimed\"), props[\"agreeableness_facets\"][\"i",
         0
+      ],
+      [
+        "tests/test_card_draft.py",
+        "assert _calls(r\"model_json_schema\\(\") == {\"core/card_draft.py\": 1}",
+        0
       ]
     ],
     "M18  旧卡字符串阶段被当成 label 而不是 state": [
@@ -287,11 +292,6 @@
       [
         "tests/test_card_draft.py",
         "assert draft == expected",
-        0
-      ],
-      [
-        "tests/test_card_draft.py",
-        "assert draft[\"situation_behaviors\"] == KONG_DRAFT[\"situation_behaviors\"]",
         0
       ]
     ],

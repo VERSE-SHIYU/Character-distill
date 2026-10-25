@@ -23,13 +23,14 @@ from __future__ import annotations
 import ast
 import json
 import re
+import threading
 from pathlib import Path
 
 import pytest
 
 import core.distiller as D
 from core.card_draft import CardDraft
-from core.distiller import Distiller
+from core.distiller import Distiller, _CACHE_WARM_GROUP
 from core.schema import FORMAT_GROUPS
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -46,7 +47,7 @@ _USAGE = {"prompt_tokens": 1, "completion_tokens": 1}
 
 _ARC = {"axis": "从甲到乙", "phases": [
     {"label": "阶段一", "state": "开头时的状态", "anchor": ""},
-    {"label": "阶段二", "state": "后来的状态", "anchor": "", "key_moments": ["转折发生的那件事"]},
+    {"label": "阶段二", "state": "后来的状态", "anchor": ""},
 ]}
 
 
@@ -183,7 +184,8 @@ _REL_TARGET = "某人"
 _REL_MARKER = "只产出这几个人物与主角的关系"
 
 
-def _group_llm(*, bad_group: str | None = None, relationships: tuple[str, ...] = ()):
+def _group_llm(*, bad_group: str | None = None, relationships: tuple[str, ...] = (),
+               warm_started: threading.Event | None = None):
     """组感知替身：按 `CharacterCard[Gn]` 回该组字段；一次读完主调用回整张卡。
 
     照生产行为写（返工经验第 35 条）：不改写 system、不改写回包；关系分批回详情。
@@ -225,6 +227,8 @@ def _group_llm(*, bad_group: str | None = None, relationships: tuple[str, ...] =
             events.append("start:" + group)
             calls.append({"group": group, "system": system, "messages": messages,
                           "max_tokens": max_tokens})
+            if group == _CACHE_WARM_GROUP and warm_started is not None:
+                warm_started.set()
             if group == bad_group:
                 # 合法 JSON 但缺该组必需字段：重修环的 Attempt 2 会带着原 system 重问，
                 # 三次尝试都失败才算「这一组失败」（生产语义）。
@@ -257,7 +261,6 @@ def test_g1_one_pass_calls_are_grouped_arc_first(path: str):
 
     groups = [c["group"] for c in calls]
     assert groups.count("G6") == 1, f"弧线组不是恰一次：{groups}"
-    assert groups[0] == "G6", f"第一次调用不是弧线组：{groups}"
     assert sorted(groups) == sorted(FORMAT_GROUPS), f"不是每组各一次：{groups}"
 
     note = _phase_list_note(_ARC["phases"])
@@ -276,9 +279,12 @@ def test_g1_one_pass_calls_are_grouped_arc_first(path: str):
         else:
             assert note not in system, f"{call['group']} 不该带阶段列表"
 
-    end_g6 = events.index("end:G6")
-    assert all(events.index("start:" + g) > end_g6 for g in groups[1:]), \
-        f"有组在弧线组返回前就启动了：{events}"
+    from core.distiller import _CACHE_WARM_GROUP
+    first = {"G6", _CACHE_WARM_GROUP}
+    assert set(groups[:2]) == first, f"首批不是弧线组 + 预热组：{groups}"
+    end_first = max(events.index("end:" + g) for g in first)
+    assert all(events.index("start:" + g) > end_first for g in groups if g not in first), \
+        f"有组在首批返回前就启动了：{events}"
 
 
 def test_g2_arc_group_split_and_phase_dependency_derived():
@@ -337,19 +343,22 @@ def test_g3_every_path_hands_over_completed_relationships(monkeypatch):
         assert name not in router, f"路由仍在补关系：{name}"
 
 
-# 失败有两个出口：弧线组单独先发、单独取结果（`_format_groups` 第一次 `fmt_queue.get()`），
-# 其余组在后面的循环里取。两个出口各测一次，一个都不能漏（复审发现 1）。
+# 失败有两个出口：首批（弧线组 + 预热组）先取结果，其余组在后面取。两个出口各测一次，
+# 一个都不能漏（复审发现 1）。首批失败时其余组一个都不发（phase-start-chapter §2 J7）。
 @pytest.mark.parametrize("bad_group", ["G6", "G4"])
 def test_g4_any_group_failure_fails_the_whole_step(monkeypatch, bad_group: str):
     from core.distiller import DistillError
 
     monkeypatch.setattr(D, "try_record_usage", lambda *a, **kw: None)
 
-    llm, calls, _ = _group_llm(bad_group=bad_group)
+    warm_started = threading.Event()
+    llm, calls, _ = _group_llm(bad_group=bad_group, warm_started=warm_started)
     with pytest.raises(DistillError):
         _run_f3(llm)
     if bad_group == "G6":
-        assert {c["group"] for c in calls} == {"G6"}, \
+        # 失败在弧线组返回时抛出，预热组线程可能还没被调度：等它真正发出再断言。
+        assert warm_started.wait(timeout=2), f"预热组 {_CACHE_WARM_GROUP} 没有与弧线组同批发出"
+        assert {c["group"] for c in calls} == {"G6", _CACHE_WARM_GROUP}, \
             f"弧线组失败后仍发了其余组：{[c['group'] for c in calls]}"
 
     llm, _, _ = _group_llm(bad_group=bad_group)

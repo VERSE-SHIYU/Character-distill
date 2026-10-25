@@ -890,27 +890,31 @@ def _group_reply(group: str) -> str:
 
 
 class TestFormatGroupsRunInParallel:
-    """WP7 F1 + S2（longctx-focused-calls §8.2）：弧线组（G6）单独先发；它返回后其余所有组
-    并行，依赖组（`PHASE_DEPENDENT_GROUPS`）带阶段列表，其余组不带。
+    """WP7 F1 + S2（longctx-focused-calls §8.2）：首批是弧线组（G6）+ 预热组（`_CACHE_WARM_GROUP`，
+    phase-start-chapter §2 J7）；两组返回后其余所有组并行，依赖组（`PHASE_DEPENDENT_GROUPS`）
+    带阶段列表，其余组不带。
 
-    并行判据是「其余组」那一批的 `threading.Barrier`：串行实现等不齐、2 s 后破障、该组失败，
-    成品卡出不来（无 str 帧）。先发判据是 G6 的事件早于其余每一组的事件。阶段列表判据：依赖组
+    并行判据是两批各自的 `threading.Barrier`：串行实现等不齐、2 s 后破障、该组失败，
+    成品卡出不来（无 str 帧）。先发判据是首批两组的事件早于第二批每一组的事件。阶段列表判据：依赖组
     的提示词带 G6 定出的阶段，非依赖组的不带。记账判据是每组一条 `distill_format`、各带不同
     usage。组划分从 `PHASE_DEPENDENT_GROUPS` / `_PHASE_SOURCE_GROUP` 读，组数从 `FORMAT_GROUPS`
     读，都不写死。
 
-    变异：① 其余组改回串行 ② 其余组不等 G6 就启动 ③ 依赖组缺阶段列表 ④ 非依赖组也带阶段列表。
+    变异：① 其余组改回串行 ② 其余组不等首批就启动 ③ 依赖组缺阶段列表 ④ 非依赖组也带阶段列表
+    ⑤ 预热组不与弧线组同批。
     """
 
     CHUNK = 3000
     TEXT = "AB" * (1500 * 50)   # 150000 字符 → 50 片（≤80，走单次合并）
 
     def test_dependent_groups_wait_for_g6_and_both_batches_run_parallel(self, monkeypatch):
-        from core.distiller import _PHASE_SOURCE_GROUP, PHASE_DEPENDENT_GROUPS
+        from core.distiller import _CACHE_WARM_GROUP, _PHASE_SOURCE_GROUP, PHASE_DEPENDENT_GROUPS
 
         n_groups = len(FORMAT_GROUPS)
-        rest = [g for g in FORMAT_GROUPS if g != _PHASE_SOURCE_GROUP]
-        barrier = threading.Barrier(len(rest), timeout=2)
+        first = (_PHASE_SOURCE_GROUP, _CACHE_WARM_GROUP)
+        rest = [g for g in FORMAT_GROUPS if g not in first]
+        first_barrier = threading.Barrier(len(first), timeout=2)
+        rest_barrier = threading.Barrier(len(rest), timeout=2)
         events: list[str] = []
         dep_systems: list[str] = []
         other_systems: list[str] = []
@@ -944,8 +948,7 @@ class TestFormatGroupsRunInParallel:
                     dep_systems.append(system)
                 elif group != _PHASE_SOURCE_GROUP:
                     other_systems.append(system)
-                if group != _PHASE_SOURCE_GROUP:
-                    barrier.wait()
+                (first_barrier if group in first else rest_barrier).wait()
                 events.append(f"group:{group}")
                 yield _group_reply(group)
                 idx = _FORMAT_GROUP_ORDER.index(group)
@@ -972,10 +975,11 @@ class TestFormatGroupsRunInParallel:
         assert events[0] == "formatting", f"formatting 帧不在各组调用之前：{events}"
         assert sum(1 for e in events if e.startswith("group:")) == n_groups, events
         assert sum(1 for f in frames if isinstance(f, str)) == 1, "成品卡不是恰 1 个 str 帧"
-        # 弧线组先发：其余每组都在它之后；依赖组带阶段列表，非依赖组不带
+        # 首批先发：第二批每组都在首批两组之后；依赖组带阶段列表，非依赖组不带
         g6_at = events.index(f"group:{_PHASE_SOURCE_GROUP}")
-        assert all(events.index(f"group:{g}") > g6_at for g in rest), (
-            f"其余组没等弧线组：{events}")
+        first_done = max(events.index(f"group:{g}") for g in first)
+        assert all(events.index(f"group:{g}") > first_done for g in rest), (
+            f"其余组没等首批：{events}")
         assert dep_systems and all("阶段一" in s for s in dep_systems), (
             f"依赖组的提示词没带弧线组的阶段列表：{dep_systems[:1]}")
         assert other_systems and not any("阶段一" in s for s in other_systems), (

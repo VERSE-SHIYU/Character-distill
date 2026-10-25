@@ -260,7 +260,7 @@ def test_sync_route_by_token_count(monkeypatch):
     d = _distiller()
     d._longctx_threshold = 1000
     monkeypatch.setattr("core.distiller.count_tokens", lambda text: 1000)
-    monkeypatch.setattr(d, "_distill_longcontext", lambda text, name: seen.append("one_pass"))
+    monkeypatch.setattr(d, "_distill_longcontext", lambda text, name, **_kw: seen.append("one_pass"))
     with contextlib.suppress(Exception):
         d.distill_incremental("正文正文", "角色")
     assert seen == []
@@ -272,7 +272,7 @@ def test_sync_route_takes_one_pass_below_threshold(monkeypatch):
     d = _distiller()
     d._longctx_threshold = 1000
     monkeypatch.setattr("core.distiller.count_tokens", lambda text: 999)
-    monkeypatch.setattr(d, "_distill_longcontext", lambda text, name: seen.append("one_pass"))
+    monkeypatch.setattr(d, "_distill_longcontext", lambda text, name, **_kw: seen.append("one_pass"))
     with contextlib.suppress(Exception):
         d.distill_incremental("正文正文", "角色")
     assert seen == ["one_pass"]
@@ -285,7 +285,7 @@ def test_stream_route_by_token_count(monkeypatch):
     d._longctx_threshold = 1000
     monkeypatch.setattr("core.distiller.count_tokens", lambda text: 1000)
     monkeypatch.setattr(d, "_distill_longcontext_stream",
-                        lambda text, name: (seen.append("one_pass"), iter(()))[1])
+                        lambda text, name, **_kw: (seen.append("one_pass"), iter(()))[1])
     with contextlib.suppress(Exception):
         list(d.distill_incremental_stream("正文正文", "角色"))
     assert seen == []
@@ -298,7 +298,7 @@ def test_stream_route_takes_one_pass_below_threshold(monkeypatch):
     d._longctx_threshold = 1000
     monkeypatch.setattr("core.distiller.count_tokens", lambda text: 999)
     monkeypatch.setattr(d, "_distill_longcontext_stream",
-                        lambda text, name: (seen.append("one_pass"), iter(()))[1])
+                        lambda text, name, **_kw: (seen.append("one_pass"), iter(()))[1])
     with contextlib.suppress(Exception):
         list(d.distill_incremental_stream("正文正文", "角色"))
     assert seen == ["one_pass"]

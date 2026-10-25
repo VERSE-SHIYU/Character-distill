@@ -34,8 +34,6 @@ from test_distill_draft_persist import (
 from test_distill_task_api import _build_client, _run_async
 
 pytestmark = pytest.mark.usefixtures("embedding_key_configured")
-
-_RELOCATED = "重定位后才会出现的独有背景串"
 _NO_DRAFT = "没有存草稿"
 
 
@@ -60,7 +58,6 @@ class _NoRedistillStub(_DraftStub):
 
     def __init__(self, draft: dict):
         super().__init__(draft)
-        self.locate_calls = 0
 
     def distill_incremental_stream(self, *_a, **_kw):
         raise AssertionError("重新出卡不应重蒸")
@@ -70,9 +67,6 @@ class _NoRedistillStub(_DraftStub):
         # 「重新出卡不补关系」，只是名字换成真正干这件事的方法（复审发现 7）。
         raise AssertionError("重新出卡不应补关系")
 
-    def locate_phase_starts(self, draft, text, character_name, retro):
-        self.locate_calls += 1
-        draft["background"] = _RELOCATED
 
 
 def _task_rows_of_text(store, tid: str) -> list[dict]:
@@ -93,10 +87,19 @@ def test_g1_redraft_uses_stored_draft_without_redistilling(monkeypatch, store):
 
     record = _run_async(store.get_card_owned(card_id, uid))
     edited = json.loads(record["card_json"])
-    edited["background"] = "手工改过、与草稿不一致的背景"
+    hand_background = "手工改过、与草稿不一致的背景"
+    edited["background"] = hand_background
     updated = _run_async(
         store.update_card(card_id, edited, expected=record["card_json"]))
     assert updated is not None, "前置：手工改卡应写进库"
+
+    # 只在本用例里给存下的草稿一个独有背景（不碰共用的 `_draft()`）：
+    # 出卡必须取草稿的这个值，而不是手改卡上的值。
+    payload = _load_payload(store, card_id, uid)
+    draft_background = "只在这条用例里、存下的草稿背景"
+    payload["draft"]["background"] = draft_background
+    _run_async(store.save_card_draft(
+        card_id, json.dumps(payload, ensure_ascii=False)))
 
     stub = _NoRedistillStub(_draft())
     _llm, threads = _install(monkeypatch, store, stub)
@@ -110,11 +113,11 @@ def test_g1_redraft_uses_stored_draft_without_redistilling(monkeypatch, store):
     body = _build_client(store, uid).get(f"/api/distill/task/{task_id}").json()
     assert body["status"] == "done", body
     assert body["card_id"] == card_id, "重新出卡应覆盖同一张卡"
-    assert stub.locate_calls == 1, "重新出卡应重新定位阶段起点，且只调一次"
 
     stored = _run_async(store.get_card_owned(card_id, uid))
     stored_card = CharacterCard.model_validate_json(stored["card_json"])
-    assert stored_card.background == _RELOCATED, "出卡用的是重定位前的草稿（手改没被盖掉）"
+    assert stored_card.background == draft_background, "出卡没取存下草稿的 background"
+    assert stored_card.background != hand_background, "手改的 background 没被存下的草稿盖掉"
 
     payload = _load_payload(store, card_id, uid)
     rebuilt, _ = dedupe_relationship_targets(
@@ -171,4 +174,3 @@ def test_g3_no_third_card_build_path():
     src = (Path(__file__).resolve().parents[1] / "web" / "routers" / "distill.py").read_text(
         encoding="utf-8")
     assert src.count("save_distilled_card(") == 2
-    assert src.count("locate_phase_starts") == 2

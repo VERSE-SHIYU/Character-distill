@@ -10,11 +10,10 @@ import json
 import queue
 import re
 import threading
-from concurrent.futures import ThreadPoolExecutor
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Sequence, TypeVar
 import collections.abc as _cabc
 
 import yaml
@@ -59,7 +58,8 @@ from core.roster_aggregate import (
 )
 from core.card_draft import CardDraft, card_from_draft, draft_schema
 from core.card_layers import REGISTRY
-from core import phase_anchoring, phase_locate, retro_regions
+from core import phase_anchoring, retro_regions
+from core.phase_excerpt import build_excerpt, excerpt_prefix
 from core.retro_regions import NOT_DETECTED, RetroRegions
 from core.relationship_batch import (
     REL_BATCH_SIZE,
@@ -255,7 +255,69 @@ def _timed_tpl(path: str) -> str:
     return '[' + item(1) + ', ...]'
 
 
-_FORMAT_DIMS: tuple[tuple[str, str], ...] = (
+class _StartWording(NamedTuple):
+    """一种阶段起点写法在提示词里的说法：维度 L 的规则行、模板里的键值、下游阶段列表里的叫法、
+    「重要」规则里的字段名。"""
+    rule: str
+    template: str
+    note: str
+    field: str
+
+
+# 阶段起点写法 → 提示词说法。**只此一处**：维度 L、模板、「重要」规则、阶段列表都从这里取；
+# 结构（schema）那一半在 `card_draft._START_SCHEMA`。锚点那条是改前的原句（逐字不变）；
+# 章号那条照探针第六版（spec phase-start-chapter §2 J5）。
+_START_WORDING: dict[phase_anchoring.StartBy, _StartWording] = {
+    phase_anchoring.StartBy.ANCHOR: _StartWording(
+        rule='   - anchor：标志这一阶段开始的一句原文（10-40字，逐字照抄）；中间要省略时必须用「……」标出，'
+             '省略号两边各至少 10 个字；阶段 1 可留空字符串。\n',
+        template='"anchor": "标志这一阶段开始的一句原文"',
+        note="起始原句",
+        field="anchor"),
+    phase_anchoring.StartBy.CHAPTER: _StartWording(
+        rule='   - start_chapter：这一阶段从哪一章开始，填摘录里【第N章】标记的数字 N'
+             '（整数，只能用摘录里出现过的章号）；阶段 1 填 0。\n',
+        template='"start_chapter": 章号',
+        note="起始章",
+        field="start_chapter"),
+}
+
+# 随起点写法变的提示词条目：取值是 ``start_by → 文本`` 的函数（其余条目是定串）。
+_ByStart = Callable[[phase_anchoring.StartBy], str]
+
+
+def _arc_dimension(start_by: phase_anchoring.StartBy) -> str:
+    return (
+        'L. 角色弧线：此人从故事开始到结束，心态或立场发生了怎样的变化？无明显变化则 axis 留空、phases 输出空数组 []。\n'
+        '   - axis：一句「从…到…」（≤30字），两端都写心态或立场，不写情节。\n'
+        '   - phases：按故事顺序排列。只在心态或立场确实变了的地方分段，通常2-3个、最多4个；同一种心态下的不同场景不算新阶段。每个阶段都必须是此人还在场、还能与人交谈的时期，死亡、失踪、离场不单列为阶段。\n'
+        '   - label：这一阶段的心态或立场（≤8字，如「隐忍不发」），不要写事件或结局（如「被逐出师门」「死去」）。\n'
+        '   - state：一句话。句首用书里的具体事件或时段点明这是什么时候（如「被逐出师门之后」），不要写「前期」「中期」「后期」；再写此时的心态与行事方式。\n'
+        + _START_WORDING[start_by].rule +
+        '   - boundary_examples：每个阶段 2-4 组「此阶段不可能知道的提问 + 该阶段的回应」，'
+        '写成 [{"ask": "…", "reply": "…"}]。提问只能是他这个时期不可能知道、书里也没有发生的事；'
+        '**绝不能出现书里真实的后续情节**；回答用此阶段的口吻，只学应对方式、不照抄措辞。\n'
+        '   - 阶段按 phases 的顺序从 1 开始编号，维度 O 用这个编号。'
+    )
+
+
+def _arc_template(start_by: phase_anchoring.StartBy) -> str:
+    return (
+        '  "character_arc": {\n'
+        '    "axis": "从…到…",\n'
+        '    "phases": [{"label": "阶段心态", "state": "故事时期，此时的心态与行事方式", '
+        + _START_WORDING[start_by].template + ',\n'
+        '                "boundary_examples": [{"ask": "此阶段不可能知道的提问", "reply": "该阶段的回应"}]}]\n'
+        '  }'
+    )
+
+
+def _arc_importance(start_by: phase_anchoring.StartBy) -> str:
+    return ('- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state/'
+            + _START_WORDING[start_by].field + '/boundary_examples')
+
+
+_FORMAT_DIMS: tuple[tuple[str, str | _ByStart], ...] = (
     ("G1", 'A. 基本信息：名字、身份、背景（背景只写故事开始前就成立的出身与处境，不写故事里的遭遇）'),
     ("G2", 'B. 核心性格（3-5个）：每个特质 + 原文中的具体场景作为证据。'
            + _phase_rule("personality_traits")),
@@ -288,20 +350,7 @@ _FORMAT_DIMS: tuple[tuple[str, str], ...] = (
            + _phase_rule("emotional_patterns")),
     ("G2", 'K. 决策风格：面对选择时是冲动还是谨慎？靠情感还是逻辑？举例说明。'
            + _phase_rule("decision_style")),
-    ("G6",
-        'L. 角色弧线：此人从故事开始到结束，心态或立场发生了怎样的变化？无明显变化则 axis 留空、phases 输出空数组 []。\n'
-        '   - axis：一句「从…到…」（≤30字），两端都写心态或立场，不写情节。\n'
-        '   - phases：按故事顺序排列。只在心态或立场确实变了的地方分段，通常2-3个、最多4个；同一种心态下的不同场景不算新阶段。每个阶段都必须是此人还在场、还能与人交谈的时期，死亡、失踪、离场不单列为阶段。\n'
-        '   - label：这一阶段的心态或立场（≤8字，如「隐忍不发」），不要写事件或结局（如「被逐出师门」「死去」）。\n'
-        '   - state：一句话。句首用书里的具体事件或时段点明这是什么时候（如「被逐出师门之后」），不要写「前期」「中期」「后期」；再写此时的心态与行事方式。\n'
-        '   - anchor：标志这一阶段开始的一句原文（10-40字，逐字照抄）；中间要省略时必须用「……」标出，省略号两边各至少 10 个字；阶段 1 可留空字符串。\n'
-        '   - key_moments：按发生顺序列 1-3 件此阶段的关键事件，每件一句、必须是此人本人做出或亲身经历的具体事；'
-        '第一件写' + phase_locate.KEY_MOMENT_START + '；阶段 1 可输出空数组 []。\n'
-        '   - boundary_examples：每个阶段 2-4 组「此阶段不可能知道的提问 + 该阶段的回应」，'
-        '写成 [{"ask": "…", "reply": "…"}]。提问只能是他这个时期不可能知道、书里也没有发生的事；'
-        '**绝不能出现书里真实的后续情节**；回答用此阶段的口吻，只学应对方式、不照抄措辞。\n'
-        '   - 阶段按 phases 的顺序从 1 开始编号，维度 O 用这个编号。'
-    ),
+    ("G6", _arc_dimension),
     ("G3",
         'N. 认知/语言画像：基于原文中角色的实际话语和行为，判断以下四项：\n'
         '   - education_level（文化程度）：文盲/识字不多/普通/受过良好教育/学者。从句式复杂度、用词丰富度、会不会用成语典故判断。依据原文中角色说的话判断。稳定项，' + _STABLE_FIELD_RULE + '\n'
@@ -336,7 +385,7 @@ _FORMAT_OUTPUT_RULES = (
     '严禁输出 {trait:..., description:...} 这种嵌套对象。'
 )
 _FORMAT_TEMPLATE_INTRO = 'JSON 模板（所有字段必须包含）：'
-_FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
+_FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str | _ByStart], ...] = (
     ("name", '  "name": "角色名"'),
     ("identity", '  "identity": "一句话身份"'),
     ("personality_traits", '  "personality_traits": ' + _timed_tpl("personality_traits")),
@@ -366,14 +415,7 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ("first_message", '  "first_message": "角色开场白"'),
     ("emotional_patterns", '  "emotional_patterns": ' + _timed_tpl("emotional_patterns")),
     ("decision_style", '  "decision_style": ' + _timed_tpl("decision_style")),
-    ("character_arc",
-        '  "character_arc": {\n'
-        '    "axis": "从…到…",\n'
-        '    "phases": [{"label": "阶段心态", "state": "故事时期，此时的心态与行事方式", "anchor": "标志这一阶段开始的一句原文", "key_moments": ["'
-        + phase_locate.KEY_MOMENT_START + '", "后续关键事件"],\n'
-        '                "boundary_examples": [{"ask": "此阶段不可能知道的提问", "reply": "该阶段的回应"}]}]\n'
-        '  }'
-    ),
+    ("character_arc", _arc_template),
     ("situation_behaviors",
         '  "situation_behaviors": [\n'
         '    {"situation": "一类情境", "behavior": "具体做法", "occurrences": [{"phase": 1, "quote": "该阶段原文摘录"}, {"phase": 2, "quote": "该阶段原文摘录"}]}\n'
@@ -412,13 +454,13 @@ _FORMAT_TEMPLATE_KEYS: tuple[tuple[str, str], ...] = (
     ),
 )
 _FORMAT_IMPORTANCE_HEADING = '重要：'
-_FORMAT_IMPORTANCE: tuple[tuple[str | None, str], ...] = (
+_FORMAT_IMPORTANCE: tuple[tuple[str | None, str | _ByStart], ...] = (
     ("G4", '- psyche 是必需嵌套对象，triggers / soft_spots / warming_conditions / relational_modes / agreeableness_facets 都放在 psyche 内部，不在顶层'),
     (None, '- 数组字段的元素形态按模板来：模板里写成【一句字符串】的，就输出一句字符串，不要改成对象'),
     (None, '- 写成 [{"value": …, "occurrences": […"phase"/"quote"…]}] 的字段，元素是【对象】；'
            'occurrences 的 phase 用维度 L 的阶段编号（1 起）；' + _BASELINE_ZERO_RULE),
     ("G5", '- relationships 只出【名单】：每个元素是【对象】，只含 target（对方的标准名）；relation/attitude/note/attitudes 由后续步骤生成，不要在这里写'),
-    ("G6", '- character_arc 是【对象】，含 axis 与 phases；phases 的每个元素是【对象】，含 label/state/anchor/key_moments/boundary_examples'),
+    ("G6", _arc_importance),
     ("G7", '- situation_behaviors / key_memories 的每个元素是【对象】；occurrences 的每个元素是【对象】，含 phase/quote'),
     ("G7", '- 有阶段时，occurrences 的 phase 用维度 L 的阶段编号（1 起）；关键记忆发生在故事开始之前的填 0；没有阶段时只写一条，phase 填 0'),
     ("G4", '- 数字字段（openness/conscientiousness 等）输出整数，不要加引号'),
@@ -446,16 +488,25 @@ PHASE_DEPENDENT_GROUPS: frozenset[str] = frozenset(
     g for g, fields in FORMAT_GROUPS.items()
     if g != _PHASE_SOURCE_GROUP and _has_phase_leaves(fields)
 )
+# 与弧线组同批先发、预热整书前缀缓存的组：登记表顺序里第一个不依赖阶段的组（spec
+# phase-start-chapter §2 J7）。弧线组读摘录时不再带整书前缀，没有它其余组首批并行都会按未命中计费。
+_CACHE_WARM_GROUP = next(g for g in FORMAT_GROUPS
+                         if g != _PHASE_SOURCE_GROUP and g not in PHASE_DEPENDENT_GROUPS)
 
 
-def format_prompt_after(group: str | None = None) -> str:
+def format_prompt_after(group: str | None = None, *,
+                        start_by: phase_anchoring.StartBy = phase_anchoring.StartBy.ANCHOR) -> str:
     """拼装格式化提示词。
 
     ``group=None`` → 完整提示词（与改前逐字一致，仅两句改写：「list 元素」那句改为不点
     字段名的通用句；模板引导句去掉 psyche —— psyche 的要求归 G4，引导句进每组提示词时
     不能再点它）。``group`` 取 `FORMAT_GROUPS` 的键 → 共享前缀 + 该组片段（该组维度说明、
-    该组「重要」规则、该组 JSON 模板），供流式按组并行调用。
+    该组「重要」规则、该组 JSON 模板），供流式按组并行调用。``start_by``：阶段起点要哪种写法
+    （默认锚点；只影响弧线那几条，见 `_START_WORDING`）。
     """
+    def text_of(text: str | _ByStart) -> str:
+        return text if isinstance(text, str) else text(start_by)
+
     if group is not None and group not in FORMAT_GROUPS:
         raise ValueError(f"未知字段组：{group!r}（应为 {list(FORMAT_GROUPS)} 之一）")
     keep = (lambda owner: True) if group is None else (
@@ -466,14 +517,14 @@ def format_prompt_after(group: str | None = None) -> str:
         _FORMAT_IRON_LAWS,
         _FORMAT_PRESTEP if keep("G5") else "",
         _FORMAT_DIMS_HEADING,
-        "\n".join(text for owner, text in _FORMAT_DIMS if keep(owner)),
+        "\n".join(text_of(text) for owner, text in _FORMAT_DIMS if keep(owner)),
         _FORMAT_DIM_M if keep("G4") else "",
         _FORMAT_OUTPUT_RULES,
         _FORMAT_TEMPLATE_INTRO + "\n{\n" + ",\n".join(
-            text for key, text in _FORMAT_TEMPLATE_KEYS if keep(_FORMAT_FIELD_GROUP[key])
+            text_of(text) for key, text in _FORMAT_TEMPLATE_KEYS if keep(_FORMAT_FIELD_GROUP[key])
         ) + "\n}",
         _FORMAT_IMPORTANCE_HEADING + "\n" + "\n".join(
-            text for owner, text in _FORMAT_IMPORTANCE if keep(owner)
+            text_of(text) for owner, text in _FORMAT_IMPORTANCE if keep(owner)
         ),
     ]
     return "\n\n".join(p for p in parts if p) + "\n"
@@ -506,23 +557,45 @@ def book_prefix(text: str) -> str:
 
 
 def _arc_phases(draft: dict) -> list[dict]:
-    """草稿里弧线的阶段列表（草稿原形，键 label / state / anchor / key_moments）。"""
+    """草稿里弧线的阶段列表（草稿原形，键 label / state / anchor 或 start_chapter）。"""
     return ((draft or {}).get("character_arc") or {}).get("phases") or []
 
 
 def _phase_list_note(phases: list[dict]) -> str:
-    """阶段列表的**唯一渲染**（分组路径与关系分批共用）——编号 · label · state · 起始原句。
+    """阶段列表的**唯一渲染**（分组路径与关系分批共用）——编号 · label · state · 起点
+    （起始原句或起始章，叫法见 `_START_WORDING`）。
 
     没有阶段（`phases` 空）时返回「没有阶段」的写法，让模型只写一条 phase 0。
     """
     if not phases:
         return "本角色没有阶段：需要按阶段标注的字段只写一条，phase 填 0。"
-    checked = dict(phase_anchoring.checked_anchors(phases))   # 阶段 1 不带锚点原句（规则只在那里）
+    # 阶段 1 不带起点（规则只在 `checked_anchors`）；写法按阶段实际带的判（`start_of`）。
+    checked = {k: given for k, _, given in phase_anchoring.checked_starts(phases)}
     lines = ["本角色弧线的阶段（维度 L 已定，按阶段标注的字段用这些编号）："]
     lines += [f"  {phase_header(i, p.get('label', ''))} · {p.get('state', '')}"
-              f" · 起始原句：{checked.get(i) or '（从开头起）'}"
+              f" · {_START_WORDING[phase_anchoring.start_of(p)[0]].note}：{checked.get(i) or '（从开头起）'}"
               for i, p in enumerate(phases, 1)]
     return "\n".join(lines)
+
+
+class ArcInput(NamedTuple):
+    """弧线组（G6）的输入：前缀、用户句、起点写法。其余组都用整书（或分析档案）+ 锚点写法。"""
+    system_prefix: str
+    user_message: str
+    start_by: phase_anchoring.StartBy = phase_anchoring.StartBy.ANCHOR
+
+
+def arc_input_for(text: str, character_name: str, aliases: Sequence[str],
+                  retro: RetroRegions) -> ArcInput | None:
+    """一次读完时弧线组读什么：原文有可用章节 → 人物摘录 + 章号写法（去掉回忆区的章）；
+    建不出摘录（没有章节标题、没一段提到此人）→ None，与其余组相同、照旧用锚点。
+    **「问模型要哪种起点」只在这里定**（spec phase-start-chapter §2 J3）。"""
+    excerpt = build_excerpt(text, [character_name, *aliases], retro.chapters(text))
+    if excerpt is None:
+        return None
+    return ArcInput(excerpt_prefix(character_name, excerpt),
+                    f"请基于以上摘录为「{character_name}」输出模板中的字段",
+                    phase_anchoring.StartBy.CHAPTER)
 
 
 class DistillError(ValueError):
@@ -773,11 +846,6 @@ class Distiller:
     IDENTIFY_VERSION = 4
     # 回忆区回复只是几行章号范围 + 理由（实测 331–748 token），给足余量。
     RETRO_MAX_TOKENS = 1024
-    # 阶段起点判断（`locate_phase_starts`）：每次只回 {happens, sent, why} 一行 JSON，实测输出约 50 token。
-    LOCATE_MAX_TOKENS = 300
-    # 判断并发数：一张卡约 25×(阶段数−1) 次短调用。8 是 10-18 探针 E2 实测的并发（125 次 22–30 s、
-    # 0 条格式错误、无 429）；不另读配置。
-    LOCATE_WORKERS = 8
 
     #: 全书判定的独立采样次数：同一输入、同一提示词下单次调用的例外清单随采样大幅
     #: 漂移（实测两次交集很小），故按 self-consistency（Wang et al., ICLR 2023）取多数票。
@@ -1120,68 +1188,6 @@ class Distiller:
             return reply
 
         return retro_regions.detect(text, prefix=book_prefix(text), call=_call)
-
-    def locate_phase_starts(self, draft: dict[str, Any], text: str, character_name: str,
-                            retro: RetroRegions) -> None:
-        """模型写的阶段锚点核对不通过时，按原文重新找起点，**就地**改草稿里的 `anchor`。
-
-        spec `docs/specs/phase-locate.md`。核对得过（或阶段不足 2 个）→ 不调模型、不改草稿。
-        重新找：`core.phase_locate.locate`（检索候选章 → 逐章判断 → 最早「是」）。任一阶段找不到、
-        或换上新锚点后核对仍不过 → 草稿不动，行为同今天（转卡时整卡跳过位置核对）。
-        **不抛**：任何异常只打 warning（起点是位置核对的辅助，找不到不挡蒸馏）。
-        """
-        try:
-            arc = draft.get("character_arc") if isinstance(draft, dict) else None
-            phases = arc.get("phases") if isinstance(arc, dict) else None
-            if not isinstance(phases, list) or len(phases) < 2 or not all(isinstance(p, dict) for p in phases):
-                return
-            spans = retro.spans(text)
-            if not phase_anchoring.build_anchors(phases, text, retro=spans).reason:
-                logger.warning("[phase_locate] card=%s 锚点核对通过，用模型锚点", character_name)
-                return
-            result = phase_locate.locate(phases, text, retro, character_name, judge=self._judge_phase_starts)
-            for row in result.rows:
-                label = phases[row.phase - 1].get("label", "")
-                for n, happens, why, sent in row.judged:
-                    logger.warning("[phase_locate] card=%s 阶段 %d 候选 第%d章：%s；理由：%s；句子：%s",
-                                   character_name, row.phase, n, "是" if happens else "否", why, sent)
-                if row.chapter is None:
-                    logger.warning("[phase_locate] card=%s 阶段 %d「%s」找不到起点，答是的章 %s；保持原锚点；理由：%s",
-                                   character_name, row.phase, label, row.yes, row.why)
-                else:
-                    logger.warning("[phase_locate] card=%s 阶段 %d「%s」→ 第%d章，答是的章 %s；锚点「%s」；理由：%s",
-                                   character_name, row.phase, label, row.chapter, row.yes, row.anchor, row.why)
-            if result.anchors is None:
-                if not result.rows:
-                    logger.warning("[phase_locate] card=%s 不重新定位：%s", character_name, result.reason)
-                return
-            trial = [{**p, "anchor": a} for p, a in zip(phases, result.anchors)]
-            reason = phase_anchoring.build_anchors(trial, text, retro=spans).reason
-            if reason:
-                logger.warning("[phase_locate] card=%s 新锚点核对仍不过（%s），保持原锚点", character_name, reason)
-                return
-            for p, a in zip(phases, result.anchors):
-                p["anchor"] = a
-            logger.warning("[phase_locate] card=%s 已换成重定位锚点", character_name)
-        except Exception as exc:                       # 起点是辅助信息：失败不挡蒸馏
-            logger.warning("[phase_locate] card=%s 重新定位失败，保持原锚点：%s",
-                           character_name, exc, exc_info=True)
-
-    def _judge_phase_starts(self, prompts: list[str]) -> list[str]:
-        """一批起点判断，并发 `LOCATE_WORKERS`；单条失败给空串（按「否」处理），每条照常记账。"""
-        def one(user: str) -> str:
-            try:
-                reply, _ = self._chat_accounted(
-                    phase_locate.JUDGE_SYSTEM, [{"role": "user", "content": user}],
-                    "阶段起点判断", "distill_phase_locate", max_tokens=self.LOCATE_MAX_TOKENS)
-                return reply
-            except Exception as exc:
-                logger.warning("[phase_locate] 单章判断失败，按「否」处理：%s", exc)
-                return ""
-
-        with ThreadPoolExecutor(max_workers=self.LOCATE_WORKERS) as pool:
-            futures = [C.ctx_submit(pool, one, u) for u in prompts]
-            return [f.result() for f in futures]
 
     def _chat_accounted(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str, action: str,
@@ -1909,7 +1915,9 @@ class Distiller:
 
     # ── Long-context distillation ──────────────────────────────────────
 
-    def _distill_longcontext(self, text: str, character_name: str) -> CharacterCard:
+    def _distill_longcontext(self, text: str, character_name: str, *,
+                             aliases: Sequence[str] = (),
+                             retro: RetroRegions = NOT_DETECTED) -> CharacterCard:
         """整本蒸：按组专注调用（弧线先发，其余组带阶段列表）→ 合并 → 转卡。
 
         整本书放在 system 最前（`book_prefix`），同一本书的不同角色与关系分批都命中
@@ -1923,13 +1931,16 @@ class Distiller:
                 rel_material="",
                 action="distill_longcontext",
                 system_prefix=book_prefix(text) + "\n\n",
+                arc_input=arc_input_for(text, character_name, aliases, retro),
             ))
-            return card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)
+            return card_from_draft(draft.model_dump(), text, retro=retro)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
 
-    def _distill_longcontext_stream(self, text: str, character_name: str):
+    def _distill_longcontext_stream(self, text: str, character_name: str, *,
+                                    aliases: Sequence[str] = (),
+                                    retro: RetroRegions = NOT_DETECTED):
         """整本蒸流式版：按组专注调用，逐组心跳 + 一个草稿 JSON 串。"""
         yield from self._format_groups_stream(
             character_name=character_name,
@@ -1938,6 +1949,7 @@ class Distiller:
             rel_material="",
             action="distill_longcontext",
             system_prefix=book_prefix(text) + "\n\n",
+            arc_input=arc_input_for(text, character_name, aliases, retro),
         )
 
     def dialogue_candidates(
@@ -2408,15 +2420,17 @@ class Distiller:
         aliases: list[str] | None = None,
         on_progress: "callable | None" = None,
         text_type: str = "story",
+        retro: RetroRegions = NOT_DETECTED,
     ) -> CharacterCard:
         """MapReduce 蒸馏：Map 并发分析 → Reduce 合并 → Format 输出 CharacterCard。
 
         Args:
             text: 原始文本。
             character_name: 目标角色名。
-            aliases: 角色别名列表，用于过滤相关片段。
+            aliases: 角色别名列表，用于过滤相关片段（一次读完时也用来建弧线组的人物摘录）。
             on_progress: ``(current, total)`` 进度回调。
             text_type: 'story' (默认) 或 'chat' (聊天记录预处理+专用提示词)。
+            retro: 这本书的回忆区；一次读完时回忆区的章不进人物摘录（`arc_input_for`）。
         """
         is_chat = text_type == "chat"
         is_classic = text_type == "classic"
@@ -2428,7 +2442,8 @@ class Distiller:
                 text = preprocessor._layer2_character_context(text, character_name)
             if on_progress:
                 on_progress(0, 1)
-            card = self._distill_longcontext(text, character_name)
+            card = self._distill_longcontext(text, character_name,
+                                             aliases=aliases or (), retro=retro)
             if on_progress:
                 on_progress(1, 1)
             return card
@@ -2565,33 +2580,38 @@ class Distiller:
     def _format_groups(
         self, *, character_name: str, user_message: str, rel_prefix: str,
         rel_material: str, action: str, system_prefix: str = "",
+        arc_input: ArcInput | None = None,
     ):
         """按字段组并行格式化 → 合并 → 关系分批 → 按草稿校验。
 
-        每组是一次长输出（共享前缀 + 组片段 + 该组子 schema），组内串行。**弧线组单独先发**，
-        返回后其余所有组并行：依赖组（`PHASE_DEPENDENT_GROUPS`，由登记表推导）要按阶段编号
-        标注 occurrences，得先知道弧线组定下的阶段，提示词附上阶段列表；其余组不带阶段列表。
-        弧线先单发也保住了缓存：一次读完的每次调用都带整本书的前缀，首批若并行而缓存未预热，
-        会按未命中计费多次（spec §8.2）。
+        每组是一次长输出（前缀 + 组片段 + 该组子 schema），组内串行。**首批是弧线组 + 预热组**
+        （`_CACHE_WARM_GROUP`），两组都返回后其余所有组并行：依赖组（`PHASE_DEPENDENT_GROUPS`，
+        由登记表推导）要按阶段编号标注 occurrences，得先知道弧线组定下的阶段，提示词附上阶段列表；
+        其余组不带阶段列表。预热组带整书前缀先跑完，其余组并行时才命中缓存（spec §8.2；
+        phase-start-chapter §2 J7：弧线组读摘录时不再替大家预热）。
 
         ``system_prefix`` 供一次读完路径把整本书放在最前（Context Caching 只认前缀）；
-        分组路径留空。每组完成 yield 一次心跳；返回值是校验后的 `CardDraft`。
+        分组路径留空。``arc_input``：弧线组与其余组不同的输入（摘录前缀、用户句、起点写法），
+        不给就与其余组相同、起点用锚点。每组完成 yield 一次心跳；返回值是校验后的 `CardDraft`。
         组失败经 `_FormatGroupError` 上抛，由调用方决定上屏形态 —— 本函数不拼半张卡。
         """
         fmt_queue: queue.Queue = queue.Queue()
+        shared = ArcInput(system_prefix, user_message)
+        arc = arc_input or shared
 
         def _format_one_group(group: str, phase_list_note: str = "") -> None:
+            inputs = arc if group == _PHASE_SOURCE_GROUP else shared
             try:
                 sub_schema = json.dumps(
-                    draft_schema(group), ensure_ascii=False, indent=2
+                    draft_schema(group, start_by=inputs.start_by), ensure_ascii=False, indent=2
                 )
                 system_prompt = (
-                    system_prefix + DISTILL_PROMPT_BEFORE_NAME + character_name
-                    + format_prompt_after(group)
+                    inputs.system_prefix + DISTILL_PROMPT_BEFORE_NAME + character_name
+                    + format_prompt_after(group, start_by=inputs.start_by)
                     + (phase_list_note + "\n\n" if phase_list_note else "")
                     + sub_schema
                 )
-                messages = [{"role": "user", "content": user_message}]
+                messages = [{"role": "user", "content": inputs.user_message}]
                 reply, upstream_truncated = self._chat_accounted(
                     system_prompt, messages, "最终格式化", action,
                     stream=True, max_tokens=self.CARD_MAX_TOKENS,
@@ -2609,35 +2629,34 @@ class Distiller:
             except Exception as exc:
                 fmt_queue.put(("error", group, exc))   # 上屏口径交给调用方统一出口
 
-        # 弧线组单独先发：它定出阶段号，其余组才有得跟；也避免首批并行时多次未命中缓存。
-        C.ctx_thread(_format_one_group, args=(_PHASE_SOURCE_GROUP,),
-                     name=f"format-{_PHASE_SOURCE_GROUP}").start()
+        group_data: dict[str, dict[str, Any]] = {}
 
-        kind, group, payload = fmt_queue.get()
-        if kind == "error":
-            raise _FormatGroupError(group, payload) from payload
-        group_data: dict[str, dict[str, Any]] = {group: payload}
-        # 心跳带组进度：消费方据此推进度条，不必知道有几组（复审发现 4）
-        yield {"heartbeat": True, "current": len(group_data), "total": len(FORMAT_GROUPS)}
+        def _collect(groups) -> _cabc.Iterator[dict]:
+            """等 `groups` 都回来；每组回来一次心跳（带组进度，消费方不必知道有几组，复审发现 4）。"""
+            while not all(g in group_data for g in groups):
+                kind, group, payload = fmt_queue.get()
+                if kind == "error":
+                    raise _FormatGroupError(group, payload) from payload
+                group_data[group] = payload
+                yield {"heartbeat": True, "current": len(group_data), "total": len(FORMAT_GROUPS)}
 
-        # 弧线组到手 → 其余组一起发；依赖组附上它定出的阶段列表
-        phase_list_note = _phase_list_note(_arc_phases(payload))
+        # 首批：弧线组定出阶段号（其余组才有得跟），预热组同时预热整书前缀。
+        first = (_PHASE_SOURCE_GROUP, _CACHE_WARM_GROUP)
+        for group in first:
+            C.ctx_thread(_format_one_group, args=(group,), name=f"format-{group}").start()
+        yield from _collect(first)
+
+        # 首批到手 → 其余组一起发；依赖组附上弧线组定出的阶段列表
+        phase_list_note = _phase_list_note(_arc_phases(group_data[_PHASE_SOURCE_GROUP]))
         for group in FORMAT_GROUPS:
-            if group == _PHASE_SOURCE_GROUP:
+            if group in first:
                 continue
             C.ctx_thread(
                 _format_one_group, args=(group,),
                 kwargs=({"phase_list_note": phase_list_note}
                         if group in PHASE_DEPENDENT_GROUPS else {}),
                 name=f"format-{group}").start()
-
-        while len(group_data) < len(FORMAT_GROUPS):
-            kind, group, payload = fmt_queue.get()
-            if kind == "error":
-                raise _FormatGroupError(group, payload) from payload
-            group_data[group] = payload
-            # 每组回来一次心跳，不新增状态值
-            yield {"heartbeat": True, "current": len(group_data), "total": len(FORMAT_GROUPS)}
+        yield from _collect(tuple(FORMAT_GROUPS))
 
         merged: dict[str, Any] = {}
         for group in FORMAT_GROUPS:      # 按 FORMAT_GROUPS 的顺序合并，与完成次序无关
@@ -2651,6 +2670,7 @@ class Distiller:
     def _format_groups_stream(
         self, *, character_name: str, user_message: str, rel_prefix: str,
         rel_material: str, action: str, system_prefix: str = "",
+        arc_input: ArcInput | None = None,
     ):
         """F1/F4 共用的上屏协议：formatting 帧 → 每组一次心跳 → 一个草稿 JSON 串。
 
@@ -2669,6 +2689,7 @@ class Distiller:
                 rel_material=rel_material,
                 action=action,
                 system_prefix=system_prefix,
+                arc_input=arc_input,
             )
         except _FormatGroupError as err:
             logger.error("format group %s aborted: %s", err.group, err.cause)
@@ -2696,8 +2717,11 @@ class Distiller:
         text_type: str = "story",
         on_chunk_done: "callable | None" = None,
         resume_candidates: dict[int, dict] | None = None,
+        retro: RetroRegions = NOT_DETECTED,
     ):
         """MapReduce 流式蒸馏 — 实时推送进度 + 流式 JSON 生成。
+
+        retro: 这本书的回忆区；一次读完时回忆区的章不进弧线组的人物摘录（`arc_input_for`）。
 
         yield 值类型：
         - dict: 进度事件（status: analyzing / merging / formatting / error）
@@ -2722,7 +2746,8 @@ class Distiller:
                 preprocessor = ChatPreprocessor()
                 text = preprocessor._layer2_character_context(text, character_name)
             # 长上下文单次路径无分片 checkpoint，续跑候选无从对应：直接整跑。
-            yield from self._distill_longcontext_stream(text, character_name)
+            yield from self._distill_longcontext_stream(text, character_name,
+                                                        aliases=aliases or (), retro=retro)
             return
         # ── End long-context routing ──────────────────────────────────────
 

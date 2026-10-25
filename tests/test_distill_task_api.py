@@ -276,15 +276,12 @@ class _CardStubDistiller:
 
     def distill_incremental_stream(self, text, character_name, *, aliases=None,
                                    text_type="story", on_chunk_done=None,
-                                   resume_candidates=None):
+                                   resume_candidates=None, retro=None):
         yield {"status": "formatting", "current": 1, "total": 1}
         yield json.dumps(self.CARD, ensure_ascii=False)
 
     def _auto_tag(self, card_dict):
         return []
-
-    def locate_phase_starts(self, draft, text, character_name, retro):
-        return None      # 路由在转卡前重新找阶段起点；本替身的草稿不需要（真实现核对得过即不调模型）
 
     def finalize_card(self, card, content, name, aliases=(), roster=()):
         self.pick_calls.append((content, name, tuple(aliases), len(roster)))
@@ -742,7 +739,7 @@ class _ChunkEmittingDistiller:
 
     def distill_incremental_stream(self, text, character_name, *,
                                    aliases=None, text_type="story",
-                                   on_chunk_done=None, resume_candidates=None):
+                                   on_chunk_done=None, resume_candidates=None, retro=None):
         for i in range(self.N):
             self.map_calls += 1
             if on_chunk_done:
@@ -821,7 +818,7 @@ class _ResumeSkippingDistiller(_ChunkEmittingDistiller):
 
     def distill_incremental_stream(self, text, character_name, *,
                                    aliases=None, text_type="story",
-                                   on_chunk_done=None, resume_candidates=None):
+                                   on_chunk_done=None, resume_candidates=None, retro=None):
         self.seen_candidates = resume_candidates
         hits = set(resume_candidates or {})
         for i in range(self.N):

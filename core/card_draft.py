@@ -14,6 +14,7 @@
   JSON，由消费方（`web/routers/distill.py`）调这一处；同步路径同样调这一处。
 """
 
+import copy
 import logging
 from collections.abc import Callable
 from typing import Annotated, Any, NamedTuple
@@ -142,23 +143,23 @@ class DraftRelationship(Relationship):
     attitudes: list[DraftAttitude] = []
 
 
-def _key_moments_stays_required(schema: dict, cls) -> None:
-    """发给模型的结构不因默认值而变：key_moments 仍列在 required、不带 default。"""
-    schema.get("properties", {}).get("key_moments", {}).pop("default", None)
-    required = schema.setdefault("required", [])
-    if "key_moments" not in required:
-        required.append("key_moments")
-
-
 class DraftPhase(PhaseState):
-    """弧线上的一个阶段；anchor 是标志这一阶段开始的一句原文（阶段 1 可留空）。
-
-    key_moments 只供重定位用，不进卡。
-    """
-    model_config = ConfigDict(json_schema_extra=_key_moments_stays_required)
+    """弧线上的一个阶段；起点是 anchor（一句原文）或 start_chapter（章号）其一，发给模型的结构
+    只露其中一个（`draft_schema` 的 ``start_by``），读草稿时按 `phase_anchoring.start_of` 判断。"""
     anchor: str = ""
-    key_moments: list[str] = []
+    start_chapter: int | None = None
     boundary_examples: list[BoundaryExample] = []
+
+
+# 每种起点写法发给模型的阶段说明与起点字段（**只此一处**；另一种写法的字段从结构里拿掉）。
+# 锚点那条是改前的原句（逐字不变）；章号那条照探针第六版（spec phase-start-chapter §2 J5）。
+_START_SCHEMA: dict[phase_anchoring.StartBy, tuple[str, dict[str, Any] | None]] = {
+    phase_anchoring.StartBy.ANCHOR: (
+        "弧线上的一个阶段；anchor 是标志这一阶段开始的一句原文（阶段 1 可留空）。", None),
+    phase_anchoring.StartBy.CHAPTER: (
+        "弧线上的一个阶段；start_chapter 是这一阶段开始的章号（阶段 1 填 0）。",
+        {"default": 0, "title": "Start Chapter", "type": "integer"}),
+}
 
 
 class DraftArc(ArcAxis):
@@ -215,13 +216,28 @@ class CardDraftBase(CharacterCard):
 CardDraft = _derive_draft_model(CardDraftBase, name="CardDraft")
 
 
-def draft_schema(group: str | None = None) -> dict[str, Any]:
+def _phase_schema(defs: dict[str, Any], start_by: phase_anchoring.StartBy) -> None:
+    """就地把 ``$defs.DraftPhase`` 改成 `start_by` 这一种起点写法（`_START_SCHEMA`）。"""
+    phase = defs["DraftPhase"]
+    description, field = _START_SCHEMA[start_by]
+    phase["description"] = description
+    for other in phase_anchoring.StartBy:
+        if other is not start_by:
+            phase["properties"].pop(other.value, None)
+    if field is not None:
+        phase["properties"][start_by.value] = field
+
+
+def draft_schema(group: str | None = None, *,
+                 start_by: phase_anchoring.StartBy = phase_anchoring.StartBy.ANCHOR) -> dict[str, Any]:
     """发给模型的 JSON 结构。``group=None`` → 整张；取 `FORMAT_GROUPS` 的键 → 该组子集。
 
     不给分组调用整张卡的 schema：那会让每一组都以为要输出全部字段。``$defs`` 整体带上，
     不按引用裁剪 —— 多带的定义只是几行噪声，裁错一条就是 ``$ref`` 解析不了的硬伤。
+    ``start_by``：阶段起点要哪种写法（默认锚点）；结构里只露那一种。
     """
-    full = CardDraft.model_json_schema()
+    full = copy.deepcopy(CardDraft.model_json_schema())
+    _phase_schema(full["$defs"], start_by)
     if group is None:
         return full
     fields = FORMAT_GROUPS[group]

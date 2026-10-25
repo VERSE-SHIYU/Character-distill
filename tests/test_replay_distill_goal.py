@@ -19,7 +19,7 @@ from pathlib import Path
 
 from conftest import TEST_DATABASE_URL  # noqa: E402
 from adapters.llm_adapter import IncompleteResponseError  # noqa: E402
-from core import phase_anchoring, phase_locate  # noqa: E402
+from core import phase_anchoring  # noqa: E402
 from core.card_draft import CardDraft, _valid_number_rows  # noqa: E402
 from core.distiller import IDENTIFY_SYSTEM_PROMPT, Distiller  # noqa: E402
 from core.request_context import LLM_CALLER, SYSTEM  # noqa: E402
@@ -36,17 +36,11 @@ _NAME = "祈灼"
 
 
 def _text(chapter_of: dict[str, int], chapters: int = 350) -> str:
-    """`chapter_of`：唯一锚点句 → 它所在的章号。每章都有标题与一行正文。
-
-    前 25 章各多一句独有句子（S2），供重定位的判定替身选中，保证换上的锚点逐章唯一。
-    """
+    """`chapter_of`：唯一锚点句 → 它所在的章号。每章都有标题与一行正文。"""
     by_chapter = {n: sentence for sentence, n in chapter_of.items()}
     parts: list[str] = []
     for n in range(1, chapters + 1):
         parts.append(f"第{n}章\n这是本章的正文。\n")
-        if n <= 25:
-            # 行首不能是「第N章」：那样会被当成第二个章节标题（章号重复 → 全书无标题）。
-            parts.append(f"独有句第{n}章。\n")
         if n in by_chapter:
             parts.append(by_chapter[n] + "\n")
     return "".join(parts)
@@ -56,12 +50,9 @@ _ARC = {
     "axis": "从孤冷到放手",
     "phases": [
         {"label": "孤冷求索", "state": "开头", "anchor": ""},
-        {"label": "一见倾心", "state": "动心", "anchor": "他第一次看见她笑",
-         "key_moments": ["他第一次看见她笑"]},
-        {"label": "甘为底牌", "state": "守候", "anchor": "他把她护在身后",
-         "key_moments": ["他把她护在身后"]},
-        {"label": "甘愿放手", "state": "离开", "anchor": "他终于转身走了",
-         "key_moments": ["他终于转身走了"]},
+        {"label": "一见倾心", "state": "动心", "anchor": "他第一次看见她笑"},
+        {"label": "甘为底牌", "state": "守候", "anchor": "他把她护在身后"},
+        {"label": "甘愿放手", "state": "离开", "anchor": "他终于转身走了"},
     ],
 }
 _ENTRY_QUOTES = {
@@ -158,13 +149,6 @@ def _stub(*, arcs: list[int] | None = None, chapter4: int = 344,
         mark("chat")
         if system.startswith(IDENTIFY_SYSTEM_PROMPT):
             return json.dumps([{"name": _NAME, "aliases": []}], ensure_ascii=False)
-        if system == phase_locate.JUDGE_SYSTEM:
-            user = messages[0]["content"]
-            chapter = int(re.search(r"### 第(\d+)章", user).group(1))
-            sent = next((line.split("：")[0] for line in user.splitlines()
-                         if line.startswith("S") and f"独有句第{chapter}章。" in line), "")
-            return json.dumps({"happens": bool(sent), "sent": sent, "why": "stub"},
-                              ensure_ascii=False)
         return json.dumps(CardDraft(name=_NAME).model_dump(), ensure_ascii=False)
 
     async def async_chat(self, system, messages, max_tokens=None, client=None, **kw):
@@ -265,7 +249,7 @@ def test_t1_one_run_writes_six_files_and_no_writes(monkeypatch, tmp_path):
     run_dir = tmp_path / "run-1"
     names = {p.name for p in run_dir.iterdir()}
     assert names == {
-        "calls.jsonl", "draft_before_locate.json", "draft_after_locate.json",
+        "calls.jsonl", "draft.json",
         "retro.json", "phase_starts.json", "entries.tsv"}, names
     lines = [json.loads(x) for x in (run_dir / "calls.jsonl").read_text(
         encoding="utf-8").splitlines() if x.strip()]
@@ -301,7 +285,7 @@ def test_t2_entries_landed_phase_matches_phase_anchoring(monkeypatch, tmp_path):
 
     content = asyncio.run(go())
     run_dir = tmp_path / "run-1"
-    draft = json.loads((run_dir / "draft_after_locate.json").read_text(encoding="utf-8"))
+    draft = json.loads((run_dir / "draft.json").read_text(encoding="utf-8"))
     model = CardDraft.model_validate(draft)
     anchors = phase_anchoring.build_anchors(
         model.character_arc.phases, content,
@@ -479,7 +463,7 @@ def test_t7_entry_verdicts_match_core_verify_counts(tmp_path):
 
     content = asyncio.run(go())
     run_dir = tmp_path / "run-1"
-    draft = json.loads((run_dir / "draft_after_locate.json").read_text(encoding="utf-8"))
+    draft = json.loads((run_dir / "draft.json").read_text(encoding="utf-8"))
     model = CardDraft.model_validate(draft)
     anchors = phase_anchoring.build_anchors(
         model.character_arc.phases, content,
@@ -581,60 +565,11 @@ def test_checklist_item1_fails_when_position_check_is_skipped():
     anchors = phase_anchoring.build_anchors(phases, content, retro=retro.spans(content))
     assert anchors.reason, anchors.reason
 
-    starts = replay._start_rows(phases, anchors, content,
-                                [p.get("anchor", "") for p in phases])
+    starts = replay._start_rows(phases, anchors, content)
     items = replay._checklist(starts, anchors, _NAME)
 
     assert items[0]["verdict"] == "不过", items[0]
     assert items[0]["detail"] == anchors.reason, items[0]
-
-
-# ── 复审补充：H4 触发 / 不触发（M2、M13）────────────────────────────────────
-
-def _run_calls(run_dir: Path) -> list[dict]:
-    return [json.loads(x) for x in (run_dir / "calls.jsonl").read_text(
-        encoding="utf-8").splitlines() if x.strip()]
-
-
-def test_h4_not_triggered_when_anchors_pass(tmp_path):
-    async def go():
-        store, user, text = await _prepare()
-        try:
-            return await _run(store, text["id"], tmp_path, _stub())
-        finally:
-            await store.close()
-
-    summary = asyncio.run(go())
-    h4 = summary["H4"]["runs"][0]
-    starts = json.loads((tmp_path / "run-1" / "phase_starts.json").read_text(
-        encoding="utf-8"))
-    assert h4["triggered"] is False, h4
-    assert starts["relocated"] is False, starts
-    assert h4["before"] == h4["after"], h4
-    assert not [c for c in _run_calls(tmp_path / "run-1")
-                if c["action"] == "distill_phase_locate"]
-
-
-def test_h4_triggered_when_anchor_unlocatable(tmp_path):
-    async def go():
-        store, user, text = await _prepare()
-        try:
-            return await _run(store, text["id"], tmp_path,
-                              _stub(phase2_anchor="原文里没有这句话"))
-        finally:
-            await store.close()
-
-    summary = asyncio.run(go())
-    h4 = summary["H4"]["runs"][0]
-    starts = json.loads((tmp_path / "run-1" / "phase_starts.json").read_text(
-        encoding="utf-8"))
-    assert h4["triggered"] is True, h4
-    assert starts["relocated"] is True, starts
-    assert h4["before"][1] == "原文里没有这句话", h4
-    assert h4["after"][1] == "独有句第1章。", h4
-    assert [p["chapter"] for p in starts["phases"]] == [0, 1, 2, 3], starts
-    assert [c for c in _run_calls(tmp_path / "run-1")
-            if c["action"] == "distill_phase_locate"]
 
 
 # ── 复审补充：回忆区（M3）───────────────────────────────────────────────────
