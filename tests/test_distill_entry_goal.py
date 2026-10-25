@@ -19,6 +19,8 @@ import test_distill_task_api as A
 from test_distill_task_api import store, user_id, _clean_tasks  # noqa: F401  复用同一套夹具
 from core.distiller import text_fingerprint
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 ENTRIES = ("character_page", "workbench_card", "workbench_task", "task_bar", "redraft")
 
 

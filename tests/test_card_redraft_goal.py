@@ -33,6 +33,8 @@ from test_distill_draft_persist import (
 )
 from test_distill_task_api import _build_client, _run_async
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 _RELOCATED = "重定位后才会出现的独有背景串"
 _NO_DRAFT = "没有存草稿"
 

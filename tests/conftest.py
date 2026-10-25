@@ -479,6 +479,23 @@ class FakeSSE:
 
 
 @pytest.fixture
+def embedding_key_configured(monkeypatch):
+    """给 SQLite / PG 存储的用户一个百炼 key —— 只给「本文件不测 key 行为」的模块用。
+
+    面向用户入口在没配 key 时一律 400（`web/user_keys.require_embedding`）。这些模块测的是
+    别的东西，不显式 opt-in 就会撞在门上；要测门本身的模块不要用它。
+    """
+    from storage.postgres_store import PostgresStore
+    from storage.sqlite_store import SQLiteStore
+
+    async def _with_key(_self, _user_id):
+        return {"embedding_key": "k", "embedding_region": "cn"}
+
+    monkeypatch.setattr(SQLiteStore, "get_user_api_config", _with_key)
+    monkeypatch.setattr(PostgresStore, "get_user_api_config", _with_key)
+
+
+@pytest.fixture
 def fake_sse():
     srv = FakeSSE()
     yield srv

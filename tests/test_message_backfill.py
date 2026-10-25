@@ -36,6 +36,8 @@ from routers.history import router as history_router
 from storage.sqlite_store import SQLiteStore
 from conftest import open_test_client, app_lifespan
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 
 # ── 夹具 ──────────────────────────────────────────────────────────────────────
 

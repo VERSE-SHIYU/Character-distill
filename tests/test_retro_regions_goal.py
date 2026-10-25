@@ -19,6 +19,8 @@ from storage.sqlite_store import SQLiteStore
 import test_distill_draft_persist as P
 from test_distill_task_api import _run_async
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 # 谢凛羽原文 3335472a438b（第 1–509 章）的标准答案，Claude 逐章核过：第 491–504 章日札（123 篇，
 # 记的是正文里早已写过的日子）、第 508–509 章番外（云钺童年）是倒叙；第 490 章「正文完」，
 # 第 505–507 章是结局之后的番外（第 507 章末「番外：误认为有孕篇（完）」），时间接在正文之后，不是倒叙。

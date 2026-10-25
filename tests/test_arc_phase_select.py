@@ -18,11 +18,15 @@ import threading
 import uuid
 from pathlib import Path
 
+import pytest
+
 from core.card_draft import card_from_draft
 from core.retro_regions import NOT_DETECTED
 from core.chat_engine import ChatEngine
 from core.export import export_tavern_json
 from core.schema import FORMAT_GROUPS, POST_FORMAT_FIELDS, CharacterCard, RetrievalWindow
+
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
 
 _REPO = Path(__file__).resolve().parent.parent
 

@@ -79,7 +79,8 @@ class _Store:
         return {"text_id": text_id, "content": "正文", "text_type": "story", "user_id": user_id}
 
     async def get_user_api_config(self, user_id: str) -> dict:
-        return {}
+        # 本文件不测 key 门：给个百炼 key，否则面向用户入口一律 400。
+        return {"embedding_key": "k", "embedding_region": "cn"}
 
     async def get_session_owned(self, session_id: str, user_id: str):
         return self._session

@@ -29,6 +29,8 @@ from routers.auth import get_current_user
 from routers.group import router as group_router
 from storage.sqlite_store import SQLiteStore
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 
 def _run_async(coro):
     loop = asyncio.new_event_loop()

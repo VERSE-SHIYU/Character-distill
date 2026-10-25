@@ -40,6 +40,8 @@ from test_distill_draft_persist import (
 )
 from test_distill_task_api import _assert_premise_resolves, _build_client, _run_async
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 _REPO = Path(__file__).resolve().parents[1]
 _ROOT = logging.getLogger()
 

@@ -21,6 +21,8 @@ from httpx import ASGITransport, AsyncClient
 
 from conftest import PG_ENV, TEST_DATABASE_URL
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 _pg = PG_ENV.skipif("PG 群聊阶段目标检查")
 
 # 两阶段的可选卡：起点齐全 + 有指纹（`has_positions` 为真）。

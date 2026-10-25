@@ -34,6 +34,8 @@ from routers.chat import _ensure_session
 from routers.history import router as history_router
 from storage.sqlite_store import SQLiteStore
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 _ROLE = "骑士"
 
 
