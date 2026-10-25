@@ -132,7 +132,7 @@ class TestMetrics:
             [_scene(SOURCE[:18])],
         )
         assert row == {"id": "q1", "hit": True, "leak": False,
-                       "top3_chunk_ids": ["scene_0"]}
+                       "unlocated": 0, "top3_chunk_ids": ["scene_0"]}
 
     def test_truncated_hit_still_overlaps(self):
         # 命中段只含片段前半（截断到 800 字内的自然形态），位置仍重叠。
@@ -148,7 +148,7 @@ class TestMetrics:
             [_scene(SOURCE[35:55])],
         )
         assert row == {"id": "q3", "hit": False, "leak": True,
-                       "top3_chunk_ids": ["scene_0"]}
+                       "unlocated": 0, "top3_chunk_ids": ["scene_0"]}
 
     def test_no_overlap_counts_neither(self):
         row = self._score(
@@ -158,6 +158,36 @@ class TestMetrics:
             [_scene("后来他独自去了后山没有告诉任何人")],
         )
         assert row["hit"] is False and row["leak"] is False
+
+    def test_ellipsis_hit_does_not_overlap_the_gap(self):
+        # 命中段含「……」：位置只取最长一段、宽度按整段算时，区间会跨过中间无关段落
+        # （B 段）而假命中。评测只认连续原文，拼接文本在原文里找不到。
+        from core import recall_eval
+
+        source = (
+            "满月宴那天祈灼在廊下听见了那支曲子"      # 0..17
+            "后来他独自去了后山没有告诉任何人"        # 18..34
+            "魏无羡在另一处杀了人这件事祈灼不知道"    # 35..54
+            "最后他在渡口等到天亮"                    # 55..64
+        )
+        hit_text = source[:18] + "……" + source[55:65]
+        row = recall_eval.score_case(
+            normalize(source),
+            {"id": "q5", "should": [source[18:35]], "should_not": []},
+            [_scene(hit_text)],
+        )
+        assert row["hit"] is False, "省略号拼接的命中段被当成了与中间段落重叠"
+        assert row["unlocated"] == 1
+
+    def test_unlocated_hits_are_counted(self):
+        from core import recall_eval
+
+        row = recall_eval.score_case(
+            normalize(SOURCE),
+            {"id": "q6", "should": [], "should_not": []},
+            [_scene(SOURCE[18:35]), _scene("这句话原文里根本没有啊")],
+        )
+        assert row["unlocated"] == 1
 
     def test_aggregate(self):
         from core import recall_eval
@@ -193,13 +223,15 @@ class TestAnnotationSelfCheck:
              "should": ["满月宴"], "should_not": []},
             {"id": "q_late", "phase": 1, "query": QUERY,
              "should": ["魏无羡在另一处杀了人"], "should_not": []},
+            {"id": "q_ellipsis", "phase": 1, "query": QUERY,
+             "should": ["满月宴那天……那支曲子"], "should_not": []},
         ]
 
         with pytest.raises(re_mod.AnnotationError) as excinfo:
             ev.run_eval(SOURCE, _card(), cases, rag=object())
 
         message = str(excinfo.value)
-        for bad in ("q_missing", "q_dup", "q_short", "q_late"):
+        for bad in ("q_missing", "q_dup", "q_short", "q_late", "q_ellipsis"):
             assert bad in message, f"{bad} 的问题没有被列出"
         assert "q_ok" not in message
         assert called == [], "标注有问题时不许发出任何检索调用"

@@ -1,14 +1,18 @@
 """召回评测的指标与标注自检 —— **纯函数，零 IO**。
 
 命中按**原文位置区间重叠**判定，不按段 id：命中段只带文本（``meta.chunk_id``），
-标注写的是原文片段，两边都用 ``core.quotes.locate_in_normalized`` 换算成规范化坐标，
-区间相交即算。这样不依赖场景怎么切，以后重切场景 / 改成按事件入库，标注不用重做。
+标注写的是原文片段，两边都换算成原文的**连续**规范化区间，相交即算。这样不依赖场景
+怎么切，以后重切场景 / 改成按事件入库，标注不用重做。
+
+不复用 ``core.quotes.locate_in_normalized``：那是为「省略号拼接核对」设计的，位置只取
+最长一段、宽度却按整段算，命中段含省略号时区间会跨过中间无关段落（假命中）。
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable, Mapping
 
-from core.quotes import MIN_ELIDED_FRAGMENT_LEN, locate_in_normalized, normalize
+from core.quotes import MIN_ELIDED_FRAGMENT_LEN, _ELLIPSIS, normalize
 
 
 class AnnotationError(ValueError):
@@ -16,10 +20,11 @@ class AnnotationError(ValueError):
 
 
 def _intervals(source_norm: str, text: str) -> list[tuple[int, int]]:
-    """文本在原文里的所有区间；找不到 → 空列表（不判命中）。"""
-    positions = locate_in_normalized(source_norm, text) or []
-    width = len(normalize(text))
-    return [(p, p + width) for p in positions]
+    """文本在原文里的所有连续区间；找不到（或规范化后为空）→ 空列表。"""
+    n = normalize(text)
+    if not n:
+        return []
+    return [(m.start(), m.start() + len(n)) for m in re.finditer(re.escape(n), source_norm)]
 
 
 def _overlaps(a: list[tuple[int, int]], b: list[tuple[int, int]]) -> bool:
@@ -43,16 +48,19 @@ def validate_cases(
         for key in ("should", "should_not"):
             for i, fragment in enumerate(case.get(key) or []):
                 piece = str(fragment)
+                if _ELLIPSIS.search(piece):
+                    problems.append(f"{case_id}: {key}[{i}] 含省略号（只接受连续原文片段）")
+                    continue
                 if len(piece.strip()) < MIN_ELIDED_FRAGMENT_LEN:
                     problems.append(f"{case_id}: {key}[{i}] 短于 {MIN_ELIDED_FRAGMENT_LEN} 字")
                     continue
-                positions = locate_in_normalized(source_norm, piece)
-                if positions is None:
+                intervals = _intervals(source_norm, piece)
+                if not intervals:
                     problems.append(f"{case_id}: {key}[{i}] 在原文里找不到")
-                elif len(positions) > 1:
+                elif len(intervals) > 1:
                     problems.append(
-                        f"{case_id}: {key}[{i}] 在原文里出现 {len(positions)} 处（须唯一）")
-                elif key == "should" and before is not None and positions[0] >= before:
+                        f"{case_id}: {key}[{i}] 在原文里出现 {len(intervals)} 处（须唯一）")
+                elif key == "should" and before is not None and intervals[0][0] >= before:
                     problems.append(f"{case_id}: {key}[{i}] 落在所选阶段之后")
     if problems:
         raise AnnotationError("标注未通过自检：\n" + "\n".join(problems))
@@ -64,13 +72,17 @@ def score_case(source_norm: str, case: Mapping[str, Any], hits: Iterable[Any]) -
     should_not = [iv for f in case.get("should_not") or [] for iv in _intervals(source_norm, f)]
 
     hit = leak = False
+    unlocated = 0
     chunk_ids: list[str | None] = []
     for item in hits:
         chunk_ids.append((item.meta or {}).get("chunk_id"))
         hit_iv = _intervals(source_norm, item.text)
+        if not hit_iv:
+            unlocated += 1
         hit = hit or _overlaps(hit_iv, should)
         leak = leak or _overlaps(hit_iv, should_not)
-    return {"id": case.get("id"), "hit": hit, "leak": leak, "top3_chunk_ids": chunk_ids}
+    return {"id": case.get("id"), "hit": hit, "leak": leak,
+            "unlocated": unlocated, "top3_chunk_ids": chunk_ids}
 
 
 def aggregate(rows: Iterable[dict]) -> dict:
