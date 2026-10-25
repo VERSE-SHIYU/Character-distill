@@ -115,7 +115,7 @@ async def _rebuild_group_session(
         # 503 只取决于请求者自己的配置，不暴露会话是否存在。
         raise HTTPException(503, "请先在设置页配置 API Key")
 
-    gdeps = await group_engine_deps(user_id, per_user_llm, storage, where=f"rebuild {group_id}")
+    gdeps = await group_engine_deps(user_id, per_user_llm, storage)
     member_phases: dict[str, int] = session.get("member_phases") or {}
 
     persona_type = session.get("user_persona_type", "director")
@@ -298,7 +298,7 @@ async def create_group(
     from core.chat_engine import ChatEngine
     from core.schema import CharacterCard
 
-    gdeps = await group_engine_deps(user_id, per_user_llm, storage, where="create")
+    gdeps = await group_engine_deps(user_id, per_user_llm, storage)
 
     # 群身份先于引擎生成：每个引擎出生时就带上它，不再等「要评估好感度了」再补。
     group_id = uuid.uuid4().hex[:12]

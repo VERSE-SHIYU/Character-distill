@@ -26,8 +26,8 @@ class GroupEngineDeps:
     storage: Any
 
 
-async def group_engine_deps(user_id: str, per_user_llm: Any, storage: Any, *, where: str) -> GroupEngineDeps:
-    """群引擎的依赖**只在这里**准备一次。`where` 只进日志（建群 / 恢复哪个群）。"""
+async def group_engine_deps(user_id: str, per_user_llm: Any, storage: Any) -> GroupEngineDeps:
+    """群引擎的依赖**只在这里**准备一次。"""
     from deps import get_indexing_service, get_user_memory
     from web.user_keys import require_embedding
 

@@ -32,7 +32,6 @@ from deps import get_sessions, get_storage
 from routers.auth import get_current_user
 
 _LLM_CONFIG = {"api_key": "k", "base_url": "https://api.deepseek.com", "model": "m"}
-_EMB_CONFIG = {"embedding_key": "sk-emb", "embedding_region": "cn"}
 
 
 class _Boom:
@@ -235,13 +234,3 @@ def test_llm_503_precedes_embedding_400(name, monkeypatch):
     client = _build(store)
     resp = getattr(client, method)(path, json=body)
     assert resp.status_code == 503, f"{name}: 先 LLM 503 再百炼 400：{resp.status_code} {resp.text}"
-
-
-def test_reindex_service_unassembled_is_503(monkeypatch):
-    """服务没装配不是用户没配置 —— 两者原先混在同一个 400 里。"""
-    store, _uid, _m, path, _body = _make_case("reindex")
-    store.config = dict(_EMB_CONFIG)
-    monkeypatch.setattr(D, "get_indexing_service", lambda: None)
-    client = _build(store)
-    resp = client.post(path)
-    assert resp.status_code == 503, resp.text

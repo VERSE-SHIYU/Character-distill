@@ -496,7 +496,7 @@ def _make_indexing_service() -> IndexingService:
     return IndexingService(_rag_config)
 
 
-def get_indexing_service() -> IndexingService | None:
+def get_indexing_service() -> IndexingService:
     """Return the IndexingService singleton."""
     global _indexing_service
     if _indexing_service is None:

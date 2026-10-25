@@ -167,3 +167,11 @@ scripts/rebuild_384_collections.py:281:        env_key=(os.getenv("EMBEDDING_API
 | `_ensure_session` 内存命中不读配置 | F10 读过 `chat.py:134-150` |
 | §7 受影响测试 | grep 得出 + 读过 T4c、`test_card_draft.py:330-375`、`test_phase_anchoring.py:520-547` 的桩；其余文件**未逐个运行**，交 S0 |
 | history / create_group 的 LLM 503 在前 | **未核实**，交 S0-4 |
+
+## 补充（10-25 审计）
+
+审计指出两处，追加一个提交修掉：
+
+1. **reindex 的「服务未装配」503 分支是不可达代码**。§3/§4 E10 依据的是 `web/deps.py:499` 的返回类型 `IndexingService | None`，但没读函数体：`get_indexing_service()` 在 `_indexing_service is None` 时懒构造并返回实例（`:501-504`），生产路径永不返回 None。据此拆出的 503 分支和它的测试都只描述了一个不存在的情况。处置：删 `web/routers/distill.py` 里那两行、把返回类型收紧为 `IndexingService`、删 `test_reindex_service_unassembled_is_503`。
+   **根因**：spec 只看了返回类型没读函数体（违反 §8 S0「讲代码行为的判断要引出这一轮读过的代码行」）。
+2. **`group_engine_deps` 的 `where` 是死参数**。它原先只用于 F4 那段 try/except 的 `logger.warning`（`origin/main:web/group_engines.py:39-42`），本 PR 删掉那段后已无任何使用处，docstring 仍在声称「只进日志」。处置：删参数、docstring 说明，以及 `web/routers/group.py:118`、`:301` 两处传参。

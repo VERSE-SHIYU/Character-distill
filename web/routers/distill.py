@@ -1309,11 +1309,8 @@ async def reindex_rag(
         raise HTTPException(404, "Text not found")
     content = text_rec["content"]
 
-    # 先确认建得了，再识别：识别可能要调一次 LLM，建不了就不该花这一笔。
     emb = await require_embedding(user_id, storage)
     indexing_service = get_indexing_service()
-    if indexing_service is None:
-        raise HTTPException(503, "向量检索服务未装配，请稍后重试")
 
     # 不设就地捕获（理由见 `_do_identify` 上方的块注释）：识别失败冒泡到统一出口。
     chars = await resolve_characters(storage, distiller, text_id, user_id, content)
