@@ -1,0 +1,480 @@
+{
+  "r_at_3": 0.0,
+  "leak_rate": 0.0,
+  "n": 43,
+  "per_query": [
+    {
+      "id": "q01",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_128",
+        "scene_18",
+        "scene_54"
+      ]
+    },
+    {
+      "id": "q02",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_0",
+        "scene_3",
+        "scene_13"
+      ]
+    },
+    {
+      "id": "q03",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_102",
+        "scene_97",
+        "scene_99"
+      ]
+    },
+    {
+      "id": "q04",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_87",
+        "scene_91",
+        "scene_140"
+      ]
+    },
+    {
+      "id": "q05",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_93",
+        "scene_136",
+        "scene_116"
+      ]
+    },
+    {
+      "id": "q06",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_323",
+        "scene_655",
+        "scene_675"
+      ]
+    },
+    {
+      "id": "q07",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_482",
+        "scene_303",
+        "scene_255"
+      ]
+    },
+    {
+      "id": "q08",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_180",
+        "scene_504",
+        "scene_567"
+      ]
+    },
+    {
+      "id": "q09",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_323",
+        "scene_160",
+        "scene_307"
+      ]
+    },
+    {
+      "id": "q10",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_482",
+        "scene_487",
+        "scene_484"
+      ]
+    },
+    {
+      "id": "q11",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_504",
+        "scene_410",
+        "scene_652"
+      ]
+    },
+    {
+      "id": "q12",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_323",
+        "scene_160",
+        "scene_298"
+      ]
+    },
+    {
+      "id": "q13",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_62",
+        "scene_25",
+        "scene_105"
+      ]
+    },
+    {
+      "id": "q14",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_128",
+        "scene_27",
+        "scene_135"
+      ]
+    },
+    {
+      "id": "q15",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_88",
+        "scene_27",
+        "scene_85"
+      ]
+    },
+    {
+      "id": "q16",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_3",
+        "scene_1",
+        "scene_88"
+      ]
+    },
+    {
+      "id": "q17",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_1",
+        "scene_0",
+        "scene_3"
+      ]
+    },
+    {
+      "id": "q18",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_1",
+        "scene_3",
+        "scene_11"
+      ]
+    },
+    {
+      "id": "q19",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_323",
+        "scene_160",
+        "scene_503"
+      ]
+    },
+    {
+      "id": "q20",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_443",
+        "scene_564",
+        "scene_484"
+      ]
+    },
+    {
+      "id": "q21",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_381",
+        "scene_648",
+        "scene_466"
+      ]
+    },
+    {
+      "id": "q22",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_422",
+        "scene_504",
+        "scene_102"
+      ]
+    },
+    {
+      "id": "q23",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_323",
+        "scene_160",
+        "scene_410"
+      ]
+    },
+    {
+      "id": "q24",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_323",
+        "scene_160",
+        "scene_410"
+      ]
+    },
+    {
+      "id": "q25",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_323",
+        "scene_307",
+        "scene_655"
+      ]
+    },
+    {
+      "id": "q26",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_341",
+        "scene_438",
+        "scene_417"
+      ]
+    },
+    {
+      "id": "q27",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_307",
+        "scene_410",
+        "scene_214"
+      ]
+    },
+    {
+      "id": "q28",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_675",
+        "scene_447",
+        "scene_631"
+      ]
+    },
+    {
+      "id": "q29",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_553",
+        "scene_657",
+        "scene_675"
+      ]
+    },
+    {
+      "id": "q30",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_657",
+        "scene_675",
+        "scene_672"
+      ]
+    },
+    {
+      "id": "q31",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_466",
+        "scene_381",
+        "scene_615"
+      ]
+    },
+    {
+      "id": "q32",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_323",
+        "scene_572",
+        "scene_583"
+      ]
+    },
+    {
+      "id": "q33",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_504",
+        "scene_3",
+        "scene_299"
+      ]
+    },
+    {
+      "id": "q34",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_503",
+        "scene_323",
+        "scene_654"
+      ]
+    },
+    {
+      "id": "q35",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_323",
+        "scene_503",
+        "scene_648"
+      ]
+    },
+    {
+      "id": "q36",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_323",
+        "scene_504",
+        "scene_655"
+      ]
+    },
+    {
+      "id": "q37",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_248",
+        "scene_326",
+        "scene_499"
+      ]
+    },
+    {
+      "id": "q38",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_530",
+        "scene_499",
+        "scene_326"
+      ]
+    },
+    {
+      "id": "q39",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_341",
+        "scene_410",
+        "scene_323"
+      ]
+    },
+    {
+      "id": "q40",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_341",
+        "scene_438",
+        "scene_340"
+      ]
+    },
+    {
+      "id": "q41",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_1",
+        "scene_0",
+        "scene_3"
+      ]
+    },
+    {
+      "id": "q42",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_1",
+        "scene_88",
+        "scene_119"
+      ]
+    },
+    {
+      "id": "q43",
+      "hit": false,
+      "leak": false,
+      "unlocated": 0,
+      "top3_chunk_ids": [
+        "scene_279",
+        "scene_160",
+        "scene_504"
+      ]
+    }
+  ]
+}

@@ -121,6 +121,19 @@
     "redacted_fields": []
   },
   {
+    "id": "recall-baseline-qizhuo",
+    "claim": "R@3 0.00 / 越界率 0.00（n=43，基线 tag 见 env）",
+    "status": "verified",
+    "artifact": "docs/evidence/recall-baseline-qizhuo.json",
+    "script": "scripts/eval_recall.py",
+    "script_role": "producer",
+    "reproduce": "SG 容器：cd /app && PYTHONPATH=/app python /tmp/eval_recall.py --user-id 3996bd7f23a34311 --card-id d541a44f3679 --cases /tmp/qizhuo.jsonl > /tmp/result.json；本地：python scripts/eval_recall.py --from-json /tmp/result.json --evidence-id recall-baseline-qizhuo",
+    "env": "用户自己的百炼 embedding key；检索 = 聊天同一次 scene_hits（top_k=3）；基线 tag recall-baseline-2026-10",
+    "measured_at": "2026-10-25",
+    "code_sha": "52a9c9cd",
+    "redacted_fields": []
+  },
+  {
     "id": "thinking-capfield",
     "claim": "顶到 8192 时 3 条里 2 条 content_chars=0、reasoning_content 12441/12413、finish_reason=length —— 思考与正文共享 max_tokens 预算",
     "status": "verified",
