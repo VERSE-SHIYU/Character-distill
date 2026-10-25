@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -34,15 +35,13 @@ from core.schema import (  # noqa: E402
 )
 from evidence_fakes import build_ctx  # noqa: E402
 
-pytestmark = pytest.mark.xfail(strict=True, reason="召回评测段 0a 尚未实现")
-
 # 全部为汉字、无标点：规范化坐标 == 字符下标，方便算阶段边界。
 SOURCE = (
     "满月宴那天祈灼在廊下听见了那支曲子"      # 0..17
     "后来他独自去了后山没有告诉任何人"        # 18..34
     "魏无羡在另一处杀了人这件事祈灼不知道"    # 35..54
-    "没有人知道这件事"                        # 55..62
-    "没有人知道这件事"                        # 63..70
+    "祈灼始终不知道这件事"                    # 55..64（重复，用于唯一性自检）
+    "祈灼始终不知道这件事"                    # 65..74
 )
 
 QUERY = "你还记得满月宴那天吗"
@@ -80,7 +79,8 @@ class TestSameRetrievalCall:
         monkeypatch.setattr(sr, "scene_hits", recorder)
 
         card = _card()
-        ctx = build_ctx(card=card)
+        rag = object()
+        ctx = build_ctx(card=card, rag=rag)
         ctx.arc_view = arc_view(card, 1)
         ctx._scene_items(QUERY)
 
@@ -88,12 +88,12 @@ class TestSameRetrievalCall:
             SOURCE, card,
             [{"id": "q1", "phase": 1, "query": QUERY,
               "should": ["满月宴那天祈灼在廊下听见"], "should_not": []}],
-            rag=object(),
+            rag=rag,
         )
 
         assert len(calls) == 2, "聊天与评测各应发出一次 scene_hits"
         chat, tool = calls
-        for key in ("query", "character_name", "window"):
+        for key in ("rag", "query", "character_name", "window"):
             assert chat[key] == tool[key], f"{key} 不一致：聊天与评测量的不是同一次调用"
 
     def test_scene_hits_delegates_top3_and_detected_emotion(self):
@@ -188,7 +188,7 @@ class TestAnnotationSelfCheck:
             {"id": "q_missing", "phase": 1, "query": QUERY,
              "should": ["原文里根本没有的一句话"], "should_not": []},
             {"id": "q_dup", "phase": 1, "query": QUERY,
-             "should": ["没有人知道这件事"], "should_not": []},
+             "should": ["祈灼始终不知道这件事"], "should_not": []},
             {"id": "q_short", "phase": 1, "query": QUERY,
              "should": ["满月宴"], "should_not": []},
             {"id": "q_late", "phase": 1, "query": QUERY,
@@ -203,3 +203,23 @@ class TestAnnotationSelfCheck:
             assert bad in message, f"{bad} 的问题没有被列出"
         assert "q_ok" not in message
         assert called == [], "标注有问题时不许发出任何检索调用"
+
+
+class TestScriptLoading:
+    def test_missing_embedding_key_reports_production_message(self):
+        import scripts.eval_recall as ev
+        from core.embeddings import EMBEDDING_KEY_REQUIRED
+
+        class _Storage:
+            async def get_card_owned(self, card_id, user_id):
+                return {"text_id": "t1", "card_json": "{}"}
+
+            async def get_text_owned(self, text_id, user_id):
+                return {"content": "原文"}
+
+            async def get_user_api_config(self, user_id):
+                return {}
+
+        with pytest.raises(ev.EvalAbort) as excinfo:
+            asyncio.run(ev.load_inputs(_Storage(), user_id="u1", card_id="c1"))
+        assert str(excinfo.value) == EMBEDDING_KEY_REQUIRED
