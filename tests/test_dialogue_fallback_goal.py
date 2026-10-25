@@ -52,6 +52,8 @@ from test_identify_failure_channels import (  # noqa: F401  （fixture 靠名字
     user_id,
 )
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 DONE = "蒸馏完成 ✓"
 DONE_WITHOUT_EXAMPLES = "蒸馏完成，未配上对话示例（可在编辑角色卡时手动填写）"
 EXAMPLE = "路人：先前的话。\n角色：我说一句话。"

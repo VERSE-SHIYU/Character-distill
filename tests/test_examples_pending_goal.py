@@ -51,6 +51,8 @@ from __future__ import annotations
 import json
 import uuid
 
+import pytest
+
 import deps
 from core.card_out import card_revision
 from core.distiller import Distiller
@@ -67,6 +69,8 @@ from test_identify_failure_channels import (  # noqa: F401  （fixture 靠名字
     store,
     user_id,
 )
+
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
 
 EXAMPLE = "路人：先前的话。\n角色：我说一句话。"
 ROSTER = [{"name": "角色"}, {"name": "路人"}]
