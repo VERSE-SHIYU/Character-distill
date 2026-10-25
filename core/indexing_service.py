@@ -28,7 +28,14 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from core.rag import POS_SCHEMA, POS_SCHEMA_KEY, CollectionUnusableError, EvidenceHits, RAGEngine
+from core.rag import (
+    POS_SCHEMA,
+    POS_SCHEMA_KEY,
+    CollectionUnusableError,
+    EvidenceHits,
+    RAGEngine,
+    chunk_spans as rag_chunk_spans,
+)
 from core.scene_indexer import SceneIndexer
 
 logger = logging.getLogger(__name__)
@@ -97,8 +104,8 @@ class SessionRag:
     每次检索前先比令牌（只读元数据），令牌没变就沿用，变了（有集合被重建 / 建完 /
     开始或结束构建，不论哪个进程做的）才重新装载。本会话的一次查询失败也会强制重读。
 
-    对外只提供 `ContextEngine` 用到的 `query_with_emotion_ex`；
-    `collection_name` 只读，供观测。
+    对外提供 `ContextEngine` 用的 `query_with_emotion_ex`，以及评测用的
+    `chunk_spans`；`collection_name` 只读，供观测。
     """
 
     def __init__(
@@ -131,6 +138,13 @@ class SessionRag:
         self._engine, self._unavailable = service._load_session_rag(
             rag, self._text_id, self._card_id)
         self._probe, self._stamp = rag, stamp
+
+    def chunk_spans(self, source_norm_len: int) -> dict[str, tuple[int, int]]:
+        """检索实际绑定的那个集合的块区间；未装载 / 没有可用集合 → 空表。"""
+        self._refresh()
+        if self._engine is None:
+            return {}
+        return rag_chunk_spans(self._engine.collection, source_norm_len)
 
     def query_with_emotion_ex(self, query_text: str, **kwargs: Any) -> EvidenceHits:
         """透传给已装载的引擎。时间窗（``window``）的适用性判断在 `RAGEngine` 里做（审计 A1），
