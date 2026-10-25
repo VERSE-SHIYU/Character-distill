@@ -52,6 +52,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import pytest
+
 import deps
 import server
 from conftest import TEST_JWT_SECRET
@@ -69,6 +71,8 @@ from core.schema import FORMAT_GROUPS
 
 # WP7 复用：从格式化系统提示词认组别 + 按组回字段齐备的 JSON（不另抄字段样例）
 from test_distiller_routing import _format_group_of, _group_reply
+
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
 
 _REPO = Path(__file__).resolve().parent.parent
 
@@ -502,6 +506,9 @@ def test_start_route_lands_usage_rows(monkeypatch):
     monkeypatch.setattr(deps, "Distiller", _factory)
     monkeypatch.setattr(deps, "get_user_llm", _resolve)
     monkeypatch.setattr(deps, "_storage", store)
+    # 配了百炼 key 才会走到记忆 / 索引；本用例测记账身份，两者都关掉，不出网。
+    monkeypatch.setattr(deps, "get_memory_manager", lambda: None)
+    monkeypatch.setattr(deps, "get_indexing_service", lambda: None)
 
     app = FastAPI()
     app.include_router(D.router)

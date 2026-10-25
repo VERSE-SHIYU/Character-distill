@@ -30,6 +30,8 @@ from storage.sqlite_store import SQLiteStore
 import test_distill_draft_persist as P
 from routers import distill as D
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 _SRC = ("第1章\n他在家里读书。日子平平淡淡。\n"
         "第2章\n那天他在桥边初遇阿月。他从此心动不已。\n"
         "第3章\n他常想起桥边的阿月。书院来信催他。\n"

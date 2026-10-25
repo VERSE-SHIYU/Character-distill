@@ -23,6 +23,8 @@ from storage.sqlite_store import SQLiteStore
 import test_distill_draft_persist as P
 from routers import distill as D          # 与 test_distill_draft_persist 同一个模块对象
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 _SRC = ("第1章\n开头甲甲甲甲甲。旧事丁丁丁丁丁。\n"
         "第2章\n中间乙乙乙乙乙。\n"
         "第3章\n结尾丙丙丙丙丙。\n"

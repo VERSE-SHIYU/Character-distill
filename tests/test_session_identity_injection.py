@@ -44,6 +44,8 @@ from routers.group import get_group_sessions, _rebuild_group_session
 from routers.group import router as group_router
 from storage.sqlite_store import SQLiteStore
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 
 def _run(coro):
     loop = asyncio.new_event_loop()

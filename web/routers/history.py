@@ -22,7 +22,7 @@ from core.nonfatal import nonfatal
 from core.text_manager import session_identity
 from storage.base import StorageBase
 from routers.auth import get_current_user
-from web.llm_resolution import resolve_embedding
+from web.user_keys import require_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -214,17 +214,7 @@ async def resume_session(
         all_characters = [{"name": c["name"], "aliases": []} for c in existing_cards]
 
     # 4. Fetch embedding config for this user
-    try:
-        user_cfg = await storage.get_user_api_config(user_id) or {}
-    except Exception as exc:
-        user_cfg = {}
-        # 读不到用户配置 → 下面按「没配」处理：不检索、不回落全局。失败要留痕。
-        logger.warning(
-            "Session resume: per-user api config unreadable, treating as unconfigured "
-            "(user_id=%s session_id=%s): %r",
-            user_id, session_id, exc, exc_info=True,
-        )
-    emb = resolve_embedding(user_cfg)
+    emb = await require_embedding(user_id, storage)
 
     # 5. Rebuild RAG + ChatEngine via _create_session (with timeout)
     try:

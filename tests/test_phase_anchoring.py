@@ -524,7 +524,7 @@ def _anchoring_content_route(monkeypatch, draft):
             return {"id": text_id, "content": _SRC, "text_type": "story"}
 
         async def get_user_api_config(self, user_id):
-            return {}
+            return {"embedding_key": "k", "embedding_region": "cn"}
 
     stream_saved: list = []
 

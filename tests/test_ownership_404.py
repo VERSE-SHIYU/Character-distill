@@ -149,6 +149,13 @@ def _no_ambient_state(monkeypatch, store):
     monkeypatch.setattr(deps, "get_memory_manager", lambda: _MemMgr())
     monkeypatch.setattr(deps, "_storage", store)
 
+    # 夹具用户没配百炼 key：新门会让 create/start 这类入口先 400，测不到属主判定。
+    # 本文件不测 key 行为，给夹具一个 key 让路即可（断言不动）。
+    async def _with_embedding_key(_user_id):
+        return {"embedding_key": "k", "embedding_region": "cn"}
+
+    monkeypatch.setattr(store, "get_user_api_config", _with_embedding_key)
+
 
 def _make_client(store, user_id):
     app = FastAPI(lifespan=app_lifespan)

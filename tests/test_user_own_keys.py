@@ -18,6 +18,7 @@ from pwdlib import PasswordHash
 
 import deps
 import server
+from core.embeddings import EMBEDDING_KEY_REQUIRED
 from core.schema import CharacterCard
 from core.memory_scope import MemoryScope
 from routers.auth import _create_access_token, get_jwt_secret
@@ -171,7 +172,7 @@ def test_T4b_scene_index_without_embedding_key_is_not_scheduled(monkeypatch):
 
 
 def test_T4c_group_without_embedding_key_builds_no_rag(client, store, user, monkeypatch, no_rag_engine):
-    """用户配了 LLM key、没配百炼 key：群聊照建，但每个引擎都不检索，也不构造 RAGEngine。"""
+    """用户配了 LLM key、没配百炼 key：建群入口 400 提示配置，不建群、不构造 RAGEngine。"""
     monkeypatch.setattr(deps, "get_memory_manager", lambda: None)
     _run(store.update_user_api_config(user["id"], "user-llm-key", "https://api.deepseek.com", "m"))
     deps.clear_user_llm_cache(user["id"])
@@ -184,15 +185,12 @@ def test_T4c_group_without_embedding_key_builds_no_rag(client, store, user, monk
         _run(store.save_card(cid, text_id, name, CharacterCard(name=name).model_dump_json(), user["id"]))
         card_ids.append(cid)
 
+    before = set(deps.get_group_sessions())
     resp = client.post("/api/group/create", json={"card_ids": card_ids}, headers=_token(user))
-    assert resp.status_code == 200, f"{resp.status_code} {resp.text}"
-    gid = resp.json()["group"]["id"]
-    try:
-        engines = deps.get_group_sessions()[gid].engines
-        assert engines and all(e.rag is None for e in engines.values())
-        assert no_rag_engine.built == [], "没有 embedding key 却去构造了 RAGEngine"
-    finally:
-        deps.get_group_sessions().pop(gid, None)
+    assert resp.status_code == 400, f"{resp.status_code} {resp.text}"
+    assert resp.json() == {"detail": EMBEDDING_KEY_REQUIRED}
+    assert set(deps.get_group_sessions()) == before, "没有 embedding key 却建了群"
+    assert no_rag_engine.built == [], "没有 embedding key 却去构造了 RAGEngine"
 
 
 # ── T5–T7 / T10：长期记忆的工厂 —— 只用用户自己的两把 key ─────────────────────

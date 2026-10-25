@@ -285,18 +285,23 @@ class _StubTextManager:
 
 
 @pytest.fixture
-def llm_gate_open(monkeypatch):
+def llm_gate_open(store, monkeypatch):
     """打开端点的 503「未配置 API Key」前置门，让请求能走到属主门。
 
     这批端点在读文本前先判 distiller / text_manager 是否为 None，无 API Key 时直接 503，
     不打开这道门就测不到属主过滤。只替换 deps 的工厂，不碰被测的属主逻辑。
+    百炼 key 同理：没配时新门先给 400，也走不到属主门（不改 key 行为，只为让路）。
     """
     import deps
     import web.routers.distill as distill_mod
 
+    async def _fake_api_config(_user_id):
+        return {"embedding_key": "k", "embedding_region": "cn"}
+
     async def _fake_user_llm(*args, **kwargs):
         return object()
 
+    monkeypatch.setattr(store, "get_user_api_config", _fake_api_config)
     monkeypatch.setattr(deps, "get_user_llm", _fake_user_llm)
     monkeypatch.setattr(deps, "get_distiller", lambda *a, **kw: object())
     monkeypatch.setattr(deps, "get_text_manager", lambda *a, **kw: _StubTextManager())

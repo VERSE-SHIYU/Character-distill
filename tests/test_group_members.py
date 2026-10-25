@@ -15,6 +15,8 @@ from pydantic import ValidationError
 
 from routers.group import CreateGroupRequest, _check_group_members
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 
 def _card(name: str, text_id: str | None = "t1") -> dict:
     return {"id": f"c_{name}", "name": name, "text_id": text_id}
@@ -51,6 +53,7 @@ def test_create_rejects_cards_from_two_books_and_builds_nothing(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    import deps
     import routers.group as G
     from deps import get_group_sessions, get_storage
     from routers.auth import get_current_user
@@ -58,6 +61,9 @@ def test_create_rejects_cards_from_two_books_and_builds_nothing(monkeypatch):
 
     async def _llm(*_a, **_kw):
         return object()
+
+    # 本用例只测成员规则：规则在建引擎前就该拒绝，记忆管理器与本用例无关。
+    monkeypatch.setattr(deps, "get_user_memory", lambda *_a, **_kw: object())
 
     import tempfile
     store = SQLiteStore(f"{tempfile.mkdtemp()}/g.db")

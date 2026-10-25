@@ -29,7 +29,6 @@ from core.retro_cache import resolve_retro_regions
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core import examples_pending
 from core import task_log
-from core.embeddings import EMBEDDING_KEY_REQUIRED
 from core.nonfatal import nonfatal_sync
 from core.unlocated import UnknownPhase, move_unlocated
 from core.export import export_tavern_json
@@ -41,7 +40,7 @@ from core import concurrency as C  # 派生与上下文传播
 from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
-from web.llm_resolution import resolve_embedding
+from web.user_keys import require_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -760,9 +759,7 @@ async def distill_by_text_id(
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
-    # Fetch user's embedding key so RAGEngine can initialize DashScope embedding
-    _api_config = await storage.get_user_api_config(user_id) or {}
-    emb = resolve_embedding(_api_config)
+    emb = await require_embedding(user_id, storage)
 
     content = text_rec["content"]
     # 空 character_name 才需要名单；非空时用户已点名，不必读名单。
@@ -862,10 +859,9 @@ async def _distill_start_impl(
         raise HTTPException(503, "请先在设置页配置 API Key")
     distiller = get_distiller(llm=llm)
 
-    # embedding 二元组在这里取**一次**（经唯一归一出口），随线程入参传下去：后台线程
-    # 不再回头读配置（它连 storage 都不该碰，那是请求线程的账）。
-    api_config = await storage.get_user_api_config(user_id) or {}
-    emb = resolve_embedding(api_config)
+    # embedding 二元组在这里取**一次**，随线程入参传下去：后台线程不再回头读配置
+    # （它连 storage 都不该碰，那是请求线程的账）。
+    emb = await require_embedding(user_id, storage)
 
     # Read text content in the async endpoint so the background thread
     # doesn't need to call asyncio storage methods (cross-thread safe).
@@ -1136,9 +1132,7 @@ async def distill_stream(
     if text_manager is None or distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
 
-    # Fetch user's embedding key so RAGEngine can initialize DashScope embedding
-    _api_config = await storage.get_user_api_config(user_id) or {}
-    emb = resolve_embedding(_api_config)
+    emb = await require_embedding(user_id, storage)
 
     text_rec = await storage.get_text_owned(req.text_id, user_id)
     if not text_rec:
@@ -1315,11 +1309,8 @@ async def reindex_rag(
         raise HTTPException(404, "Text not found")
     content = text_rec["content"]
 
-    # 先确认建得了，再识别：识别可能要调一次 LLM，建不了就不该花这一笔。
-    emb = resolve_embedding(await storage.get_user_api_config(user_id) or {})
+    emb = await require_embedding(user_id, storage)
     indexing_service = get_indexing_service()
-    if not emb.key or indexing_service is None:
-        raise HTTPException(400, EMBEDDING_KEY_REQUIRED)
 
     # 不设就地捕获（理由见 `_do_identify` 上方的块注释）：识别失败冒泡到统一出口。
     chars = await resolve_characters(storage, distiller, text_id, user_id, content)
@@ -1607,16 +1598,7 @@ async def start_session(
     arc_phase = valid_phase(card, req.arc_phase)
 
     # 两条分支（原文 / 独立卡片）都要：检索用 embedding，长期记忆用 LLM + embedding。
-    try:
-        user_cfg = await storage.get_user_api_config(user_id) or {}
-    except Exception as exc:
-        user_cfg = {}
-        # 读不到用户配置 → 下面按「没配」处理：不检索、不回落全局。失败要留痕。
-        logger.warning(
-            "Distill session: per-user api config unreadable, treating as unconfigured "
-            "(user_id=%s): %r", user_id, exc, exc_info=True,
-        )
-    emb = resolve_embedding(user_cfg)
+    emb = await require_embedding(user_id, storage)
     memory = await asyncio.to_thread(text_manager.memory_for, user_id, emb.key, emb.region)
 
     if req.text_id:
@@ -1763,9 +1745,7 @@ async def legacy_distill(
     if distiller is None or text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
 
-    # Fetch user's embedding key so RAGEngine can initialize DashScope embedding
-    _api_config = await storage.get_user_api_config(user_id) or {}
-    emb = resolve_embedding(_api_config)
+    emb = await require_embedding(user_id, storage)
 
     text = req.text.strip()
     if not text:

@@ -32,6 +32,8 @@ from test_distill_task_api import (
     _run_async,
 )
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 # 三段，各有独特 token：normalize 后 = 开头甲甲甲中间乙乙乙结尾丙丙丙（len 15），起点 0 / 5 / 10。
 _SRC = "开头甲甲甲。中间乙乙乙。结尾丙丙丙。"
 _Q1, _Q3 = "开头甲甲甲", "结尾丙丙丙"

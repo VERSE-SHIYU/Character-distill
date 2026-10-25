@@ -26,22 +26,12 @@ class GroupEngineDeps:
     storage: Any
 
 
-async def group_engine_deps(user_id: str, per_user_llm: Any, storage: Any, *, where: str) -> GroupEngineDeps:
-    """群引擎的依赖**只在这里**准备一次。`where` 只进日志（建群 / 恢复哪个群）。"""
+async def group_engine_deps(user_id: str, per_user_llm: Any, storage: Any) -> GroupEngineDeps:
+    """群引擎的依赖**只在这里**准备一次。"""
     from deps import get_indexing_service, get_user_memory
-    from web.llm_resolution import resolve_embedding
+    from web.user_keys import require_embedding
 
-    try:
-        user_cfg = await storage.get_user_api_config(user_id) or {}
-    except Exception as exc:
-        user_cfg = {}
-        # 读不到用户配置 → 下面按「没配」处理：不检索、不回落全局。失败要留痕。
-        logger.warning(
-            "Group %s: per-user api config unreadable, treating as unconfigured "
-            "(user_id=%s): %r", where, user_id, exc, exc_info=True,
-        )
-    emb = resolve_embedding(user_cfg)
-    # 用户自己的两把 key 缺一把就是 None —— 引擎原有的「记忆为空即跳过」分支即「不提供记忆」。
+    emb = await require_embedding(user_id, storage)
     memory_manager = await asyncio.to_thread(
         get_user_memory, user_id, per_user_llm, emb.key, emb.region,
     )

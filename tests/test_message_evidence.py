@@ -61,6 +61,8 @@ from storage.sqlite_store import SQLiteStore
 
 from evidence_fakes import make_trace
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 
 def _run_async(coro):
     loop = asyncio.new_event_loop()
