@@ -129,11 +129,16 @@
 只看了函数名与签名。该函数是为「省略号拼接核对」设计的（各段都在即通过、位置取最长段），
 而「按位置判命中」需要的是**连续原文**的区间 —— 两者语义不同。
 
-**修法**：`_intervals` 改为 `n = normalize(text)` → 在 `source_norm` 上
-`re.finditer(re.escape(n))` 取全部起点，区间 `(p, p + len(n))`；`n` 为空返回 `[]`。
-`validate_cases` 也走 `_intervals`（找不到 / 不唯一 / 落在阶段之后同一条定位规则只此一处）；
-标注片段含省略号（`……` 或 `...`）直接报错。`score_case` 每行加 `unlocated`
-（前 3 段中在原文定位不到的段数），`aggregate` 不变。
+**修法**：连续区间的匹配原语放在 `core/quotes.py::intervals_in_normalized` ——
+`n = normalize(text)` → 在 `source_norm` 上 `re.finditer(re.escape(n))` 取全部起点，
+区间 `(p, p + len(n))`；`n` 为空返回 `[]`。放这里的第二个理由：结构锁
+`tests/test_phase_anchoring.py::test_s2_normalized_match_is_written_once` 要求
+`re.finditer(` / `in source_norm` / `_ELLIPSIS.split(` 三个特征串在 `core/` 下只出现在
+`core/quotes.py`（「匹配只写一份」）。`core/recall_eval.py` 只调它，省略号判定用已有的
+`core.quotes.has_ellipsis`。
+`validate_cases` 也走 `intervals_in_normalized`（找不到 / 不唯一 / 落在阶段之后同一条定位
+规则只此一处）；标注片段含省略号（`……` 或 `...`）直接报错。`score_case` 每行加
+`unlocated`（前 3 段中在原文定位不到的段数），`aggregate` 不变。
 
 **更正 §2 坐标**：
 

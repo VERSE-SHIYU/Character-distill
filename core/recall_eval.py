@@ -5,26 +5,22 @@
 怎么切，以后重切场景 / 改成按事件入库，标注不用重做。
 
 不复用 ``core.quotes.locate_in_normalized``：那是为「省略号拼接核对」设计的，位置只取
-最长一段、宽度却按整段算，命中段含省略号时区间会跨过中间无关段落（假命中）。
+最长一段、宽度却按整段算，命中段含省略号时区间会跨过中间无关段落（假命中）。连续区间
+由 ``core.quotes.intervals_in_normalized`` 给出 —— 与原文匹配只写那一份。
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Iterable, Mapping
 
-from core.quotes import MIN_ELIDED_FRAGMENT_LEN, _ELLIPSIS, normalize
+from core.quotes import (
+    MIN_ELIDED_FRAGMENT_LEN,
+    has_ellipsis,
+    intervals_in_normalized,
+)
 
 
 class AnnotationError(ValueError):
     """标注在检索前就没通过自检；消息里逐条列出是哪一条。"""
-
-
-def _intervals(source_norm: str, text: str) -> list[tuple[int, int]]:
-    """文本在原文里的所有连续区间；找不到（或规范化后为空）→ 空列表。"""
-    n = normalize(text)
-    if not n:
-        return []
-    return [(m.start(), m.start() + len(n)) for m in re.finditer(re.escape(n), source_norm)]
 
 
 def _overlaps(a: list[tuple[int, int]], b: list[tuple[int, int]]) -> bool:
@@ -48,13 +44,13 @@ def validate_cases(
         for key in ("should", "should_not"):
             for i, fragment in enumerate(case.get(key) or []):
                 piece = str(fragment)
-                if _ELLIPSIS.search(piece):
+                if has_ellipsis(piece):
                     problems.append(f"{case_id}: {key}[{i}] 含省略号（只接受连续原文片段）")
                     continue
                 if len(piece.strip()) < MIN_ELIDED_FRAGMENT_LEN:
                     problems.append(f"{case_id}: {key}[{i}] 短于 {MIN_ELIDED_FRAGMENT_LEN} 字")
                     continue
-                intervals = _intervals(source_norm, piece)
+                intervals = intervals_in_normalized(source_norm, piece)
                 if not intervals:
                     problems.append(f"{case_id}: {key}[{i}] 在原文里找不到")
                 elif len(intervals) > 1:
@@ -68,15 +64,15 @@ def validate_cases(
 
 def score_case(source_norm: str, case: Mapping[str, Any], hits: Iterable[Any]) -> dict:
     """一条查询的命中 / 越界判定；``hits`` 是 ``EvidenceItem`` 序列（前 3 段）。"""
-    should = [iv for f in case.get("should") or [] for iv in _intervals(source_norm, f)]
-    should_not = [iv for f in case.get("should_not") or [] for iv in _intervals(source_norm, f)]
+    should = [iv for f in case.get("should") or [] for iv in intervals_in_normalized(source_norm, f)]
+    should_not = [iv for f in case.get("should_not") or [] for iv in intervals_in_normalized(source_norm, f)]
 
     hit = leak = False
     unlocated = 0
     chunk_ids: list[str | None] = []
     for item in hits:
         chunk_ids.append((item.meta or {}).get("chunk_id"))
-        hit_iv = _intervals(source_norm, item.text)
+        hit_iv = intervals_in_normalized(source_norm, item.text)
         if not hit_iv:
             unlocated += 1
         hit = hit or _overlaps(hit_iv, should)
