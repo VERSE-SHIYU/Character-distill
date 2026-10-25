@@ -44,6 +44,8 @@ from routers import distill as D
 from routers.auth import get_current_user
 from storage.sqlite_store import SQLiteStore
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 # WP7 F4 复用 WP7 那批格式化件（认组别 + 按组回 JSON），不另抄一份字段样例：
 # 抄一份就是第二处「组字段表」，组一变就漂。cross-module import 在本仓有先例
 # （test_postgres_store 引 test_published_from_backfill）。
@@ -158,12 +160,6 @@ def _build_app(store, uid, monkeypatch, *, distiller, tm=None):
     monkeypatch.setattr(deps, "get_user_llm", _llm)
     monkeypatch.setattr(deps, "get_distiller", lambda *a, **kw: distiller)
     monkeypatch.setattr(deps, "get_text_manager", lambda *a, **kw: tm or _TM())
-
-    # 本文件测的是识别失败通道，不测 key：夹具用户配一个百炼 key，免得新门先给 400。
-    async def _with_embedding_key(_user_id):
-        return {"embedding_key": "k", "embedding_region": "cn"}
-
-    monkeypatch.setattr(store, "get_user_api_config", _with_embedding_key)
     return app
 
 
@@ -376,11 +372,6 @@ class TestIdentifyFamilyRoutesKeepDistillError:
         """`POST /api/distill/reindex/{id}` 的名单段 → 400 + 真实原因。"""
         tid = _seed_text(store, user_id, body=f"角色说的话{uuid.uuid4().hex}")
 
-        async def _with_embedding_key(_user_id):
-            # 没配向量检索 key 时 /reindex 在识别之前就 400 —— 那一支不是本条要测的。
-            return {"embedding_key": "sk-test", "embedding_region": "cn"}
-
-        monkeypatch.setattr(store, "get_user_api_config", _with_embedding_key)
         client = _build_client(
             store, user_id, monkeypatch, distiller=_failing_distiller())
 

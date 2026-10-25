@@ -33,6 +33,8 @@ from routers import distill as D
 from routers.auth import get_current_user
 from storage.sqlite_store import SQLiteStore
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 
 def _run_async(coro):
     loop = asyncio.new_event_loop()
@@ -370,15 +372,6 @@ class TestDialogueExamplesPostStep:
 
 
 # ── 路由测试（B / C / D）：独立 app + 真 SQLiteStore ────────────────────────
-
-@pytest.fixture(autouse=True)
-def _embedding_key_configured(monkeypatch):
-    """本文件不测 key 行为：给所有 SQLiteStore 用户一个百炼 key，让 `/start` 走到被测逻辑。"""
-    async def _with_embedding_key(_self, _user_id):
-        return {"embedding_key": "k", "embedding_region": "cn"}
-
-    monkeypatch.setattr(SQLiteStore, "get_user_api_config", _with_embedding_key)
-
 
 @pytest.fixture
 def store(tmp_path):

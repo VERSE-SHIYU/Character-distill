@@ -51,6 +51,8 @@ from routers.chat import router as chat_router
 from routers.distill import router as distill_router
 from storage.sqlite_store import SQLiteStore
 
+pytestmark = pytest.mark.usefixtures("embedding_key_configured")
+
 _BLOCKED_IP = "1.1.1.1"
 _ALLOWED_IP = "8.8.8.8"
 
@@ -356,9 +358,6 @@ def test_l2_background_thread_gets_the_resolved_instance(store, seed_user, monke
 
     monkeypatch.setattr(deps, "get_user_llm", _spy)
     uid = seed_user(f"u_l2_{uuid.uuid4().hex[:8]}")
-    # 本用例测线程拿到的是同一实例，不测百炼 key：补一个 key 让新门放行。
-    asyncio.run(store.update_user_api_config(
-        uid, "", "", "", embedding_key="k", embedding_region="cn"))
     deps.clear_user_llm_cache(uid)
     tid = _seed_text(store, uid)
 
