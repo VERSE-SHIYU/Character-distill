@@ -6,10 +6,17 @@
 
 只读：不写库、不建会话、不调大模型。每条查询只花一次查询嵌入。
 
+算与写分开：
+
+- 检索模式（服务器上跑）：把结果 JSON 打到 stdout；不写证据。
+- ``--from-json``（本地跑）：读已产出的结果，只调 ``write_evidence``。
+
 用法::
 
     python scripts/eval_recall.py --user-id <id> --card-id <id> \
-        --cases tests/eval/recall/<名字>.jsonl --evidence-id <id>
+        --cases tests/eval/recall/<名字>.jsonl
+
+    python scripts/eval_recall.py --from-json result.json --evidence-id <id>
 """
 from __future__ import annotations
 
@@ -95,18 +102,61 @@ def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
     return recall_eval.aggregate(rows)
 
 
+_ENV = ("用户自己的百炼 embedding key；检索 = 聊天同一次 scene_hits（top_k=3）；"
+        "基线 tag recall-baseline-2026-10")
+
+
+def _claim(result: dict) -> str:
+    # tag 里带年份数字、产物里无可绑定字段，故 tag 放 env（claim 的数字须全部有出处）。
+    return (f"R@3 {result['r_at_3']:.2f} / 越界率 {result['leak_rate']:.2f}"
+            f"（n={result['n']}，基线 tag 见 env）")
+
+
+def write_from_json(path: str | Path, evidence_id: str) -> None:
+    """本地：读服务器产出的结果，只写证据 —— 不连库、不检索。"""
+    sys.path.insert(0, str(PROJECT_ROOT / "tests" / "perf"))
+    from evidence_writer import code_sha, write_evidence
+
+    result = json.loads(Path(path).read_text(encoding="utf-8"))
+    write_evidence(
+        evidence_id, result,
+        claim=_claim(result),
+        script="scripts/eval_recall.py",
+        env=_ENV,
+        reproduce=("SG 容器：cd /app && PYTHONPATH=/app python /tmp/eval_recall.py "
+                   "--user-id 3996bd7f23a34311 --card-id d541a44f3679 "
+                   "--cases /tmp/qizhuo.jsonl > /tmp/result.json；本地："
+                   "python scripts/eval_recall.py --from-json /tmp/result.json "
+                   "--evidence-id recall-baseline-qizhuo"),
+        code_sha=code_sha(),
+    )
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="召回评测（只读；不写库、不调大模型）")
-    parser.add_argument("--user-id", required=True)
-    parser.add_argument("--card-id", required=True)
-    parser.add_argument("--cases", required=True, help="标注 JSONL 文件")
-    parser.add_argument("--evidence-id", required=True, help="证据产物 id（须先登记）")
-    return parser.parse_args(argv)
+    parser.add_argument("--user-id")
+    parser.add_argument("--card-id")
+    parser.add_argument("--cases", help="标注 JSONL 文件")
+    parser.add_argument("--from-json", dest="from_json", help="已有结果 JSON（只写证据）")
+    parser.add_argument("--evidence-id", help="证据产物 id（须先登记；只配 --from-json）")
+    args = parser.parse_args(argv)
+    if args.from_json:
+        if not args.evidence_id:
+            parser.error("--from-json 需要 --evidence-id")
+        return args
+    if args.evidence_id:
+        parser.error("--evidence-id 只用于 --from-json：检索模式不写证据")
+    missing = [name for name in ("user_id", "card_id", "cases") if not getattr(args, name)]
+    if missing:
+        parser.error("检索模式缺少 " + ", ".join(f"--{n.replace('_', '-')}" for n in missing))
+    return args
 
 
 async def _main(args: argparse.Namespace) -> None:
-    sys.path.insert(0, str(PROJECT_ROOT / "tests" / "perf"))
-    from evidence_writer import code_sha, write_evidence
+    if args.from_json:
+        write_from_json(args.from_json, args.evidence_id)
+        return
+
     from web.deps import get_indexing_service, get_storage
 
     storage = get_storage()
@@ -123,15 +173,6 @@ async def _main(args: argparse.Namespace) -> None:
             raise EvalAbort("无法建立会话检索（原文为空或没有 embedding key）")
 
         result = run_eval(loaded.source, loaded.card, cases, rag)
-        write_evidence(
-            args.evidence_id, result,
-            claim=(f"{loaded.card.name} R@3 {result['r_at_3']:.2f} / "
-                   f"越界率 {result['leak_rate']:.2f}（n={result['n']}，"
-                   f"基线 tag recall-baseline-2026-10）"),
-            script="scripts/eval_recall.py",
-            env="用户自己的百炼 embedding key；检索 = 聊天同一次 scene_hits（top_k=3）",
-            code_sha=code_sha(),
-        )
         print(json.dumps(result, ensure_ascii=False, indent=2))
     finally:
         await storage.close()

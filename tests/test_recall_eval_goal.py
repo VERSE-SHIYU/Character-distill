@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -235,6 +237,77 @@ class TestAnnotationSelfCheck:
             assert bad in message, f"{bad} 的问题没有被列出"
         assert "q_ok" not in message
         assert called == [], "标注有问题时不许发出任何检索调用"
+
+
+class TestWriteSeparation:
+    RESULT = {"r_at_3": 0.5, "leak_rate": 0.25, "n": 4, "per_query": []}
+
+    def test_compute_mode_prints_json_and_never_writes(self, monkeypatch, capsys):
+        import scripts.eval_recall as ev
+        import web.deps as deps
+
+        class _Storage:
+            async def close(self):
+                pass
+
+        class _Service:
+            def get_rag_for_session(self, *args, **kwargs):
+                return object()
+
+        async def fake_load_inputs(storage, *, user_id, card_id):
+            return ev.Loaded(card=_card(), text_id="t1", source=SOURCE,
+                             embedding_key="k", embedding_region="r")
+
+        monkeypatch.setattr(ev, "load_inputs", fake_load_inputs)
+        monkeypatch.setattr(ev, "load_cases", lambda path: [])
+        monkeypatch.setattr(ev, "run_eval", lambda *a, **k: self.RESULT)
+        monkeypatch.setattr(deps, "get_storage", lambda: _Storage())
+        monkeypatch.setattr(deps, "get_indexing_service", lambda: _Service())
+
+        writer = types.ModuleType("evidence_writer")
+
+        def boom(*args, **kwargs):
+            raise AssertionError("检索模式不许写证据")
+
+        writer.write_evidence = boom
+        writer.code_sha = boom
+        monkeypatch.setitem(sys.modules, "evidence_writer", writer)
+
+        ev.main(["--user-id", "u1", "--card-id", "c1", "--cases", "cases.jsonl"])
+        assert json.loads(capsys.readouterr().out) == self.RESULT
+
+    def test_from_json_only_writes_evidence(self, tmp_path, monkeypatch):
+        import scripts.eval_recall as ev
+
+        path = tmp_path / "result.json"
+        path.write_text(json.dumps(self.RESULT), encoding="utf-8")
+        calls: dict = {}
+
+        writer = types.ModuleType("evidence_writer")
+
+        def record(evidence_id, payload, *, claim, script, env, code_sha):
+            calls.update(evidence_id=evidence_id, payload=payload, claim=claim,
+                         script=script, env=env, code_sha=code_sha)
+
+        writer.write_evidence = record
+        writer.code_sha = lambda: "abc1234"
+        monkeypatch.setitem(sys.modules, "evidence_writer", writer)
+
+        ev.main(["--from-json", str(path), "--evidence-id", "recall-baseline-qizhuo"])
+
+        assert calls["evidence_id"] == "recall-baseline-qizhuo"
+        assert calls["payload"] == self.RESULT
+        assert "R@3 0.50" in calls["claim"] and "越界率 0.25" in calls["claim"]
+        assert calls["code_sha"] == "abc1234"
+
+    def test_evidence_id_is_rejected_on_retrieval_path(self):
+        import scripts.eval_recall as ev
+
+        with pytest.raises(SystemExit):
+            ev.main(["--user-id", "u", "--card-id", "c",
+                     "--cases", "cases.jsonl", "--evidence-id", "recall-baseline-qizhuo"])
+        with pytest.raises(SystemExit):
+            ev.main(["--from-json", "result.json"])
 
 
 class TestScriptLoading:
