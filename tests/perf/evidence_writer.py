@@ -91,6 +91,9 @@ _ALLOWED_BY_ID: dict[str, frozenset[str]] = {
          "stats", "chunksInDb", "chunkLengths", "allNonEmpty", "allEqualTruncated",
          "chunkParsesAsJson", "resumeStartStatus", "resumeFinalStatus", "resumeStats",
          "resumeMapCalls", "truncatedReusedByGate2", "ok"}),
+    # recall_eval（scripts/eval_recall.py）—— 召回基线：R@3 与越界率。per_query 只有
+    # id、布尔值、unlocated 计数与 chunk id，不含原文字段。
+    "recall-baseline-qizhuo": frozenset({"r_at_3", "leak_rate", "n", "per_query"}),
     # ── 以下三条**没有产物**（status = runtime-measured / unverifiable）：空白名单是它们的
     # 正确登记形态 —— 注册一个空集，结构上就堵死了「哪天有人往里写产物」这条路。
     # write_evidence 只在**调用时**拒绝空集（见其 docstring），注册时不拦，正是为此。
