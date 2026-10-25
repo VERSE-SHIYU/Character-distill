@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""原文的章节标题 → 章号与原文起点。**只此一处**认章节标题。
+"""原文的章节标题 → 章号、原文起点与正文。**只此一处**认章节标题。
 
 只认行首的「第N章」，N 为阿拉伯数字。认不出、章号重复（如分卷后重新编号）或不递增时
 返回 None：调用方据此判定「这本书没有可用的章节标题」，不猜。
@@ -34,3 +34,28 @@ def chapter_openings(source_text: str, chapters: list[tuple[int, int]],
         body = [s for s in (ln.strip() for ln in lines) if s and _FILLER.fullmatch(s) is None]
         out.append((n, " ".join(body)[:width]))
     return out
+
+
+
+def _body_spans(source_text: str) -> dict[int, tuple[int, int]]:
+    """``{章号: (正文起点, 正文终点)}``（原文坐标，正文不含标题行）—— 正文边界**只在这里**算。"""
+    ch = chapter_starts(source_text)
+    if ch is None:
+        return {}
+    cuts = [r for _, r in ch] + [len(source_text)]
+    out: dict[int, tuple[int, int]] = {}
+    for (n, a), b in zip(ch, cuts[1:]):
+        nl = source_text.find("\n", a, b)
+        out[n] = (b if nl == -1 else nl + 1, b)
+    return out
+
+
+def chapter_bodies(source_text: str) -> dict[int, tuple[int, str]]:
+    """``{章号: (正文在原文里的起点, 正文)}``，正文不含标题行；没有可用的章节标题时为空。"""
+    return {n: (a, source_text[a:b]) for n, (a, b) in _body_spans(source_text).items()}
+
+
+def chapter_body_start(source_text: str, chapter: int) -> int | None:
+    """第 `chapter` 章正文（标题行之后）在原文里的起点；没有这一章（或没有可用的章节标题）为 None。"""
+    span = _body_spans(source_text).get(chapter)
+    return None if span is None else span[0]

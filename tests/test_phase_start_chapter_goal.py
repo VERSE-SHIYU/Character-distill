@@ -196,14 +196,12 @@ def _starts(phases, src=_SRC, retro=()):
     return phase_anchoring.build_anchors(phases, src, retro=retro)
 
 
-@pytest.mark.xfail(strict=True, reason="PR 1 前：章号不参与定位")
 def test_s3a_chapter_number_maps_to_that_chapters_body_start():
     a = _starts(_CHAPTER_ARC["phases"], retro=_retro_ch4())
     assert a.reason == ""
     assert [lo for lo, _ in a.ranges] == [0, _norm_body_start(_SRC, 3), _norm_body_start(_SRC, 5)]
 
 
-@pytest.mark.xfail(strict=True, reason="PR 1 前：章号不参与定位")
 def test_s3b_missing_retro_or_unordered_chapters_skip_the_card():
     def with_chapters(*nums):
         return [{**p, "start_chapter": n} for p, n in zip(_CHAPTER_ARC["phases"], (0, *nums))]

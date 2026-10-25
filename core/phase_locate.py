@@ -27,7 +27,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
-from core.chapters import chapter_starts
+from core.chapters import chapter_bodies
 from core.llm_json import extract_json
 from core.quotes import locate_anchor, normalize
 from core.retro_regions import RetroRegions
@@ -50,20 +50,6 @@ KEY_MOMENT_START = "标志这一阶段开始的那件事"
 
 
 # ── 章节与句子 ────────────────────────────────────────────────────────────────────
-
-def chapter_bodies(source_text: str) -> dict[int, tuple[int, str]]:
-    """``{章号: (正文在原文里的起点, 正文)}``，正文不含标题行；没有可用的章节标题时为空。"""
-    ch = chapter_starts(source_text)
-    if ch is None:
-        return {}
-    cuts = [r for _, r in ch] + [len(source_text)]
-    out: dict[int, tuple[int, str]] = {}
-    for (n, a), b in zip(ch, cuts[1:]):
-        nl = source_text.find("\n", a, b)
-        start = b if nl == -1 else nl + 1
-        out[n] = (start, source_text[start:b])
-    return out
-
 
 def sentences(body: str) -> list[str]:
     """按句末标点与换行切句，去掉只有省略号 / 破折号的行。"""

@@ -18,9 +18,9 @@ from typing import NamedTuple, Sequence
 
 import bisect
 
-from core.chapters import chapter_starts
+from core.chapters import chapter_body_start, chapter_starts
 from core.quotes import (has_ellipsis, locate_anchor, locate_in_normalized, normalize,
-                         paragraph_bounds, raw_offsets)
+                         normalized_starts, paragraph_bounds, raw_offsets)
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,33 @@ def _anchor_of(phase) -> str:
     return _field_of(phase, "anchor")
 
 
+def _chapter_of(phase) -> int | None:
+    """阶段对象的起始章号（`start_chapter`）；没给（旧草稿、按锚点的书）为 None。"""
+    value = phase.get("start_chapter") if isinstance(phase, dict) else getattr(phase, "start_chapter", None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _given_start(phase) -> tuple[str, str]:
+    """模型给的起点：``(怎么给的, 给的什么)``。**「按章号还是按锚点」只在这里分**：带章号就按章号，
+    否则按锚点（旧草稿、没有章节的书）。文案（跳过原因、明细）与定位都从这一处取。"""
+    chapter = _chapter_of(phase)
+    if chapter is not None:
+        return "起始章", f"第{chapter}章"
+    return "锚点", _anchor_of(phase)
+
+
+def _start_position(phase, source_text: str, source_norm: str,
+                    paragraphs: list[int] | None) -> int | None:
+    """起点在规范化原文里的位置；定不了位为 None。章号 → 该章正文起点（`core.chapters`）→
+    规范化坐标（`quotes.normalized_starts`）；锚点 → `quotes.locate_anchor`。"""
+    chapter = _chapter_of(phase)
+    if chapter is not None:
+        raw = chapter_body_start(source_text, chapter)
+        return None if raw is None else normalized_starts(source_text, [raw])[0]
+    loc = locate_anchor(source_text, source_norm, _anchor_of(phase), paragraphs)
+    return None if loc is None else loc[0]
+
+
 class StartStatus(Enum):
     """一个阶段起点的定位结论。**整卡跳过原因与逐阶段明细都只从它推出**（判定只在 `locate_starts`）。"""
     FROM_START = "from_start"    # 不参与核对（`checked_anchors` 不含它）：一律从全书开头算起
@@ -88,9 +115,11 @@ class StartStatus(Enum):
 
 
 class PhaseStart(NamedTuple):
-    """阶段 k 的起点：状态 + 规范化位置（FROM_START 为 0；EMPTY / NOT_FOUND 为 None）+ 回忆区标签。"""
+    """阶段 k 的起点：模型给的什么（`kind` 锚点 / 起始章，`given` 原句 / 「第N章」）+ 状态 +
+    规范化位置（FROM_START 为 0；EMPTY / NOT_FOUND 为 None）+ 回忆区标签。"""
     k: int
-    anchor: str
+    kind: str
+    given: str
     status: StartStatus
     pos: int | None = None
     region: str | None = None
@@ -98,15 +127,15 @@ class PhaseStart(NamedTuple):
 
 # 状态 → 整卡跳过原因（不在表里的状态不触发跳过）。**原因文案只在这里**。
 _SKIP_REASONS = {
-    StartStatus.EMPTY: "阶段 {k} 锚点为空",
-    StartStatus.NOT_FOUND: "阶段 {k} 锚点核对不上：{anchor}",
-    StartStatus.IN_RETRO: "阶段 {k} 锚点落在回忆区（{region}）：{anchor}",
+    StartStatus.EMPTY: "阶段 {k} {kind}为空",
+    StartStatus.NOT_FOUND: "阶段 {k} {kind}核对不上：{given}",
+    StartStatus.IN_RETRO: "阶段 {k} {kind}落在回忆区（{region}）：{given}",
 }
 
 # 状态 → 整卡跳过明细里没有位置可展示时的文案（其余状态打章号 / 位置 / 前文）。**只在这里**。
 _DETAIL_NO_POSITION = {
     StartStatus.FROM_START: "不参与核对（阶段 1 从全书开头算起）",
-    StartStatus.EMPTY: "锚点为空",
+    StartStatus.EMPTY: "{kind}为空",
     StartStatus.NOT_FOUND: "原文查不到",
 }
 
@@ -142,26 +171,27 @@ def locate_starts(phases, source_text: str, source_norm: str,
     """逐阶段定位起点 —— **「这个阶段的起点算不算数」只在这里判定**。
 
     每个阶段都给出结论（不在第一个失败处停），整卡跳过原因（`_skip_reason`）与整卡跳过明细
-    （`log_phase_starts`）都只读这份结果，不各自重新定位。锚点位置由 `quotes.locate_anchor`
-    给出（逐字 → 规范化 → 省略号拼接，判定顺序只在那一处）。
+    （`log_phase_starts`）都只读这份结果，不各自重新定位。起点按章号还是按锚点由 `_given_start`
+    定，位置由 `_start_position` 给出（章号 → 该章正文起点；锚点 → `quotes.locate_anchor`，
+    逐字 → 规范化 → 省略号拼接，判定顺序只在那一处）。回忆区与递增对两种起点口径相同。
     """
     checked = dict(checked_anchors(phases))
     out: list[PhaseStart] = []
     for k, phase in enumerate(phases, 1):
-        anchor = _anchor_of(phase)
+        kind, given = _given_start(phase)
         if k not in checked:
-            out.append(PhaseStart(k, anchor, StartStatus.FROM_START, 0))
+            out.append(PhaseStart(k, kind, given, StartStatus.FROM_START, 0))
             continue
-        if not anchor:
-            out.append(PhaseStart(k, anchor, StartStatus.EMPTY))
+        if not given:
+            out.append(PhaseStart(k, kind, given, StartStatus.EMPTY))
             continue
-        loc = locate_anchor(source_text, source_norm, anchor, paragraphs)
-        if loc is None:
-            out.append(PhaseStart(k, anchor, StartStatus.NOT_FOUND))
+        pos = _start_position(phase, source_text, source_norm, paragraphs)
+        if pos is None:
+            out.append(PhaseStart(k, kind, given, StartStatus.NOT_FOUND))
             continue
-        region = _region_of(retro, loc[0])
+        region = _region_of(retro, pos)
         status = StartStatus.LOCATED if region is None else StartStatus.IN_RETRO
-        out.append(PhaseStart(k, anchor, status, loc[0], region))
+        out.append(PhaseStart(k, kind, given, status, pos, region))
     return out
 
 
@@ -170,7 +200,7 @@ def _skip_reason(starts: Sequence[PhaseStart]) -> str:
     for st in starts:
         template = _SKIP_REASONS.get(st.status)
         if template is not None:
-            return template.format(k=st.k, anchor=st.anchor, region=st.region)
+            return template.format(k=st.k, kind=st.kind, given=st.given, region=st.region)
     positions = [st.pos for st in starts]
     for a, b in zip(positions, positions[1:]):
         if b <= a:
@@ -300,9 +330,9 @@ def log_phase_starts(phases, source_text: str, anchors: PhaseAnchors, name: str)
     tails = {st.k: (pos, raw, where) for st, pos, raw, where in zip(
         shown, [st.pos for st in shown], positions, chapter_labels(source_text, positions))}
     for st, phase in zip(anchors.starts, phases):
-        head = f"{title}（{name}）阶段 {st.k}「{_field_of(phase, 'label')}」锚点「{st.anchor}」→ "
+        head = f"{title}（{name}）阶段 {st.k}「{_field_of(phase, 'label')}」{st.kind}「{st.given}」→ "
         if st.k not in tails:
-            logger.warning("%s%s", head, _DETAIL_NO_POSITION[st.status])
+            logger.warning("%s%s", head, _DETAIL_NO_POSITION[st.status].format(kind=st.kind))
             continue
         pos, raw, where = tails[st.k]
         logger.warning("%s%s", head, _detail_tail(anchors, source_text, pos, raw, where))
