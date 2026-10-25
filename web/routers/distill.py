@@ -561,10 +561,6 @@ def _run_distill_task(
         if data is None:
             return
 
-        # 模型写的阶段锚点核对不过时，按原文重新找起点（spec phase-locate）；不抛、找不到不动草稿。
-        with task_log.step("重定位"):
-            distiller.locate_phase_starts(data, content, name, retro)
-
         try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
             with task_log.step("转卡"):
@@ -1208,9 +1204,6 @@ async def distill_stream(
         if data is None:
             yield f"data: {json.dumps({'error': '蒸馏失败：LLM 返回格式不正确'}, ensure_ascii=False, default=str)}\n\n"
             return
-
-        # 同 /start：锚点核对不过时重新找起点；一批并发短调用，挪进线程不堵事件循环。
-        await asyncio.to_thread(distiller.locate_phase_starts, data, content, char_name, retro)
 
         try:
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。

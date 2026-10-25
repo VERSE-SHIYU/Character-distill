@@ -624,9 +624,6 @@ class _SleepyDistiller:
     def distill_incremental(self, content, character_name, aliases=None, **kw):
         return CharacterCard.model_validate({"name": character_name})
 
-    def locate_phase_starts(self, draft, text, character_name, retro):
-        return None      # 路由在转卡前重新找阶段起点；本替身的草稿不需要（真实现核对得过即不调模型）
-
     def distill_incremental_stream(self, content, name, aliases=None, **kw):
         yield json.dumps({"name": name}, ensure_ascii=False)
 

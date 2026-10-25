@@ -46,7 +46,7 @@ _USAGE = {"prompt_tokens": 1, "completion_tokens": 1}
 
 _ARC = {"axis": "从甲到乙", "phases": [
     {"label": "阶段一", "state": "开头时的状态", "anchor": ""},
-    {"label": "阶段二", "state": "后来的状态", "anchor": "", "key_moments": ["转折发生的那件事"]},
+    {"label": "阶段二", "state": "后来的状态", "anchor": ""},
 ]}
 
 

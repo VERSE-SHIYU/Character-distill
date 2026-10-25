@@ -283,9 +283,6 @@ class _CardStubDistiller:
     def _auto_tag(self, card_dict):
         return []
 
-    def locate_phase_starts(self, draft, text, character_name, retro):
-        return None      # 路由在转卡前重新找阶段起点；本替身的草稿不需要（真实现核对得过即不调模型）
-
     def finalize_card(self, card, content, name, aliases=(), roster=()):
         self.pick_calls.append((content, name, tuple(aliases), len(roster)))
         if self.pick_error is not None:

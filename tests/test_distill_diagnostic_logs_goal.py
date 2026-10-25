@@ -3,7 +3,7 @@
 
 G1–G9 先全部 `xfail(strict=True)`，每个提交跑一次，最后一次去掉标记。
 替身与搭 app 复用 `test_distill_draft_persist` / `test_card_redraft_goal` /
-`test_phase_anchoring` / `test_phase_locate_goal` / `test_anchor_skip_diagnostics_goal`。
+`test_phase_anchoring` / `test_anchor_skip_diagnostics_goal`。
 """
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ from storage.sqlite_store import SQLiteStore
 
 import test_anchor_skip_diagnostics_goal as SK
 import test_phase_anchoring as PA
-import test_phase_locate_goal as PL
 from test_card_redraft_goal import _NoRedistillStub
 from test_distill_draft_persist import (
     _DraftStub,
@@ -175,7 +174,7 @@ def test_g2_step_timings_in_order(capsys, monkeypatch, store):
         assert resp_bad.status_code == 200, resp_bad.text
         out_bad = capsys.readouterr().out
 
-    want = ["名单", "回忆区", "蒸馏", "重定位", "转卡", "后置", "打标签", "落卡", "待补", "苏醒台词"]
+    want = ["名单", "回忆区", "蒸馏", "转卡", "后置", "打标签", "落卡", "待补", "苏醒台词"]
     got = re.findall(r"步骤 (\S+) 完成 耗时 (\d+\.\d+)s", out_start)
     assert [name for name, _ in got] == want
     assert all(secs for _, secs in got)
@@ -237,42 +236,6 @@ def test_g5_rehang_line_names_the_chapter(caplog):
         PA._card([PA._row([PA._occ(3, PA._Q1)], "错挂")])
     assert [r.getMessage() for r in caplog.records if "改挂" in r.getMessage()] == [
         "改挂：做法 '错挂' 标在阶段 3，摘录落在阶段 [1]（摘录在无章节标题）"]
-
-
-def test_g6_candidate_verdicts_and_reasons(caplog):
-    class _WhyJudge(PL._Judge):
-        def chat(self, system, messages, max_tokens=None, **kw):
-            n = int(re.search(r"### 第(\d+)章", messages[-1]["content"]).group(1))
-            d = json.loads(super().chat(system, messages, max_tokens=max_tokens, **kw))
-            d["why"] = f"第{n}章{'是' if d['happens'] else '否'}"
-            return json.dumps(d)
-
-    judge = _WhyJudge(PL._YES)
-    with caplog.at_level(logging.WARNING):
-        PL._distiller(judge).locate_phase_starts(PL._draft(), PL._SRC, "他", PL._RETRO)
-    lines = [r.getMessage() for r in caplog.records
-             if r.getMessage().startswith("[phase_locate]")]
-
-    cands = [ln for ln in lines if "候选" in ln]
-    assert len(cands) == len(judge.asked)
-    assert all(re.fullmatch(
-        r"\[phase_locate\] card=他 阶段 [23] 候选 第\d+章：(是|否)；理由：第\d+章(是|否)；句子：.*",
-        ln) for ln in cands)
-    assert [ln.endswith("句子：") for ln in cands if "：否；" in ln] == [True] * len(
-        [ln for ln in cands if "：否；" in ln])
-    originals = [ln for ln in lines if "→ 第" in ln]
-    assert [ln.rsplit("；理由：", 1)[-1] for ln in originals] == ["第2章是", "第4章是"]
-
-
-def test_g6b_verified_anchors_say_so(caplog):
-    good = copy.deepcopy(PL._PHASES)
-    good[1]["anchor"], good[2]["anchor"] = "那天他在桥边初遇阿月", "他终于决定远行求学"
-    with caplog.at_level(logging.WARNING):
-        PL._distiller(PL._Judge(PL._YES)).locate_phase_starts(
-            PL._draft(good), PL._SRC, "他", PL._RETRO)
-    lines = [r.getMessage() for r in caplog.records
-             if r.getMessage().startswith("[phase_locate]")]
-    assert lines == ["[phase_locate] card=他 锚点核对通过，用模型锚点"]
 
 
 def test_g7_no_print_left_on_the_chain():

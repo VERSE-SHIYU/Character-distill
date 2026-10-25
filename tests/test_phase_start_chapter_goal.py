@@ -241,7 +241,6 @@ def test_s5_g1_warms_the_book_prefix_alongside_g6():
 
 # ── S6：不再重新定位 ────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="PR 1 前：重定位还在")
 def test_s6_relocation_is_gone():
     assert not hasattr(Distiller, "locate_phase_starts")
     assert not (_ROOT / "core" / "phase_locate.py").exists()

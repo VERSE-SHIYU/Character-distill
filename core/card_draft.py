@@ -142,22 +142,9 @@ class DraftRelationship(Relationship):
     attitudes: list[DraftAttitude] = []
 
 
-def _key_moments_stays_required(schema: dict, cls) -> None:
-    """发给模型的结构不因默认值而变：key_moments 仍列在 required、不带 default。"""
-    schema.get("properties", {}).get("key_moments", {}).pop("default", None)
-    required = schema.setdefault("required", [])
-    if "key_moments" not in required:
-        required.append("key_moments")
-
-
 class DraftPhase(PhaseState):
-    """弧线上的一个阶段；anchor 是标志这一阶段开始的一句原文（阶段 1 可留空）。
-
-    key_moments 只供重定位用，不进卡。
-    """
-    model_config = ConfigDict(json_schema_extra=_key_moments_stays_required)
+    """弧线上的一个阶段；anchor 是标志这一阶段开始的一句原文（阶段 1 可留空）。"""
     anchor: str = ""
-    key_moments: list[str] = []
     boundary_examples: list[BoundaryExample] = []
 
 

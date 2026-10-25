@@ -52,8 +52,7 @@ _DRAFT_ONLY = "越界阶段才有的独有做法串"
 
 def _draft() -> dict:
     """有阶段、有关系的草稿（`CardDraft` 真实形态）。S2 起蒸馏流交出的草稿关系已补全
-    （关系分批在 distiller 内部做），故关系带 relation。阶段 2 的锚点留空，由路由转卡前的
-    `locate_phase_starts`（替身）就地补上 —— 好让「存了转卡前最后改动之前的副本」的变异可辨。"""
+    （关系分批在 distiller 内部做），故关系带 relation。阶段 2 的锚点留空：转卡时整卡跳过位置核对。"""
     return {
         "name": _CARD_NAME,
         "character_arc": {"axis": "从死要面子到不再分辩", "phases": [
@@ -80,7 +79,6 @@ class _DraftStub:
 
     def __init__(self, draft: dict):
         self.draft = draft
-        self.locate_calls = 0
 
     def effective_chunk_size(self, text_type="story"):
         return 3000
@@ -93,18 +91,6 @@ class _DraftStub:
                                    resume_candidates=None):
         yield {"status": "formatting", "current": 1, "total": 1}
         yield json.dumps(self.draft, ensure_ascii=False)
-
-    def locate_phase_starts(self, draft, text, character_name, retro):
-        # 照生产行为：就地改草稿里的阶段锚点（真实现重新定位起点后写回 `anchor`）。
-        # 这是路由在转卡前对草稿的最后一次改动 —— 让「存改动之前的副本」这一变异有判别力。
-        # 真实现对形态不对的草稿什么都不改、也不抛（core/distiller.py `locate_phase_starts`
-        # 开头的形态判断）—— 替身照做，否则「转卡失败」那类用例会先死在这里。
-        self.locate_calls += 1
-        arc = draft.get("character_arc") if isinstance(draft, dict) else None
-        phases = arc.get("phases") if isinstance(arc, dict) else None
-        if isinstance(phases, list) and len(phases) >= 2 and isinstance(phases[1], dict):
-            phases[1]["anchor"] = _Q3
-        return None
 
     def _auto_tag(self, card_dict):
         return []
@@ -235,9 +221,8 @@ def test_start_persists_the_draft_with_the_distill_time_character(monkeypatch, s
     payload = _load_payload(store, card_id, uid)
     assert set(payload) == {"character", "draft"}
     assert payload["character"] == _DISTILL_NAME, "存的是蒸馏时的角色名，不是卡上的 name"
-    # 存的就是转卡前那份 data（locate_phase_starts 就地补上的锚点在里面）
-    assert payload["draft"]["character_arc"]["phases"][1]["anchor"] == _Q3
-    assert distiller.locate_calls == 1
+    # 存的就是蒸馏流交出的那份草稿
+    assert payload["draft"] == distiller.draft
 
 
 def test_run_stream_persists_the_draft(monkeypatch, store):
