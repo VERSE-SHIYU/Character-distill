@@ -18,7 +18,7 @@ from core.schema import (
 )
 from core.arc_view import ProjectedCard, phase_header, require_projected
 from core.rag import RAGEngine
-from core.scene_indexer import _detect_emotion
+from core import scene_retrieval
 from core.tokens import count_tokens
 from core.utils import try_record_usage
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
@@ -549,11 +549,10 @@ class ContextEngine:
         """rag 的结构化出口。rag 未配置 → 空（真无，不是失败）。"""
         if self.rag is None:
             return [], None
-        hits = self.rag.query_with_emotion_ex(
+        hits = scene_retrieval.scene_hits(
+            self.rag,
             query,
-            current_emotion=_detect_emotion(query),
             character_name=self.card.name,
-            top_k=3,
             window=self.arc_view.window if self.arc_view is not None else None,
         )
         return list(hits), None
