@@ -100,6 +100,19 @@ def locate_in_normalized(source_norm: str, quote: str) -> list[int] | None:
     return [m.start() for m in re.finditer(re.escape(longest), source_norm)]
 
 
+def intervals_in_normalized(source_norm: str, text: str) -> list[tuple[int, int]]:
+    """`text` 在 `source_norm` 里的全部连续出现区间（规范化坐标，半开）；找不到 → 空列表。
+
+    与 `locate_in_normalized` 的分工：那条为「省略号拼接核对」设计，只取最长一段的起点；
+    这条给「按位置判重叠」用，区间宽度就是被找文本自身，不会跨过中间的无关段落。原文里
+    的省略号由 `normalize` 去掉，故含省略号的整段原文仍能对上。
+    """
+    n = normalize(text)
+    if not n:
+        return []
+    return [(m.start(), m.start() + len(n)) for m in re.finditer(re.escape(n), source_norm)]
+
+
 def _paragraph_index(bounds: list[int], pos: int) -> int:
     """规范化位置 `pos` 落在第几段（`bounds` = 各段起始偏移，按换行分段、升序）。"""
     lo, hi = 0, len(bounds)
