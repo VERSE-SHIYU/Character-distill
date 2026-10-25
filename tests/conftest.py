@@ -484,15 +484,23 @@ def embedding_key_configured(monkeypatch):
 
     面向用户入口在没配 key 时一律 400（`web/user_keys.require_embedding`）。这些模块测的是
     别的东西，不显式 opt-in 就会撞在门上；要测门本身的模块不要用它。
+
+    叠加在**真实配置**之上，不整个替换：有的用例还要从同一份配置里读用户的 LLM key。
     """
     from storage.postgres_store import PostgresStore
     from storage.sqlite_store import SQLiteStore
 
-    async def _with_key(_self, _user_id):
-        return {"embedding_key": "k", "embedding_region": "cn"}
+    def _install(cls):
+        orig = cls.get_user_api_config
 
-    monkeypatch.setattr(SQLiteStore, "get_user_api_config", _with_key)
-    monkeypatch.setattr(PostgresStore, "get_user_api_config", _with_key)
+        async def _with_key(self, user_id):
+            return {**(await orig(self, user_id) or {}),
+                    "embedding_key": "k", "embedding_region": "cn"}
+
+        monkeypatch.setattr(cls, "get_user_api_config", _with_key)
+
+    _install(SQLiteStore)
+    _install(PostgresStore)
 
 
 @pytest.fixture
