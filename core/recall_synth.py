@@ -237,10 +237,10 @@ def verify_ok(verdict: Any, evidence_ids: Iterable[str]) -> bool | None:
 
 
 def _advice(result: Any) -> list[str]:
-    """退回修改时交给起草方的原话：优先 ``suggestion``，没有就用 ``reason``。"""
+    """退回修改时交给起草方的原话：A.5 给 ``suggestion``，A.6 只给 ``notes``，其余兜 ``reason``。"""
     if not isinstance(result, Mapping):
         return []
-    for key in ("suggestion", "reason"):
+    for key in ("suggestion", "notes", "reason"):
         value = result.get(key)
         if isinstance(value, str) and value.strip():
             return [value]

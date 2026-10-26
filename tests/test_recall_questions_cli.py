@@ -123,6 +123,21 @@ def test_ground_failure_rewrites_with_feedback(tmp_path):
     assert len(llm.calls) == 4  # 失败那轮不过关 1，重写后再过 3
 
 
+def test_verifier_notes_reach_next_draft_as_feedback(tmp_path):
+    """A.6 不过时，其 ``notes`` 是唯一的说明 —— 必须原话进下一次起草的 {feedback}。"""
+    rejected = {"answerable": True, "sufficient": False, "per_doc": {"e1": True},
+                "necessary": [True], "leak": False, "intent_match": True,
+                "notes": "缺少 e2 的出处"}
+    llm = FakeLLM([DRAFT, DRAFT], a6=[rejected, GOOD])
+
+    summary = rq.run_generate([_book()], llm, PROMPTS, tmp_path)
+
+    drafts = [c for c in llm.calls if c.startswith("DRAFT|")]
+    assert len(drafts) == 2
+    assert "缺少 e2 的出处" in drafts[1]
+    assert summary["books"]["t1_甲"]["outcomes"] == {"passed": 1}
+
+
 def test_repair_cap_discards_after_three_attempts(tmp_path):
     llm = FakeLLM([{"query": "你当时在场吗？", "should": [BAD_FRAGMENT]}] * 3)
 
