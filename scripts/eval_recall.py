@@ -215,7 +215,6 @@ def run_suite(books: list[Book], service) -> dict:
         if not book.cases:
             raise EvalAbort(f"书目行没有标注文件：{book.title}/{book.character}")
         cases = load_cases(book.cases)
-        per_text[book.text_id] = per_text.get(book.text_id, 0) + 1
         if book.card is not None:
             rag = service.get_rag_for_session(
                 book.text_id, card_id=book.card_id or "",
@@ -224,6 +223,8 @@ def run_suite(books: list[Book], service) -> dict:
                 raise EvalAbort(f"无法建立会话检索：{book.title}/{book.character}")
             rows = run_eval(book.source, book.card, cases, rag)["per_query"]
         else:
+            # n 只数无卡行：有卡行不建 eval 集合，不占编号。
+            per_text[book.text_id] = per_text.get(book.text_id, 0) + 1
             card_id = f"eval_{book.text_id}_c{per_text[book.text_id]}"
             service.build_scene_index(
                 book.text_id, card_id, book.source, book.character, None,

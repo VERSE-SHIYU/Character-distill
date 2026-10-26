@@ -71,6 +71,23 @@ def test_no_card_rows_build_numbered_scene_collections_and_aggregate(tmp_path):
     assert (result["overall"]["n"], result["overall"]["r_at_3"]) == (2, 1.0)
 
 
+def test_card_row_does_not_consume_scene_collection_number(tmp_path, monkeypatch):
+    """同一 text_id、有卡行在前：n 只数无卡行，无卡行仍是 `_c1`。"""
+    import eval_recall
+
+    card_book = _book(tmp_path, character="甲", phase=1)
+    card_book.card = object()
+    card_book.card_id = "real_card"
+    books = [card_book, _book(tmp_path, character="乙")]
+    service = _Service()
+    # 有卡分支的打分不在本条范围内，只看无卡行的集合编号。
+    monkeypatch.setattr(eval_recall, "run_eval", lambda *a, **k: {"per_query": []})
+
+    run_suite(books, service)
+
+    assert service.built == ["eval_t1_c1"]
+
+
 def test_phase_must_be_null_without_card(tmp_path):
     with pytest.raises(EvalAbort, match="phase"):
         run_suite([_book(tmp_path, phase=1)], _Service())
