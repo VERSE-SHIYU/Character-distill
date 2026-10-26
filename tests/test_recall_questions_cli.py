@@ -1,10 +1,12 @@
-"""☁ 出题命令行：台账拒收、关卡顺序、软关打标记、解析失败、锚点与摸底。
+"""☁ 出题命令行：generate 的起草/关卡/修复/跳过/解析失败，probe 的摸底。
 
 本地**不跑**（spec §0：☁ 测试由复核方在沙箱带内存上限跑）。替身只配 ``chat``、
-固定返回、无流式；提示词用假模板，不写论文原文。
+固定返回、无流式；提示词用假模板，不写论文原文。替身按提示词开头路由，不按调用
+顺序 —— generate 在 8 个线程里并发，顺序不可依赖。
 """
 import json
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -12,17 +14,21 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import recall_questions as rq  # noqa: E402
-from core.recall_synth import sample_anchors  # noqa: E402
-from eval_recall import Book, EvalAbort  # noqa: E402
+from eval_recall import Book  # noqa: E402
 
 NAME = "甲"
+SEG = "乙" * 120
+FRAG_A = "丙丁戊己庚辛壬癸子丑"
+FRAG_B = "子丑寅卯辰巳午未申酉"
 # 名字只出现一次；紧跟其后的 10 字片段全书唯一，且落在 ±120 的锚点窗口内。
-SOURCE = "乙" * 120 + NAME + "丙丁戊己庚辛壬癸子丑" + "乙" * 120
-FRAGMENT = "丙丁戊己庚辛壬癸子丑"
+SOURCE = SEG + NAME + FRAG_A + SEG
+SOURCE_TWO = SEG + NAME + FRAG_A + SEG + SEG + NAME + FRAG_B + SEG
+BAD_FRAGMENT = "乙乙乙乙乙乙乙乙乙乙"
 
 PROMPTS = {
-    "own_words_A5": "{question}|{quotes}",
-    "verifier_A6": "{question}|{quotes}|{intent_criterion}|{intent_field}",
+    "draft": "DRAFT|{character}|{title}|{window}|{feedback}",
+    "own_words_A5": "A5|{question}|{quotes}",
+    "verifier_A6": "A6|{question}|{quotes}|{intent_criterion}|{intent_field}",
     "intent_factual_A3": "Factual lookup: row",
 }
 
@@ -30,145 +36,160 @@ LIFT = {"searchable": True, "reason": "lift", "suggestion": "换个说法问"}
 OWN = {"searchable": False, "reason": "", "suggestion": ""}
 GOOD = {"answerable": True, "sufficient": True, "per_doc": {"e1": True}, "necessary": [True],
         "leak": False, "intent_match": True, "notes": ""}
+DRAFT = {"query": "你当时在场吗？", "should": [FRAG_A]}
 
 
 class FakeLLM:
-    """只答卡片式 JSON 请求的替身：按顺序吐出固定回复。"""
+    """按提示词开头路由的替身：DRAFT / A5 / A6，线程安全，返回固定或不重复的回复。"""
 
-    def __init__(self, replies):
-        self.replies = [json.dumps(r, ensure_ascii=False) for r in replies]
+    def __init__(self, drafts, *, a5=None, a6=None):
+        self.drafts = drafts if callable(drafts) else list(drafts)
+        self.a5 = list(a5 or [OWN])
+        self.a6 = list(a6 or [GOOD])
+        self.lock = threading.Lock()
         self.calls = []
         self.last_usage = {"prompt_tokens": 3, "completion_tokens": 5}
 
+    @staticmethod
+    def _next(queue):
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+
     def chat(self, system_prompt, messages, max_tokens=None):
-        self.calls.append(system_prompt)
-        return self.replies.pop(0)
+        with self.lock:
+            self.calls.append(system_prompt)
+            if system_prompt.startswith("DRAFT|"):
+                if callable(self.drafts):
+                    reply = self.drafts(system_prompt)
+                else:
+                    reply = self._next(self.drafts)
+            elif system_prompt.startswith("A5|"):
+                reply = self._next(self.a5)
+            else:
+                reply = self._next(self.a6)
+            self.last_usage = {"prompt_tokens": 3, "completion_tokens": 5}
+        return reply if isinstance(reply, str) else json.dumps(reply, ensure_ascii=False)
 
 
-def _book(*, cases=None):
+def _book(*, source=SOURCE, cases=None):
     return Book(book="b", title="书", user_id="u", text_id="t1", character=NAME,
-                source=SOURCE, aliases=[], cases=cases, card_id=None, card=None,
+                source=source, aliases=[], cases=cases, card_id=None, card=None,
                 embedding_key="k", embedding_region="cn")
 
 
-def _anchors():
-    anchors = sample_anchors(SOURCE, [NAME], k=1, half_width=120)
-    return [{"id": "a01", **anchors[0]}]
+def _cases(out_dir, stem="t1_甲"):
+    path = Path(out_dir) / f"{stem}.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()]
 
 
-def _work(tmp_path, anchors=None):
-    work = tmp_path / "work"
-    drafts = tmp_path / "drafts"
-    work.mkdir()
-    drafts.mkdir()
-    (work / "t1_甲.anchors.json").write_text(
-        json.dumps({"anchors": anchors or _anchors()}, ensure_ascii=False), encoding="utf-8")
-    return work, drafts
+def test_generate_passes_and_writes_eval_cases(tmp_path):
+    llm = FakeLLM([DRAFT])
 
+    summary = rq.run_generate([_book()], llm, PROMPTS, tmp_path)
 
-def _draft(drafts, rows):
-    (drafts / "t1_甲.jsonl").write_text(
-        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
-
-
-def _cases(work):
-    text = (work / "t1_甲.jsonl").read_text(encoding="utf-8")
-    return [json.loads(line) for line in text.splitlines() if line.strip()]
-
-
-def test_check_passes_and_writes_eval_cases(tmp_path):
-    work, drafts = _work(tmp_path)
-    _draft(drafts, [{"id": "a01", "query": "你当时在场吗？", "should": [FRAGMENT]}])
-    llm = FakeLLM([OWN, GOOD])
-
-    summary = rq.run_check([_book()], llm, PROMPTS, drafts, work, round_no=1)
-
-    rows = _cases(work)
-    assert rows == [{"id": "a01", "phase": None, "query": "你当时在场吗？",
-                     "should": [FRAGMENT], "should_not": [], "own_words_flag": False}]
+    assert _cases(tmp_path) == [{"id": "a01", "phase": None, "query": "你当时在场吗？",
+                                 "should": [FRAG_A], "should_not": [],
+                                 "own_words_flag": False}]
     assert summary["books"]["t1_甲"]["outcomes"] == {"passed": 1}
-    assert len(llm.calls) == 2  # A.5 → A.6，各一次
+    assert summary["books"]["t1_甲"]["anchors"] == 1
+    assert summary["usage"]["calls"] == 3  # 起草 → A.5 → A.6
+    assert (tmp_path / "t1_甲.anchors.json").exists()
+    assert (tmp_path / "verdicts.jsonl").exists()
+    assert (tmp_path / "summary.json").exists()
+
+
+def test_skip_leaves_anchor_empty_without_gate_calls(tmp_path):
+    llm = FakeLLM([{"skip": True}])
+
+    summary = rq.run_generate([_book()], llm, PROMPTS, tmp_path)
+
+    assert summary["books"]["t1_甲"]["skip"] == 1
+    assert summary["books"]["t1_甲"]["outcomes"] == {}
+    assert _cases(tmp_path) == []
+    assert len(llm.calls) == 1
+
+
+def test_ground_failure_rewrites_with_feedback(tmp_path):
+    llm = FakeLLM([{"query": "你当时在场吗？", "should": [BAD_FRAGMENT]}, DRAFT])
+
+    summary = rq.run_generate([_book()], llm, PROMPTS, tmp_path)
+
+    assert _cases(tmp_path)[0]["should"] == [FRAG_A]
+    assert summary["books"]["t1_甲"]["repair_passes"]["1"]["ground"] == 1
+    assert summary["books"]["t1_甲"]["outcomes"] == {"passed": 1}
+    assert "Previous attempt was rejected" in llm.calls[1]  # 第二次起草带反馈
+    assert len(llm.calls) == 4  # 失败那轮不过关 1，重写后再过 3
+
+
+def test_repair_cap_discards_after_three_attempts(tmp_path):
+    llm = FakeLLM([{"query": "你当时在场吗？", "should": [BAD_FRAGMENT]}] * 3)
+
+    summary = rq.run_generate([_book()], llm, PROMPTS, tmp_path)
+
+    assert summary["books"]["t1_甲"]["outcomes"] == {"discarded:ground": 1}
+    assert _cases(tmp_path) == []
+    assert len(llm.calls) == 3  # 三次起草，硬关一次模型调用都不花
 
 
 def test_soft_flag_last_round_still_runs_verifier(tmp_path):
-    work, drafts = _work(tmp_path)
-    _draft(drafts, [{"id": "a01", "query": "你当时在场吗？", "should": [FRAGMENT]}])
-    llm = FakeLLM([LIFT, GOOD])
+    llm = FakeLLM([DRAFT] * 3, a5=[LIFT, LIFT, OWN])
 
-    rq.run_check([_book()], llm, PROMPTS, drafts, work, round_no=3)
+    summary = rq.run_generate([_book()], llm, PROMPTS, tmp_path)
 
-    assert _cases(work)[0]["own_words_flag"] is True
-    assert len(llm.calls) == 2
-
-
-def test_ground_failure_costs_no_model_call(tmp_path):
-    work, drafts = _work(tmp_path)
-    _draft(drafts, [{"id": "a01", "query": "你当时在场吗？", "should": ["乙乙乙乙乙乙乙乙乙乙"]}])
-    llm = FakeLLM([])
-
-    summary = rq.run_check([_book()], llm, PROMPTS, drafts, work, round_no=1)
-
-    assert summary["books"]["t1_甲"]["outcomes"] == {"ground_fail": 1}
-    assert llm.calls == []
+    assert _cases(tmp_path)[0]["own_words_flag"] is True
+    assert summary["books"]["t1_甲"]["outcomes"] == {"passed_own_words_flag": 1}
+    assert summary["books"]["t1_甲"]["repair_passes"]["2"]["critic"] == 1
+    assert len(llm.calls) == 7  # 3 起草 + 3 A.5 + 1 A.6
 
 
-def test_ledger_rejects_before_any_model_call(tmp_path):
-    work, drafts = _work(tmp_path)
-    _draft(drafts, [{"id": "x99", "query": "问？", "should": [FRAGMENT]}])
-    llm = FakeLLM([])
-    with pytest.raises(EvalAbort, match="x99"):
-        rq.run_check([_book()], llm, PROMPTS, drafts, work)
-    assert llm.calls == []
-
-
-def test_discarded_id_cannot_come_back(tmp_path):
-    work, drafts = _work(tmp_path)
-    (work / "t1_甲.discarded.json").write_text(json.dumps(["a01"]), encoding="utf-8")
-    _draft(drafts, [{"id": "a01", "query": "问？", "should": [FRAGMENT]}])
-    llm = FakeLLM([])
-    with pytest.raises(EvalAbort, match="a01"):
-        rq.run_check([_book()], llm, PROMPTS, drafts, work)
-
-
-def test_skip_leaves_anchor_empty_without_calls(tmp_path):
-    work, drafts = _work(tmp_path)
-    _draft(drafts, [{"id": "a01", "skip": True}])
-    llm = FakeLLM([])
-
-    summary = rq.run_check([_book()], llm, PROMPTS, drafts, work)
-
-    assert summary["books"]["t1_甲"]["skip"] == 1
-    assert _cases(work) == [] and llm.calls == []
-
-
-def test_unparsed_twice_becomes_parse_discard(tmp_path):
-    work, drafts = _work(tmp_path)
-    _draft(drafts, [{"id": "a01", "query": "你当时在场吗？", "should": [FRAGMENT]}])
+def test_unparsed_draft_twice_becomes_parse_discard(tmp_path):
     llm = FakeLLM(["not json", "still not json"])
 
-    summary = rq.run_check([_book()], llm, PROMPTS, drafts, work)
+    summary = rq.run_generate([_book()], llm, PROMPTS, tmp_path)
 
     assert summary["books"]["t1_甲"]["outcomes"] == {"discarded:parse": 1}
-    assert len(llm.calls) == 2  # 同一关重调一次，不计修复次数
+    assert len(llm.calls) == 2  # 同一轮重调一次，不计修复次数
 
 
-def test_anchors_written_per_row(tmp_path):
-    summary = rq.run_anchors([_book()], tmp_path / "work", k=1)
-    assert summary == {"t1_甲": 1}
-    payload = json.loads((tmp_path / "work" / "t1_甲.anchors.json").read_text(encoding="utf-8"))
-    assert payload["anchors"][0]["id"] == "a01"
-    assert payload["anchors"][0]["text"].startswith("乙" * 120 + NAME)
+def test_human_rows_are_not_generated(tmp_path):
+    human = tmp_path / "human.jsonl"
+    human.write_text(json.dumps({"id": "q01", "query": "你当时在场吗？",
+                                 "should": [FRAG_A]}, ensure_ascii=False) + "\n",
+                     encoding="utf-8")
+    llm = FakeLLM([])
+
+    summary = rq.run_generate([_book(cases=str(human))], llm, PROMPTS, tmp_path)
+
+    assert summary["books"] == {}
+    assert summary["b（人工题）"]["n"] == 1
+    assert llm.calls == []
+
+
+def test_two_anchors_share_usage_and_stay_apart(tmp_path):
+    def pick(prompt):
+        return {"query": "你当时在场吗？",
+                "should": [FRAG_A if FRAG_A in prompt else FRAG_B]}
+
+    summary = rq.run_generate([_book(source=SOURCE_TWO)], FakeLLM(pick), PROMPTS, tmp_path)
+
+    rows = _cases(tmp_path)
+    assert {row["id"] for row in rows} == {"a01", "a02"}
+    assert {row["should"][0] for row in rows} == {FRAG_A, FRAG_B}
+    assert summary["books"]["t1_甲"]["anchors"] == 2
+    assert summary["usage"]["calls"] == 6 and summary["usage"]["prompt_tokens"] == 18
 
 
 def test_probe_reports_disagreement_and_excludes_chitchat(tmp_path):
     human = tmp_path / "human.jsonl"
     human.write_text(
         "\n".join(json.dumps(r, ensure_ascii=False) for r in (
-            {"id": "q01", "query": "你当时在场吗？", "should": [FRAGMENT]},
+            {"id": "q01", "query": "你当时在场吗？", "should": [FRAG_A]},
             {"id": "q02", "query": "早呀", "should": []},
         )) + "\n",
         encoding="utf-8")
-    llm = FakeLLM([GOOD, {**GOOD, "leak": True}])
+    llm = FakeLLM([], a6=[GOOD, {**GOOD, "leak": True}])
 
     summary = rq.run_probe([_book(cases=str(human))], llm, PROMPTS,
                            tmp_path / "probe.json", gates=("a6",))

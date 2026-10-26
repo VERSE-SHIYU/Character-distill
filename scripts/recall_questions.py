@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""出题命令行（0d）：``probe`` / ``anchors`` / ``check``。
+"""出题命令行（0d）：``probe`` / ``generate``。
 
 - ``probe``：人工题（剔除寒暄）过指定的模型关（A.5 / A.6）各两次，只量误判率与
   两次一致率，不改任何题。
-- ``anchors``：按全书均分的 60 段抽锚点，每段至多一个（`sample_anchors`）。
-- ``check``：`ledger_problems`（有问题整批拒收）→ g_ground → A.4 → A.5 → A.6，
-  每一步只对上一步过了的调；写 verdicts / repair / 评测格式的题。
+- ``generate``（spec ⑱）：一条命令跑完「锚点 → 起草 → g_ground → A.5 → A.6 →
+  修两轮」，中途不停；起草与判定都用 DeepSeek。
 
 关卡规则全在 `core.recall_synth`（本文件不判通过条件），模型 JSON 解析走
-`core.llm_json.loads_llm_json`，提示词只从本地 `prompts/` 读并逐份核哈希。
+`core.llm_json.loads_llm_json`，照抄的提示词只从本地 `prompts/` 读并逐份核哈希；
+起草提示词 `DRAFT_PROMPT` 在本仓库（⑱：论文没给）。
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +26,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from core import concurrency as C  # noqa: E402
 from core import recall_synth  # noqa: E402
 from core.llm_json import loads_llm_json  # noqa: E402
 from core.quotes import normalize  # noqa: E402
@@ -38,6 +42,12 @@ PROMPT_FILES: dict[str, str] = {
 MAX_TOKENS = 512
 # 模板都是完整指令；补一句用户轮让厂商拿到非空 user 消息。
 USER_TURN = "Proceed with the judgment."
+
+# 锚点并发数：沿用蒸馏线程池的 8 路写法（`ThreadPoolExecutor` + `C.ctx_submit`）。
+DRAFT_WORKERS = 8
+
+# ⑲：一律只用本名找锚点；林黛玉本名只出现 284 次，原文主要叫「黛玉」（1375 次）。
+ANCHOR_NAME_OVERRIDES: dict[str, list[str]] = {"林黛玉": ["黛玉"]}
 
 
 def _stem(book: Book) -> str:
@@ -87,11 +97,6 @@ def _parse_discard(draft: dict, attempt: int) -> dict:
     }
 
 
-def _read_jsonl(path: str | Path) -> list[dict]:
-    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines()
-            if line.strip()]
-
-
 def _write_jsonl(path: str | Path, rows: list[dict]) -> None:
     with Path(path).open("w", encoding="utf-8", newline="\n") as fh:
         for row in rows:
@@ -104,16 +109,8 @@ def _write_json(path: str | Path, payload: Any) -> None:
         fh.write("\n")
 
 
-def _load_str_list(path: str | Path, default: list[str]) -> list[str]:
-    path = Path(path)
-    if not path.exists():
-        return default
-    value = json.loads(path.read_text(encoding="utf-8"))
-    return [str(v) for v in value]
-
-
 def _load_prompts(prompt_dir: str | Path) -> dict[str, str]:
-    """读 4 份照抄的提示词并逐份核哈希；按字节解码，不做换行转换。"""
+    """读 3 份照抄的提示词并逐份核哈希；按字节解码，不做换行转换。"""
     base = Path(prompt_dir)
     prompts: dict[str, str] = {}
     for name, filename in PROMPT_FILES.items():
@@ -245,35 +242,31 @@ def run_probe(books: list[Book], llm: Any, prompts: dict[str, str],
     return summary
 
 
-def run_anchors(books: list[Book], out_dir: str | Path, k: int = 30) -> dict:
-    """每本（只给没有人工题的行）抽 ``k`` 个锚点，写 ``<stem>.anchors.json``。"""
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    summary: dict[str, int] = {}
-    for book in books:
-        if book.cases:
-            continue
-        anchors = recall_synth.sample_anchors(
-            book.source, [book.character, *book.aliases], k=k)
-        payload = {
-            "book": book.book,
-            "title": book.title,
-            "text_id": book.text_id,
-            "character": book.character,
-            "aliases": book.aliases,
-            "anchors": [{"id": f"a{i:02d}", **a} for i, a in enumerate(anchors, 1)],
-        }
-        _write_json(out / f"{_stem(book)}.anchors.json", payload)
-        summary[_stem(book)] = len(anchors)
-    return summary
+def _anchor_names(book: Book) -> list[str]:
+    """⑲：找锚点只用本名，林黛玉是唯一例外（原文主要叫「黛玉」）。"""
+    return ANCHOR_NAME_OVERRIDES.get(book.character, [book.character])
 
 
-def _read_anchors(path: Path, book: Book) -> list[dict]:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise EvalAbort(f"{_stem(book)} 还没有锚点文件：{path}（先跑 anchors）") from None
-    return payload["anchors"]
+def _draft_shape(value: dict) -> dict | None:
+    """起草结果的结构：``{"skip": true}`` 或 ``{"query", "should"}``；其余算未解析。"""
+    if value.get("skip") is True:
+        return value
+    query = value.get("query")
+    should = value.get("should")
+    if isinstance(should, str):
+        should = [should]
+    if not isinstance(query, str) or not query.strip():
+        return None
+    if not isinstance(should, list) or not should or not all(isinstance(s, str) for s in should):
+        return None
+    return {"query": query, "should": should}
+
+
+def _feedback(problems: list[str]) -> str:
+    if not problems:
+        return ""
+    return ("\nPrevious attempt was rejected. Fix these problems:\n"
+            + "\n".join(f"- {p}" for p in problems) + "\n")
 
 
 def _run_gates(
@@ -318,88 +311,135 @@ def _run_gates(
         verdict=verdict, attempt=attempt), raws
 
 
-def run_check(
-    books: list[Book], llm: Any, prompts: dict[str, str],
-    drafts_dir: str | Path, out_dir: str | Path, *, round_no: int = 1,
+def _one_anchor(
+    book: Book, anchor: dict, anchor_id: str, source_norm: str,
+    llm: Any, prompts: dict[str, str],
 ) -> dict:
-    """整批核查：先台账（有问题整批拒收），再逐条过关，写三份产物。"""
+    """一个锚点：起草 → g_ground → A.5 → A.6；未过把原因填回反馈位重写（至多 3 次）。
+
+    每个锚点一份适配器副本：``last_usage`` 是跨调用的共享槽，并发读会串号
+    （``core/distiller.py`` 缺陷 20 同形）。副本共享底层客户端，只是各记各的账。
+    """
+    worker_llm = copy.copy(llm)
+    usage = _new_usage()
+    history: list[dict] = []
+    feedback = ""
+
+    for attempt in range(1, recall_synth.MAX_ATTEMPTS + 1):
+        prompt = recall_synth.render(
+            "draft", prompts["draft"], character=book.character, title=book.title,
+            window=anchor["text"], feedback=feedback)
+        drafted = _ask_gate(worker_llm, prompt, _draft_shape, usage)
+        if drafted is None:
+            history.append(_parse_discard({"id": anchor_id}, attempt))
+            return {"id": anchor_id, "status": "discarded", "gate": "parse",
+                    "case": None, "attempts": history, "usage": usage}
+        if drafted.get("skip") is True:
+            return {"id": anchor_id, "status": "skip", "case": None,
+                    "attempts": [], "usage": usage}
+
+        draft = {"id": anchor_id, "query": drafted["query"], "should": drafted["should"]}
+        result, raws = _run_gates(
+            book, draft, anchor, source_norm, worker_llm, prompts, usage, attempt)
+        result = {**result, "raw": raws}
+        history.append(result)
+        if result["status"] == "passed":
+            return {"id": anchor_id, "status": "passed", "attempts": history,
+                    "usage": usage, "case": {
+                        "id": anchor_id,
+                        "phase": None,
+                        "query": draft["query"],
+                        "should": draft["should"],
+                        "should_not": [],
+                        "own_words_flag": result["own_words_flag"],
+                    }}
+        if result["status"] == "discarded":
+            return {"id": anchor_id, "status": "discarded", "gate": result.get("gate"),
+                    "case": None, "attempts": history, "usage": usage}
+        feedback = _feedback(result["problems"])
+
+    raise AssertionError("judge 未在 MAX_ATTEMPTS 内给出终态")
+
+
+def _repair_passes(outcomes: list[dict]) -> dict[str, dict[str, int]]:
+    """各关退回后「修 1 / 2 次通过」的条数，按最后一次退回的关分桶。"""
+    counts = {str(n): {"ground": 0, "critic": 0, "verify": 0}
+              for n in range(1, recall_synth.MAX_ATTEMPTS)}
+    for outcome in outcomes:
+        history = outcome["attempts"]
+        if outcome["status"] != "passed" or len(history) < 2:
+            continue
+        repairs = str(len(history) - 1)
+        gate = history[-2].get("gate")
+        if repairs in counts and gate in counts[repairs]:
+            counts[repairs][gate] += 1
+    return counts
+
+
+def run_generate(
+    books: list[Book], llm: Any, prompts: dict[str, str],
+    out_dir: str | Path, *, k: int = 30, workers: int = DRAFT_WORKERS,
+) -> dict:
+    """⑱：锚点 → 起草 → 三关 → 修两轮，一条命令跑完，中途不停。"""
+    started = time.monotonic()
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    drafts_dir = Path(drafts_dir)
-
-    prepared: list[tuple[Book, dict[str, dict], list[dict], list[str]]] = []
-    problems: list[str] = []
-    for book in books:
-        if book.cases:
-            continue
-        stem = _stem(book)
-        anchors = _read_anchors(out / f"{stem}.anchors.json", book)
-        drafts_path = drafts_dir / f"{stem}.jsonl"
-        drafts = _read_jsonl(drafts_path) if drafts_path.exists() else []
-        discarded = _load_str_list(out / f"{stem}.discarded.json", [])
-        problems.extend(recall_synth.ledger_problems(
-            [d.get("id") for d in drafts],
-            [a["id"] for a in anchors],
-            discarded,
-        ))
-        prepared.append((book, {a["id"]: a for a in anchors}, drafts, discarded))
-    if problems:
-        raise EvalAbort("台账未通过，整批拒收：\n" + "\n".join(problems))
-
     usage = _new_usage()
     verdict_rows: list[dict] = []
-    repair_rows: list[dict] = []
-    summary: dict[str, Any] = {}
+    summary: dict[str, Any] = {"books": {}}
 
-    for book, anchors, drafts, discarded in prepared:
+    for book in books:
+        if book.cases:  # 祈灼：43 条人工题直接进套件（spec §5 第 8 条）
+            continue
         stem = _stem(book)
         source_norm = normalize(book.source)
-        passed_rows: list[dict] = []
-        newly_discarded: list[str] = []
-        book_results: list[dict] = []
-        skipped = 0
+        anchors = [{"id": f"a{i:02d}", **a} for i, a in enumerate(
+            recall_synth.sample_anchors(book.source, _anchor_names(book), k=k), 1)]
+        _write_json(out / f"{stem}.anchors.json", {
+            "book": book.book,
+            "title": book.title,
+            "text_id": book.text_id,
+            "character": book.character,
+            "anchor_names": _anchor_names(book),
+            "anchors": anchors,
+        })
 
-        for draft in drafts:
-            if draft.get("skip"):
-                skipped += 1
-                continue
-            result, raws = _run_gates(
-                book, draft, anchors[draft["id"]], source_norm, llm, prompts,
-                usage, round_no)
-            book_results.append(result)
-            verdict_rows.append({"id": draft["id"], "round": round_no, **result, "raw": raws})
-            if result["status"] == "passed":
-                passed_rows.append({
-                    "id": draft["id"],
-                    "phase": None,
-                    "query": draft["query"],
-                    "should": draft["should"],
-                    "should_not": draft.get("should_not") or [],
-                    "own_words_flag": result["own_words_flag"],
-                })
-            elif result["status"] == "discarded":
-                newly_discarded.append(draft["id"])
-            else:
-                repair_rows.append({
-                    "id": draft["id"], "round": round_no,
-                    "status": result["status"], "problems": result["problems"],
-                })
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                C.ctx_submit(pool, _one_anchor, book, anchor, anchor["id"],
+                             source_norm, llm, prompts)
+                for anchor in anchors
+            ]
+            outcomes = [future.result() for future in futures]
 
-        _write_jsonl(out / f"{stem}.jsonl", passed_rows)
-        if newly_discarded:
-            _write_json(
-                out / f"{stem}.discarded.json",
-                sorted(set(discarded) | set(newly_discarded)))
-        summary[stem] = {
+        problems = recall_synth.ledger_problems(
+            [outcome["id"] for outcome in outcomes if outcome["status"] != "skip"],
+            [anchor["id"] for anchor in anchors])
+        if problems:
+            raise EvalAbort("台账未通过，整批拒收：\n" + "\n".join(problems))
+
+        cases = [outcome["case"] for outcome in outcomes if outcome["case"]]
+        _write_jsonl(out / f"{stem}.jsonl", cases)
+        for outcome in outcomes:
+            for key, value in outcome["usage"].items():
+                usage[key] += value
+            for result in outcome["attempts"]:
+                verdict_rows.append(
+                    {"book": book.book, "character": book.character, **result})
+
+        finals = [
+            {"status": outcome["status"], "gate": outcome.get("gate"),
+             "own_words_flag": bool(outcome["case"] and outcome["case"]["own_words_flag"])}
+            for outcome in outcomes if outcome["status"] != "skip"
+        ]
+        summary["books"][stem] = {
             "anchors": len(anchors),
-            "drafts": len(drafts),
-            "skip": skipped,
-            "passed": len(passed_rows),
-            "flagged": sum(1 for row in passed_rows if row["own_words_flag"]),
-            "outcomes": recall_synth.outcome_counts(book_results),
+            "skip": sum(1 for outcome in outcomes if outcome["status"] == "skip"),
+            "outcomes": recall_synth.outcome_counts(finals),
+            "repair_passes": _repair_passes(outcomes),
             "overlap": recall_synth.overlap_histogram(
-                recall_synth.lexical_overlap(row["query"], row["should"])
-                for row in passed_rows),
+                recall_synth.lexical_overlap(case["query"], case["should"])
+                for case in cases),
         }
 
     for book in books:
@@ -414,12 +454,14 @@ def run_check(
         }
 
     _write_jsonl(out / "verdicts.jsonl", verdict_rows)
-    _write_jsonl(out / "repair.jsonl", repair_rows)
-    return {"round": round_no, "books": summary, "usage": usage}
+    summary["usage"] = usage
+    summary["duration_s"] = round(time.monotonic() - started, 1)
+    _write_json(out / "summary.json", summary)
+    return summary
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="0d 出题工具（probe / anchors / check）")
+    parser = argparse.ArgumentParser(description="0d 出题工具（probe / generate）")
     sub = parser.add_subparsers(dest="command", required=True)
 
     probe = sub.add_parser("probe", help="人工题过指定模型关各两次（不改题）")
@@ -428,24 +470,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     probe.add_argument("--out", required=True)
     probe.add_argument("--gates", nargs="+", choices=PROBE_GATES, default=list(PROBE_GATES))
 
-    anchors = sub.add_parser("anchors", help="按 60 段抽锚点")
-    anchors.add_argument("--suite", required=True)
-    anchors.add_argument("--out-dir", dest="out_dir", required=True)
-    anchors.add_argument("--k", type=int, default=30)
-
-    check = sub.add_parser("check", help="台账 + 四道关，写 verdicts / repair / 题")
-    check.add_argument("--suite", required=True)
-    check.add_argument("--prompts", required=True)
-    check.add_argument("--drafts", required=True)
-    check.add_argument("--out-dir", dest="out_dir", required=True)
-    check.add_argument("--round", type=int, default=1)
+    generate = sub.add_parser("generate", help="锚点 → 起草 → 三关 → 修两轮（⑱）")
+    generate.add_argument("--suite", required=True)
+    generate.add_argument("--prompts", required=True)
+    generate.add_argument("--out-dir", dest="out_dir", required=True)
+    generate.add_argument("--k", type=int, default=30)
     return parser.parse_args(argv)
 
 
 async def _main(args: argparse.Namespace) -> None:
-    if args.command == "check" and not 1 <= args.round <= recall_synth.MAX_ATTEMPTS:
-        raise EvalAbort(f"--round 只接受 1..{recall_synth.MAX_ATTEMPTS}")
-
     from web.deps import get_storage, get_user_llm
 
     entries = load_suite(args.suite)
@@ -453,22 +486,19 @@ async def _main(args: argparse.Namespace) -> None:
     try:
         with system_llm_context():
             books = [await load_book(storage, entry) for entry in entries]
-            if args.command == "anchors":
-                summary = run_anchors(books, args.out_dir, k=args.k)
+            prompts = _load_prompts(args.prompts)
+            if args.command == "generate":
+                prompts["draft"] = recall_synth.DRAFT_PROMPT
+            user_ids = sorted({book.user_id for book in books})
+            if len(user_ids) != 1:
+                raise EvalAbort(f"书目跨多个用户：{user_ids}（本次只取一个用户的 key）")
+            llm = await get_user_llm(user_ids[0], storage)
+            if llm is None:
+                raise EvalAbort("该用户没有自己的 LLM key（模型关只走用户自己的 key）")
+            if args.command == "probe":
+                summary = run_probe(books, llm, prompts, args.out, tuple(args.gates))
             else:
-                prompts = _load_prompts(args.prompts)
-                user_ids = sorted({book.user_id for book in books})
-                if len(user_ids) != 1:
-                    raise EvalAbort(f"书目跨多个用户：{user_ids}（本次只取一个用户的 key）")
-                llm = await get_user_llm(user_ids[0], storage)
-                if llm is None:
-                    raise EvalAbort("该用户没有自己的 LLM key（三道模型关只走用户自己的 key）")
-                if args.command == "probe":
-                    summary = run_probe(books, llm, prompts, args.out, tuple(args.gates))
-                else:
-                    summary = run_check(
-                        books, llm, prompts, args.drafts, args.out_dir,
-                        round_no=args.round)
+                summary = run_generate(books, llm, prompts, args.out_dir, k=args.k)
             print(json.dumps(summary, ensure_ascii=False, indent=2))
     finally:
         await storage.close()
