@@ -341,7 +341,7 @@ def _one_anchor(
         draft = {"id": anchor_id, "query": drafted["query"], "should": drafted["should"]}
         result, raws = _run_gates(
             book, draft, anchor, source_norm, worker_llm, prompts, usage, attempt)
-        result = {**result, "raw": raws}
+        result = {**result, "raw": raws, "query": draft["query"], "should": draft["should"]}
         history.append(result)
         if result["status"] == "passed":
             return {"id": anchor_id, "status": "passed", "attempts": history,
