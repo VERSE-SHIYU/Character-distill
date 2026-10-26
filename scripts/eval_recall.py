@@ -49,6 +49,23 @@ class Loaded:
     embedding_region: str
 
 
+@dataclass
+class Book:
+    """一本书里的一个角色 —— `suite.json` 的一行（⑭ 的评测单位）。"""
+    book: str
+    title: str
+    user_id: str
+    text_id: str
+    character: str
+    source: str
+    aliases: list[str]
+    cases: str | None
+    card_id: str | None
+    card: CharacterCard | None
+    embedding_key: str
+    embedding_region: str
+
+
 def load_cases(path: str | Path) -> list[dict]:
     cases = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines()
              if line.strip()]
@@ -84,6 +101,77 @@ async def load_inputs(storage, *, user_id: str, card_id: str) -> Loaded:
     )
 
 
+def load_suite(path: str | Path) -> list[dict]:
+    """读书目（`suite.json`）：每行一本书里的一个角色；`cases` 相对 suite 文件解析。"""
+    suite_path = Path(path)
+    try:
+        entries = json.loads(suite_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise EvalAbort(f"读不了书目 {suite_path}：{exc}") from exc
+    if not isinstance(entries, list) or not entries:
+        raise EvalAbort(f"书目为空或不是数组：{suite_path}")
+    base = suite_path.parent
+    for entry in entries:
+        cases = entry.get("cases")
+        if cases:
+            entry["cases"] = str((base / cases).resolve())
+    return entries
+
+
+async def load_book(storage, entry: dict) -> Book:
+    """按 suite 的一行读书：原文、主角名与别名、可选卡、用户自己的嵌入 key。
+
+    名单为空、主角不在名单里、缺原文 / 卡 / key 都在**检索前**抛 ``EvalAbort``：
+    这三样缺一个，跑下去的只是空结果（F6 / F7 / F15）。
+    """
+    from core.character_roster import aliases_for, cached_characters
+    from core.embeddings import EMBEDDING_KEY_REQUIRED
+    from web.llm_resolution import resolve_embedding
+
+    title = entry.get("title") or entry.get("book") or entry.get("text_id")
+    text_id = entry.get("text_id") or ""
+    character = entry.get("character") or ""
+    user_id = entry.get("user_id") or ""
+    if not (text_id and character and user_id):
+        raise EvalAbort(f"书目行缺 text_id / character / user_id：{title}")
+    text_rec = await storage.get_text_owned(text_id, user_id)
+    if not text_rec:
+        raise EvalAbort(f"原文不存在或不属于该用户：{title}（{text_id}）")
+
+    chars = await cached_characters(storage, text_id, user_id)
+    if not chars:
+        raise EvalAbort(f"{title} 的角色名单为空 —— 先在网站上对这本书点「识别角色」")
+    if character not in {c.get("name") for c in chars}:
+        raise EvalAbort(f"{title} 的名单里没有「{character}」")
+
+    card_id = entry.get("card_id") or None
+    card = None
+    if card_id:
+        card_rec = await storage.get_card_owned(card_id, user_id)
+        if not card_rec:
+            raise EvalAbort(f"卡片不存在或不属于该用户：{card_id}")
+        card = CharacterCard.model_validate_json(card_rec["card_json"])
+
+    emb = resolve_embedding(await storage.get_user_api_config(user_id) or {})
+    if not emb.key:
+        raise EvalAbort(EMBEDDING_KEY_REQUIRED)
+
+    return Book(
+        book=entry.get("book") or title,
+        title=title,
+        user_id=user_id,
+        text_id=text_id,
+        character=character,
+        source=text_rec.get("content", ""),
+        aliases=aliases_for(chars, character),
+        cases=entry.get("cases") or None,
+        card_id=card_id,
+        card=card,
+        embedding_key=emb.key,
+        embedding_region=emb.region,
+    )
+
+
 def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
     """先自检标注，再逐条检索；任何检索前失败都不花一次嵌入调用。"""
     source_norm = normalize(source)
@@ -101,6 +189,54 @@ def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
         )
         rows.append(recall_eval.score_case(source_norm, case, hits, spans))
     return recall_eval.aggregate(rows)
+
+
+def run_eval_no_phase(source: str, character: str, cases: list[dict], rag) -> list[dict]:
+    """没有卡的书：窗口恒 None，`phase` 必须为 null（`suite.json` 的生成题）。"""
+    for case in cases:
+        if case.get("phase") is not None:
+            raise EvalAbort(f"没有卡的题 phase 必须为 null：{case.get('id')}")
+    source_norm = normalize(source)
+    recall_eval.validate_cases(cases, source_norm, {None: None})
+    spans = rag.chunk_spans(len(source_norm))
+    rows = []
+    for case in cases:
+        hits = scene_retrieval.scene_hits(
+            rag, case["query"], character_name=character, window=None)
+        rows.append(recall_eval.score_case(source_norm, case, hits, spans))
+    return rows
+
+
+def run_suite(books: list[Book], service) -> dict:
+    """一次跑完书目：有卡照旧；无卡只建场景集合（`eval_{text_id}_c{n}`，n 只数无卡行）再走会话检索。"""
+    rows_by_book: dict[str, list[dict]] = {}
+    per_text: dict[str, int] = {}
+    for book in books:
+        if not book.cases:
+            raise EvalAbort(f"书目行没有标注文件：{book.title}/{book.character}")
+        cases = load_cases(book.cases)
+        if book.card is not None:
+            rag = service.get_rag_for_session(
+                book.text_id, card_id=book.card_id or "",
+                embedding_key=book.embedding_key, embedding_region=book.embedding_region)
+            if rag is None:
+                raise EvalAbort(f"无法建立会话检索：{book.title}/{book.character}")
+            rows = run_eval(book.source, book.card, cases, rag)["per_query"]
+        else:
+            # n 只数无卡行：有卡行不建 eval 集合，不占编号。
+            per_text[book.text_id] = per_text.get(book.text_id, 0) + 1
+            card_id = f"eval_{book.text_id}_c{per_text[book.text_id]}"
+            service.build_eval_scene_index(
+                card_id, book.source, book.character,
+                book.embedding_key, book.embedding_region)
+            rag = service.get_rag_for_session(
+                book.text_id, card_id=card_id,
+                embedding_key=book.embedding_key, embedding_region=book.embedding_region)
+            if rag is None:
+                raise EvalAbort(f"无法建立会话检索：{book.title}/{book.character}")
+            rows = run_eval_no_phase(book.source, book.character, cases, rag)
+        rows_by_book[f"{book.title}/{book.character}"] = rows
+    return recall_eval.aggregate_suite(rows_by_book)
 
 
 _ENV = ("用户自己的百炼 embedding key；检索 = 聊天同一次 scene_hits（top_k=3）；"
@@ -140,7 +276,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cases", help="标注 JSONL 文件")
     parser.add_argument("--from-json", dest="from_json", help="已有结果 JSON（只写证据）")
     parser.add_argument("--evidence-id", help="证据产物 id（须先登记；只配 --from-json）")
+    parser.add_argument("--suite", help="书目 JSON（每行一本书里的一个角色）")
     args = parser.parse_args(argv)
+    if args.suite:
+        if args.from_json or args.evidence_id or args.user_id or args.card_id or args.cases:
+            parser.error("--suite 不能与单卡参数 / --from-json / --evidence-id 同用")
+        return args
     if args.from_json:
         if not args.evidence_id:
             parser.error("--from-json 需要 --evidence-id")
@@ -159,6 +300,17 @@ async def _main(args: argparse.Namespace) -> None:
         return
 
     from web.deps import get_indexing_service, get_storage
+
+    if args.suite:
+        storage = get_storage()
+        try:
+            books = [await load_book(storage, entry) for entry in load_suite(args.suite)]
+            result = run_suite(books, get_indexing_service())
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        finally:
+            await storage.close()
+        return
+
 
     storage = get_storage()
     try:

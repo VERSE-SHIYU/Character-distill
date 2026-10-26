@@ -28,6 +28,30 @@ def _overlaps(a: list[tuple[int, int]], b: list[tuple[int, int]]) -> bool:
     return any(x0 < y1 and y0 < x1 for x0, x1 in a for y0, y1 in b)
 
 
+def fragment_problems(
+    case_id: Any,
+    key: str,
+    i: int,
+    piece: Any,
+    source_norm: str,
+    before: int | None,
+) -> list[str]:
+    """一个标注片段合不合规 —— 人工标注自检与出题关 g_ground 共用这一份规则。"""
+    piece = str(piece)
+    if has_ellipsis(piece):
+        return [f"{case_id}: {key}[{i}] 含省略号（只接受连续原文片段）"]
+    if len(piece.strip()) < MIN_ELIDED_FRAGMENT_LEN:
+        return [f"{case_id}: {key}[{i}] 短于 {MIN_ELIDED_FRAGMENT_LEN} 字"]
+    intervals = intervals_in_normalized(source_norm, piece)
+    if not intervals:
+        return [f"{case_id}: {key}[{i}] 在原文里找不到"]
+    if len(intervals) > 1:
+        return [f"{case_id}: {key}[{i}] 在原文里出现 {len(intervals)} 处（须唯一）"]
+    if key == "should" and before is not None and intervals[0][0] >= before:
+        return [f"{case_id}: {key}[{i}] 落在所选阶段之后"]
+    return []
+
+
 def validate_cases(
     cases: Iterable[Mapping[str, Any]],
     source_norm: str,
@@ -44,21 +68,8 @@ def validate_cases(
         before = phase_limits.get(case.get("phase"))
         for key in ("should", "should_not"):
             for i, fragment in enumerate(case.get(key) or []):
-                piece = str(fragment)
-                if has_ellipsis(piece):
-                    problems.append(f"{case_id}: {key}[{i}] 含省略号（只接受连续原文片段）")
-                    continue
-                if len(piece.strip()) < MIN_ELIDED_FRAGMENT_LEN:
-                    problems.append(f"{case_id}: {key}[{i}] 短于 {MIN_ELIDED_FRAGMENT_LEN} 字")
-                    continue
-                intervals = intervals_in_normalized(source_norm, piece)
-                if not intervals:
-                    problems.append(f"{case_id}: {key}[{i}] 在原文里找不到")
-                elif len(intervals) > 1:
-                    problems.append(
-                        f"{case_id}: {key}[{i}] 在原文里出现 {len(intervals)} 处（须唯一）")
-                elif key == "should" and before is not None and intervals[0][0] >= before:
-                    problems.append(f"{case_id}: {key}[{i}] 落在所选阶段之后")
+                problems.extend(
+                    fragment_problems(case_id, key, i, fragment, source_norm, before))
     if problems:
         raise AnnotationError("标注未通过自检：\n" + "\n".join(problems))
 
@@ -97,3 +108,10 @@ def aggregate(rows: Iterable[dict]) -> dict:
         "n": n,
         "per_query": rows,
     }
+
+
+def aggregate_suite(rows_by_book: Mapping[str, Iterable[dict]]) -> dict:
+    """每本各自 aggregate，总体按**全部行**算（不是各书比例的平均）。"""
+    by_book = {book: aggregate(rows) for book, rows in rows_by_book.items()}
+    overall = aggregate(r for rows in rows_by_book.values() for r in rows)
+    return {"by_book": by_book, "overall": overall}
