@@ -208,7 +208,7 @@ def run_probe(books: list[Book], llm: Any, prompts: dict[str, str],
             if "a6" in gates:
                 raw = [_a6_once(llm, prompts, case, usage) for _ in range(2)]
                 row["a6"] = raw
-                evidence_ids = [f"e{i}" for i in range(1, len(case["should"]) + 1)]
+                evidence_ids = recall_synth.evidence_ids(case["should"])
                 row["a6_ok"] = [recall_synth.verify_ok(v, evidence_ids) for v in raw]
             rows.append(row)
 
@@ -295,7 +295,7 @@ def _run_gates(
     if result["status"] != "verify_unparsed":
         return result, raws
 
-    evidence_ids = [f"e{i}" for i in range(1, len(should) + 1)]
+    evidence_ids = recall_synth.evidence_ids(should)
     verifier_prompt = recall_synth.render(
         "verifier_A6", prompts["verifier_A6"], question=question, quotes=quotes,
         **recall_synth.intent_slots(prompts["intent_factual_A3"]))

@@ -214,3 +214,15 @@ def test_probe_reports_disagreement_and_excludes_chitchat(tmp_path):
     assert summary["a6"]["leak_true"] == 1 and summary["a6"]["agree_rate"] == 0.0
     assert (tmp_path / "probe.json").exists()
     assert summary["usage"]["calls"] == 2
+
+
+def test_evidence_ids_are_the_quote_labels():
+    """证据编号只有一处出处：A.6 判 ``per_doc`` 的键与提示词里 ``[eN]`` 的标号同源。"""
+    from core import recall_synth
+
+    quotes = [FRAG_A, FRAG_B]
+    ids = recall_synth.evidence_ids(quotes)
+
+    assert ids == ["e1", "e2"]
+    assert recall_synth.quotes_block(quotes).splitlines() == [
+        f"[{i}] {q}" for i, q in zip(ids, quotes)]

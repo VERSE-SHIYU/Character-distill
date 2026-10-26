@@ -113,9 +113,15 @@ def intent_slots(row: str) -> dict[str, str]:
     }
 
 
+def evidence_ids(quotes: Iterable[str]) -> list[str]:
+    """证据编号的唯一出处：``e1``…``eN``，既是提示词里的 ``[eN]``，也是 A.6 ``per_doc`` 的键。"""
+    return [f"e{i}" for i, _ in enumerate(quotes, 1)]
+
+
 def quotes_block(quotes: Iterable[str]) -> str:
-    """A.5 / A.6 共用的证据格式：一行一条，编号与 ``per_doc`` 的键一致。"""
-    return "\n".join(f"[e{i}] {q}" for i, q in enumerate(quotes, 1))
+    """A.5 / A.6 共用的证据格式：一行一条，编号取自 `evidence_ids`。"""
+    quotes = list(quotes)
+    return "\n".join(f"[{eid}] {q}" for eid, q in zip(evidence_ids(quotes), quotes))
 
 
 def _name_positions(text: str, names: Iterable[str]) -> list[int]:
@@ -301,8 +307,7 @@ def judge(
             return _result(case_id, "own_words_repair", _advice(critic), attempt, gate="critic")
         own_words_flag = True
 
-    evidence_ids = [f"e{i}" for i in range(1, len(draft.get("should") or []) + 1)]
-    verified = verify_ok(verdict, evidence_ids)
+    verified = verify_ok(verdict, evidence_ids(draft.get("should") or []))
     if verified is None:
         return _result(case_id, "verify_unparsed", ["A.6 结果解析失败"], attempt, gate="verify")
     if not verified:
