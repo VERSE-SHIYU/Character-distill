@@ -31,6 +31,7 @@
 | ⑱ | **精简流程**（Shiyu：不要一层层停顿）：起草改由 DeepSeek 脚本批量完成（CoverSynth §5.2 本就是同一模型起草与核查，第 8 页）；一条命令 `generate` 在 SG 上跑完「锚点 → 起草 → g_ground → A.5 → A.6 → 修 2 轮」，中途不停，只在出错时停。代价：起草与核查同一模型，少了交叉把关。起草提示词 `DRAFT_PROMPT` 是**我们自己写的**（论文附录没给起草提示词），内容即 §5 第 2 步的规则 | 10-26 15:22 |
 | ⑲ | 锚点称呼（按 10-26 别名表数据定）：别名质量不可靠（如云绮的别名里混有「小姐」1396 次、「公主」612 次，以及别人的名字「云汐玥」「云肆野」），**一律只用本名**；唯一例外林黛玉——本名「林黛玉」只出现 284 次，她在原文里主要叫「黛玉」（1375 次，含「林黛玉」），改用「黛玉」。即：云绮、宝玉、黛玉、顾昀、长庚、魏无羡、蓝忘机、简隋英、李玉（祈灼用人工题，不取锚点）。共 **9 个生成题角色**。锚点不足 30 的角色如实报 | 10-26 15:40 |
 | ⑬ | 书单：恶女训狗无数（女频古言，43 条人工题，唯一算越界率）、魔道祖师、杀破狼、**红楼梦**（演示账号 offerPass 的内容；半文白文风）、你却爱着一个傻逼（现代背景，约 46 万字）。替换 10-25 名单里的《溺爱成瘾》：它是纯爱、不是记录里写的「现代言情」，且 4 本古风缺现代背景 | 10-26 13:43–13:52 |
+| ⑳ | **评测无卡行只建 eval 场景集合**：`eval_recall --suite` 的无卡行调 `build_eval_scene_index`，只建 `scenes_eval_{text_id}_c{n}`，**不建 `text_` 集合**（不整本嵌入）；会话检索按 `scenes_{card_id}` → `text_{text_id}` 的顺序装载，场景集合在即命中（`core/indexing_service.py` `_session_candidates` / `_load_session_rag`）。编号 `n` **只数无卡行**，有卡行（祈灼）不计数。出自 PR #208 独立复核 P1 与「无卡也去建原文集合」两条 | 10-26 19:30 |
 
 ## 0. 环境硬规则（执行方必读）
 
@@ -117,7 +118,7 @@
 4. ~~g_real（A.4）~~：不用（⑮）。
 5. **措辞评审**（软，A.5 照抄）：`{question}`、`{quotes}` = `quotes_block(should)`。`searchable=true` → 带 `suggestion` 退回修改；修 2 次仍是 → 录取并打 `own_words_flag`。
 6. **g_verify**（硬，A.6 照抄）：`{quotes}` 同上；`{intent_criterion}` / `{intent_field}` = `intent_slots(表 4 Factual lookup 行)`。通过 = `answerable` ∧ `sufficient` ∧ `per_doc` 全真 ∧ ¬`leak` ∧ `intent_match`。
-7. **修复**：硬关未过的 id 连原因写进 `repair.jsonl`，只改这些；最多修 2 次，第 3 次仍不过 → `discarded`。丢了的锚点空着，不补。`*_unparsed` 不计次数，重调一次仍不行记 `discarded:parse` 并报数。
+7. **修复**：每一轮判定（含硬关未过的 id 与原因）写进 `verdicts.jsonl`（每行带 `id`、`gate`、`problems`，与 §4 一致；不另设 `repair.jsonl`），只改未过的；最多修 2 次，第 3 次仍不过 → `discarded`。丢了的锚点空着，不补。`*_unparsed` 不计次数，重调一次仍不行记 `discarded:parse` 并报数。
 8. **祈灼**：`qizhuo.jsonl`（3 阶段版）43 条直接进套件，不过模型关（人工已核）；越界率只在祈灼上算。
 
 ## 6. 规模表
