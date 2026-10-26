@@ -36,14 +36,14 @@ from core.schema import (  # noqa: E402
 )
 
 # 行 = (chroma id, 原文, metadata)。metadata 键集逐键对齐 scene_indexer 实际写入的
-# 形态（emotion / characters / scene_index 三键），上轮教训：fixture 少键会让取值锁空转。
+# 形态（characters / scene_index / npos 三键），上轮教训：fixture 少键会让取值锁空转。
 SCENE_ROWS = [
     ("scene_0", "屋顶上的旧事，风很凉。",
-     {"emotion": "平静", "characters": "魏无羡,江澄", "scene_index": "0"}),
+     {"characters": "魏无羡,江澄", "scene_index": "0", "npos": 0}),
     ("scene_1", "紫电出鞘那一瞬。",
-     {"emotion": "愤怒", "characters": "江澄", "scene_index": "1"}),
+     {"characters": "江澄", "scene_index": "1", "npos": 20}),
     ("scene_2", "金光瑶微微一笑。",
-     {"emotion": "温柔", "characters": "金光瑶", "scene_index": "2"}),
+     {"characters": "金光瑶", "scene_index": "2", "npos": 40}),
 ]
 
 # 键集照抄 memory_manager.search 的产出（memory_manager.py:271-301 + 287-301 的合成量）。
@@ -244,7 +244,7 @@ def make_item(source: str, text: str = "片段") -> EvidenceItem:
     """
     if source == "scene":
         return scene_evidence(
-            text=text, final=0.5, semantic=0.5, emotion_affinity=0.5,
+            text=text, rerank_score=0.5, vector_rank=0,
             chunk_id="fake_0", chapter=None,
         )
     if source == "memory":

@@ -150,8 +150,8 @@ def _view(svc, text_id: str, card_id: str):
 
 
 def _ask(view) -> None:
-    view.query_with_emotion_ex("那天廊下说了什么", current_emotion="平静",
-                               character_name="魏无羡", top_k=3)
+    view.query_scenes("那天廊下说了什么",
+                      character_name="魏无羡", top_k=3)
 
 
 def _run_jobs(fn):
@@ -215,7 +215,7 @@ def test_a3_no_collection_is_empty_and_nothing_is_built(monkeypatch):
     monkeypatch.setattr(RAGEngine, "index", lambda self, *a, **kw: built.append(kw))
 
     view = _view(_svc(), "t1", "c1")
-    hits = view.query_with_emotion_ex("问题", character_name="魏无羡", top_k=3)
+    hits = view.query_scenes("问题", character_name="魏无羡", top_k=3)
 
     assert built == [], f"会话检索路径调用了 index()：请求里不许建集合（{built}）"
     assert list(hits) == [], "一个集合都没有时本轮应是空结果"
