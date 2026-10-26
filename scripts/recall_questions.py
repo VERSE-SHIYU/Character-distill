@@ -43,7 +43,7 @@ MAX_TOKENS = 512
 # 模板都是完整指令；补一句用户轮让厂商拿到非空 user 消息。
 USER_TURN = "Proceed with the judgment."
 
-# 锚点并发数：沿用蒸馏线程池的 8 路写法（`ThreadPoolExecutor` + `C.ctx_submit`）。
+# 锚点并发数：8 路 `ThreadPoolExecutor` + `C.ctx_submit`（本脚本自定；`core/distiller.py` 没有现成线程池可沿用）。
 DRAFT_WORKERS = 8
 
 # ⑲：一律只用本名找锚点；林黛玉本名只出现 284 次，原文主要叫「黛玉」（1375 次）。
@@ -51,7 +51,7 @@ ANCHOR_NAME_OVERRIDES: dict[str, list[str]] = {"林黛玉": ["黛玉"]}
 
 
 def _stem(book: Book) -> str:
-    """产物文件名（集合名也用它）：编号不用中文名（Chroma 集合名限制，0e 前核实）。"""
+    """产物文件名 `{text_id}_{角色名}`（如 `t1_甲.jsonl`）；不作集合名 —— 评测集合名见 `eval_recall.run_suite`。"""
     return f"{book.text_id}_{book.character}"
 
 
