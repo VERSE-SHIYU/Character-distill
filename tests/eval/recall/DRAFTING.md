@@ -43,7 +43,7 @@ cd /app && python /tmp/recall_pkg/scripts/recall_questions.py check \
   --round 1
 ```
 
-关卡顺序：台账 → g_ground（本地、免费）→ A.4 真实度 → A.5 措辞评审 → A.6 核查。
+关卡顺序：台账 → g_ground（本地、免费）→ A.5 措辞评审 → A.6 核查（A.4 不用，spec ⑮）。
 关 1 不过的锚点不花模型调用。产物：
 
 | 文件 | 内容 |

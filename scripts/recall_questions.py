@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """出题命令行（0d）：``probe`` / ``anchors`` / ``check``。
 
-- ``probe``：人工题过 A.4、A.5 各两次，只量误判率与两次一致率，不改任何题。
+- ``probe``：人工题（剔除寒暄）过指定的模型关（A.5 / A.6）各两次，只量误判率与
+  两次一致率，不改任何题。
 - ``anchors``：按全书均分的 60 段抽锚点，每段至多一个（`sample_anchors`）。
 - ``check``：`ledger_problems`（有问题整批拒收）→ g_ground → A.4 → A.5 → A.6，
   每一步只对上一步过了的调；写 verdicts / repair / 评测格式的题。
@@ -29,7 +30,6 @@ from core.request_context import system_llm_context  # noqa: E402
 from eval_recall import Book, EvalAbort, load_book, load_cases, load_suite  # noqa: E402
 
 PROMPT_FILES: dict[str, str] = {
-    "realism_A4": "realism_A4.txt",
     "own_words_A5": "own_words_A5.txt",
     "verifier_A6": "verifier_A6.txt",
     "intent_factual_A3": "intent_factual_A3.txt",
@@ -43,11 +43,6 @@ USER_TURN = "Proceed with the judgment."
 def _stem(book: Book) -> str:
     """产物文件名（集合名也用它）：编号不用中文名（Chroma 集合名限制，0e 前核实）。"""
     return f"{book.text_id}_{book.character}"
-
-
-def _persona(book: Book) -> str:
-    """⑨：产品的真实使用场景 —— 一个正在和这本书里这个角色聊天的读者。"""
-    return f"一位正在和《{book.title}》里〈{book.character}〉聊天的读者"
 
 
 def _new_usage() -> dict[str, int]:
@@ -135,66 +130,115 @@ def _load_prompts(prompt_dir: str | Path) -> dict[str, str]:
     return prompts
 
 
+PROBE_GATES = ("a5", "a6")
+
+
+def _a5_once(llm: Any, prompts: dict[str, str], case: dict,
+             usage: dict[str, int]) -> dict | None:
+    prompt = recall_synth.render(
+        "own_words_A5", prompts["own_words_A5"],
+        question=case["query"], quotes=recall_synth.quotes_block(case.get("should") or []))
+    return _ask_once(llm, prompt, usage)
+
+
+def _a6_once(llm: Any, prompts: dict[str, str], case: dict,
+             usage: dict[str, int]) -> dict | None:
+    should = case.get("should") or []
+    prompt = recall_synth.render(
+        "verifier_A6", prompts["verifier_A6"],
+        question=case["query"], quotes=recall_synth.quotes_block(should),
+        **recall_synth.intent_slots(prompts["intent_factual_A3"]))
+    return _ask_once(llm, prompt, usage)
+
+
+def _a6_flags(raws: list[dict | None]) -> dict[str, int]:
+    """A.6 各项判 False（leak 判 True）的次数 —— 误判按核查项分开报（spec ⑰）。"""
+    flags = dict.fromkeys(
+        ("answerable_false", "sufficient_false", "per_doc_false", "leak_true",
+         "intent_match_false"), 0)
+    for value in raws:
+        if not isinstance(value, dict):
+            continue
+        for field, key in (("answerable", "answerable_false"),
+                           ("sufficient", "sufficient_false")):
+            if value.get(field) is False:
+                flags[key] += 1
+        per_doc = value.get("per_doc")
+        if isinstance(per_doc, dict) and any(v is False for v in per_doc.values()):
+            flags["per_doc_false"] += 1
+        if value.get("leak") is True:
+            flags["leak_true"] += 1
+        if value.get("intent_match") is False:
+            flags["intent_match_false"] += 1
+    return flags
+
+
+def _agreement(rows: list[dict], key: str) -> float | None:
+    pairs = len(rows)
+    if not pairs:
+        return None
+    agreed = sum(1 for row in rows
+                 if row[key][0] is not None and row[key][0] == row[key][1])
+    return agreed / pairs
+
+
 def run_probe(books: list[Book], llm: Any, prompts: dict[str, str],
-              out_path: str | Path) -> dict:
-    """S6a 摸底：每条人工题 A.4 / A.5 各跑两次，只记录结论，不改题。"""
+              out_path: str | Path, gates: tuple[str, ...] = PROBE_GATES) -> dict:
+    """摸底：每条人工题过指定模型关各两次，只记录结论，不改题。
+
+    寒暄（`should` 为空）不量模型关，单独列出 id（spec ⑮）。
+    """
+    unknown = set(gates) - set(PROBE_GATES)
+    if unknown:
+        raise EvalAbort(f"未知的摸底关：{sorted(unknown)}")
+
     usage = _new_usage()
     rows: list[dict] = []
+    excluded: list[Any] = []
     for book in books:
         if not book.cases:
             continue
         for case in load_cases(book.cases):
-            question = case["query"]
-            quotes = recall_synth.quotes_block(case.get("should") or [])
-            a4_prompt = recall_synth.render(
-                "realism_A4", prompts["realism_A4"],
-                persona=_persona(book), question=question)
-            a5_prompt = recall_synth.render(
-                "own_words_A5", prompts["own_words_A5"], question=question, quotes=quotes)
-            a4 = [_ask_once(llm, a4_prompt, usage) for _ in range(2)]
-            a5 = [_ask_once(llm, a5_prompt, usage) for _ in range(2)]
-            rows.append({
-                "book": book.book,
-                "id": case.get("id"),
-                "question": question,
-                "a4": a4,
-                "a4_ok": [recall_synth.realism_ok(v) for v in a4],
-                "a5": a5,
-                "a5_searchable": [recall_synth.critic_ok(v) for v in a5],
-            })
+            if not case.get("should"):
+                excluded.append(case.get("id"))
+                continue
+            row: dict[str, Any] = {"book": book.book, "id": case.get("id"),
+                                   "question": case["query"]}
+            if "a5" in gates:
+                raw = [_a5_once(llm, prompts, case, usage) for _ in range(2)]
+                row["a5"] = raw
+                row["a5_ok"] = [recall_synth.critic_ok(v) for v in raw]
+            if "a6" in gates:
+                raw = [_a6_once(llm, prompts, case, usage) for _ in range(2)]
+                row["a6"] = raw
+                evidence_ids = [f"e{i}" for i in range(1, len(case["should"]) + 1)]
+                row["a6_ok"] = [recall_synth.verify_ok(v, evidence_ids) for v in raw]
+            rows.append(row)
 
-    a4_ok = [v for row in rows for v in row["a4_ok"]]
-    a5_ok = [v for row in rows for v in row["a5_searchable"]]
-    pairs = len(rows)
-    summary = {
-        "n": pairs,
-        "a4": {
-            "calls": len(a4_ok),
-            "fail": sum(1 for v in a4_ok if v is False),
-            "unparsed": sum(1 for v in a4_ok if v is None),
-            "self_contained_false": sum(
-                1 for row in rows for v in row["a4"]
-                if isinstance(v, dict) and v.get("self_contained") is False),
-            "realistic_false": sum(
-                1 for row in rows for v in row["a4"]
-                if isinstance(v, dict) and v.get("realistic") is False),
-            "agree_rate": (sum(1 for row in rows
-                               if row["a4_ok"][0] is not None
-                               and row["a4_ok"][0] == row["a4_ok"][1]) / pairs
-                           if pairs else None),
-        },
-        "a5": {
-            "calls": len(a5_ok),
-            "searchable_true": sum(1 for v in a5_ok if v is True),
-            "unparsed": sum(1 for v in a5_ok if v is None),
-            "agree_rate": (sum(1 for row in rows
-                               if row["a5_searchable"][0] is not None
-                               and row["a5_searchable"][0] == row["a5_searchable"][1]) / pairs
-                           if pairs else None),
-        },
+    summary: dict[str, Any] = {
+        "n": len(rows),
+        "excluded_no_should": excluded,
+        "gates": list(gates),
         "usage": usage,
         "per_query": rows,
     }
+    if "a5" in gates:
+        a5_ok = [v for row in rows for v in row["a5_ok"]]
+        summary["a5"] = {
+            "calls": len(a5_ok),
+            "searchable_true": sum(1 for v in a5_ok if v is True),
+            "unparsed": sum(1 for v in a5_ok if v is None),
+            "agree_rate": _agreement(rows, "a5_ok"),
+        }
+    if "a6" in gates:
+        a6_ok = [v for row in rows for v in row["a6_ok"]]
+        summary["a6"] = {
+            "calls": len(a6_ok),
+            "fail": sum(1 for v in a6_ok if v is False),
+            "unparsed": sum(1 for v in a6_ok if v is None),
+            **_a6_flags([v for row in rows for v in row["a6"]]),
+            "agree_rate": _agreement(rows, "a6_ok"),
+        }
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     _write_json(out_path, summary)
@@ -240,21 +284,9 @@ def _run_gates(
     question = draft["query"]
     should = draft.get("should") or []
     quotes = recall_synth.quotes_block(should)
-    raws: dict[str, Any] = {"realism": None, "critic": None, "verdict": None}
+    raws: dict[str, Any] = {"critic": None, "verdict": None}
 
     result = recall_synth.judge(draft, anchor, source_norm, attempt=attempt)
-    if result["status"] != "realism_unparsed":
-        return result, raws
-
-    realism_prompt = recall_synth.render(
-        "realism_A4", prompts["realism_A4"], persona=_persona(book), question=question)
-    realism = _ask_gate(llm, realism_prompt, recall_synth.realism_ok, usage)
-    if realism is None:
-        return _parse_discard(draft, attempt), raws
-    raws["realism"] = realism
-
-    result = recall_synth.judge(
-        draft, anchor, source_norm, realism=realism, attempt=attempt)
     if result["status"] != "critic_unparsed":
         return result, raws
 
@@ -266,7 +298,7 @@ def _run_gates(
     raws["critic"] = critic
 
     result = recall_synth.judge(
-        draft, anchor, source_norm, realism=realism, critic=critic, attempt=attempt)
+        draft, anchor, source_norm, critic=critic, attempt=attempt)
     if result["status"] != "verify_unparsed":
         return result, raws
 
@@ -282,7 +314,7 @@ def _run_gates(
     raws["verdict"] = verdict
 
     return recall_synth.judge(
-        draft, anchor, source_norm, realism=realism, critic=critic,
+        draft, anchor, source_norm, critic=critic,
         verdict=verdict, attempt=attempt), raws
 
 
@@ -290,7 +322,7 @@ def run_check(
     books: list[Book], llm: Any, prompts: dict[str, str],
     drafts_dir: str | Path, out_dir: str | Path, *, round_no: int = 1,
 ) -> dict:
-    """整批核查：先台账（有问题整批拒收），再逐条过四关，写三份产物。"""
+    """整批核查：先台账（有问题整批拒收），再逐条过关，写三份产物。"""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     drafts_dir = Path(drafts_dir)
@@ -390,10 +422,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="0d 出题工具（probe / anchors / check）")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    probe = sub.add_parser("probe", help="人工题过 A.4 / A.5 各两次（不改题）")
+    probe = sub.add_parser("probe", help="人工题过指定模型关各两次（不改题）")
     probe.add_argument("--suite", required=True)
     probe.add_argument("--prompts", required=True)
     probe.add_argument("--out", required=True)
+    probe.add_argument("--gates", nargs="+", choices=PROBE_GATES, default=list(PROBE_GATES))
 
     anchors = sub.add_parser("anchors", help="按 60 段抽锚点")
     anchors.add_argument("--suite", required=True)
@@ -431,7 +464,7 @@ async def _main(args: argparse.Namespace) -> None:
                 if llm is None:
                     raise EvalAbort("该用户没有自己的 LLM key（三道模型关只走用户自己的 key）")
                 if args.command == "probe":
-                    summary = run_probe(books, llm, prompts, args.out)
+                    summary = run_probe(books, llm, prompts, args.out, tuple(args.gates))
                 else:
                     summary = run_check(
                         books, llm, prompts, args.drafts, args.out_dir,

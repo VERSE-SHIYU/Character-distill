@@ -1,4 +1,4 @@
-"""☁ 出题命令行：台账拒收、四关顺序、软关打标记、解析失败、锚点与摸底。
+"""☁ 出题命令行：台账拒收、关卡顺序、软关打标记、解析失败、锚点与摸底。
 
 本地**不跑**（spec §0：☁ 测试由复核方在沙箱带内存上限跑）。替身只配 ``chat``、
 固定返回、无流式；提示词用假模板，不写论文原文。
@@ -21,13 +21,11 @@ SOURCE = "乙" * 120 + NAME + "丙丁戊己庚辛壬癸子丑" + "乙" * 120
 FRAGMENT = "丙丁戊己庚辛壬癸子丑"
 
 PROMPTS = {
-    "realism_A4": "{persona}|{question}",
     "own_words_A5": "{question}|{quotes}",
     "verifier_A6": "{question}|{quotes}|{intent_criterion}|{intent_field}",
     "intent_factual_A3": "Factual lookup: row",
 }
 
-REAL = {"self_contained": True, "realistic": True, "reason": "", "suggestion": ""}
 LIFT = {"searchable": True, "reason": "lift", "suggestion": "换个说法问"}
 OWN = {"searchable": False, "reason": "", "suggestion": ""}
 GOOD = {"answerable": True, "sufficient": True, "per_doc": {"e1": True}, "necessary": [True],
@@ -81,7 +79,7 @@ def _cases(work):
 def test_check_passes_and_writes_eval_cases(tmp_path):
     work, drafts = _work(tmp_path)
     _draft(drafts, [{"id": "a01", "query": "你当时在场吗？", "should": [FRAGMENT]}])
-    llm = FakeLLM([REAL, OWN, GOOD])
+    llm = FakeLLM([OWN, GOOD])
 
     summary = rq.run_check([_book()], llm, PROMPTS, drafts, work, round_no=1)
 
@@ -89,24 +87,24 @@ def test_check_passes_and_writes_eval_cases(tmp_path):
     assert rows == [{"id": "a01", "phase": None, "query": "你当时在场吗？",
                      "should": [FRAGMENT], "should_not": [], "own_words_flag": False}]
     assert summary["books"]["t1_甲"]["outcomes"] == {"passed": 1}
-    assert len(llm.calls) == 3  # A.4 → A.5 → A.6，各一次
+    assert len(llm.calls) == 2  # A.5 → A.6，各一次
 
 
 def test_soft_flag_last_round_still_runs_verifier(tmp_path):
     work, drafts = _work(tmp_path)
     _draft(drafts, [{"id": "a01", "query": "你当时在场吗？", "should": [FRAGMENT]}])
-    llm = FakeLLM([REAL, LIFT, GOOD])
+    llm = FakeLLM([LIFT, GOOD])
 
     rq.run_check([_book()], llm, PROMPTS, drafts, work, round_no=3)
 
     assert _cases(work)[0]["own_words_flag"] is True
-    assert len(llm.calls) == 3
+    assert len(llm.calls) == 2
 
 
 def test_ground_failure_costs_no_model_call(tmp_path):
     work, drafts = _work(tmp_path)
     _draft(drafts, [{"id": "a01", "query": "你当时在场吗？", "should": ["乙乙乙乙乙乙乙乙乙乙"]}])
-    llm = FakeLLM([REAL, OWN, GOOD])
+    llm = FakeLLM([])
 
     summary = rq.run_check([_book()], llm, PROMPTS, drafts, work, round_no=1)
 
@@ -117,7 +115,7 @@ def test_ground_failure_costs_no_model_call(tmp_path):
 def test_ledger_rejects_before_any_model_call(tmp_path):
     work, drafts = _work(tmp_path)
     _draft(drafts, [{"id": "x99", "query": "问？", "should": [FRAGMENT]}])
-    llm = FakeLLM([REAL, OWN, GOOD])
+    llm = FakeLLM([])
     with pytest.raises(EvalAbort, match="x99"):
         rq.run_check([_book()], llm, PROMPTS, drafts, work)
     assert llm.calls == []
@@ -162,16 +160,21 @@ def test_anchors_written_per_row(tmp_path):
     assert payload["anchors"][0]["text"].startswith("乙" * 120 + NAME)
 
 
-def test_probe_reports_disagreement(tmp_path):
+def test_probe_reports_disagreement_and_excludes_chitchat(tmp_path):
     human = tmp_path / "human.jsonl"
-    human.write_text(json.dumps({"id": "q01", "query": "你当时在场吗？",
-                                 "should": [FRAGMENT]}, ensure_ascii=False) + "\n",
-                     encoding="utf-8")
-    llm = FakeLLM([REAL, REAL, LIFT, OWN])
+    human.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in (
+            {"id": "q01", "query": "你当时在场吗？", "should": [FRAGMENT]},
+            {"id": "q02", "query": "早呀", "should": []},
+        )) + "\n",
+        encoding="utf-8")
+    llm = FakeLLM([GOOD, {**GOOD, "leak": True}])
 
-    summary = rq.run_probe([_book(cases=str(human))], llm, PROMPTS, tmp_path / "probe.json")
+    summary = rq.run_probe([_book(cases=str(human))], llm, PROMPTS,
+                           tmp_path / "probe.json", gates=("a6",))
 
-    assert summary["a4"]["fail"] == 0 and summary["a4"]["agree_rate"] == 1.0
-    assert summary["a5"]["searchable_true"] == 1 and summary["a5"]["agree_rate"] == 0.0
+    assert summary["excluded_no_should"] == ["q02"] and summary["n"] == 1
+    assert summary["a6"]["fail"] == 1 and summary["a6"]["unparsed"] == 0
+    assert summary["a6"]["leak_true"] == 1 and summary["a6"]["agree_rate"] == 0.0
     assert (tmp_path / "probe.json").exists()
-    assert summary["usage"]["calls"] == 4
+    assert summary["usage"]["calls"] == 2

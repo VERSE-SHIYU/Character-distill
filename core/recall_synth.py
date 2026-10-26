@@ -1,7 +1,7 @@
 """出题规则（CoverSynth 式 2）—— 纯函数、零 IO。
 
-关卡顺序按 spec §5「先便宜后贵」：g_ground（本地、确定）→ A.4 真实度 →
-A.5 措辞评审（软）→ A.6 核查。顺序不改变录取结果（式 2 是「与」），只省调用。
+关卡顺序按 spec §5「先便宜后贵」：g_ground（本地、确定）→ A.5 措辞评审（软）→
+A.6 核查。顺序不改变录取结果（式 2 是「与」），只省调用。A.4 不用（spec ⑮）。
 
 模型的原始 JSON 由调用方传入；本模块不调模型、不读文件、不解析异常消息。
 提示词照抄自论文附录（本地 `e2e/scratch/recall/prompts/`，不入库），只认登记哈希。
@@ -19,7 +19,6 @@ from core.recall_eval import fragment_problems
 
 # 提示词身份的唯一出处：内容差一个字节就拒用（spec §10）。
 PROMPT_SHA256: dict[str, str] = {
-    "realism_A4": "6bcc5264a5feed4125209600c65e363d2ba7385f315506945382678d3561aca2",
     "own_words_A5": "3a16aa0982370acbd5109db3db82c6b4ec5993c4838048bc257c197421e38280",
     "verifier_A6": "026d60838790eab847c2841b66c11017972abc8a206d65d8b980200fe901999c",
     "intent_factual_A3": "ae4684baa1ea63f31734b3c73baccf84bb9857d7d63665c22f1a8938b0a5f8ca",
@@ -27,7 +26,6 @@ PROMPT_SHA256: dict[str, str] = {
 
 # 每份模板允许出现的占位名（`render` 只认这几个，多给少给都报错）。
 PLACEHOLDERS: dict[str, frozenset[str]] = {
-    "realism_A4": frozenset({"persona", "question"}),
     "own_words_A5": frozenset({"question", "quotes"}),
     "verifier_A6": frozenset({"intent_criterion", "intent_field", "question", "quotes"}),
     "intent_factual_A3": frozenset(),
@@ -170,15 +168,6 @@ def _bool_of(result: Any, key: str) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
-def realism_ok(realism: Any) -> bool | None:
-    """A.4 的通过条件（唯一一处）：两项都解析且都真才算过；结构不对 → None。"""
-    self_contained = _bool_of(realism, "self_contained")
-    realistic = _bool_of(realism, "realistic")
-    if self_contained is None or realistic is None:
-        return None
-    return self_contained and realistic
-
-
 def critic_ok(critic: Any) -> bool | None:
     """A.5 的软关：``searchable`` 解析成功返回它，结构不对 → None（既非过也非不过）。"""
     return _bool_of(critic, "searchable")
@@ -251,7 +240,6 @@ def judge(
     anchor: Mapping[str, Any],
     source_norm: str,
     *,
-    realism: Any = None,
     critic: Any = None,
     verdict: Any = None,
     attempt: int = 1,
@@ -265,12 +253,6 @@ def judge(
     problems = ground_problems(draft, anchor, source_norm)
     if problems:
         return _hard_fail(case_id, "ground", problems, attempt)
-
-    realism_pass = realism_ok(realism)
-    if realism_pass is None:
-        return _result(case_id, "realism_unparsed", ["A.4 结果解析失败"], attempt, gate="realism")
-    if not realism_pass:
-        return _hard_fail(case_id, "realism", _advice(realism), attempt)
 
     searchable = critic_ok(critic)
     if searchable is None:
