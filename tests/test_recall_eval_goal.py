@@ -3,8 +3,8 @@
 测的是「达成目标」，不是「符合 spec」：
 
 1. 聊天与评测工具**走同一次检索调用**（替换 ``core.scene_retrieval.scene_hits``
-   为记录参数的替身后，两次调用的参数相同；``top_k`` / ``current_emotion`` 由
-   ``scene_hits`` 内部给出，故单独锁一次它的委托参数）。
+   为记录参数的替身后，两次调用的参数相同；``top_k`` 由 ``scene_hits`` 内部给出，
+   故单独锁一次它的委托参数）。
 2. 指标算得对：区间重叠即命中 / 越界；命中段被截断仍算重叠；都不重叠两项都不计。
 3. 标注先自检：找不到、不止一处、短于 10 字、落在所选阶段之后 —— 在检索前报错
    并列出是哪一条，不发任何检索调用。
@@ -69,7 +69,7 @@ def _card() -> CharacterCard:
 
 def _scene(text: str, chunk_id: str = "scene_0"):
     return scene_evidence(
-        text=text, final=0.5, semantic=0.5, emotion_affinity=0.5,
+        text=text, rerank_score=0.5, vector_rank=0,
         chunk_id=chunk_id, chapter=None,
     )
 
@@ -106,15 +106,14 @@ class TestSameRetrievalCall:
         for key in ("rag", "query", "character_name", "window"):
             assert chat[key] == tool[key], f"{key} 不一致：聊天与评测量的不是同一次调用"
 
-    def test_scene_hits_delegates_top3_and_detected_emotion(self):
+    def test_scene_hits_delegates_top3(self):
         import core.scene_retrieval as sr
-        from core.scene_indexer import _detect_emotion
 
         class _FakeRag:
             def __init__(self):
                 self.seen = None
 
-            def query_with_emotion_ex(self, query, **kwargs):
+            def query_scenes(self, query, **kwargs):
                 self.seen = (query, kwargs)
                 return EvidenceHits([])
 
@@ -127,7 +126,6 @@ class TestSameRetrievalCall:
         assert kwargs["top_k"] == 3
         assert kwargs["character_name"] == "祈灼"
         assert kwargs["window"] is sentinel_window
-        assert kwargs["current_emotion"] == _detect_emotion(QUERY)
 
 
 class TestMetrics:

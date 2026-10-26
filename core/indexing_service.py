@@ -104,7 +104,7 @@ class SessionRag:
     每次检索前先比令牌（只读元数据），令牌没变就沿用，变了（有集合被重建 / 建完 /
     开始或结束构建，不论哪个进程做的）才重新装载。本会话的一次查询失败也会强制重读。
 
-    对外提供 `ContextEngine` 用的 `query_with_emotion_ex`，以及评测用的
+    对外提供 `ContextEngine` 用的 `query_scenes`，以及评测用的
     `chunk_spans`；`collection_name` 只读，供观测。
     """
 
@@ -146,7 +146,7 @@ class SessionRag:
             return {}
         return rag_chunk_spans(self._engine.collection, source_norm_len)
 
-    def query_with_emotion_ex(self, query_text: str, **kwargs: Any) -> EvidenceHits:
+    def query_scenes(self, query_text: str, **kwargs: Any) -> EvidenceHits:
         """透传给已装载的引擎。时间窗（``window``）的适用性判断在 `RAGEngine` 里做（审计 A1），
         本层不读也不改它 —— 与裸 `RAGEngine` 同一个签名。"""
         self._refresh()
@@ -155,7 +155,7 @@ class SessionRag:
         if self._engine is None:
             return EvidenceHits([])
         try:
-            return self._engine.query_with_emotion_ex(query_text, **kwargs)
+            return self._engine.query_scenes(query_text, **kwargs)
         except CollectionUnusableError:
             self._stamp = None
             raise

@@ -128,8 +128,8 @@ class TestSnapshotShape:
     def test_reference_survives(self):
         """meta 里的**引用**（scene 的 chunk_id / web 的 url）是将来按需回查原文的句柄。"""
         scene = SourceTrace(source="scene", status="hit", items=[
-            scene_evidence(text="屋顶上的旧事", final=0.7, semantic=0.8,
-                           emotion_affinity=0.4, chunk_id="scene_7", chapter="第三章"),
+            scene_evidence(text="屋顶上的旧事", rerank_score=0.7,
+                           vector_rank=2, chunk_id="scene_7", chapter="第三章"),
         ])
         web = SourceTrace(source="web", status="hit", items=[
             web_evidence(text="莲花坞", url="https://example.org/l", source="示例百科",

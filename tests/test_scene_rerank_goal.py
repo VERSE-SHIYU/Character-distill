@@ -77,7 +77,6 @@ def _install_rerank(monkeypatch, *, scores=None, exc=None, sink=None):
 
 
 # 1. 候选池
-@pytest.mark.xfail(strict=True, reason="RERANK_POOL 与 keep[:want] 未实现")
 def test_pool_caps_candidates_with_and_without_character_filter(monkeypatch):
     sink = []
     _install_rerank(monkeypatch, sink=sink)
@@ -91,7 +90,6 @@ def test_pool_caps_candidates_with_and_without_character_filter(monkeypatch):
     assert len(sink[0]["docs"]) == POOL
 
 
-@pytest.mark.xfail(strict=True, reason="候选不足时如实少给未实现")
 def test_short_pool_is_reported_as_is(monkeypatch):
     sink = []
     _install_rerank(monkeypatch, sink=sink)
@@ -101,7 +99,6 @@ def test_short_pool_is_reported_as_is(monkeypatch):
 
 
 # 2. 前 3 = 重排分数最高的 3 条（按 index 映射回候选）
-@pytest.mark.xfail(strict=True, reason="重排排序未实现")
 def test_top3_follow_rerank_scores_not_vector_order(monkeypatch):
     sink = []
     _install_rerank(
@@ -116,7 +113,6 @@ def test_top3_follow_rerank_scores_not_vector_order(monkeypatch):
 
 
 # 3/4. 重排失败退回向量顺序，WARNING 写明类别与集合名
-@pytest.mark.xfail(strict=True, reason="重排失败退回未实现")
 @pytest.mark.parametrize(
     "kind,status,needle",
     [
@@ -145,7 +141,6 @@ def test_rerank_failure_falls_back_to_vector_order(
 
 
 # 4b. deadline：预算不够不发；够发时 timeout 不超过剩余预算
-@pytest.mark.xfail(strict=True, reason="重排 deadline 未实现")
 def test_deadline_without_room_sends_nothing(monkeypatch, caplog):
     import core.reranker as rr
 
@@ -178,7 +173,6 @@ def test_deadline_without_room_sends_nothing(monkeypatch, caplog):
     assert any("deadline" in r.getMessage().lower() for r in caplog.records)
 
 
-@pytest.mark.xfail(strict=True, reason="重排 deadline 未实现")
 def test_deadline_caps_request_timeout(monkeypatch):
     import core.reranker as rr
 
@@ -221,7 +215,6 @@ def test_deadline_caps_request_timeout(monkeypatch):
 
 
 # 5. key / region 只来自构造它的引擎，重排函数不接收用户身份
-@pytest.mark.xfail(strict=True, reason="重排未实现")
 def test_key_and_region_come_from_the_engine(monkeypatch):
     sink = []
     _install_rerank(monkeypatch, sink=sink)
@@ -237,7 +230,6 @@ def test_key_and_region_come_from_the_engine(monkeypatch):
 
 
 # 6. 情绪排序整体删除
-@pytest.mark.xfail(strict=True, reason="情绪排序尚未删除")
 def test_emotion_ranking_is_gone():
     import core.scene_retrieval as sr
 
@@ -249,7 +241,6 @@ def test_emotion_ranking_is_gone():
 
 
 # 7. SceneMeta 契约改为 rerank_score / vector_rank
-@pytest.mark.xfail(strict=True, reason="SceneMeta 契约尚未改")
 def test_scene_meta_exposes_rerank_fields(monkeypatch):
     _install_rerank(monkeypatch, scores={0: 0.2, 1: 0.9})
     hits = _engine(2).query_scenes("q", top_k=2)
@@ -263,7 +254,6 @@ def test_scene_meta_exposes_rerank_fields(monkeypatch):
     assert hits[0].score == pytest.approx(0.9)
 
 
-@pytest.mark.xfail(strict=True, reason="SceneMeta 契约尚未改")
 def test_fallback_keeps_vector_order_and_no_rerank_score(monkeypatch):
     from core.reranker import RerankUnavailable
 

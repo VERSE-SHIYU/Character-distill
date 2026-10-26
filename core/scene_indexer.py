@@ -1,7 +1,7 @@
 """场景索引器 — 把原文切成带 metadata 的场景，存入 ChromaDB。
 
 当前版本：基于关键词规则切分场景（不依赖 LLM API，零成本）。
-未来版本：调用 LLM 做语义场景边界识别 + 情感标注。
+未来版本：调用 LLM 做语义场景边界识别。
 """
 from __future__ import annotations
 
@@ -15,23 +15,6 @@ from core.rag import (
     FINGERPRINT_KEY, POS_SCHEMA, POS_SCHEMA_KEY,
     CollectionUnusableError, RAGEngine, characters_tag, mark_built,
 )
-
-# 简单情感关键词映射（可扩充）
-_EMOTION_KEYWORDS: dict[str, list[str]] = {
-    "悲伤": ["哭", "泪", "痛", "绝望", "失去", "离开", "死", "心碎", "委屈", "难过", "心疼", "再见", "遗憾", "孤独"],
-    "愤怒": ["愤", "怒", "骂", "恨", "滚", "混蛋", "不可原谅", "凭什么", "够了", "闭嘴", "讨厌", "受够"],
-    "温柔": ["温柔", "轻声", "微笑", "牵手", "抱", "安慰", "陪着", "没关系", "乖", "别怕", "在呢", "心疼你"],
-    "紧张": ["心跳", "颤抖", "屏住呼吸", "慌", "紧张", "害怕", "不敢", "怎么办", "糟了", "完了"],
-    "委屈": ["为什么不理", "算了", "随便", "不想说", "无所谓", "你不在乎", "是我的错", "对不起打扰了", "我走"],
-    "平静": [],
-}
-
-
-def _detect_emotion(text: str) -> str:
-    for emotion, keywords in _EMOTION_KEYWORDS.items():
-        if any(kw in text for kw in keywords):
-            return emotion
-    return "平静"
 
 
 def _span_texts(pattern, text: str, base: int = 0) -> list[tuple[int, int]]:
@@ -58,7 +41,7 @@ _POS_SCHEMA_VERSION = POS_SCHEMA
 
 
 class SceneIndexer:
-    """将原文按场景切分，存入 RAGEngine 的 ChromaDB，携带情感 metadata。"""
+    """将原文按场景切分，存入 RAGEngine 的 ChromaDB，携带角色与位置 metadata。"""
 
     # 场景边界触发词（时间/地点/视角转换）
     SCENE_BREAKS = re.compile(
@@ -128,11 +111,9 @@ class SceneIndexer:
         npos = normalized_starts(text, [start for start, _ in scenes])
         ids, docs, metas = [], [], []
         for i, (start, scene) in enumerate(scenes):
-            emotion = _detect_emotion(scene)
             ids.append(f"scene_{i}")
             docs.append(scene[:800])
             metas.append({
-                "emotion": emotion,
                 # 格式唯一出处：core.rag.characters_tag（与 text_* 集合写入一致）
                 "characters": characters_tag([character_name]),
                 "scene_index": str(i),

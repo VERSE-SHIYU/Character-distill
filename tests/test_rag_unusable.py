@@ -1,7 +1,7 @@
 """Hermetic regression: dimension-mismatched / failing collections are DISTINGUISHED from no-match.
 
 Regression for the root-cause fix: load_existing was dimension-blind (only count()>0 →
-loaded a pre-embedder-migration 384-dim collection as "OK"), and query / query_with_emotion
+loaded a pre-embedder-migration 384-dim collection as "OK"), and query / query_scenes
 swallowed every exception into [] — so a stale collection "loaded successfully" then
 silently returned empty forever (no log, callers saw "no content").
 
@@ -209,20 +209,20 @@ def test_query_dim_error_raises_not_empty():
     print("  [PASS] query() dim error raises CollectionUnusableError (not silent empty)")
 
 
-def test_query_with_emotion_dim_error_raises_not_empty():
-    """query_with_emotion also surfaces, not swallows-to-[] then fallback."""
+def test_query_scenes_dim_error_raises_not_empty():
+    """query_scenes also surfaces, not swallows-to-[] then fallback."""
     col = _FakeCollection(
         count=5,
         query_error=ValueError("expecting dimension of 384, got 1024"),
     )
     eng = _make_engine(collection=col, embed_dim=1024)
     try:
-        eng.query_with_emotion("问一句", current_emotion="平静", character_name="角色", top_k=3)
+        eng.query_scenes("问一句", character_name="角色", top_k=3)
     except CollectionUnusableError:
         pass
     else:
-        raise AssertionError("query_with_emotion on failing collection must raise, not []")
-    print("  [PASS] query_with_emotion() raises CollectionUnusableError (no swallow→fallback→[])")
+        raise AssertionError("query_scenes on failing collection must raise, not []")
+    print("  [PASS] query_scenes() raises CollectionUnusableError (no swallow→fallback→[])")
 
 
 def test_query_no_match_still_returns_empty():
@@ -232,7 +232,7 @@ def test_query_no_match_still_returns_empty():
     assert eng.query("没有匹配") == []
     col2 = _FakeCollection(count=5, query_result={"documents": [[], [], []]})
     eng2 = _make_engine(collection=col2, embed_dim=1024)
-    assert eng2.query_with_emotion("没有匹配", current_emotion="平静") == []
+    assert eng2.query_scenes("没有匹配") == []
     print("  [PASS] genuine no-match still returns [] (recoverable ≠ collection failure)")
 
 
@@ -240,7 +240,7 @@ def test_query_no_collection_returns_empty():
     """collection is None → [] (not indexed yet), unchanged."""
     eng = _make_engine(collection=None, embed_dim=1024)
     assert eng.query("q") == []
-    assert eng.query_with_emotion("q") == []
+    assert eng.query_scenes("q") == []
     print("  [PASS] no collection → query returns [] (unchanged)")
 
 
@@ -321,7 +321,7 @@ def test_caller_indexing_service_degrades_no_index():
         view = svc.get_rag_for_session(
             "t_unusable", card_id="c1", embedding_key="k", embedding_region="cn")
         with pytest.raises(CollectionUnusableError):
-            view.query_with_emotion_ex("问题")
+            view.query_scenes("问题")
         inst.index.assert_not_called()
     print("  [PASS] indexing_service 路径：维度不符上抛给本轮检索、index 未调用")
 
@@ -338,12 +338,12 @@ def test_caller_indexing_service_generic_error_still_degrades():
         view = svc.get_rag_for_session(
             "t_transient", card_id="c1", embedding_key="k", embedding_region="cn")
         with pytest.raises(RuntimeError):
-            view.query_with_emotion_ex("问题")
+            view.query_scenes("问题")
         inst.index.assert_not_called()
         # 下一轮检索重新装载，不会卡在上一次的故障里
         inst.load_existing.side_effect = None
         inst.load_existing.return_value = False
-        assert view.query_with_emotion_ex("问题") == []
+        assert view.query_scenes("问题") == []
     print("  [PASS] indexing_service 路径：普通故障上抛本轮、下一轮重读")
 
 
@@ -458,7 +458,7 @@ def main() -> int:
         test_get_collection_error_load_existing_logs_returns_false,
         test_embedder_dim_unknown_skips_validation,
         test_query_dim_error_raises_not_empty,
-        test_query_with_emotion_dim_error_raises_not_empty,
+        test_query_scenes_dim_error_raises_not_empty,
         test_query_no_match_still_returns_empty,
         test_query_no_collection_returns_empty,
         test_real_chromadb_delete_absent_collection_raises_notfound,
@@ -474,7 +474,7 @@ def main() -> int:
         t()
     print("\n=== ALL %d TESTS PASSED ===" % len(tests))
     print("load_existing: dimension-blindness fixed (mismatch raises, never silent-True)")
-    print("query/query_with_emotion: failures raise, genuine no-match still returns []")
+    print("query/query_scenes: failures raise, genuine no-match still returns []")
     return 0
 
 
