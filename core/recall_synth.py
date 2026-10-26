@@ -29,7 +29,39 @@ PLACEHOLDERS: dict[str, frozenset[str]] = {
     "own_words_A5": frozenset({"question", "quotes"}),
     "verifier_A6": frozenset({"intent_criterion", "intent_field", "question", "quotes"}),
     "intent_factual_A3": frozenset(),
+    "draft": frozenset({"character", "title", "window", "feedback"}),
 }
+
+# 起草提示词（spec ⑱）：论文没给，我们自己写，内容即 §5 第 2 步的规则。
+# 占位走同一个 `render`；不登记哈希，因为它属于本仓库而非论文附录。
+DRAFT_PROMPT = """\
+You write one recall question for a character-grounded chat system.
+
+Character: {character}
+Work: {title}
+
+Here is a short window from the story in which {character} appears:
+<<<
+{window}
+>>>
+
+Write ONE question that a user chatting with {character} would naturally say to
+them, in second person ("you"), asking about something {character} experienced,
+said, or did. The question must be answerable from this window alone.
+Write the question in the same language as the window.
+
+Rules:
+- The question must not mention the source text, chapter numbers, the novel, or
+  its author.
+- Do not copy wording from the answer passage into the question; paraphrase.
+- `should` must be a verbatim contiguous passage of 10-40 characters copied
+  exactly from the window, without ellipsis, unique within the story.
+- If the window contains nothing worth asking about, return skip.
+
+Reply with JSON only, one of:
+{"query": "<question>", "should": ["<verbatim passage>"]}
+{"skip": true}
+{feedback}"""
 
 # 第 1 次起草 + 至多修 2 次；第 3 次仍不过硬关 → 丢弃（spec §5 第 7 条）。
 MAX_ATTEMPTS = 3
