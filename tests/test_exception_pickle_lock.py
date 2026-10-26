@@ -74,6 +74,10 @@ _REGISTRY = {
         "core.rag",
         lambda cls: cls("集合不可用", collection_name="cards", stored_dim=3, expected_dim=4),
     ),
+    ("core/reranker.py", "RerankUnavailable"): (
+        "core.reranker",
+        lambda cls: cls("timeout", 429),
+    ),
     ("storage/base.py", "StoreError"): (
         "storage.base",
         lambda cls: cls("save_text", ValueError("boom")),
