@@ -134,7 +134,7 @@ def test_repair_cap_discards_after_three_attempts(tmp_path):
 
 
 def test_soft_flag_last_round_still_runs_verifier(tmp_path):
-    llm = FakeLLM([DRAFT] * 3, a5=[LIFT, LIFT, OWN])
+    llm = FakeLLM([DRAFT] * 3, a5=[LIFT, LIFT, LIFT])
 
     summary = rq.run_generate([_book()], llm, PROMPTS, tmp_path)
 
