@@ -8,23 +8,10 @@ import pytest
 from core import recall_eval
 from core.quotes import normalize
 
-try:
-    from core.recall_synth import (
-        check_prompt, intent_slots, judge, ledger_problems, lexical_overlap, outcome_counts,
-        overlap_histogram, quotes_block, render, sample_anchors,
-    )
-except ModuleNotFoundError as exc:  # S3 前模块未实现：调用时记红，不让整份文件收集失败
-    if exc.name != "core.recall_synth":
-        raise
-
-    def _not_implemented(*args, **kwargs):
-        raise NotImplementedError("core.recall_synth 尚未实现")
-
-    check_prompt = intent_slots = judge = ledger_problems = lexical_overlap = (
-        outcome_counts
-    ) = overlap_histogram = quotes_block = render = sample_anchors = _not_implemented
-
-xfail = pytest.mark.xfail(strict=True, reason="0d 题库工具尚未实现")
+from core.recall_synth import (
+    check_prompt, intent_slots, judge, ledger_problems, lexical_overlap, outcome_counts,
+    overlap_histogram, quotes_block, render, sample_anchors,
+)
 
 FILLER = "风过回廊，檐下的灯一盏一盏亮起来……\n远处有人喊：“收衣裳了。”\n"
 NAME = "阿灼"
@@ -62,7 +49,6 @@ def _j(d, a, norm, *, realism=REAL, critic=OWN, verdict=GOOD, attempt=1):
 
 # ── 1 锚点 ─────────────────────────────────────────────────────────────
 
-@xfail
 def test_anchors_cover_each_stratum_at_most_once():
     src = _book(120)
     anchors = sample_anchors(src, [NAME], k=60)
@@ -71,7 +57,6 @@ def test_anchors_cover_each_stratum_at_most_once():
     assert all(NAME in a["text"] for a in anchors)
 
 
-@xfail
 def test_anchors_do_not_borrow_from_other_strata():
     src = _book(120, front_only=True)
     anchors = sample_anchors(src, [NAME], k=60)
@@ -79,7 +64,6 @@ def test_anchors_do_not_borrow_from_other_strata():
     assert len(anchors) == len({a["pos"] * 60 // len(src) for a in anchors})
 
 
-@xfail
 def test_gap_in_middle_leaves_strata_empty():
     head = "".join(FILLER * 6 + f"{NAME}甲{i}。" for i in range(20))
     mid = FILLER * 6 * 40
@@ -90,7 +74,6 @@ def test_gap_in_middle_leaves_strata_empty():
     assert not any(len(head) <= p < len(head) + len(mid) for p in pos)
 
 
-@xfail
 def test_anchor_norm_bounds_match_source():
     src = _book(20)
     a = sample_anchors(src, [NAME], k=10)[3]
@@ -99,7 +82,6 @@ def test_anchor_norm_bounds_match_source():
 
 # ── 2 关 1（硬）──────────────────────────────────────────────────────────
 
-@xfail
 def test_ground_gate():
     norm, a, inside = _setup()
     assert _j(_draft("你那时候说过什么", inside), a, norm)["status"] == "passed"
@@ -110,7 +92,6 @@ def test_ground_gate():
         assert _j(_draft("你那时候说过什么", bad), a, norm)["status"] == "ground_fail", bad
 
 
-@xfail
 def test_ground_rules_are_the_annotation_rules():
     """关 1 与人工标注自检同一份规则：同一片段两边结论一致。"""
     norm, a, inside = _setup()
@@ -126,7 +107,6 @@ def test_ground_rules_are_the_annotation_rules():
 
 # ── 3 自述措辞评审（软，附录 A.5）─────────────────────────────────────────
 
-@xfail
 def test_own_words_critic_triggers_repair_not_rejection():
     norm, a, inside = _setup()
     d = _draft("你那时候说过什么", inside)
@@ -137,14 +117,12 @@ def test_own_words_critic_triggers_repair_not_rejection():
     assert (r["status"], r["own_words_flag"]) == ("passed", True)
 
 
-@xfail
 def test_flagged_draft_still_needs_hard_gates():
     norm, a, inside = _setup()
     d = _draft("你那时候说过什么", inside)
     assert _j(d, a, norm, critic=LIFT, verdict={**GOOD, "leak": True}, attempt=3)["status"] == "discarded"
 
 
-@xfail
 def test_critic_unparsed_is_neither_pass_nor_discard():
     norm, a, inside = _setup()
     d = _draft("你那时候说过什么", inside)
@@ -152,7 +130,6 @@ def test_critic_unparsed_is_neither_pass_nor_discard():
         assert _j(d, a, norm, critic=c, attempt=3)["status"] == "critic_unparsed"
 
 
-@xfail
 def test_critic_skipped_when_ground_fails():
     norm, a, _ = _setup()
     r = _j(_draft("你那时候说过什么", "这件事我记"), a, norm, critic=LIFT, attempt=1)
@@ -161,7 +138,6 @@ def test_critic_skipped_when_ground_fails():
 
 # ── 4 核查（硬）──────────────────────────────────────────────────────────
 
-@xfail
 def test_verify_gate_follows_section_3_4_list():
     norm, a, inside = _setup()
     d = _draft("你那时候说过什么", inside)
@@ -172,7 +148,6 @@ def test_verify_gate_follows_section_3_4_list():
     assert _j(d, a, norm, verdict={**GOOD, "necessary": [False]})["status"] == "passed"
 
 
-@xfail
 def test_verify_unparsed():
     norm, a, inside = _setup()
     d = _draft("你那时候说过什么", inside)
@@ -181,7 +156,6 @@ def test_verify_unparsed():
         assert _j(d, a, norm, verdict=bad, attempt=3)["status"] == "verify_unparsed", bad
 
 
-@xfail
 def test_realism_gate_is_hard():
     norm, a, inside = _setup()
     d = _draft("你那时候说过什么", inside)
@@ -193,13 +167,11 @@ def test_realism_gate_is_hard():
 
 # ── 提示词：照抄文件只认哈希，占位只换登记过的名字 ─────────────────────────────
 
-@xfail
 def test_prompt_must_match_registered_hash():
     with pytest.raises(ValueError):
         check_prompt("realism_A4", "You are {persona}. 改过一个字")
 
 
-@xfail
 def test_render_keeps_json_braces_and_requires_exact_placeholders():
     t = 'Q: {question}\nP:\n{quotes}\nRespond ONLY JSON: {"searchable": true|false}'
     out = render("own_words_A5", t, question="问", quotes=quotes_block(["甲", "乙"]))
@@ -210,7 +182,6 @@ def test_render_keeps_json_braces_and_requires_exact_placeholders():
         render("own_words_A5", t, question="问", quotes="x", persona="多给的")
 
 
-@xfail
 def test_intent_slots_carry_table_4_row_verbatim():
     row = "Factual lookup: Retrieve a stated fact, definition, value, threshold, name, or reference precisely, as written (the default when no other intent fits)."
     slots = intent_slots(row + "\n")
@@ -219,7 +190,6 @@ def test_intent_slots_carry_table_4_row_verbatim():
 
 # ── 5 修复上限只作用于硬关 ────────────────────────────────────────────────
 
-@xfail
 def test_repair_cap_on_hard_gates():
     norm, a, inside = _setup()
     bad = _draft("你那时候说过什么", f"{NAME}第19回说：“这件事我记了19年")
@@ -230,7 +200,6 @@ def test_repair_cap_on_hard_gates():
     assert _j(ok, a, norm, attempt=3)["status"] == "passed"
 
 
-@xfail
 def test_outcome_counts_split_hard_discards_and_soft_flags():
     norm, a, inside = _setup()
     ok = _draft("你那时候说过什么", inside)
@@ -243,7 +212,6 @@ def test_outcome_counts_split_hard_discards_and_soft_flags():
                                   "discarded:verify": 1, "discarded:realism": 1}
 
 
-@xfail
 def test_no_backfill():
     probs = ledger_problems(["a01", "a02", "x99"], ["a01", "a02", "a03"], ["a02"])
     assert [p.split(":")[0] for p in probs] == ["a02", "x99"]
@@ -251,7 +219,6 @@ def test_no_backfill():
 
 # ── 诊断：重合分布（不当关卡）──────────────────────────────────────────────
 
-@xfail
 def test_overlap_is_against_gold_quotes_and_denominator_is_question():
     quotes = ["魏无羡把笛子横在唇边，吹了一支不成调的曲子，蓝湛站在廊下听着，一言不发。"]
     assert round(lexical_overlap("你还记得魏无羡在廊下吹笛子那次吗", quotes), 2) == 0.33
@@ -259,13 +226,11 @@ def test_overlap_is_against_gold_quotes_and_denominator_is_question():
     assert lexical_overlap("甲乙丙丁戊", ["甲乙丙"]) == 0.5
 
 
-@xfail
 def test_overlap_histogram_bins():
     h = overlap_histogram([0.0, 0.05, 0.33, 0.5, 0.99, 1.0])
     assert (h["0.0"], h["0.3"], h["0.5"], h["0.9"], sum(h.values())) == (2, 1, 1, 2, 6)
 
 
-@xfail
 def test_overlap_never_decides_status():
     """重合再高，只要评审与核查都过就录取 —— 重合只是诊断数字。"""
     norm, a, inside = _setup()
