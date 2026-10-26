@@ -208,7 +208,7 @@ def run_eval_no_phase(source: str, character: str, cases: list[dict], rag) -> li
 
 
 def run_suite(books: list[Book], service) -> dict:
-    """一次跑完书目：有卡照旧；无卡先建场景集合（`eval_{text_id}_c{n}`）再走会话检索。"""
+    """一次跑完书目：有卡照旧；无卡只建场景集合（`eval_{text_id}_c{n}`，n 只数无卡行）再走会话检索。"""
     rows_by_book: dict[str, list[dict]] = {}
     per_text: dict[str, int] = {}
     for book in books:
@@ -226,8 +226,8 @@ def run_suite(books: list[Book], service) -> dict:
             # n 只数无卡行：有卡行不建 eval 集合，不占编号。
             per_text[book.text_id] = per_text.get(book.text_id, 0) + 1
             card_id = f"eval_{book.text_id}_c{per_text[book.text_id]}"
-            service.build_scene_index(
-                book.text_id, card_id, book.source, book.character, None,
+            service.build_eval_scene_index(
+                card_id, book.source, book.character,
                 book.embedding_key, book.embedding_region)
             rag = service.get_rag_for_session(
                 book.text_id, card_id=card_id,

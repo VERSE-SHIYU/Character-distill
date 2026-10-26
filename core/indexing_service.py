@@ -277,7 +277,26 @@ class IndexingService:
         )
         if rag.collection is None:
             return
-        # rag 是本作业私有的，`index_scenes` 把它改指到场景集合不影响任何会话。
+        self._index_scene_collection(rag, card_id, content, char_name, need_positions)
+
+    def build_eval_scene_index(
+        self, card_id: str, content: str, char_name: str,
+        embedding_key: str, embedding_region: str,
+    ) -> None:
+        """评测专用：只建 `scenes_{card_id}`，不建原文集合（不整本嵌入）。(sync)
+
+        会话检索按 `_session_candidates` 先装载 `scenes_{card_id}`，有它就不读
+        `text_{text_id}`；场景切分只用私有引擎的客户端与嵌入函数，不依赖原文集合。
+        """
+        rag = self._new_rag(embedding_key, embedding_region)
+        self._index_scene_collection(rag, card_id, content, char_name, need_positions=False)
+
+    @staticmethod
+    def _index_scene_collection(
+        rag: RAGEngine, card_id: str, content: str, char_name: str, need_positions: bool,
+    ) -> None:
+        """建（或按指纹复用）`scenes_{card_id}`，构建期间登记为「正在建」。(sync)"""
+        # rag 是调用方私有的，`index_scenes` 把它改指到场景集合不影响任何会话。
         name = f"scenes_{card_id}"
         with _builds.building(name):
             SceneIndexer().index_scenes(

@@ -41,8 +41,8 @@ class _Service:
         self.rag = _Rag({"scene_0": (start, end)})
         self.built = []
 
-    def build_scene_index(self, text_id, card_id, content, char_name, all_characters,
-                          embedding_key, embedding_region, need_positions=False):
+    def build_eval_scene_index(self, card_id, content, char_name,
+                               embedding_key, embedding_region):
         self.built.append(card_id)
 
     def get_rag_for_session(self, text_id, *, card_id, embedding_key, embedding_region):
@@ -86,6 +86,31 @@ def test_card_row_does_not_consume_scene_collection_number(tmp_path, monkeypatch
     run_suite(books, service)
 
     assert service.built == ["eval_t1_c1"]
+
+
+def test_eval_scene_index_builds_only_the_scene_collection(monkeypatch):
+    """评测只建 `scenes_{card_id}`：不走 `_build_text_collection`（不嵌入整本原文）。"""
+    from core import indexing_service as mod
+
+    service = mod.IndexingService({})
+    engine = object()
+    built = []
+
+    def _no_text_collection(*args, **kwargs):
+        raise AssertionError("评测不该建原文集合")
+
+    def _index_scenes(self, text, rag, character_name, collection_name=None,
+                      need_positions=False):
+        built.append((rag, character_name, collection_name, need_positions))
+        return 1
+
+    monkeypatch.setattr(service, "_new_rag", lambda key, region: engine)
+    monkeypatch.setattr(service, "_build_text_collection", _no_text_collection)
+    monkeypatch.setattr(mod.SceneIndexer, "index_scenes", _index_scenes)
+
+    service.build_eval_scene_index("eval_t1_c1", SOURCE, NAME, "k", "cn")
+
+    assert built == [(engine, NAME, "scenes_eval_t1_c1", False)]
 
 
 def test_phase_must_be_null_without_card(tmp_path):
