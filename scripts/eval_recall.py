@@ -49,6 +49,23 @@ class Loaded:
     embedding_region: str
 
 
+@dataclass
+class Book:
+    """一本书里的一个角色 —— `suite.json` 的一行（⑭ 的评测单位）。"""
+    book: str
+    title: str
+    user_id: str
+    text_id: str
+    character: str
+    source: str
+    aliases: list[str]
+    cases: str | None
+    card_id: str | None
+    card: CharacterCard | None
+    embedding_key: str
+    embedding_region: str
+
+
 def load_cases(path: str | Path) -> list[dict]:
     cases = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines()
              if line.strip()]
@@ -79,6 +96,77 @@ async def load_inputs(storage, *, user_id: str, card_id: str) -> Loaded:
         card=CharacterCard.model_validate_json(card_rec["card_json"]),
         text_id=text_id,
         source=text_rec.get("content", ""),
+        embedding_key=emb.key,
+        embedding_region=emb.region,
+    )
+
+
+def load_suite(path: str | Path) -> list[dict]:
+    """读书目（`suite.json`）：每行一本书里的一个角色；`cases` 相对 suite 文件解析。"""
+    suite_path = Path(path)
+    try:
+        entries = json.loads(suite_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise EvalAbort(f"读不了书目 {suite_path}：{exc}") from exc
+    if not isinstance(entries, list) or not entries:
+        raise EvalAbort(f"书目为空或不是数组：{suite_path}")
+    base = suite_path.parent
+    for entry in entries:
+        cases = entry.get("cases")
+        if cases:
+            entry["cases"] = str((base / cases).resolve())
+    return entries
+
+
+async def load_book(storage, entry: dict) -> Book:
+    """按 suite 的一行读书：原文、主角名与别名、可选卡、用户自己的嵌入 key。
+
+    名单为空、主角不在名单里、缺原文 / 卡 / key 都在**检索前**抛 ``EvalAbort``：
+    这三样缺一个，跑下去的只是空结果（F6 / F7 / F15）。
+    """
+    from core.character_roster import aliases_for, cached_characters
+    from core.embeddings import EMBEDDING_KEY_REQUIRED
+    from web.llm_resolution import resolve_embedding
+
+    title = entry.get("title") or entry.get("book") or entry.get("text_id")
+    text_id = entry.get("text_id") or ""
+    character = entry.get("character") or ""
+    user_id = entry.get("user_id") or ""
+    if not (text_id and character and user_id):
+        raise EvalAbort(f"书目行缺 text_id / character / user_id：{title}")
+    text_rec = await storage.get_text_owned(text_id, user_id)
+    if not text_rec:
+        raise EvalAbort(f"原文不存在或不属于该用户：{title}（{text_id}）")
+
+    chars = await cached_characters(storage, text_id, user_id)
+    if not chars:
+        raise EvalAbort(f"{title} 的角色名单为空 —— 先在网站上对这本书点「识别角色」")
+    if character not in {c.get("name") for c in chars}:
+        raise EvalAbort(f"{title} 的名单里没有「{character}」")
+
+    card_id = entry.get("card_id") or None
+    card = None
+    if card_id:
+        card_rec = await storage.get_card_owned(card_id, user_id)
+        if not card_rec:
+            raise EvalAbort(f"卡片不存在或不属于该用户：{card_id}")
+        card = CharacterCard.model_validate_json(card_rec["card_json"])
+
+    emb = resolve_embedding(await storage.get_user_api_config(user_id) or {})
+    if not emb.key:
+        raise EvalAbort(EMBEDDING_KEY_REQUIRED)
+
+    return Book(
+        book=entry.get("book") or title,
+        title=title,
+        user_id=user_id,
+        text_id=text_id,
+        character=character,
+        source=text_rec.get("content", ""),
+        aliases=aliases_for(chars, character),
+        cases=entry.get("cases") or None,
+        card_id=card_id,
+        card=card,
         embedding_key=emb.key,
         embedding_region=emb.region,
     )
