@@ -26,8 +26,10 @@
 | ⑫ | 全在 SG：祈灼的 3 阶段卡只在 SG（d541a44f3679）；**推翻 10-25 20:00 的「评测在本地跑、线上零影响」**。书不跨节点同步（`web/routers/inter_node.py` 只有 dm / card / invite-code / user 等路由），只影响 SG | 10-26 13:33 |
 | ⑭ | 评测单位 =「书 × 角色」。识别结果里「主要」标签一本十几个，不用它选人：每本对名单里每个人物，用名字 + 别名统计「全书均分 60 段中出现在几段」（并列看总次数），取前 2。恶女训狗无数例外：祈灼（43 条人工题，有卡，唯一算越界率）+ 云绮（排名第 1，生成题，只算召回）——祈灼在该书排第 12，只取他会漏掉最主要的人物（Shiyu 10-26 14:14 同意）。**S1 前**列出入选 9 人的全部别名、各自原文出现次数、是否与名单里别人的名字 / 别名重合，停下由审计方据数据定锚点用哪些称呼（别名里混有「母亲」「太太」这类泛称）。理由：锚点按这 60 段抽，段数决定能不能出够题（规则是我们定的，无文献）。每人约 20 题、30 个锚点，总数约 220。S0 贴完整排名表，Shiyu 确认后才往下 | 10-26 14:02 |
 | ⑮ | **去掉 A.4**，录取 = g_ground ∧ g_verify（A.6）；A.5 仍为软关。依据 S6a 摸底（SG，10-26）：A.4 的前提是「给看不见原文的文件搜索助手提问」，聊天问句天然带上文指代，前提不成立；43 条（含 3 条寒暄）共 86 次判定 39 次不过，**全部** `self_contained=false`（理由均为指向看不见的上文：当初、那晚、你心里），其中 19 次同时 `realistic=false`；两次一致率 0.698。剔除寒暄（`should` 为空）后的数字由执行方重算，结论不变。**偏离论文式 2，由摸底数据推翻**。代价：没有任何关再检查「像不像真实用户」，靠起草规则保证，列为局限 | 10-26 15:01 |
-| ⑯ | 别名表：S1 之前列出入选 9 人的名字、全部别名、各别名原文次数、是否与名单里他人重名，停下等审计方按数据定锚点用哪些称呼（此步此前被跳过，补做） | 10-26 15:01 |
-| ⑰ | A.6 摸底：同一批人工题（剔除寒暄）过 A.6 各两次，报误判（分 answerable / sufficient / per_doc / leak / intent_match）与一致率，停下等放行 S6b | 10-26 15:01 |
+| ⑯ | ~~别名表审查~~ 作废（⑱）：锚点只用角色本名找位置，不用别名，泛称问题不存在 | 10-26 15:22 |
+| ⑰ | ~~A.6 摸底~~ 作废（⑱）：A.6 误判的后果只是丢题、不会混进坏题；整批跑时按角色报各关丢弃数 | 10-26 15:22 |
+| ⑱ | **精简流程**（Shiyu：不要一层层停顿）：起草改由 DeepSeek 脚本批量完成（CoverSynth §5.2 本就是同一模型起草与核查，第 8 页）；一条命令 `generate` 在 SG 上跑完「锚点 → 起草 → g_ground → A.5 → A.6 → 修 2 轮」，中途不停，只在出错时停。代价：起草与核查同一模型，少了交叉把关。起草提示词 `DRAFT_PROMPT` 是**我们自己写的**（论文附录没给起草提示词），内容即 §5 第 2 步的规则 | 10-26 15:22 |
+| ⑲ | 锚点称呼（按 10-26 别名表数据定）：别名质量不可靠（如云绮的别名里混有「小姐」1396 次、「公主」612 次，以及别人的名字「云汐玥」「云肆野」），**一律只用本名**；唯一例外林黛玉——本名「林黛玉」只出现 284 次，她在原文里主要叫「黛玉」（1375 次，含「林黛玉」），改用「黛玉」。即：云绮、宝玉、黛玉、顾昀、长庚、魏无羡、蓝忘机、简隋英、李玉（祈灼用人工题，不取锚点）。共 **9 个生成题角色**。锚点不足 30 的角色如实报 | 10-26 15:40 |
 | ⑬ | 书单：恶女训狗无数（女频古言，43 条人工题，唯一算越界率）、魔道祖师、杀破狼、**红楼梦**（演示账号 offerPass 的内容；半文白文风）、你却爱着一个傻逼（现代背景，约 46 万字）。替换 10-25 名单里的《溺爱成瘾》：它是纯爱、不是记录里写的「现代言情」，且 4 本古风缺现代背景 | 10-26 13:43–13:52 |
 
 ## 0. 环境硬规则（执行方必读）
@@ -101,16 +103,16 @@
 | 出题规则（纯函数、零 IO） | 新增 `core/recall_synth.py` | `sample_anchors` · `ground_problems`（调 `fragment_problems` + 在窗口内）· `PROMPT_SHA256` / `PLACEHOLDERS`（只登记 A.5、A.6、表 4；⑮） / `check_prompt` / `render` / `intent_slots` / `quotes_block`（`[e1] …` 格式，A.5 与 A.6 共用；A.6 原文要求「id in brackets」）· `verify_ok` · `judge(draft, anchor, source_norm, *, critic, verdict, attempt)` · `ledger_problems` · `outcome_counts` · `lexical_overlap` / `overlap_histogram`（诊断） |
 | 读书（IO，一处） | `scripts/eval_recall.py` 新增 `load_book(storage, entry) -> Book`（原文、主角名、别名、可选卡） | 两个命令行都从它取书 |
 | 书目（配置，一处） | `e2e/scratch/recall/suite.json`（本地一份，随脚本拷进 SG 临时目录）；**每行 = 一本书里的一个角色**（⑭）：每本 `{book, title, user_id, text_id, character, cases, card_id?}` | 所有命令只读这一份；`title` 用于 ⑨ 的人设句 |
-| 出题命令行 | 新增 `scripts/recall_questions.py`：`probe` / `anchors` / `check` | `probe`：祈灼人工题（剔除寒暄）过指定的模型关各两次（A.5、A.6；已跑过的 A.4 结果见 ⑮），写 `probe.json`（每条两次结论、误判数、两次一致率），**不改任何题**。`check`：先 `ledger_problems`（有问题整批拒收）→ 关 g_ground → A.5 → A.6，每步只对上一步过了的调 → 写 `verdicts.jsonl`（每 id 第几次、各关原始 JSON）、`repair.jsonl`、`<书>.jsonl`（评测格式，带 `own_words_flag`）→ 打印 `outcome_counts`、重合分布、token 用量 |
+| 出题命令行 | 新增 `scripts/recall_questions.py`：`probe` / `generate` | `probe`：已用于 S6a。`generate`：读 `suite.json` → 对每个生成题角色 `sample_anchors(原文, [⑲ 的称呼], k=30)` → 每个锚点用 `DRAFT_PROMPT` 让 DeepSeek 起草（JSON：`query`、`should` 或 `skip`）→ `ledger_problems` → g_ground → A.5 → A.6；未过的把 `problems`（A.5 的 `suggestion` / A.6 的 `notes` / 关 1 的原因）填回 `DRAFT_PROMPT` 的反馈位重写，至多 2 次 → 写 `verdicts.jsonl`、`<角色>.jsonl`（评测格式，带 `own_words_flag`）→ 打印每个角色的 `outcome_counts`、skip 数、各关退回后修 1 / 2 次通过数、人工题与模型题重合分布、token、耗时 |
 | 评测命令行 | `scripts/eval_recall.py --suite`（读 `suite.json`） | 有卡照现在；无卡：每个角色 `build_scene_index(card_id=f"eval_{text_id}_c{n}")`（n = 该书第几个角色；集合名用编号不用中文名，Chroma 集合名字符限制 0e 前核实） 后取会话检索，窗口 None，`phase` 必须为 null；输出 `aggregate_suite(...)`；旧单卡参数不变 |
-| 起草说明 | 新增 `tests/eval/recall/DRAFTING.md`（不含原文、不含论文提示词） | §5 第 2 步的规则 |
+| 起草提示词 | `core/recall_synth.py` 新增 `DRAFT_PROMPT`（占位 `{character}`、`{title}`、`{window}`、`{feedback}`，登记进 `PLACEHOLDERS`，走同一个 `render`；我们自写，入库，不核哈希） | §5 第 2 步的规则逐条写进去 |
 
 **关卡顺序**：g_ground（免费、确定）→ A.5（软）→ A.6（硬），同论文 §3.4 的顺序；A.4 不用（⑮）。
 
 ## 5. 出题流程
 
 1. **锚点**（程序）：每本 60 个，比目标 40 条多留丢弃余量（推断）。
-2. **起草**（本地 Claude，照 `DRAFTING.md`）：每个锚点一条，或标 `skip`。用户**跟这个角色聊天**时会说的话，第二人称；问他经历过、说过、做过的事；`should` 从该锚点窗口逐字摘 10–40 字；不新增锚点、不改锚点 id。修改时拿到的是各关返回的 `suggestion` / `notes`。
+2. **起草**（DeepSeek，`DRAFT_PROMPT`，⑱）：每个锚点一条，或返回 `skip`（窗口里没有可问的事）。用户**跟这个角色聊天**时会说的话，第二人称；问他经历过、说过、做过的事；不出现「原文 / 第几章 / 小说 / 作者」；`should` 从窗口逐字摘 10–40 字；不把 `should` 的词搬进问句。修改时把上一轮各关的 `problems` 填进 `{feedback}`。
 3. **g_ground**（硬，程序）：`fragment_problems` 全过 + 落在锚点窗口内。
 4. ~~g_real（A.4）~~：不用（⑮）。
 5. **措辞评审**（软，A.5 照抄）：`{question}`、`{quotes}` = `quotes_block(should)`。`searchable=true` → 带 `suggestion` 退回修改；修 2 次仍是 → 录取并打 `own_words_flag`。
@@ -125,7 +127,7 @@
 | 书 | 5 | ⑬ | `suite.json` 5 项 |
 | 锚点 / 角色 | 30（`sample_anchors(k=30)`） | 每人目标 20 + 余量（推断） | 不足 20 如实报 |
 | 摸底调用 | 约 40 条 × 2 关 × 2 次 = 160 | ⑩ + 返工经验 34 | 打印 token |
-| 出题调用 | ≤ 8 个生成题角色 × 30 锚点 × 3 次 × 2 关 = 1440（上限；关 1 不过的不调） | 修复上限 2 | 打印 token |
+| 出题调用 | ≤ 9 个生成题角色 × 30 锚点 × 3 次 × 2 关 = 1620（上限；关 1 不过的不调） | 修复上限 2 | 打印 token |
 | `normalized_starts` | 每本 ≤ 180 个位置，每个对前缀整段规范化 | `core/quotes.py:65` | 120 万字的书可能要几十秒（推断，S6 记实际耗时） |
 | 评测查询 | 约 200 | 0d 目标 | 每条一次查询嵌入 |
 | 首次建索引 | 0d 不建；0e 时 4 本无卡书各整本嵌入一次（建前先查 SG 内存） | F2 | 指纹相同不重建 |
@@ -141,13 +143,13 @@
 - **S1**：提交 `tests/test_recall_synth_goal.py`，模块级 `xfail(strict=True)`，23 个全 xfail。
 - **S2**：`fragment_problems` 抽取 + `char_bigrams` + 改名 + `aggregate_suite`；`tests/test_recall_eval_goal.py` 原样绿。
 - **S3**：`core/recall_synth.py`（`PROMPT_SHA256` 用 §10 的值）；去掉 xfail，23 个全绿。
-- **S4**：`load_book` + `recall_questions.py` + `DRAFTING.md`；☁ `tests/test_recall_questions_cli.py`（替身只配 `chat`、固定返回、无流式；替身对空输入、坏 JSON 的行为照生产——返工经验 35；用例里的提示词用假模板，不写进论文原文）。
+- **S4**：`load_book` + `recall_questions.py`（`probe` / `generate`）+ `DRAFT_PROMPT`；☁ `tests/test_recall_questions_cli.py`（替身只配 `chat`、固定返回、无流式；替身对空输入、坏 JSON 的行为照生产——返工经验 35；用例里的提示词用假模板，不写进论文原文）。
 - **S5**：`eval_recall.py --suite`；☁ `tests/test_recall_suite.py`。
 - **SG 上怎么跑（S6 与 0e 共用）**：把本分支的 Python 代码（`core/`、`web/`、`adapters/`、`storage/`、`scripts/` 整目录）和 `e2e/scratch/recall/`（含 `prompts/`、`suite.json`、草稿）拷到 SG 容器的 `/tmp/recall_pkg/`；在容器里 `cd /app && python /tmp/recall_pkg/scripts/<脚本> ...`。脚本开头把自己的上级目录插到 `sys.path` 最前（`scripts/eval_recall.py:30-31` 现成写法），于是用的是本分支代码。配置按**代码文件位置**找（`web/deps.py:17,36` `_REPO_ROOT / "config.yaml"`；`adapters/llm_adapter.py:760-761` 同理），所以要在副本里建软链 `/tmp/recall_pkg/config.yaml → /app/config.example.yaml`（**更正**：SG 容器里没有 `/app/config.yaml`，生产进程走 `web/deps.py:37-38` 的回退读 `config.example.yaml`；S6a 首跑因软链指错 `FileNotFoundError` 退出 1，改指后跑通）；Chroma 目录是相对当前目录的 `./data/chroma_db`（`core/rag.py:232`），`cd /app` 后即用线上那份；**必须整目录拷**——只拷改过的文件时 `core` 包会解析到副本、缺其他模块而导入失败。产物从 `/tmp/recall_pkg/` 拷回本地。跑完删掉 `/tmp/recall_pkg/`。本分支不加新依赖，用 SG 镜像现有的包。
 - **S6a（真跑，摸底，SG，已完成 10-26）**：A.4、A.5 各两次。结果见 ⑮；A.5 判 `searchable=true` 7/86 次（q06、q17、q31、q36、q40），两次一致率 0.930，可用。
-- **S6a′（别名表，SG 只读）**：按 ⑯ 列表后停下。
-- **S6a″（A.6 摸底，SG）**：按 ⑰，`probe` 跑 A.6 两次，报数后停下，Shiyu 放行才做 S6b。
-- **S6b（真跑，整批，Shiyu 放行后）**：`anchors`（SG）→ 拷回本地起草 → 拷回 SG `check` → 修复至多 2 轮。报每本：锚点数、skip 数、各关通过 / 待修、各关退回后修 1 次 / 修 2 次通过的条数、`outcome_counts`（丢弃按硬关分开、带标记的单列）、人工 40 条与模型题的重合分布并排、token、耗时。**不跑评测**（基线是 0e）。
+- ~~S6a′、S6a″~~：作废（⑯⑰）。
+
+- **S6b（真跑，一条命令，SG）**：`generate`，跑完一次性报 `generate` 那一栏列的全部数字，然后开 PR。中途只在出错时停。**不跑评测**（基线是 0e）。
 
 ## 8. 调用点矩阵与测试范围
 
