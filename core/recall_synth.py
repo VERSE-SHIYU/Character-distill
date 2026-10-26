@@ -54,6 +54,11 @@ Rules:
 - The question must not mention the source text, chapter numbers, the novel, or
   its author.
 - Do not copy wording from the answer passage into the question; paraphrase.
+- The answer must be fully stated in `should`; do not ask for a reason,
+  motive, feeling, or inner thought the passage does not state.
+- `should` must be a declarative sentence copied from the passage; never copy
+  a question into `should`.
+- Ask about one thing only; do not combine several questions.
 - `should` must be a verbatim contiguous passage of 10-40 characters copied
   exactly from the window, without ellipsis, unique within the story.
 - If the window contains nothing worth asking about, return skip.
