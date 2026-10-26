@@ -20,11 +20,14 @@
 | ⑥ | 按原文：词重合 0.5 没有定义 → 不当关卡；软关不进录取条件（式 2）→ 修 2 次不过的**录取并打标记**；防照抄改用附录 A.5 的模型评审 | 10-26 11:26 |
 | ⑦ | A.6 通过 = §3.4 列的核查项；`necessary` 只报不卡 | 10-26 11:35 |
 | ⑧ | A.6 的 `{intent_criterion}` / `{intent_field}` 照抄表 4 的 Factual lookup 行，不留空 | 10-26 11:35 |
-| ⑨ | A.4 的 `{persona}` =「一位正在和《书名》里〈角色〉聊天的读者」，来源是产品的真实使用场景 | 10-26 11:35 |
+| ⑨ | ~~A.4 的 `{persona}`~~ 随 ⑮ 作废 | 10-26 11:35 |
 | ⑩ | 先用祈灼 40 条人工题摸底 A.4 / A.5 的误判率（A.4 第 1 条「refers deictically to an unseen passage」可能误判聊天里的「那天」「他」） | 10-26 11:35 |
 | ⑪ | 提示词不进仓库，spec 记哈希和页码（PDF 无许可证声明，按无授权处理） | 10-26 11:35 |
 | ⑫ | 全在 SG：祈灼的 3 阶段卡只在 SG（d541a44f3679）；**推翻 10-25 20:00 的「评测在本地跑、线上零影响」**。书不跨节点同步（`web/routers/inter_node.py` 只有 dm / card / invite-code / user 等路由），只影响 SG | 10-26 13:33 |
 | ⑭ | 评测单位 =「书 × 角色」。识别结果里「主要」标签一本十几个，不用它选人：每本对名单里每个人物，用名字 + 别名统计「全书均分 60 段中出现在几段」（并列看总次数），取前 2。恶女训狗无数例外：祈灼（43 条人工题，有卡，唯一算越界率）+ 云绮（排名第 1，生成题，只算召回）——祈灼在该书排第 12，只取他会漏掉最主要的人物（Shiyu 10-26 14:14 同意）。**S1 前**列出入选 9 人的全部别名、各自原文出现次数、是否与名单里别人的名字 / 别名重合，停下由审计方据数据定锚点用哪些称呼（别名里混有「母亲」「太太」这类泛称）。理由：锚点按这 60 段抽，段数决定能不能出够题（规则是我们定的，无文献）。每人约 20 题、30 个锚点，总数约 220。S0 贴完整排名表，Shiyu 确认后才往下 | 10-26 14:02 |
+| ⑮ | **去掉 A.4**，录取 = g_ground ∧ g_verify（A.6）；A.5 仍为软关。依据 S6a 摸底（SG，10-26）：A.4 的前提是「给看不见原文的文件搜索助手提问」，聊天问句天然带上文指代，前提不成立；43 条（含 3 条寒暄）共 86 次判定 39 次不过，**全部** `self_contained=false`（理由均为指向看不见的上文：当初、那晚、你心里），其中 19 次同时 `realistic=false`；两次一致率 0.698。剔除寒暄（`should` 为空）后的数字由执行方重算，结论不变。**偏离论文式 2，由摸底数据推翻**。代价：没有任何关再检查「像不像真实用户」，靠起草规则保证，列为局限 | 10-26 15:01 |
+| ⑯ | 别名表：S1 之前列出入选 9 人的名字、全部别名、各别名原文次数、是否与名单里他人重名，停下等审计方按数据定锚点用哪些称呼（此步此前被跳过，补做） | 10-26 15:01 |
+| ⑰ | A.6 摸底：同一批人工题（剔除寒暄）过 A.6 各两次，报误判（分 answerable / sufficient / per_doc / leak / intent_match）与一致率，停下等放行 S6b | 10-26 15:01 |
 | ⑬ | 书单：恶女训狗无数（女频古言，43 条人工题，唯一算越界率）、魔道祖师、杀破狼、**红楼梦**（演示账号 offerPass 的内容；半文白文风）、你却爱着一个傻逼（现代背景，约 46 万字）。替换 10-25 名单里的《溺爱成瘾》：它是纯爱、不是记录里写的「现代言情」，且 4 本古风缺现代背景 | 10-26 13:43–13:52 |
 
 ## 0. 环境硬规则（执行方必读）
@@ -37,7 +40,7 @@
 
 ## 1. 目标与目标检查（第一个提交，`xfail(strict=True)`）
 
-**目标**：在 Shiyu 本地 5 本书上产出约 200 条召回题（祈灼 43 条人工题 + 其余 4 本各约 40 条），每条过 CoverSynth 式 2 的三道硬关；评测脚本一次跑完 5 本，按书分组报 R@3，另给总体。
+**目标**：在 Shiyu 本地 5 本书上产出约 200 条召回题（祈灼 43 条人工题 + 其余 4 本各约 40 条），每条过 g_ground、A.6 两道硬关（A.4 由摸底推翻，⑮）；评测脚本一次跑完 5 本，按书分组报 R@3，另给总体。
 
 **目标检查** `tests/test_recall_synth_goal.py`（随 spec 交付，纯函数、无 IO；夹具带省略号、中文引号、换行、重复句——返工经验 54）：
 
@@ -45,7 +48,7 @@
 |---|---|---|
 | 1 | 锚点：每层至多 1 个、均匀书至少 55/60 层有；只前半本提到主角 → 后半本无锚点；中段没提到 → 中段空着不借；规范化起止与原文一致 | `test_anchors_*`、`test_gap_in_middle_leaves_strata_empty`、`test_anchor_norm_bounds_match_source` |
 | 2 | 关 g_ground（硬）：窗口外 / 全书多处 / 含省略号 / 短于 10 字 → `ground_fail`；规则与人工标注自检同一份 | `test_ground_gate`、`test_ground_rules_are_the_annotation_rules` |
-| 3 | 关 g_real（硬，A.4）：`self_contained`、`realistic` 都真才过；第 3 次仍不过 → `discarded`；结构不对 → `realism_unparsed` | `test_realism_gate_is_hard` |
+| 3 | 不用 A.4：`judge` 不收 `realism`、登记表里没有 A.4（⑮） | `test_no_realism_gate` |
 | 4 | 措辞评审（软，A.5）：`searchable=true` 在第 1、2 次触发修改并带回 `suggestion`；第 3 次仍是 → **录取并打 `own_words_flag`**，但仍要过 A.6；评审结构不对 → `critic_unparsed`；关 1 不过时不跑评审 | `test_own_words_critic_triggers_repair_not_rejection`、`test_flagged_draft_still_needs_hard_gates`、`test_critic_unparsed_is_neither_pass_nor_discard`、`test_critic_skipped_when_ground_fails` |
 | 5 | 关 g_verify（硬，A.6）：`answerable`、`sufficient`、`per_doc` 全真、`leak` 假、`intent_match` 真才过；`necessary` 为假不影响；`per_doc` 的键不等于证据 id 集合、或缺字段 → `verify_unparsed` | `test_verify_gate_follows_section_3_4_list`、`test_verify_unparsed` |
 | 6 | 修复上限只作用于硬关；结果按「录取 / 录取带标记 / 丢弃（按丢在哪道硬关）」分开数 | `test_repair_cap_on_hard_gates`、`test_outcome_counts_split_hard_discards_and_soft_flags` |
@@ -54,7 +57,7 @@
 | 9 | 诊断重合：问句 vs **答案片段**（A.5 / A.6 看到的同一份 `{quotes}`），分母 = 问句；0.1 一档分布；**重合再高也不影响状态** | `test_overlap_is_against_gold_quotes_and_denominator_is_question`、`test_overlap_histogram_bins`、`test_overlap_never_decides_status` |
 | 10 | 多本书：`overall` 按全部行算，不是各书比例的平均 | `test_suite_overall_counts_rows_not_books` |
 
-目标检查只守规则，不守「题出得好」（返工经验 ⑥-5）。题目质量靠三道模型关、S6a 摸底与 S6b 报告的数字；其他 4 本没有人工抽查（Shiyu 没读过），如实写进 PR。
+目标检查只守规则，不守「题出得好」（返工经验 ⑥-5）。题目质量靠 A.5、A.6 两道模型关、S6a 摸底与 S6b 报告的数字；其他 4 本没有人工抽查（Shiyu 没读过），如实写进 PR。
 
 ## 2. 已查实的事实（含「对目标的影响」）
 
@@ -66,8 +69,8 @@
 | F4 | 场景集合每段 `"characters": characters_tag([character_name])` | `core/scene_indexer.py:137` | 无卡的书传主角名即可（D7 照旧，第 5 轮修） |
 | F5 | 场景只存 `docs.append(scene[:800])` | `core/scene_indexer.py:133` | 锚点**必须从原文按位置取**，否则题目集中在每段前 800 字 |
 | F6 | `cached_characters(storage, text_id, user_id)` 只读缓存不发 LLM；`aliases_for` 返回 `c.get("aliases") or []` | `core/character_roster.py:90`、`:118-127` | 名单为空停下报告，不调识别（花钱） |
-| F7 | `get_user_llm(user_id)` 只认用户自己的 key；DeepSeek 关思考由适配器统一加 | `web/deps.py:100-136`；`adapters/llm_adapter.py:419-423`、`chat` :972-1012 | 三道模型关都走 Shiyu 本地账号自己的 key |
-| F8 | LLM 回复转 JSON 的出口 `loads_llm_json` | `core/llm_json.py:90` | 三道模型关的解析都复用它 |
+| F7 | `get_user_llm(user_id)` 只认用户自己的 key；DeepSeek 关思考由适配器统一加 | `web/deps.py:100-136`；`adapters/llm_adapter.py:419-423`、`chat` :972-1012 | 两道模型关都走 Shiyu 本地账号自己的 key |
+| F8 | LLM 回复转 JSON 的出口 `loads_llm_json` | `core/llm_json.py:90` | 两道模型关的解析都复用它 |
 | F9 | main 上没有字二元组函数：原 `_bigrams` 在 `core/phase_locate.py`，#206 的 `e3e626e4` 删了整个文件 | `git show e3e626e4^:core/phase_locate.py` :60-63 | `core/quotes.py` 新增 `char_bigrams`（诊断用；第 4 轮 BM25 用同一个） |
 | F10 | 片段规则全在 `validate_cases` 的循环体里，结果只以 `AnnotationError` 的拼接消息抛出 | `core/recall_eval.py:31-63` | 抽出 `fragment_problems`，人工标注自检与关 g_ground 共用；不许解析异常消息 |
 | F11 | 证据 id 白名单只有 `recall-baseline-qizhuo` | `tests/perf/evidence_writer.py:94-96` | 本 PR 不出基线；0e 再登记 |
@@ -95,21 +98,21 @@
 | 多本书汇总 | `core/recall_eval.py` 新增 `aggregate_suite(rows_by_book)` | 每本 `aggregate` + 全部行一起 `aggregate` |
 | 字二元组 | `core/quotes.py` 新增 `char_bigrams(s)` | 先 `normalize` 再取相邻两字 |
 | 公开建索引 | `core/indexing_service.py`：改名 `build_scene_index`，函数体不动；`:336` 与 `core/scene_indexer.py:81` 同步 | 后台调度与评测共用 |
-| 出题规则（纯函数、零 IO） | 新增 `core/recall_synth.py` | `sample_anchors` · `ground_problems`（调 `fragment_problems` + 在窗口内）· `PROMPT_SHA256` / `PLACEHOLDERS` / `check_prompt` / `render` / `intent_slots` / `quotes_block`（`[e1] …` 格式，A.5 与 A.6 共用；A.6 原文要求「id in brackets」）· `realism_ok` / `verify_ok` · `judge(draft, anchor, source_norm, *, realism, critic, verdict, attempt)` · `ledger_problems` · `outcome_counts` · `lexical_overlap` / `overlap_histogram`（诊断） |
+| 出题规则（纯函数、零 IO） | 新增 `core/recall_synth.py` | `sample_anchors` · `ground_problems`（调 `fragment_problems` + 在窗口内）· `PROMPT_SHA256` / `PLACEHOLDERS`（只登记 A.5、A.6、表 4；⑮） / `check_prompt` / `render` / `intent_slots` / `quotes_block`（`[e1] …` 格式，A.5 与 A.6 共用；A.6 原文要求「id in brackets」）· `verify_ok` · `judge(draft, anchor, source_norm, *, critic, verdict, attempt)` · `ledger_problems` · `outcome_counts` · `lexical_overlap` / `overlap_histogram`（诊断） |
 | 读书（IO，一处） | `scripts/eval_recall.py` 新增 `load_book(storage, entry) -> Book`（原文、主角名、别名、可选卡） | 两个命令行都从它取书 |
 | 书目（配置，一处） | `e2e/scratch/recall/suite.json`（本地一份，随脚本拷进 SG 临时目录）；**每行 = 一本书里的一个角色**（⑭）：每本 `{book, title, user_id, text_id, character, cases, card_id?}` | 所有命令只读这一份；`title` 用于 ⑨ 的人设句 |
-| 出题命令行 | 新增 `scripts/recall_questions.py`：`probe` / `anchors` / `check` | `probe`：祈灼人工题过 A.4、A.5 各两次，写 `probe.json`（每条两次结论、误判数、两次一致率），**不改任何题**。`check`：先 `ledger_problems`（有问题整批拒收）→ 关 g_ground → A.4 → A.5 → A.6，每步只对上一步过了的调 → 写 `verdicts.jsonl`（每 id 第几次、各关原始 JSON）、`repair.jsonl`、`<书>.jsonl`（评测格式，带 `own_words_flag`）→ 打印 `outcome_counts`、重合分布、token 用量 |
+| 出题命令行 | 新增 `scripts/recall_questions.py`：`probe` / `anchors` / `check` | `probe`：祈灼人工题（剔除寒暄）过指定的模型关各两次（A.5、A.6；已跑过的 A.4 结果见 ⑮），写 `probe.json`（每条两次结论、误判数、两次一致率），**不改任何题**。`check`：先 `ledger_problems`（有问题整批拒收）→ 关 g_ground → A.5 → A.6，每步只对上一步过了的调 → 写 `verdicts.jsonl`（每 id 第几次、各关原始 JSON）、`repair.jsonl`、`<书>.jsonl`（评测格式，带 `own_words_flag`）→ 打印 `outcome_counts`、重合分布、token 用量 |
 | 评测命令行 | `scripts/eval_recall.py --suite`（读 `suite.json`） | 有卡照现在；无卡：每个角色 `build_scene_index(card_id=f"eval_{text_id}_c{n}")`（n = 该书第几个角色；集合名用编号不用中文名，Chroma 集合名字符限制 0e 前核实） 后取会话检索，窗口 None，`phase` 必须为 null；输出 `aggregate_suite(...)`；旧单卡参数不变 |
 | 起草说明 | 新增 `tests/eval/recall/DRAFTING.md`（不含原文、不含论文提示词） | §5 第 2 步的规则 |
 
-**关卡顺序**：g_ground 先跑（免费、确定），再按 §3.4 的顺序 A.4 → A.5 → A.6。式 2 的三道硬关是「与」，先后不改变录取结果，只省调用。
+**关卡顺序**：g_ground（免费、确定）→ A.5（软）→ A.6（硬），同论文 §3.4 的顺序；A.4 不用（⑮）。
 
 ## 5. 出题流程
 
 1. **锚点**（程序）：每本 60 个，比目标 40 条多留丢弃余量（推断）。
 2. **起草**（本地 Claude，照 `DRAFTING.md`）：每个锚点一条，或标 `skip`。用户**跟这个角色聊天**时会说的话，第二人称；问他经历过、说过、做过的事；`should` 从该锚点窗口逐字摘 10–40 字；不新增锚点、不改锚点 id。修改时拿到的是各关返回的 `suggestion` / `notes`。
 3. **g_ground**（硬，程序）：`fragment_problems` 全过 + 落在锚点窗口内。
-4. **g_real**（硬，A.4 照抄）：`{persona}` = ⑨ 的句子，`{question}` = 问句。通过 = `self_contained` ∧ `realistic`。
+4. ~~g_real（A.4）~~：不用（⑮）。
 5. **措辞评审**（软，A.5 照抄）：`{question}`、`{quotes}` = `quotes_block(should)`。`searchable=true` → 带 `suggestion` 退回修改；修 2 次仍是 → 录取并打 `own_words_flag`。
 6. **g_verify**（硬，A.6 照抄）：`{quotes}` 同上；`{intent_criterion}` / `{intent_field}` = `intent_slots(表 4 Factual lookup 行)`。通过 = `answerable` ∧ `sufficient` ∧ `per_doc` 全真 ∧ ¬`leak` ∧ `intent_match`。
 7. **修复**：硬关未过的 id 连原因写进 `repair.jsonl`，只改这些；最多修 2 次，第 3 次仍不过 → `discarded`。丢了的锚点空着，不补。`*_unparsed` 不计次数，重调一次仍不行记 `discarded:parse` 并报数。
@@ -122,7 +125,7 @@
 | 书 | 5 | ⑬ | `suite.json` 5 项 |
 | 锚点 / 角色 | 30（`sample_anchors(k=30)`） | 每人目标 20 + 余量（推断） | 不足 20 如实报 |
 | 摸底调用 | 约 40 条 × 2 关 × 2 次 = 160 | ⑩ + 返工经验 34 | 打印 token |
-| 出题调用 | ≤ 4 本 × 60 × 3 次 × 3 关 = 2160（上限；关 1 不过的不调） | 修复上限 2 | 打印 token |
+| 出题调用 | ≤ 8 个生成题角色 × 30 锚点 × 3 次 × 2 关 = 1440（上限；关 1 不过的不调） | 修复上限 2 | 打印 token |
 | `normalized_starts` | 每本 ≤ 180 个位置，每个对前缀整段规范化 | `core/quotes.py:65` | 120 万字的书可能要几十秒（推断，S6 记实际耗时） |
 | 评测查询 | 约 200 | 0d 目标 | 每条一次查询嵌入 |
 | 首次建索引 | 0d 不建；0e 时 4 本无卡书各整本嵌入一次（建前先查 SG 内存） | F2 | 指纹相同不重建 |
@@ -140,8 +143,10 @@
 - **S3**：`core/recall_synth.py`（`PROMPT_SHA256` 用 §10 的值）；去掉 xfail，23 个全绿。
 - **S4**：`load_book` + `recall_questions.py` + `DRAFTING.md`；☁ `tests/test_recall_questions_cli.py`（替身只配 `chat`、固定返回、无流式；替身对空输入、坏 JSON 的行为照生产——返工经验 35；用例里的提示词用假模板，不写进论文原文）。
 - **S5**：`eval_recall.py --suite`；☁ `tests/test_recall_suite.py`。
-- **SG 上怎么跑（S6 与 0e 共用）**：把本分支的 Python 代码（`core/`、`web/`、`adapters/`、`storage/`、`scripts/` 整目录）和 `e2e/scratch/recall/`（含 `prompts/`、`suite.json`、草稿）拷到 SG 容器的 `/tmp/recall_pkg/`；在容器里 `cd /app && python /tmp/recall_pkg/scripts/<脚本> ...`。脚本开头把自己的上级目录插到 `sys.path` 最前（`scripts/eval_recall.py:30-31` 现成写法），于是用的是本分支代码。配置按**代码文件位置**找（`web/deps.py:17,36` `_REPO_ROOT / "config.yaml"`；`adapters/llm_adapter.py:760-761` 同理），所以要在副本里建软链 `/tmp/recall_pkg/config.yaml → /app/config.yaml`；Chroma 目录是相对当前目录的 `./data/chroma_db`（`core/rag.py:232`），`cd /app` 后即用线上那份；**必须整目录拷**——只拷改过的文件时 `core` 包会解析到副本、缺其他模块而导入失败。产物从 `/tmp/recall_pkg/` 拷回本地。跑完删掉 `/tmp/recall_pkg/`。本分支不加新依赖，用 SG 镜像现有的包。
-- **S6a（真跑，摸底，SG）**：`probe`。报：每条人工题 A.4 两次、A.5 两次的结论；A.4 不过数（分 `self_contained` / `realistic`）、A.5 判 `searchable` 数；两次一致率；token。**然后停下，等 Shiyu 看完决定**（照用 / 回来定对策）。
+- **SG 上怎么跑（S6 与 0e 共用）**：把本分支的 Python 代码（`core/`、`web/`、`adapters/`、`storage/`、`scripts/` 整目录）和 `e2e/scratch/recall/`（含 `prompts/`、`suite.json`、草稿）拷到 SG 容器的 `/tmp/recall_pkg/`；在容器里 `cd /app && python /tmp/recall_pkg/scripts/<脚本> ...`。脚本开头把自己的上级目录插到 `sys.path` 最前（`scripts/eval_recall.py:30-31` 现成写法），于是用的是本分支代码。配置按**代码文件位置**找（`web/deps.py:17,36` `_REPO_ROOT / "config.yaml"`；`adapters/llm_adapter.py:760-761` 同理），所以要在副本里建软链 `/tmp/recall_pkg/config.yaml → /app/config.example.yaml`（**更正**：SG 容器里没有 `/app/config.yaml`，生产进程走 `web/deps.py:37-38` 的回退读 `config.example.yaml`；S6a 首跑因软链指错 `FileNotFoundError` 退出 1，改指后跑通）；Chroma 目录是相对当前目录的 `./data/chroma_db`（`core/rag.py:232`），`cd /app` 后即用线上那份；**必须整目录拷**——只拷改过的文件时 `core` 包会解析到副本、缺其他模块而导入失败。产物从 `/tmp/recall_pkg/` 拷回本地。跑完删掉 `/tmp/recall_pkg/`。本分支不加新依赖，用 SG 镜像现有的包。
+- **S6a（真跑，摸底，SG，已完成 10-26）**：A.4、A.5 各两次。结果见 ⑮；A.5 判 `searchable=true` 7/86 次（q06、q17、q31、q36、q40），两次一致率 0.930，可用。
+- **S6a′（别名表，SG 只读）**：按 ⑯ 列表后停下。
+- **S6a″（A.6 摸底，SG）**：按 ⑰，`probe` 跑 A.6 两次，报数后停下，Shiyu 放行才做 S6b。
 - **S6b（真跑，整批，Shiyu 放行后）**：`anchors`（SG）→ 拷回本地起草 → 拷回 SG `check` → 修复至多 2 轮。报每本：锚点数、skip 数、各关通过 / 待修、各关退回后修 1 次 / 修 2 次通过的条数、`outcome_counts`（丢弃按硬关分开、带标记的单列）、人工 40 条与模型题的重合分布并排、token、耗时。**不跑评测**（基线是 0e）。
 
 ## 8. 调用点矩阵与测试范围
@@ -163,7 +168,7 @@
 
 | 问 | 答 | 依据 |
 |---|---|---|
-| 同一条规则写了几处？ | 片段合规 1 处（`fragment_problems`）；每道模型关的通过条件 1 处（`realism_ok` / `verify_ok` / `judge` 里的 `searchable`）；占位替换 1 处（`render`）；证据格式 1 处（`quotes_block`，A.5 与 A.6 共用）；提示词身份 1 处（`PROMPT_SHA256`）；读书 1 处（`load_book`）；书目 1 处（`suite.json`） | §4 |
+| 同一条规则写了几处？ | 片段合规 1 处（`fragment_problems`）；每道模型关的通过条件 1 处（`verify_ok` / `judge` 里的 `searchable`）；占位替换 1 处（`render`）；证据格式 1 处（`quotes_block`，A.5 与 A.6 共用）；提示词身份 1 处（`PROMPT_SHA256`）；读书 1 处（`load_book`）；书目 1 处（`suite.json`） | §4 |
 | 调用方是否被迫知道不该知道的事？ | 命令行不知道关卡规则（只调 `judge` / `ledger_problems` / `render`）；`judge` 不做 IO、不调模型（结果由调用方传入）；关 g_ground 不解析异常消息 | §4、F10 |
 | 加一种情况要改几处？ | 换一份论文提示词版本 → 本地文件 + `PROMPT_SHA256` 一行；加一本书 → `suite.json` 一行；以后加意图 → `intent_slots` 一处；第 1 轮改切法 → `build_scene_index` 自动带上，题按原文位置判，不用重做 | — |
 
@@ -177,7 +182,7 @@
 | 「A final adversarial verifier (g_verify) checks answerability, gold-span sufficiency, that the question neither reveals the answer nor points to its location, independent support per evidence unit, and sequential dependency for bridges」 | 5 | `verify_ok`（⑦）；桥接只适用多跳，我们不出 |
 | 「The hard admission criteria are」式 2 `A = g_real ∧ ⋀ g_ground ∧ g_verify`；「A draft still failing a hard gate after at most two repairs is rejected.」 | 5 | 只硬关决定录取；软关修不过录取带标记（⑥） |
 | 表 4：「The generator steers a candidate toward one intent and an adversarial gate confirms the drafted question matches it. Factual lookup is the default」；Factual lookup 行 | 16 | `intent_slots`（⑧） |
-| A.4 Realism gate 全文 | 16–17 | 本地 `prompts/realism_A4.txt` |
+| A.4 Realism gate 全文 | 16–17 | 本地 `prompts/realism_A4.txt`；**不用**（⑮），文件保留作摸底记录 |
 | A.5 Own-words critic 全文 | 17–18 | 本地 `prompts/own_words_A5.txt` |
 | A.6 Single and Aggregation Queries 全文 | 18 | 本地 `prompts/verifier_A6.txt` |
 | 「GPT-5.6 Sol drafts questions and adjudicates semantics.」（§5.2） | 8 | CoverSynth 起草与核查同一模型；我们 Claude 起草、DeepSeek 核查是自己的选择 |
@@ -195,11 +200,11 @@
 
 | 推断 | 原文旁证 | 判断 |
 |---|---|---|
-| A.4 两项都为真才算通过 | 式 2 把 g_real 当一个整体的硬关（过 / 不过）；A.4 的 `suggestion` 要求「a self-contained, natural rephrasing」，一次改写同时修两项；两项对应关名的两层意思 | 很可能对 |
-| 修改时用 A.4 / A.5 的 `suggestion` | 两份输出格式各有 `suggestion` 字段，写明是改写后的问句；论文别处没有其他改写机制 | 很可能对 |
+| ~~A.4 两项都为真才算通过~~ | — | 随 ⑮ 作废 |
+| 修改时用 A.5 的 `suggestion` | A.5 输出格式有 `suggestion` 字段，写明是改写后的问句；论文别处没有其他改写机制 | 很可能对 |
 | A.6 不过也修：把 `notes`（哪一项不过）交给起草方重写，最多 2 次 | A.6 输出只有 `notes`、没有 `suggestion`；第 5 页「A draft still failing a hard gate after at most two repairs is rejected」，A.6 是硬关 | 与原文最一致的读法 |
 
-怎么验：第 1 条由 S6a 摸底验（人工题被 A.4 判不过的比例）；第 2、3 条是修改机制，摸底量不到，在 S6b 报「各关退回后修 1 次、修 2 次通过的条数」，修了也过不了的多，回来找 Shiyu 定。
+怎么验：两条都是修改机制，摸底量不到，在 S6b 报「各关退回后修 1 次、修 2 次通过的条数」；修了也过不了的多，回来找 Shiyu 定。
 
 **我们自己写的部分（论文没给，标明）**：⑨ 的人设句；`intent_slots` 的包装句「6. intent_match: does the QUESTION realize this intent? 」与字段名 `intent_match`（论文只留 `{intent_criterion}` / `{intent_field}` 两个占位）；`quotes_block` 的 `[e1]` 编号格式（A.6 原文只说「id in brackets」）；g_ground 先跑。
 
@@ -216,8 +221,8 @@
 | M1 / M2 | 每层取全部 / 空层向后借 | 放宽 |
 | M3 | 规范化起止算成原文坐标 | 错位 |
 | M4 / M5 | g_ground 不查窗口 / 不走 `fragment_problems` | 放宽 |
-| M6 | A.4 只看 `realistic` | 放宽 |
-| M7 | A.4 当软关（第 3 次不丢） | 放宽 |
+| M6 | `judge` 仍收 `realism` 或仍登记 A.4 | 违反 ⑮ |
+| M7 | A.5 第 3 次仍判 `searchable` 时跳过 A.6 直接录取 | 放宽 |
 | M8 | A.5 第 3 次仍判 `searchable` 时丢题 | 过严（违反式 2） |
 | M9 | A.5 第 3 次打标记后跳过 A.6 | 放宽 |
 | M10 | A.6 忽略 `per_doc` / `intent_match` | 放宽 |

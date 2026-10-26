@@ -7,7 +7,6 @@ import pytest
 
 from core import recall_eval
 from core.quotes import normalize
-
 from core.recall_synth import (
     check_prompt, intent_slots, judge, ledger_problems, lexical_overlap, outcome_counts,
     overlap_histogram, quotes_block, render, sample_anchors,
@@ -18,7 +17,6 @@ NAME = "阿灼"
 
 GOOD = {"answerable": True, "sufficient": True, "per_doc": {"e1": True}, "necessary": [True],
         "leak": False, "intent_match": True, "notes": ""}
-REAL = {"self_contained": True, "realistic": True, "reason": "", "suggestion": ""}
 OWN = {"searchable": False, "reason": "", "suggestion": ""}
 LIFT = {"searchable": True, "reason": "lift", "suggestion": "换个说法问"}
 
@@ -43,8 +41,8 @@ def _draft(q, should, i="d1"):
     return {"id": i, "query": q, "should": [should]}
 
 
-def _j(d, a, norm, *, realism=REAL, critic=OWN, verdict=GOOD, attempt=1):
-    return judge(d, a, norm, realism=realism, critic=critic, verdict=verdict, attempt=attempt)
+def _j(d, a, norm, *, critic=OWN, verdict=GOOD, attempt=1):
+    return judge(d, a, norm, critic=critic, verdict=verdict, attempt=attempt)
 
 
 # ── 1 锚点 ─────────────────────────────────────────────────────────────
@@ -156,20 +154,20 @@ def test_verify_unparsed():
         assert _j(d, a, norm, verdict=bad, attempt=3)["status"] == "verify_unparsed", bad
 
 
-def test_realism_gate_is_hard():
+def test_no_realism_gate():
+    """A.4 不用（spec ⑮）：judge 不收 realism 参数，登记表里也没有 A.4。"""
+    from core import recall_synth
     norm, a, inside = _setup()
-    d = _draft("你那时候说过什么", inside)
-    for bad in ({"self_contained": False}, {"realistic": False}):
-        assert _j(d, a, norm, realism={**REAL, **bad})["status"] == "realism_fail"
-        assert _j(d, a, norm, realism={**REAL, **bad}, attempt=3)["status"] == "discarded"
-    assert _j(d, a, norm, realism={"realistic": True}, attempt=3)["status"] == "realism_unparsed"
+    with pytest.raises(TypeError):
+        judge(_draft("你那时候说过什么", inside), a, norm, realism={}, critic=OWN, verdict=GOOD, attempt=1)
+    assert "realism_A4" not in recall_synth.PROMPT_SHA256
 
 
 # ── 提示词：照抄文件只认哈希，占位只换登记过的名字 ─────────────────────────────
 
 def test_prompt_must_match_registered_hash():
     with pytest.raises(ValueError):
-        check_prompt("realism_A4", "You are {persona}. 改过一个字")
+        check_prompt("own_words_A5", "QUESTION: {question} 改过一个字")
 
 
 def test_render_keeps_json_braces_and_requires_exact_placeholders():
@@ -206,10 +204,9 @@ def test_outcome_counts_split_hard_discards_and_soft_flags():
     bad = _draft("你那时候说过什么", f"{NAME}第19回说：“这件事我记了19年")
     rs = [_j(ok, a, norm), _j(ok, a, norm, critic=LIFT, attempt=3),
           _j(bad, a, norm, attempt=3), _j(ok, a, norm, verdict={**GOOD, "leak": True}, attempt=3),
-          _j(ok, a, norm, realism={**REAL, "realistic": False}, attempt=3),
           _j(ok, a, norm, critic=LIFT, attempt=1)]
     assert outcome_counts(rs) == {"passed": 1, "passed_own_words_flag": 1, "discarded:ground": 1,
-                                  "discarded:verify": 1, "discarded:realism": 1}
+                                  "discarded:verify": 1}
 
 
 def test_no_backfill():
