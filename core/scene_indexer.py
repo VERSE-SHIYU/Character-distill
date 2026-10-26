@@ -78,7 +78,7 @@ class SceneIndexer:
         """切分场景并写入 RAG，返回场景数量。**幂等**：正文没变即复用已建好的集合。
 
         注意：此方法会把 ``rag.collection`` 改指到新建 / 复用的场景集合。传进来的
-        ``rag`` 必须是调用方**私有**的引擎（`IndexingService._scene_index_job` 里那一个）
+        ``rag`` 必须是调用方**私有**的引擎（`IndexingService.build_scene_index` 里那一个）
         —— 不许是某个会话正在用的引擎。会话各自经 `IndexingService.get_rag_for_session`
         拿 `SessionRag`，按 `scenes_{card_id}` → `text_{text_id}` 装载。
 

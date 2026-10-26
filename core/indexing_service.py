@@ -265,7 +265,7 @@ class IndexingService:
             logger.info("RAG text collection built: text_id=%s in %.1fs", text_id, time.time() - _t)
         return rag
 
-    def _scene_index_job(
+    def build_scene_index(
         self, text_id: str, card_id: str, content: str, char_name: str,
         all_characters: list[dict[str, Any]] | None,
         embedding_key: str, embedding_region: str, need_positions: bool = False,
@@ -333,7 +333,7 @@ class IndexingService:
             logger.info("Scene index skipped: user has no embedding key (card_id=%s)", card_id)
             return
         self._run_in_background(
-            f"scenes_{card_id}", f"Scene index card_id={card_id}", self._scene_index_job,
+            f"scenes_{card_id}", f"Scene index card_id={card_id}", self.build_scene_index,
             text_id, card_id, content, char_name, all_characters,
             embedding_key, embedding_region, need_positions,
         )

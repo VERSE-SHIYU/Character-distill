@@ -51,6 +51,12 @@ def normalize(s) -> str:
     return "".join(ch for ch in folded if not ch.isspace() and ch not in _DROP_CHARS).translate(_VARIANT_FOLD)
 
 
+def char_bigrams(s) -> list[str]:
+    """规范化后的相邻两字 —— 「词」的唯一口径（诊断/BM25 共用，不当关卡）。"""
+    n = normalize(s)
+    return [n[i:i + 2] for i in range(len(n) - 1)]
+
+
 def leading_ws(s: str) -> int:
     """前导空白长度：`s.strip()` 相对原串右移这么多（切分时给出片段起点用）。"""
     return len(s) - len(s.lstrip())
