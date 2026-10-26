@@ -191,6 +191,53 @@ def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
     return recall_eval.aggregate(rows)
 
 
+def run_eval_no_phase(source: str, character: str, cases: list[dict], rag) -> list[dict]:
+    """没有卡的书：窗口恒 None，`phase` 必须为 null（`suite.json` 的生成题）。"""
+    for case in cases:
+        if case.get("phase") is not None:
+            raise EvalAbort(f"没有卡的题 phase 必须为 null：{case.get('id')}")
+    source_norm = normalize(source)
+    recall_eval.validate_cases(cases, source_norm, {None: None})
+    spans = rag.chunk_spans(len(source_norm))
+    rows = []
+    for case in cases:
+        hits = scene_retrieval.scene_hits(
+            rag, case["query"], character_name=character, window=None)
+        rows.append(recall_eval.score_case(source_norm, case, hits, spans))
+    return rows
+
+
+def run_suite(books: list[Book], service) -> dict:
+    """一次跑完书目：有卡照旧；无卡先建场景集合（`eval_{text_id}_c{n}`）再走会话检索。"""
+    rows_by_book: dict[str, list[dict]] = {}
+    per_text: dict[str, int] = {}
+    for book in books:
+        if not book.cases:
+            raise EvalAbort(f"书目行没有标注文件：{book.title}/{book.character}")
+        cases = load_cases(book.cases)
+        per_text[book.text_id] = per_text.get(book.text_id, 0) + 1
+        if book.card is not None:
+            rag = service.get_rag_for_session(
+                book.text_id, card_id=book.card_id or "",
+                embedding_key=book.embedding_key, embedding_region=book.embedding_region)
+            if rag is None:
+                raise EvalAbort(f"无法建立会话检索：{book.title}/{book.character}")
+            rows = run_eval(book.source, book.card, cases, rag)["per_query"]
+        else:
+            card_id = f"eval_{book.text_id}_c{per_text[book.text_id]}"
+            service.build_scene_index(
+                book.text_id, card_id, book.source, book.character, None,
+                book.embedding_key, book.embedding_region)
+            rag = service.get_rag_for_session(
+                book.text_id, card_id=card_id,
+                embedding_key=book.embedding_key, embedding_region=book.embedding_region)
+            if rag is None:
+                raise EvalAbort(f"无法建立会话检索：{book.title}/{book.character}")
+            rows = run_eval_no_phase(book.source, book.character, cases, rag)
+        rows_by_book[f"{book.title}/{book.character}"] = rows
+    return recall_eval.aggregate_suite(rows_by_book)
+
+
 _ENV = ("用户自己的百炼 embedding key；检索 = 聊天同一次 scene_hits（top_k=3）；"
         "基线 tag recall-baseline-2026-10")
 
@@ -228,7 +275,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cases", help="标注 JSONL 文件")
     parser.add_argument("--from-json", dest="from_json", help="已有结果 JSON（只写证据）")
     parser.add_argument("--evidence-id", help="证据产物 id（须先登记；只配 --from-json）")
+    parser.add_argument("--suite", help="书目 JSON（每行一本书里的一个角色）")
     args = parser.parse_args(argv)
+    if args.suite:
+        if args.from_json or args.evidence_id or args.user_id or args.card_id or args.cases:
+            parser.error("--suite 不能与单卡参数 / --from-json / --evidence-id 同用")
+        return args
     if args.from_json:
         if not args.evidence_id:
             parser.error("--from-json 需要 --evidence-id")
@@ -247,6 +299,17 @@ async def _main(args: argparse.Namespace) -> None:
         return
 
     from web.deps import get_indexing_service, get_storage
+
+    if args.suite:
+        storage = get_storage()
+        try:
+            books = [await load_book(storage, entry) for entry in load_suite(args.suite)]
+            result = run_suite(books, get_indexing_service())
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        finally:
+            await storage.close()
+        return
+
 
     storage = get_storage()
     try:
