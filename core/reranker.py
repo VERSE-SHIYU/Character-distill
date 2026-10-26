@@ -38,6 +38,11 @@ class RerankUnavailable(RuntimeError):
         self.kind = kind
         self.status = status
 
+    def __reduce__(self):
+        # 默认 reduce 只交 args（已格式化的整句），重建后 __init__ 会把整句再当 kind
+        # 套一层前缀，str() 变成 "...: rerank unavailable: ..."。交原始字段才对。
+        return (type(self), (self.kind, self.status))
+
 
 def _endpoint(region: str) -> str:
     """重排地址：与嵌入共用地域表，去掉兼容模式后缀换成重排路径。"""
