@@ -1,6 +1,8 @@
 """召回评测的指标与标注自检 —— **纯函数，零 IO**。
 
-命中看**块**是否在 ``scene_hits`` 按 token 预算填入的那组里（字段名 ``r_at_3`` / ``top3_chunk_ids`` 沿用旧名）：每块的完整区间由 ``core.rag.chunk_spans`` 从集合的
+命中看**块**是否在 ``scene_hits`` 按 token 预算填入的那组里。字段沿用旧名、含义已变：
+``r_at_3`` = 命中落在注入的块里的题占比；``top3_chunk_ids`` = 注入的块（不再固定 3 块）。
+每块的完整区间由 ``core.rag.chunk_spans`` 从集合的
 ``npos`` 算出（评测脚本传入 ``spans``），标注片段换算成原文的**连续**规范化区间，
 相交即算 —— 与返回文本截到多少字无关（场景集合只存前 800 字）。这样不依赖场景
 怎么切，以后重切场景 / 改成按事件入库，标注不用重做。
@@ -97,6 +99,7 @@ def score_case(
         hit = hit or _overlaps(hit_iv, should)
         leak = leak or _overlaps(hit_iv, should_not)
     return {"id": case.get("id"), "hit": hit, "leak": leak,
+            # top3_chunk_ids 沿用旧名，含义 = 注入的块（按 token 预算填，块数不定）。
             "unlocated": unlocated, "top3_chunk_ids": chunk_ids,
             "rerank_fallback": bool(getattr(hits, "rerank_fallback", False)),
             "rerank_ms": getattr(hits, "rerank_ms", None),
@@ -108,6 +111,7 @@ def aggregate(rows: Iterable[dict]) -> dict:
     rows = list(rows)
     n = len(rows)
     return {
+        # r_at_3 沿用旧名，含义 = 命中落在注入的块里的题占比（不再是前 3 块）。
         "r_at_3": sum(1 for r in rows if r["hit"]) / n if n else 0.0,
         "leak_rate": sum(1 for r in rows if r["leak"]) / n if n else 0.0,
         "n": n,
