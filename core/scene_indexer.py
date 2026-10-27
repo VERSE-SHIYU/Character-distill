@@ -55,6 +55,15 @@ class ChunkScheme:
         """写进集合 metadata 的稳定字符串 —— 复用判断只认它。"""
         return f"{self.mode}:{self.chars}:{self.overlap}"
 
+    @classmethod
+    def from_key(cls, key: str) -> ChunkScheme:
+        """`key()` 的反函数 —— 切法字符串只在这里解析；非法值抛 ValueError。"""
+        parts = key.split(":")
+        if len(parts) != 3:
+            raise ValueError(f"切法须为 mode:chars:overlap，实得 {key!r}")
+        mode, chars, overlap = parts
+        return cls(mode=mode, chars=int(chars), overlap=int(overlap))  # type: ignore[arg-type]
+
 
 # 占位：S4 按实测 R@3 换成胜出变体（A/B/C），其余变体不留路径。字数预算待 S3 量出
 # token/字比例后定（spec §3），此值未核实。

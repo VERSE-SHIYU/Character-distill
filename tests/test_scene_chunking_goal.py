@@ -262,3 +262,20 @@ def test_6_default_scheme_is_used_when_none_given():
     client = _Client()
     SceneIndexer().index_scenes(TEXT, _rag(client), "祈灼", collection_name=NAME)
     assert client.collections[NAME].metadata["chunk_scheme"] == CHUNK_SCHEME.key()
+
+
+# ── S3：切法字符串只在一处解析 ───────────────────────────────────────────
+
+@pytest.mark.parametrize("variant", ["A", "B", "C"])
+def test_s3_from_key_inverts_key(variant):
+    from core.scene_indexer import ChunkScheme
+    scheme = _schemes()[variant]
+    assert ChunkScheme.from_key(scheme.key()) == scheme
+
+
+@pytest.mark.parametrize("bad", ["", "para", "para:300", "para:x:0", "word:300:0",
+                                 "fixed:100:100", "para:0:0", "para:300:0:1", "para:-5:0"])
+def test_s3_from_key_rejects_bad_values(bad):
+    from core.scene_indexer import ChunkScheme
+    with pytest.raises(ValueError):
+        ChunkScheme.from_key(bad)
