@@ -34,8 +34,8 @@ PLACEHOLDERS: dict[str, frozenset[str]] = {
 }
 
 # 问法规则（spec ㉑，10-27 人工抽查 20 道：场合不明 5、人称搞反 1、片段答不了 2）。A.6 照抄论文、不查这两项，
-# 故放在起草侧。`YOU_RULE` 两份提示词逐字共用；场合规则的指代对象不同（起草指窗口、多轮指原问题），
-# 多轮那句写在 turn1 的要求里。
+# 故放在起草侧。`YOU_RULE` 两份提示词逐字共用；场合规则只加在起草：多轮提示词只拿到原问句、
+# 拿不到原文，要求交代场合会逼模型编造。
 OCCASION_RULE = """\
 Pin down the occasion: include enough of the situation (who was there, where, or
   what had just happened) that the question can only refer to the moment in this
@@ -102,10 +102,7 @@ Original question (asked by a user chatting with {character}):
 
 The question mentions {entity}. Split it into two user turns:
 - turn1: the user first brings up {entity} in passing, in a natural chatty way. It must
-  name {entity} and must not ask the question or hint at its answer. turn1 must also
-  pin down the occasion: include enough of the situation (who was there, where, or
-  what had just happened) that turn2 can only refer to the moment the original
-  question is about, not to something that happens many times in the story.
+  name {entity} and must not ask the question or hint at its answer.
 - turn2: the user then asks about exactly the same thing as the original question, but
   refers to {entity} only by a pronoun or by omission. turn2 must not contain {entity}
   or any other name or nickname of {entity}.
