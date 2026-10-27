@@ -18,6 +18,7 @@ import pytest
 import core.rag as rag_mod
 import core.reranker as rr
 from core import recall_eval
+from core.scene_retrieval import SCENE_TOKEN_BUDGET  # noqa: E402
 from core.embeddings import embed_deadline
 from core.rag import EvidenceHits
 
@@ -126,7 +127,7 @@ def test_evidence_hits_stats_default_none():
 
 def test_query_scenes_fills_stats_on_success(monkeypatch):
     _install(monkeypatch, cost_s=0.6, usage={"total_tokens": 28000})
-    hits = _engine().query_scenes("q", top_k=3)
+    hits = _engine().query_scenes("q", token_budget=SCENE_TOKEN_BUDGET)
     assert hits.rerank_fallback is False
     assert hits.rerank_ms == 600
     assert hits.rerank_tokens == 28000
@@ -135,7 +136,7 @@ def test_query_scenes_fills_stats_on_success(monkeypatch):
 def test_query_scenes_fallback_keeps_spent_time_and_no_tokens(monkeypatch):
     _install(monkeypatch, cost_s=10.0, usage={"total_tokens": 1})
     with embed_deadline(1000.0 + 4.0):
-        hits = _engine().query_scenes("q", top_k=3)
+        hits = _engine().query_scenes("q", token_budget=SCENE_TOKEN_BUDGET)
     assert hits.rerank_fallback is True
     assert hits.rerank_ms == 3900  # 唯一一次尝试 timeout = 4.0 − margin 0.1
     assert hits.rerank_tokens is None
@@ -143,7 +144,7 @@ def test_query_scenes_fallback_keeps_spent_time_and_no_tokens(monkeypatch):
 
 def test_query_scenes_without_candidates_has_no_stats(monkeypatch):
     _install(monkeypatch, cost_s=0.1, usage={"total_tokens": 1})
-    hits = _engine(0).query_scenes("q", top_k=3)
+    hits = _engine(0).query_scenes("q", token_budget=SCENE_TOKEN_BUDGET)
     assert hits.rerank_ms is None and hits.rerank_tokens is None
 
 

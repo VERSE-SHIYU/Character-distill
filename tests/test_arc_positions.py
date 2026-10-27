@@ -25,6 +25,7 @@ from chromadb.errors import NotFoundError
 
 import core.indexing_service as IS
 from core.quotes import normalize, normalized_starts, raw_offsets
+from core.scene_retrieval import SCENE_TOKEN_BUDGET  # noqa: E402
 from core.rag import RAGEngine, positions_metadata
 from core.scene_indexer import SceneIndexer
 from core.schema import CharacterCard, RetrievalWindow
@@ -276,7 +277,7 @@ _POS_ROWS = [("d100", {"npos": 100}), ("d599", {"npos": 599}), ("d700", {"npos":
 
 def test_u7_bare_engine_matching_fingerprint_filters_by_bound():
     col = _PosCollection(_POS_ROWS, _MARKED)
-    hits = _engine(col).query_scenes("q", window=_WIN, top_k=5)
+    hits = _engine(col).query_scenes("q", window=_WIN, token_budget=SCENE_TOKEN_BUDGET)
     assert [h.text for h in hits] == ["d100", "d599"], f"实得 {[h.text for h in hits]}"
 
 
@@ -284,21 +285,21 @@ def test_u7_bare_engine_missing_pos_schema_returns_empty_and_warns(caplog):
     """裸 `RAGEngine`（离线测评等）同样把关：无位置的集合不被查（A1）。"""
     col = _PosCollection(_POS_ROWS, {"content_fingerprint": "FP"})
     with caplog.at_level(logging.WARNING):
-        hits = _engine(col).query_scenes("q", window=_WIN, top_k=5)
+        hits = _engine(col).query_scenes("q", window=_WIN, token_budget=SCENE_TOKEN_BUDGET)
     assert (list(hits), col.calls,
             any(r.levelno == logging.WARNING for r in caplog.records)) == ([], [], True)
 
 
 def test_u7_bare_engine_fingerprint_mismatch_returns_empty():
     col = _PosCollection(_POS_ROWS, {"pos_schema": 1, "content_fingerprint": "OTHER"})
-    hits = _engine(col).query_scenes("q", window=_WIN, top_k=5)
+    hits = _engine(col).query_scenes("q", window=_WIN, token_budget=SCENE_TOKEN_BUDGET)
     assert (list(hits), col.calls) == ([], [])
 
 
 def test_u7_no_window_bypasses_the_check():
     """无时间窗（最后阶段 / 旧卡）→ 不看 pos_schema，照常检索（今天的行为）。"""
     col = _PosCollection(_POS_ROWS, {})
-    hits = _engine(col).query_scenes("q", top_k=5)
+    hits = _engine(col).query_scenes("q", token_budget=SCENE_TOKEN_BUDGET)
     assert [h.text for h in hits] == ["d100", "d599", "d700"]
 
 
@@ -307,7 +308,7 @@ def test_u7_session_rag_passes_window_through(monkeypatch):
     client = _Client()
     client.seed("text_t1", _POS_ROWS, _MARKED)
     view = _session_view(monkeypatch, client)
-    hits = view.query_scenes("q", window=_WIN, top_k=5)
+    hits = view.query_scenes("q", window=_WIN, token_budget=SCENE_TOKEN_BUDGET)
     assert [h.text for h in hits] == ["d100", "d599"], f"实得 {[h.text for h in hits]}"
 
 
@@ -315,7 +316,7 @@ def test_u7_session_rag_unmarked_collection_returns_empty(monkeypatch):
     client = _Client()
     client.seed("text_t1", _POS_ROWS, {"content_fingerprint": "FP"})
     view = _session_view(monkeypatch, client)
-    hits = view.query_scenes("q", window=_WIN, top_k=5)
+    hits = view.query_scenes("q", window=_WIN, token_budget=SCENE_TOKEN_BUDGET)
     assert (list(hits), client.cols["text_t1"].calls) == ([], [])
 
 

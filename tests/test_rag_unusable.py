@@ -38,6 +38,7 @@ if str(_web) not in sys.path:
 from chromadb.errors import NotFoundError
 
 from core.rag import CollectionUnusableError, RAGEngine
+from core.scene_retrieval import SCENE_TOKEN_BUDGET  # noqa: E402
 
 
 class _FakeCollection:
@@ -217,7 +218,7 @@ def test_query_scenes_dim_error_raises_not_empty():
     )
     eng = _make_engine(collection=col, embed_dim=1024)
     try:
-        eng.query_scenes("问一句", character_name="角色", top_k=3)
+        eng.query_scenes("问一句", character_name="角色", token_budget=SCENE_TOKEN_BUDGET)
     except CollectionUnusableError:
         pass
     else:
@@ -232,7 +233,7 @@ def test_query_no_match_still_returns_empty():
     assert eng.query("没有匹配") == []
     col2 = _FakeCollection(count=5, query_result={"documents": [[], [], []]})
     eng2 = _make_engine(collection=col2, embed_dim=1024)
-    assert eng2.query_scenes("没有匹配") == []
+    assert eng2.query_scenes("没有匹配", token_budget=SCENE_TOKEN_BUDGET) == []
     print("  [PASS] genuine no-match still returns [] (recoverable ≠ collection failure)")
 
 
@@ -240,7 +241,7 @@ def test_query_no_collection_returns_empty():
     """collection is None → [] (not indexed yet), unchanged."""
     eng = _make_engine(collection=None, embed_dim=1024)
     assert eng.query("q") == []
-    assert eng.query_scenes("q") == []
+    assert eng.query_scenes("q", token_budget=SCENE_TOKEN_BUDGET) == []
     print("  [PASS] no collection → query returns [] (unchanged)")
 
 
@@ -321,7 +322,7 @@ def test_caller_indexing_service_degrades_no_index():
         view = svc.get_rag_for_session(
             "t_unusable", card_id="c1", embedding_key="k", embedding_region="cn")
         with pytest.raises(CollectionUnusableError):
-            view.query_scenes("问题")
+            view.query_scenes("问题", token_budget=SCENE_TOKEN_BUDGET)
         inst.index.assert_not_called()
     print("  [PASS] indexing_service 路径：维度不符上抛给本轮检索、index 未调用")
 
@@ -338,12 +339,12 @@ def test_caller_indexing_service_generic_error_still_degrades():
         view = svc.get_rag_for_session(
             "t_transient", card_id="c1", embedding_key="k", embedding_region="cn")
         with pytest.raises(RuntimeError):
-            view.query_scenes("问题")
+            view.query_scenes("问题", token_budget=SCENE_TOKEN_BUDGET)
         inst.index.assert_not_called()
         # 下一轮检索重新装载，不会卡在上一次的故障里
         inst.load_existing.side_effect = None
         inst.load_existing.return_value = False
-        assert view.query_scenes("问题") == []
+        assert view.query_scenes("问题", token_budget=SCENE_TOKEN_BUDGET) == []
     print("  [PASS] indexing_service 路径：普通故障上抛本轮、下一轮重读")
 
 

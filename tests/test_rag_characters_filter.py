@@ -33,6 +33,7 @@ from core.rag import (  # noqa: E402
     RAGEngine,
     characters_tag,
 )
+from core.scene_retrieval import SCENE_TOKEN_BUDGET  # noqa: E402
 from core.scene_indexer import SceneIndexer  # noqa: E402
 
 # 三条候选：第一条是**多角色** chunk，这正是 $eq 方案会漏掉的那条。
@@ -146,17 +147,17 @@ def test_refetch_widens_candidates_once_when_not_exhausted():
 
 def test_query_scenes_uses_same_filter_and_flag():
     eng = _make_engine(_ScriptedCollection())
-    hits = eng.query_scenes("旧事", character_name="江澄", top_k=3)
+    hits = eng.query_scenes("旧事", character_name="江澄", token_budget=SCENE_TOKEN_BUDGET)
     assert [h.text for h in hits] == [ROWS[0][0], ROWS[1][0]], f"实得 {list(hits)}"
     assert isinstance(hits, EvidenceHits)
-    none_hits = eng.query_scenes("旧事", top_k=3)
+    none_hits = eng.query_scenes("旧事", token_budget=SCENE_TOKEN_BUDGET)
     assert len(none_hits) == 3, "不传 character_name 时应不过滤"
     print("  [PASS] query_scenes 同一过滤与标记；不传角色名时不过滤")
 
 
 def test_no_collection_returns_empty_hits():
     eng = _make_engine(None)
-    assert list(eng.query("q")) == [] and list(eng.query_scenes("q")) == []
+    assert list(eng.query("q")) == [] and list(eng.query_scenes("q", token_budget=SCENE_TOKEN_BUDGET)) == []
     print("  [PASS] 无集合 → 空结果（行为不变）")
 
 

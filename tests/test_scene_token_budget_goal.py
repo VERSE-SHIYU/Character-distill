@@ -30,8 +30,6 @@ from core.tokens import count_tokens  # noqa: E402
 
 BUDGET = 2500  # 独立写死：目标检查先于实现存在，不从被测常量取期望值
 
-pytestmark = pytest.mark.xfail(strict=True, reason="目标检查先红：fill-to-budget 尚未实现")
-
 _SENTENCE = "“你还记得满月宴那天吗……”他在廊下低声问，\n她没有回头。"
 
 
