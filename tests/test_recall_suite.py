@@ -88,29 +88,61 @@ def test_card_row_does_not_consume_scene_collection_number(tmp_path, monkeypatch
     assert service.built == ["eval_t1_c1"]
 
 
-def test_eval_scene_index_builds_only_the_scene_collection(monkeypatch):
-    """评测只建 `scenes_{card_id}`：不走 `_build_text_collection`（不嵌入整本原文）。"""
+def _capture_index_scenes(monkeypatch, service):
+    """把 `index_scenes` 换成记录器；返回记录列表。"""
     from core import indexing_service as mod
+
+    built = []
+
+    def _index_scenes(self, text, rag, character_name, collection_name=None,
+                      need_positions=False, scheme=None):
+        built.append((rag, character_name, collection_name, need_positions, scheme))
+        return 1
+
+    monkeypatch.setattr(mod.SceneIndexer, "index_scenes", _index_scenes)
+    return built
+
+
+def test_eval_scene_index_builds_only_the_scene_collection(monkeypatch):
+    """评测只建 `scenes_{card_id}`：不走 `_build_text_collection`（不嵌入整本原文）；
+    `scheme` 原样传到 `index_scenes`，不传时为 None（即产品缺省切法）。"""
+    from core import indexing_service as mod
+    from core.scene_indexer import ChunkScheme
 
     service = mod.IndexingService({})
     engine = object()
-    built = []
 
     def _no_text_collection(*args, **kwargs):
         raise AssertionError("评测不该建原文集合")
 
-    def _index_scenes(self, text, rag, character_name, collection_name=None,
-                      need_positions=False):
-        built.append((rag, character_name, collection_name, need_positions))
-        return 1
-
     monkeypatch.setattr(service, "_new_rag", lambda key, region: engine)
     monkeypatch.setattr(service, "_build_text_collection", _no_text_collection)
-    monkeypatch.setattr(mod.SceneIndexer, "index_scenes", _index_scenes)
+    built = _capture_index_scenes(monkeypatch, service)
+    scheme = ChunkScheme(mode="fixed", chars=512, overlap=50)
 
     service.build_eval_scene_index("eval_t1_c1", SOURCE, NAME, "k", "cn")
+    service.build_eval_scene_index("eval_t1_c2", SOURCE, NAME, "k", "cn", scheme=scheme)
 
-    assert built == [(engine, NAME, "scenes_eval_t1_c1", False)]
+    assert built == [(engine, NAME, "scenes_eval_t1_c1", False, None),
+                     (engine, NAME, "scenes_eval_t1_c2", False, scheme)]
+
+
+def test_product_scene_index_passes_no_scheme(monkeypatch):
+    """产品路径 `build_scene_index` 不传切法：行为不变，用 `CHUNK_SCHEME`。"""
+    from core import indexing_service as mod
+
+    service = mod.IndexingService({})
+
+    class _Rag:
+        collection = object()
+
+    rag = _Rag()
+    monkeypatch.setattr(service, "_build_text_collection", lambda *a, **k: rag)
+    built = _capture_index_scenes(monkeypatch, service)
+
+    service.build_scene_index("t1", "c1", SOURCE, NAME, None, "k", "cn", need_positions=True)
+
+    assert built == [(rag, NAME, "scenes_c1", True, None)]
 
 
 def test_phase_must_be_null_without_card(tmp_path):
