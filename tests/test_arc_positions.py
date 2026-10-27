@@ -222,7 +222,7 @@ def test_u6_no_bound_returns_everything():
 
 def test_u6_entries_without_npos_are_excluded_when_bound_given():
     """C8：不带 npos 键的条目在加 where 时被排除（只能对已带位置的集合加过滤）。"""
-    col = _PosCollection([("legacy", {"emotion": "平静"}), ("d10", {"npos": 10})], _MARKED)
+    col = _PosCollection([("legacy", {"characters": "甲"}), ("d10", {"npos": 10})], _MARKED)
     hits = _engine(col).query("q", window=_WIN, top_k=10)
     assert [str(h) for h in hits] == ["d10"], f"实得 {list(hits)}"
 

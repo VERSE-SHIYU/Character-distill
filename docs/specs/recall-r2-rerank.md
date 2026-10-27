@@ -1,3 +1,5 @@
+已取代（10-27）：重排暂缓，见 PR #209 正文；重排代码在 feat/recall-rerank-later
+
 # recall-r2-rerank：候选池 50 + qwen3-rerank 重排（召回升级第 2 轮）
 
 - 基线：main `a9b830ed`。**今晚从 main `a9b830ed` 拉分支 `feat/recall-r2-rerank`，只改产品代码与它的测试**；**不碰 0d 的文件**（`scripts/eval_recall.py`、`scripts/recall_questions.py`、`core/recall_eval.py`、`core/recall_synth.py`），这样 #208 复核后怎么改都不影响本分支。评测脚本的改动放到明早 #208 合并后、rebase 到 main 再加。

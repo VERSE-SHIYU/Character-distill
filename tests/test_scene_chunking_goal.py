@@ -201,7 +201,7 @@ def test_5_ideal_retrieval_still_one_under_new_chunking(variant):
     def ideal(fragment):
         frag = normalize(fragment)
         cid, doc = next((i, d) for i, d in zip(col.ids, col.docs) if frag in normalize(d))
-        return [scene_evidence(text=doc, final=0.5, semantic=0.5, emotion_affinity=0.5,
+        return [scene_evidence(text=doc, vector_rank=0,
                                chunk_id=cid, chapter=None)]
 
     fragments = ["乙沉默不语，转身离去", "丙站在桥头", "祈灼在渡口等到天亮",

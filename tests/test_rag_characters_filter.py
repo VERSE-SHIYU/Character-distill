@@ -38,9 +38,9 @@ from core.scene_indexer import SceneIndexer  # noqa: E402
 
 # 三条候选：第一条是**多角色** chunk，这正是 $eq 方案会漏掉的那条。
 ROWS = [
-    ("魏无羡与江澄并肩站在屋顶。", {"characters": "魏无羡,江澄", "emotion": "平静"}),
-    ("江澄握紧了紫电，指节发白。", {"characters": "江澄", "emotion": "愤怒"}),
-    ("金光瑶微微一笑，掩去眼底冷意。", {"characters": "金光瑶", "emotion": "温柔"}),
+    ("魏无羡与江澄并肩站在屋顶。", {"characters": "魏无羡,江澄"}),
+    ("江澄握紧了紫电，指节发白。", {"characters": "江澄"}),
+    ("金光瑶微微一笑，掩去眼底冷意。", {"characters": "金光瑶"}),
 ]
 
 
@@ -122,8 +122,8 @@ def test_chunk_without_target_not_returned():
 
 def test_candidates_exhausted_flagged_and_fewer_than_top_k():
     """变异锚点：删掉候选耗尽标记 → 本条必红。"""
-    rows = [(f"路人片段{i}", {"characters": "路人甲", "emotion": "平静"}) for i in range(6)]
-    rows.append(("唯一命中片段", {"characters": "魏无羡", "emotion": "平静"}))
+    rows = [(f"路人片段{i}", {"characters": "路人甲"}) for i in range(6)]
+    rows.append(("唯一命中片段", {"characters": "魏无羡"}))
     eng = _make_engine(_ScriptedCollection(rows))
     hits = eng.query("旧事", character_name="魏无羡", top_k=3)
     assert list(hits) == ["唯一命中片段"], f"实得 {list(hits)}"
@@ -134,8 +134,8 @@ def test_candidates_exhausted_flagged_and_fewer_than_top_k():
 
 def test_refetch_widens_candidates_once_when_not_exhausted():
     """候选刚好取满 n 但过滤后不足 → 必须扩大重取，而不是就此返回少量。"""
-    rows = [(f"路人片段{i}", {"characters": "路人甲", "emotion": "平静"}) for i in range(12)]
-    rows.append(("命中在候选之外", {"characters": "魏无羡", "emotion": "平静"}))
+    rows = [(f"路人片段{i}", {"characters": "路人甲"}) for i in range(12)]
+    rows.append(("命中在候选之外", {"characters": "魏无羡"}))
     col = _ScriptedCollection(rows)
     eng = _make_engine(col)
     hits = eng.query("旧事", character_name="魏无羡", top_k=3)
