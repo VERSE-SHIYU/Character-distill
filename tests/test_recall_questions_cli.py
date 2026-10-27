@@ -189,10 +189,6 @@ def test_human_rows_are_not_generated(tmp_path):
     assert llm.calls == []
 
 
-XFAIL = pytest.mark.xfail(strict=True, reason="generate 尚未回填 suite_eval.json（目标检查先红）")
-
-
-@XFAIL
 def test_generate_writes_suite_with_written_cases(tmp_path):
     """生成行的 cases 就是实际写出的 jsonl 文件名，且相对 out_dir。"""
     book = _book()
@@ -205,7 +201,6 @@ def test_generate_writes_suite_with_written_cases(tmp_path):
     assert (tmp_path / suite[0]["cases"]).is_file()
 
 
-@XFAIL
 def test_suite_copies_human_cases_and_rewrites_to_relative(tmp_path):
     """人工题的 cases 文件被拷进 out_dir，行里只留文件名。"""
     src = tmp_path / "input"
@@ -224,7 +219,6 @@ def test_suite_copies_human_cases_and_rewrites_to_relative(tmp_path):
     assert (out / "human.jsonl").read_text(encoding="utf-8") == human.read_text(encoding="utf-8")
 
 
-@XFAIL
 def test_empty_generated_role_omitted_from_suite_and_summary(tmp_path):
     """录取 0 条的角色不写进书目（load_cases 遇空文件会抛），并在 summary 里报出来。"""
     kept = _book(title="书一")
@@ -241,7 +235,6 @@ def test_empty_generated_role_omitted_from_suite_and_summary(tmp_path):
     assert summary["omitted_roles"] == ["t2_甲"]
 
 
-@XFAIL
 def test_generated_suite_reads_back_with_load_suite(tmp_path):
     """整份书目用 eval_recall.load_suite 读回，所有 cases 都落在 out_dir 且存在。"""
     src = tmp_path / "input"
