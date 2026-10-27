@@ -106,6 +106,17 @@ def test_3_fixed_chunks_length_and_overlap():
     assert chunks[-1][1] == len(TEXT)
 
 
+def test_3_fixed_skips_blank_windows():
+    """全是空白的窗口不成块（否则会被拿去嵌入）；空文本不出块。"""
+    from core.scene_indexer import ChunkScheme
+    scheme = ChunkScheme(mode="fixed", chars=20, overlap=5)
+    text = "甲说：“你来了……”" + " \n" * 40 + "乙沉默不语，转身离去。"
+    chunks = _split(text, scheme)
+    assert chunks and all(body.strip() for _, _, body in chunks)
+    assert _split("", scheme) == []
+    assert _split(" \n\n  ", scheme) == []
+
+
 # ── 4–6：入库、区间、复用 ────────────────────────────────────────────────
 
 class _Col:
