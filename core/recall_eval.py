@@ -96,7 +96,8 @@ def score_case(
         hit = hit or _overlaps(hit_iv, should)
         leak = leak or _overlaps(hit_iv, should_not)
     return {"id": case.get("id"), "hit": hit, "leak": leak,
-            "unlocated": unlocated, "top3_chunk_ids": chunk_ids}
+            "unlocated": unlocated, "top3_chunk_ids": chunk_ids,
+            "rerank_fallback": bool(getattr(hits, "rerank_fallback", False))}
 
 
 def aggregate(rows: Iterable[dict]) -> dict:
@@ -114,4 +115,6 @@ def aggregate_suite(rows_by_book: Mapping[str, Iterable[dict]]) -> dict:
     """每本各自 aggregate，总体按**全部行**算（不是各书比例的平均）。"""
     by_book = {book: aggregate(rows) for book, rows in rows_by_book.items()}
     overall = aggregate(r for rows in rows_by_book.values() for r in rows)
-    return {"by_book": by_book, "overall": overall}
+    fallbacks = sum(1 for rows in rows_by_book.values() for r in rows
+                    if r.get("rerank_fallback"))
+    return {"by_book": by_book, "overall": overall, "rerank_fallbacks": fallbacks}
