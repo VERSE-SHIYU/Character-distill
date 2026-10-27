@@ -739,7 +739,8 @@ async def test_embedding(
             # （`web/server.py` 的 `_llm_error_handler` → `call_refused` → 403 + 理由）。
             raise
         # 日志只放 user id 与异常，绝不放 key。
-        logger.warning("Embedding test failed for user %s: %r", user["id"], exc)
+        logger.warning("Embedding test failed for user %s: status=%s code=%s %r",
+                       user["id"], getattr(exc, "status_code", None), getattr(exc, "code", None), exc)
         return {"ok": False, "error": describe_embedding_failure(exc), "detail": str(exc)}
 
 
