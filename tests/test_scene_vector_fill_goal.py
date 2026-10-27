@@ -145,7 +145,6 @@ class _FlakyRag:
         return EvidenceHits([SimpleNamespace(text=FRAGMENTS[i], meta={"chunk_id": f"c{i}"})])
 
 
-@pytest.mark.xfail(strict=True, reason="目标检查先红：一题检索失败会中止整套评测")
 def test_eval_survives_one_failed_retrieval():
     rag = _FlakyRag()
     rows = eval_recall.run_eval_no_phase(SOURCE, "甲", CASES, rag)

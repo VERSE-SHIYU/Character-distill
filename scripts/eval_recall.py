@@ -8,7 +8,8 @@
 
 评测与聊天同一时限：每条查询现开 ``embed_deadline(now + SCENE_TOOL_BUDGET_S)``，
 与聊天里 ``AgentToolkit.execute`` 给场景工具的预算是同一个数（``core.agent.tools``
-唯一出处）；查询嵌入与重排共用它，超出即按聊天同样退回向量顺序（``rerank_fallback``）。
+唯一出处）。某题检索失败（含查询嵌入超时）按聊天同样降级为空结果计分，记
+``retrieval_failed``，不中止整套。
 
 算与写分开：
 
@@ -27,6 +28,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import sys
 import time
 from dataclasses import dataclass
@@ -40,8 +42,11 @@ from core.agent.tools import SCENE_TOOL_BUDGET_S  # noqa: E402
 from core.arc_view import arc_view  # noqa: E402
 from core.embeddings import embed_deadline  # noqa: E402
 from core.quotes import normalize  # noqa: E402
+from core.rag import CollectionUnusableError  # noqa: E402
 from core.scene_indexer import ChunkScheme  # noqa: E402
 from core.schema import CharacterCard  # noqa: E402
+
+logger = logging.getLogger("eval_recall")
 
 
 class EvalAbort(RuntimeError):
@@ -187,6 +192,22 @@ def _scene_hits_in_chat_budget(rag, query: str, *, character_name, window):
             rag, query, character_name=character_name, window=window)
 
 
+def _score_query(rag, source_norm: str, case: dict, spans, *, character_name, window) -> dict:
+    """检索一题并计分；检索失败（含查询嵌入超时）与聊天同样降级为空结果，不中止整套。
+
+    聊天侧 ``AgentToolkit.execute`` 把场景工具的异常收成 ``failed`` 态、空结果继续；
+    检索本体的失败统一以 ``CollectionUnusableError`` 上抛（``RAGEngine._fetch_candidates``），
+    这里只接这一类 —— 评测自身的错误照常抛出，不被当成「检索失败」吞掉。
+    """
+    try:
+        hits = _scene_hits_in_chat_budget(
+            rag, case["query"], character_name=character_name, window=window)
+    except CollectionUnusableError as exc:
+        logger.warning("评测题 %s 检索失败，按注入为空计分：%s", case.get("id"), exc)
+        return recall_eval.failed_case(case)
+    return recall_eval.score_case(source_norm, case, hits, spans)
+
+
 def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
     """先自检标注，再逐条检索；任何检索前失败都不花一次嵌入调用。"""
     source_norm = normalize(source)
@@ -197,12 +218,9 @@ def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
     spans = rag.chunk_spans(len(source_norm))
     rows = []
     for case in cases:
-        hits = _scene_hits_in_chat_budget(
-            rag, case["query"],
-            character_name=card.name,
-            window=views[case["phase"]].window,
-        )
-        rows.append(recall_eval.score_case(source_norm, case, hits, spans))
+        rows.append(_score_query(
+            rag, source_norm, case, spans,
+            character_name=card.name, window=views[case["phase"]].window))
     return recall_eval.aggregate(rows)
 
 
@@ -216,9 +234,8 @@ def run_eval_no_phase(source: str, character: str, cases: list[dict], rag) -> li
     spans = rag.chunk_spans(len(source_norm))
     rows = []
     for case in cases:
-        hits = _scene_hits_in_chat_budget(
-            rag, case["query"], character_name=character, window=None)
-        rows.append(recall_eval.score_case(source_norm, case, hits, spans))
+        rows.append(_score_query(
+            rag, source_norm, case, spans, character_name=character, window=None))
     return rows
 
 

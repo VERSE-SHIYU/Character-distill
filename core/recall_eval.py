@@ -100,7 +100,15 @@ def score_case(
     return {"id": case.get("id"), "hit": hit, "leak": leak,
             # top3_chunk_ids 沿用旧名，含义 = 注入的块（按 token 预算填，块数不定）。
             "unlocated": unlocated, "top3_chunk_ids": chunk_ids,
-            "injected_tokens": getattr(hits, "injected_tokens", None)}
+            "injected_tokens": getattr(hits, "injected_tokens", None),
+            "retrieval_failed": False}
+
+
+def failed_case(case: Mapping[str, Any]) -> dict:
+    """检索失败的一题：按「注入为空」计分（聊天同样降级为空结果），并记 ``retrieval_failed``。"""
+    return {"id": case.get("id"), "hit": False, "leak": False,
+            "unlocated": 0, "top3_chunk_ids": [],
+            "injected_tokens": 0, "retrieval_failed": True}
 
 
 def aggregate(rows: Iterable[dict]) -> dict:
@@ -111,6 +119,7 @@ def aggregate(rows: Iterable[dict]) -> dict:
         "r_at_3": sum(1 for r in rows if r["hit"]) / n if n else 0.0,
         "leak_rate": sum(1 for r in rows if r["leak"]) / n if n else 0.0,
         "n": n,
+        "retrieval_failed": sum(1 for r in rows if r.get("retrieval_failed")),
         "per_query": rows,
     }
 
@@ -120,4 +129,5 @@ def aggregate_suite(rows_by_book: Mapping[str, Iterable[dict]]) -> dict:
     by_book = {book: aggregate(rows) for book, rows in rows_by_book.items()}
     all_rows = [r for rows in rows_by_book.values() for r in rows]
     overall = aggregate(all_rows)
-    return {"by_book": by_book, "overall": overall}
+    return {"by_book": by_book, "overall": overall,
+            "retrieval_failed": overall["retrieval_failed"]}
