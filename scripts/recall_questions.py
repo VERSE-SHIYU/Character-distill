@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import copy
 import json
+import shutil
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -53,6 +54,19 @@ ANCHOR_NAME_OVERRIDES: dict[str, list[str]] = {"林黛玉": ["黛玉"]}
 def _stem(book: Book) -> str:
     """产物文件名 `{text_id}_{角色名}`（如 `t1_甲.jsonl`）；不作集合名 —— 评测集合名见 `eval_recall.run_suite`。"""
     return f"{book.text_id}_{book.character}"
+
+
+def _suite_row(book: Book) -> dict:
+    """`suite.json` 的一行；直接调用 `run_generate` 未传书目行时，由书对象补出同形一行。"""
+    return {
+        "book": book.book,
+        "title": book.title,
+        "user_id": book.user_id,
+        "text_id": book.text_id,
+        "character": book.character,
+        "cases": book.cases,
+        "card_id": book.card_id,
+    }
 
 
 def _new_usage() -> dict[str, int]:
@@ -379,16 +393,27 @@ def _repair_passes(outcomes: list[dict]) -> dict[str, dict[str, int]]:
 def run_generate(
     books: list[Book], llm: Any, prompts: dict[str, str],
     out_dir: str | Path, *, k: int = 30, workers: int = DRAFT_WORKERS,
+    suite_rows: list[dict] | None = None,
 ) -> dict:
-    """⑱：锚点 → 起草 → 三关 → 修两轮，一条命令跑完，中途不停。"""
+    """⑱：锚点 → 起草 → 三关 → 修两轮，一条命令跑完，中途不停。
+
+    结束时在 out_dir 写 `suite_eval.json`：生成行 `cases` 指向写出的题文件，人工题把
+    原文件拷进 out_dir；全部相对 out_dir，可直接 `eval_recall --suite`。
+    `suite_rows` 是 `load_suite` 的原始行，不传时由 `books` 补出同形行。
+    """
     started = time.monotonic()
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    source_rows = suite_rows if suite_rows is not None else [_suite_row(book) for book in books]
+    if len(source_rows) != len(books):
+        raise EvalAbort(f"书目行数与书对象数不一致：{len(source_rows)} != {len(books)}")
+    rows = [dict(row) for row in source_rows]
     usage = _new_usage()
     verdict_rows: list[dict] = []
     summary: dict[str, Any] = {"books": {}}
+    empty_indices: set[int] = set()
 
-    for book in books:
+    for index, book in enumerate(books):
         if book.cases:  # 祈灼：43 条人工题直接进套件（spec §5 第 8 条）
             continue
         stem = _stem(book)
@@ -420,6 +445,8 @@ def run_generate(
 
         cases = [outcome["case"] for outcome in outcomes if outcome["case"]]
         _write_jsonl(out / f"{stem}.jsonl", cases)
+        if not cases:
+            empty_indices.add(index)
         for outcome in outcomes:
             for key, value in outcome["usage"].items():
                 usage[key] += value
@@ -452,6 +479,22 @@ def run_generate(
                 recall_synth.lexical_overlap(case["query"], case.get("should") or [])
                 for case in cases),
         }
+
+    suite: list[dict] = []
+    for index, (book, row) in enumerate(zip(books, rows)):
+        if book.cases:
+            source = Path(book.cases)
+            target = out / source.name
+            if source.resolve() != target.resolve():
+                shutil.copyfile(source, target)
+            row["cases"] = source.name
+        elif index in empty_indices:
+            continue
+        else:
+            row["cases"] = f"{_stem(book)}.jsonl"
+        suite.append(row)
+    _write_json(out / "suite_eval.json", suite)
+    summary["omitted_roles"] = [_stem(books[i]) for i in sorted(empty_indices)]
 
     _write_jsonl(out / "verdicts.jsonl", verdict_rows)
     summary["usage"] = usage
@@ -498,7 +541,8 @@ async def _main(args: argparse.Namespace) -> None:
             if args.command == "probe":
                 summary = run_probe(books, llm, prompts, args.out, tuple(args.gates))
             else:
-                summary = run_generate(books, llm, prompts, args.out_dir, k=args.k)
+                summary = run_generate(books, llm, prompts, args.out_dir, k=args.k,
+                                       suite_rows=entries)
             print(json.dumps(summary, ensure_ascii=False, indent=2))
     finally:
         await storage.close()
