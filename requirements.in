@@ -61,7 +61,11 @@ mem0ai>=2.0.0
 PyJWT>=2.8.0
 cryptography>=42.0.0
 # 节点间请求签名（RFC 9421 HTTP Message Signatures）。选型见 docs/specs/inter-node-v2.md。
-http-message-signatures>=2.0.1
+# 上限 <3：3.0 起 sign() 自己生成 Content-Digest 并加进覆盖清单（signatures.py:322 调
+# digests.py:57-68，覆盖见 signatures.py:323），verify 只有传 body 才校验摘要（signatures.py:623-636）。
+# 本仓 web/inter_node_auth.py:190 与 tests/test_inter_node_v2.py:82 先手写摘要再 sign，
+# 3.0 下直接抛 "Content-Digest is already present"。跨节点签名升级须两端同步改+同步部署，另立任务。
+http-message-signatures>=2.0.1,<3
 pwdlib[argon2]>=0.2.0
 python-multipart>=0.0.9
 resend>=2.30.1,<3.0.0
