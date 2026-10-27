@@ -83,8 +83,8 @@ def _run(tmp_path, cases, llm):
 
 
 def _mt_cases(out):
-    path = out / "t1_甲.multiturn.jsonl"
-    return load_cases(path) if path.exists() else []
+    lines = (out / "t1_甲.multiturn.jsonl").read_text(encoding="utf-8").splitlines()
+    return [json.loads(line) for line in lines if line.strip()]
 
 
 # ── 选题 ──────────────────────────────────────────────────────────────
