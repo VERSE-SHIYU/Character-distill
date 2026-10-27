@@ -244,6 +244,11 @@ class _Client:
             raise NotFoundError(f"Collection {name} does not exist")
         return self.cols[name]
 
+    def get_max_batch_size(self):  # 真 ClientAPI 接口；写入按它分批
+
+        return 5461
+
+
     def create_collection(self, name=None, embedding_function=None, metadata=None):
         self.cols[name] = _PosCollection([], metadata, id=name)
         return self.cols[name]
@@ -475,6 +480,11 @@ class _SceneClient:
         if name not in self.collections:
             raise NotFoundError(f"Collection {name} does not exist")
         return self.collections[name]
+
+    def get_max_batch_size(self):  # 真 ClientAPI 接口；写入按它分批
+
+        return 5461
+
 
     def create_collection(self, name=None, embedding_function=None, metadata=None):
         col = _FakeCollection(dict(metadata or {}))

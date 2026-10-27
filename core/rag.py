@@ -11,6 +11,7 @@ from typing import Any, NamedTuple
 import chromadb
 from chromadb.api.models.Collection import Collection
 from chromadb.errors import NotFoundError
+from chromadb.utils.batch_utils import create_batches
 
 from core.embeddings import create_safe_embedding_fn
 from core.fingerprint import content_fingerprint
@@ -78,6 +79,28 @@ def mark_built(collection: Collection) -> None:
     metadata = dict(collection.metadata or {})
     metadata[BUILD_MARK_KEY] = uuid.uuid4().hex
     collection.modify(metadata=metadata)
+
+
+def add_in_batches(
+    client: Any,
+    collection: Collection,
+    documents: list[str],
+    ids: list[str],
+    metadatas: list[dict[str, Any]],
+) -> None:
+    """写入向量库的唯一入口：按 chroma 单批上限分片，顺序 add。
+
+    上限取 `client.get_max_batch_size()`（chromadb/api/client.py:572），切片用库自带的
+    `chromadb.utils.batch_utils.create_batches` —— 不硬编数值。一次全交超过上限会被
+    chroma 整批拒掉（《恶女训狗无数》A 切法 5492 块 > 5461）。
+
+    中途失败会留下部分条目：调用方只在本函数返回之后 `mark_built`，读方据构建标记判
+    「已建完」，不据条数。
+    """
+    for b_ids, _, b_metas, b_docs in create_batches(
+        client, ids=ids, metadatas=metadatas, documents=documents,
+    ):
+        collection.add(documents=b_docs, ids=b_ids, metadatas=b_metas)
 
 
 class CollectionUnusableError(RuntimeError):
@@ -383,9 +406,8 @@ class RAGEngine:
             if all_characters:
                 meta["characters"] = self._tag_characters(piece, all_characters)
             metas.append(meta)
-        add_kwargs: dict[str, Any] = {"documents": filtered, "ids": ids, "metadatas": metas}
         try:
-            collection.add(**add_kwargs)
+            add_in_batches(self._client, collection, filtered, ids, metas)
             print(f"[embed-stats] RAG index text chunks={len(filtered)} collection={name}")
         except Exception as exc:
             print(f"向 Chroma collection 写入文档失败：{exc}")

@@ -15,7 +15,7 @@ from core.fingerprint import content_fingerprint
 from core.quotes import leading_ws, normalized_starts
 from core.rag import (
     FINGERPRINT_KEY, POS_SCHEMA, POS_SCHEMA_KEY,
-    CollectionUnusableError, RAGEngine, characters_tag, mark_built,
+    CollectionUnusableError, RAGEngine, add_in_batches, characters_tag, mark_built,
 )
 
 # 简单情感关键词映射（可扩充）
@@ -227,7 +227,7 @@ class SceneIndexer:
                 "nend": nend[i],
             })
 
-        collection.add(documents=docs, ids=ids, metadatas=metas)
+        add_in_batches(rag._client, collection, docs, ids, metas)
         mark_built(collection)
         print(f"[embed-stats] Scene index scenes={len(docs)} collection={name}")
 

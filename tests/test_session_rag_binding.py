@@ -105,6 +105,11 @@ class _Client:
             raise NotFoundError(f"Collection {name} does not exist")
         return self.cols[name]
 
+    def get_max_batch_size(self):  # 真 ClientAPI 接口；写入按它分批
+
+        return 5461
+
+
     def create_collection(self, name=None, embedding_function=None, metadata=None):
         col = _Collection(name, metadata)
         self.cols[name] = col
