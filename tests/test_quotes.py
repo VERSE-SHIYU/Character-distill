@@ -548,3 +548,67 @@ def test_the_converter_is_built_once_not_per_call(monkeypatch):
         q.normalize("不曾讀，只上了一年學")
 
     assert built == [], "normalize 每次调用都新建了转换器（应为模块级单例）"
+
+
+# ── normalized_starts：单遍累加（召回 r1：块数 ×7 时不能把建索引拖成 ×7）──────────
+
+def _count_normalized_chars(monkeypatch):
+    """把 `core.quotes.normalize` 包一层，按送进去的总字符数计量（不用墙钟）。"""
+    import core.quotes as q
+    real = q.normalize
+    seen = {"chars": 0}
+
+    def counting(s):
+        seen["chars"] += len(str(s))
+        return real(s)
+
+    monkeypatch.setattr(q, "normalize", counting)
+    return seen
+
+
+def test_normalized_starts_cost_linear_in_text_not_chunks(monkeypatch):
+    """同一夹具，起点数 ×7 时规范化总字符数不超过 ×2。"""
+    from core.quotes import normalized_starts as ns
+    text = ("他低声说：“你别走……”她没回头。\n" * 8 + "\n") * 60
+    few = list(range(0, len(text), len(text) // 10))
+    many = list(range(0, len(text), len(text) // 70))
+
+    seen = _count_normalized_chars(monkeypatch)
+    ns(text, few)
+    cost_few = seen["chars"]
+    seen["chars"] = 0
+    ns(text, many)
+    cost_many = seen["chars"]
+
+    assert len(many) >= 7 * len(few) - 7
+    assert cost_many <= 2 * cost_few, (cost_few, cost_many)
+
+
+def test_normalized_starts_t2s_phrase_split_at_boundary():
+    """繁转简短语被切在边界上（頭|髮、乾|燥），结果仍等于逐个精确计算。"""
+    from core.quotes import normalize as norm, normalized_starts as ns
+    text = "她撥開頭髮，說：“天氣乾燥……”\n他沒答。" * 5
+    raw = [i for i, ch in enumerate(text) if ch in "髮燥"]
+    raw += [0, len(text)]
+    assert ns(text, raw) == [len(norm(text[:r])) for r in raw]
+
+
+def test_normalized_starts_unsorted_and_duplicate_starts_keep_caller_order():
+    from core.quotes import normalize as norm, normalized_starts as ns
+    text = "甲乙丙。丁戊己！\n庚辛壬癸" * 10
+    raw = [30, 0, 30, 7, len(text), 2]
+    assert ns(text, raw) == [len(norm(text[:r])) for r in raw]
+
+
+def test_normalized_starts_falls_back_when_segments_do_not_add_up(monkeypatch):
+    """逐段累加拼不回整段长度时（并字跨边界），退回逐个前缀精确计算。"""
+    import core.quotes as q
+    real = q.normalize
+
+    def merging(s):  # 「AB」连在一起才并成一个字：逐段累加 ≠ 整段
+        return real(str(s).replace("AB", "C"))
+
+    monkeypatch.setattr(q, "normalize", merging)
+    text = "xxAByyAB" * 3
+    raw = [3, 7, 11, len(text)]   # 每个起点都切在 A|B 之间
+    assert q.normalized_starts(text, raw) == [len(merging(text[:r])) for r in raw]
