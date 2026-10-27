@@ -30,6 +30,7 @@ PLACEHOLDERS: dict[str, frozenset[str]] = {
     "verifier_A6": frozenset({"intent_criterion", "intent_field", "question", "quotes"}),
     "intent_factual_A3": frozenset(),
     "draft": frozenset({"character", "title", "window", "feedback"}),
+    "multiturn": frozenset({"character", "title", "question", "entity", "feedback"}),
 }
 
 # 起草提示词（spec ⑱）：论文没给，我们自己写，内容即 §5 第 2 步的规则。
@@ -66,6 +67,33 @@ Rules:
 Reply with JSON only, one of:
 {"query": "<question>", "should": ["<verbatim passage>"]}
 {"skip": true}
+{feedback}"""
+
+# 多轮改写提示词：我们自己的设计（未见文献这样做），不登记哈希，占位走同一个 `render`。
+# 答案片段原样沿用 —— 命中按证据区间判定、与问法无关（`recall_eval.score_case`）。
+MULTITURN_PROMPT = """\
+You rewrite one recall question into a two-turn chat for a character-grounded chat system.
+
+Character: {character}
+Work: {title}
+
+Original question (asked by a user chatting with {character}):
+{question}
+
+The question mentions {entity}. Split it into two user turns:
+- turn1: the user first brings up {entity} in passing, in a natural chatty way. It must
+  name {entity} and must not ask the question or hint at its answer.
+- turn2: the user then asks about exactly the same thing as the original question, but
+  refers to {entity} only by a pronoun or by omission. turn2 must not contain {entity}
+  or any other name or nickname of {entity}.
+
+Rules:
+- Both turns are said to {character}, in second person ("you"), casual chat tone.
+- Write both turns in the same language as the original question.
+- Never mention the source text, chapter numbers, the novel, or its author.
+
+Reply with JSON only:
+{"turn1": "<first user turn>", "turn2": "<second user turn>"}
 {feedback}"""
 
 # 第 1 次起草 + 至多修 2 次；第 3 次仍不过硬关 → 丢弃（spec §5 第 7 条）。
@@ -122,6 +150,45 @@ def quotes_block(quotes: Iterable[str]) -> str:
     """A.5 / A.6 共用的证据格式：一行一条，编号取自 `evidence_ids`。"""
     quotes = list(quotes)
     return "\n".join(f"[{eid}] {q}" for eid, q in zip(evidence_ids(quotes), quotes))
+
+
+def multiturn_entity(
+    question: str,
+    roster: Iterable[Mapping[str, Any]],
+    character: str,
+) -> tuple[str, list[str]] | None:
+    """多轮选题：问句里出现名单中「问答角色本人以外」的人名或别名 → ``(本名, [本名, *别名])``。
+
+    名单即 ``character_roster.cached_characters`` 的行（``name`` / ``aliases``）；地名、
+    事件名没有可靠名单，不选。出现多人时取问句里最先出现的，同位置取较长的称呼。
+    """
+    best: tuple[int, int, str, list[str]] | None = None
+    for person in roster:
+        name = person.get("name")
+        if not name or name == character:
+            continue
+        names = list(dict.fromkeys(n for n in [name, *(person.get("aliases") or [])] if n))
+        for n in names:
+            pos = question.find(n)
+            if pos >= 0 and (best is None or (pos, -len(n)) < (best[0], -best[1])):
+                best = (pos, len(n), name, names)
+    return None if best is None else (best[2], best[3])
+
+
+def multiturn_problems(turn1: str, turn2: str, names: Sequence[str]) -> list[str]:
+    """关 1（确定性）：turn1 须点名实体（本名或任一别名），turn2 不得出现本名与任何别名。"""
+    problems: list[str] = []
+    if not any(n in turn1 for n in names):
+        problems.append(f"turn1 没有提到「{names[0]}」（本名或别名：{'、'.join(names)}）")
+    leaked = [n for n in names if n in turn2]
+    if leaked:
+        problems.append(f"turn2 不能出现「{'、'.join(leaked)}」，改用代词或省略")
+    return problems
+
+
+def multiturn_question(turn1: str, turn2: str) -> str:
+    """关 2 填进 A.6 ``{question}`` 的文本。A.6 没有上文占位，上文按此约定拼在问题前。"""
+    return f"上文：{turn1}\n问题：{turn2}"
 
 
 def _name_positions(text: str, names: Iterable[str]) -> list[int]:
