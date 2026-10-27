@@ -14,7 +14,7 @@ from chromadb.errors import NotFoundError
 from core.fingerprint import content_fingerprint
 from core.quotes import leading_ws, normalized_starts
 from core.rag import (
-    FINGERPRINT_KEY, POS_SCHEMA, POS_SCHEMA_KEY,
+    BUILD_MARK_KEY, FINGERPRINT_KEY, POS_SCHEMA, POS_SCHEMA_KEY,
     CollectionUnusableError, RAGEngine, add_in_batches, characters_tag, mark_built,
 )
 
@@ -166,7 +166,8 @@ class SceneIndexer:
         挡不住隔了很久的第二次。而重建要付两笔代价：一次全量 embedding，以及
         `delete_collection` 先于 `create_collection` 的那段空窗 —— 这期间会话
         检索跳过本集合（回落原文集合，或本轮记为失败）。故先按正文指纹复用；
-        正文变了（重解析）或维度不符才重建。
+        正文变了（重解析）或维度不符才重建。只复用**已建完**的集合（metadata 有
+        `BUILD_MARK_KEY`）：分批写入中途失败留下的半截集合带着正文指纹，但没有构建标记。
 
         ``need_positions`` 只在**带起点的卡存卡**时由 `save_distilled_card` 传 True：
         指纹相同但集合没有 `pos_schema`（这条 feature 之前建的）时也重建一次，把
@@ -188,7 +189,8 @@ class SceneIndexer:
         try:
             if rag.load_existing(name):
                 meta = rag.collection.metadata or {}
-                if (meta.get(_FINGERPRINT_KEY) == fingerprint
+                if (BUILD_MARK_KEY in meta
+                        and meta.get(_FINGERPRINT_KEY) == fingerprint
                         and meta.get(_CHUNK_SCHEME_KEY) == scheme.key()
                         and not (need_positions
                                  and meta.get(_POS_SCHEMA_KEY) != _POS_SCHEMA_VERSION)):
