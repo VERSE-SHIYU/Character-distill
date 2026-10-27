@@ -187,8 +187,31 @@ def _scene_hits_in_chat_budget(rag, query: str, *, character_name, window):
             rag, query, character_name=character_name, window=window)
 
 
-def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
+# 正向对照开关：``query`` = 标注的问题原文（缺省）；``should`` = 该题第一段证据片段原文。
+# 只换查询文本，集合、窗口、打分全不变 —— 用来看「拿答案原文去搜」能否召回，分辨问题出在
+# 查询改写还是索引 / 切块本身。
+QUERY_FROM = ("query", "should")
+
+
+def _check_query_from(cases: list[dict], query_from: str) -> None:
+    """检索前核对：``should`` 模式下每题都要有证据片段，否则列出题号中止（不花嵌入调用）。"""
+    if query_from not in QUERY_FROM:
+        raise EvalAbort(f"--query-from 只能是 {QUERY_FROM}：{query_from!r}")
+    if query_from == "should":
+        bad = [case.get("id") for case in cases if not case.get("should")]
+        if bad:
+            raise EvalAbort(f"--query-from should 需要每题至少一段 should：{bad}")
+
+
+def query_text(case: dict, query_from: str) -> str:
+    """本题实际拿去检索的文本 —— 查询文本只在这里取。"""
+    return case["should"][0] if query_from == "should" else case["query"]
+
+
+def run_eval(source: str, card: CharacterCard, cases: list[dict], rag,
+             query_from: str = "query") -> dict:
     """先自检标注，再逐条检索；任何检索前失败都不花一次嵌入调用。"""
+    _check_query_from(cases, query_from)
     source_norm = normalize(source)
     views = {case["phase"]: arc_view(card, case["phase"]) for case in cases}
     recall_eval.validate_cases(
@@ -198,7 +221,7 @@ def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
     rows = []
     for case in cases:
         hits = _scene_hits_in_chat_budget(
-            rag, case["query"],
+            rag, query_text(case, query_from),
             character_name=card.name,
             window=views[case["phase"]].window,
         )
@@ -206,8 +229,10 @@ def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
     return recall_eval.aggregate(rows)
 
 
-def run_eval_no_phase(source: str, character: str, cases: list[dict], rag) -> list[dict]:
+def run_eval_no_phase(source: str, character: str, cases: list[dict], rag,
+                      query_from: str = "query") -> list[dict]:
     """没有卡的书：窗口恒 None，`phase` 必须为 null（`suite.json` 的生成题）。"""
+    _check_query_from(cases, query_from)
     for case in cases:
         if case.get("phase") is not None:
             raise EvalAbort(f"没有卡的题 phase 必须为 null：{case.get('id')}")
@@ -217,7 +242,7 @@ def run_eval_no_phase(source: str, character: str, cases: list[dict], rag) -> li
     rows = []
     for case in cases:
         hits = _scene_hits_in_chat_budget(
-            rag, case["query"], character_name=character, window=None)
+            rag, query_text(case, query_from), character_name=character, window=None)
         rows.append(recall_eval.score_case(source_norm, case, hits, spans))
     return rows
 
@@ -233,7 +258,8 @@ def eval_card_id(text_id: str, slot: str, scheme: ChunkScheme | None) -> str:
     return f"eval_r1_{scheme.mode}-{scheme.chars}-{scheme.overlap}_{text_id}_{slot}"
 
 
-def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None) -> dict:
+def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None,
+              query_from: str = "query") -> dict:
     """一次跑完书目。无卡行建场景集合（n 只数无卡行）再走会话检索。
 
     不传 ``scheme``：有卡行照旧读线上卡集合（0e 基线的跑法）。传了：有卡行也按该切法建
@@ -257,7 +283,7 @@ def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None) -> 
                 embedding_key=book.embedding_key, embedding_region=book.embedding_region)
             if rag is None:
                 raise EvalAbort(f"无法建立会话检索：{book.title}/{book.character}")
-            rows = run_eval(book.source, book.card, cases, rag)["per_query"]
+            rows = run_eval(book.source, book.card, cases, rag, query_from)["per_query"]
         else:
             # n 只数无卡行：有卡行不占编号。
             per_text[book.text_id] = per_text.get(book.text_id, 0) + 1
@@ -270,7 +296,7 @@ def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None) -> 
                 embedding_key=book.embedding_key, embedding_region=book.embedding_region)
             if rag is None:
                 raise EvalAbort(f"无法建立会话检索：{book.title}/{book.character}")
-            rows = run_eval_no_phase(book.source, book.character, cases, rag)
+            rows = run_eval_no_phase(book.source, book.character, cases, rag, query_from)
         rows_by_book[f"{book.title}/{book.character}"] = rows
     return recall_eval.aggregate_suite(rows_by_book)
 
@@ -322,6 +348,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--suite", help="书目 JSON（每行一本书里的一个角色）")
     parser.add_argument("--chunk-scheme", dest="chunk_scheme", type=_chunk_scheme_arg,
                         help="只配 --suite：按切法 mode:chars:overlap 建 eval 变体集合")
+    parser.add_argument("--query-from", dest="query_from", choices=QUERY_FROM, default="query",
+                        help="检索文本：query=问题原文（缺省）；should=该题第一段证据片段原文")
     args = parser.parse_args(argv)
     if args.chunk_scheme and not args.suite:
         parser.error("--chunk-scheme 只用于 --suite")
@@ -352,7 +380,8 @@ async def _main(args: argparse.Namespace) -> None:
         storage = get_storage()
         try:
             books = [await load_book(storage, entry) for entry in load_suite(args.suite)]
-            result = run_suite(books, get_indexing_service(), scheme=args.chunk_scheme)
+            result = run_suite(books, get_indexing_service(), scheme=args.chunk_scheme,
+                               query_from=args.query_from)
             print(json.dumps(result, ensure_ascii=False, indent=2))
         finally:
             await storage.close()
@@ -372,7 +401,7 @@ async def _main(args: argparse.Namespace) -> None:
         if rag is None:
             raise EvalAbort("无法建立会话检索（原文为空或没有 embedding key）")
 
-        result = run_eval(loaded.source, loaded.card, cases, rag)
+        result = run_eval(loaded.source, loaded.card, cases, rag, args.query_from)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     finally:
         await storage.close()
