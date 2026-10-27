@@ -125,6 +125,20 @@ def test_2_scene_collection_written_in_batches_marked_once_at_end():
     assert BUILD_MARK_KEY in col.metadata
 
 
+def test_3_partial_write_is_not_reused_and_gets_rebuilt():
+    client = _Client(fail_on_add=2)
+    with pytest.raises(RuntimeError):
+        _index_scenes(client)
+    half = client.collections["scenes_c1"]
+    assert 0 < half.count() and BUILD_MARK_KEY not in half.metadata
+
+    client.fail_on_add = None
+    n = _index_scenes(client)
+    col = client.collections["scenes_c1"]
+    assert client.creates == 2, "半截集合不得被复用"
+    assert col.count() == n and BUILD_MARK_KEY in col.metadata
+
+
 def test_3_finished_collection_is_still_reused():
     client = _Client()
     _index_scenes(client)
