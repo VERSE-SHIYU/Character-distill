@@ -144,3 +144,28 @@ def test_3_finished_collection_is_still_reused():
     _index_scenes(client)
     _index_scenes(client)
     assert client.creates == 1
+
+
+# ── 4：is_built —— 旧集合（单次写入）可用，新集合须有构建标记 ─────────────────
+
+def _col_with(client, name, metadata):
+    col = client.create_collection(name=name, metadata=metadata)
+    col.add(documents=["正文"], ids=["chunk_0"], metadatas=[{"npos": 0}])
+    return col
+
+
+def test_4_old_single_add_collection_without_both_keys_is_usable():
+    client = _Client()
+    _col_with(client, "text_t1", {})
+    assert _rag(client).load_existing("text_t1") is True
+
+
+def test_4_new_builds_record_write_mode_and_count_as_built():
+    from core.rag import WRITE_MODE_KEY, is_built
+    client = _Client()
+    _rag(client).index("一二三四五六七八九十" * 2, collection_name="text_t1")
+    _index_scenes(client)
+    for name in ("text_t1", "scenes_c1"):
+        meta = client.collections[name].metadata
+        assert meta[WRITE_MODE_KEY] == "batched" and is_built(meta)
+    assert _rag(client).load_existing("text_t1") is True

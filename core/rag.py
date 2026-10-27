@@ -67,6 +67,26 @@ def _set_hits(sp, result) -> None:
 # 构建完成标记在集合元数据里的键。每次建完（全部写入之后）换一个新值。
 BUILD_MARK_KEY = "build_id"
 
+# 写入方式在集合元数据里的键。分批写入（`add_in_batches`）的集合建时就记上
+# `WRITE_MODE_BATCHED`：中途失败会留下部分条目，须有构建标记才算建完。
+WRITE_MODE_KEY = "write_mode"
+WRITE_MODE_BATCHED = "batched"
+
+
+def is_built(metadata: dict[str, Any] | None) -> bool:
+    """集合是否已建完 —— 「能不能复用 / 装载」的唯一判定。
+
+    有构建标记（`mark_built` 在全部写完后才打）→ 建完；
+    没有写入方式键 → 分批写入之前建的集合，那时所有 chroma 写入都是单次 `add`，全有或
+    全无（`git log -S "collection.add"` / `-S ".add(documents"` 覆盖 core/ 全部历史：
+    c2086347、ae47a216、2753409f 三次改动均为单次 add；scripts/rebuild_384_collections.py
+    同为单次 add + mark_built），有数据即完整 —— 也包括 cd96b2f2（2026-09-30）引入
+    `mark_built` 之前那些没有构建标记的集合；
+    有写入方式键而无构建标记 → 分批写到一半，未建完。
+    """
+    meta = metadata or {}
+    return BUILD_MARK_KEY in meta or WRITE_MODE_KEY not in meta
+
 
 def mark_built(collection: Collection) -> None:
     """给集合打「这一次构建已完成」的标记：全部写入之后调用，换一个新的构建号。
@@ -384,7 +404,7 @@ class RAGEngine:
             collection = self._client.create_collection(
                 name=name,
                 embedding_function=self._embedding_function,
-                metadata=positions_metadata(text),
+                metadata={**positions_metadata(text), WRITE_MODE_KEY: WRITE_MODE_BATCHED},
             )
         except Exception as exc:
             print(f"创建 Chroma collection 失败：{exc}")
