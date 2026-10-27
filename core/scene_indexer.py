@@ -112,15 +112,17 @@ def _chunk_paragraphs(text: str, budget: int) -> list[tuple[int, int]]:
 
 
 def _chunk_fixed(text: str, size: int, overlap: int) -> list[tuple[int, int]]:
-    """固定长度窗口，步长 ``size - overlap``，最后一块到全文末尾。"""
+    """固定长度窗口，步长 ``size - overlap``，最后一块到全文末尾；全是空白的窗口不成块。"""
     out: list[tuple[int, int]] = []
     start, step = 0, size - overlap
-    while True:
+    while start < len(text):
         end = min(start + size, len(text))
-        out.append((start, end))
+        if text[start:end].strip():
+            out.append((start, end))
         if end == len(text):
-            return out
+            break
         start += step
+    return out
 
 
 # 集合 metadata 里存场景幂等键的那个键名（含它的集合即「本正文已建好」）。
