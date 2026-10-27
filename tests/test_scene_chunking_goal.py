@@ -20,7 +20,6 @@ from chromadb.errors import NotFoundError
 from core.quotes import normalize
 from core.rag import POS_SCHEMA, RAGEngine
 
-pytestmark = pytest.mark.xfail(strict=True, reason="r1 切块尚未实现")
 
 # ── 夹具 ────────────────────────────────────────────────────────────────
 
