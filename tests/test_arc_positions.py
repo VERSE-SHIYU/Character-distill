@@ -26,7 +26,7 @@ from chromadb.errors import NotFoundError
 import core.indexing_service as IS
 from core.quotes import normalize, normalized_starts, raw_offsets
 from core.rag import RAGEngine, positions_metadata
-from core.scene_indexer import SceneIndexer
+from core.scene_indexer import CHUNK_SCHEME, SceneIndexer
 from core.schema import CharacterCard, RetrievalWindow
 from core.text_manager import TextManager
 
@@ -91,15 +91,15 @@ _DUP = "这一段会重复出现两遍，用 text.find 回找会取到第一处�
 
 def test_u16b_split_scenes_start_matches_segment():
     text = _DUP + "\n\n" + _DUP + "\n\n" + "第三段另起，也够长，用来凑数把切分撑开。" * 3
-    parts = SceneIndexer()._split_scenes(text)
+    parts = SceneIndexer()._split_scenes(text, CHUNK_SCHEME)
     assert parts, "没切出场景 —— 下面的断言会变成对空集的恒真"
-    for start, seg in parts:
-        assert text[start:start + len(seg)] == seg, (
+    for start, end, seg in parts:
+        assert text[start:end] == seg, (
             f"起点与片段对不上：start={start} seg[:12]={seg[:12]!r}"
         )
     # 内容相等还不足以证起点对：重复段落里 `text.find` 会取到**第一处**，而截出来的
     # 内容照样等于该片段。加一条对**位置**敏感的判据 —— 片段互不重叠、起点严格递增。
-    starts = [s for s, _ in parts]
+    starts = [s for s, _, _ in parts]
     assert all(a < b for a, b in zip(starts, starts[1:])), (
         f"起点没有严格递增（回找会取到第一处）：{starts}"
     )
@@ -131,7 +131,7 @@ def test_u16b_empty_text_yields_nothing():
     eng = object.__new__(RAGEngine)
     eng._chunk_size, eng._chunk_overlap = 60, 10
     assert eng._chunk_text("") == []
-    assert SceneIndexer()._split_scenes("") == []
+    assert SceneIndexer()._split_scenes("", CHUNK_SCHEME) == []
 
 
 # ══ 脚本化假集合：复刻 chroma 的 where 语义（$lt / $lte 对 int） ═════════════

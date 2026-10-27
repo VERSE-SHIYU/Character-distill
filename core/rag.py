@@ -34,20 +34,24 @@ def positions_metadata(text: str) -> dict[str, Any]:
 
 
 def chunk_spans(collection: Collection, source_norm_len: int) -> dict[str, tuple[int, int]]:
-    """块 id → 该块在规范化原文里的完整区间 ``[本块 npos, 下一块 npos)``。
+    """块 id → 该块在规范化原文里的完整区间 ``[npos, 终点)``。
 
-    条目只存起点（``npos``），终点取**按 npos 排序后**的下一块起点，最后一块到
-    全文末尾。chroma 的 ``get`` 按写入顺序返回，不是 npos 顺序 —— 不排序终点会错。
+    条目带 ``nend``（场景切块 r1 起）就用它 —— 块可重叠、块间可隔空白，下一块起点不是
+    终点。没有 ``nend`` 的旧条目退回：终点取**按 npos 排序后**的下一块起点，最后一块到
+    全文末尾（chroma 的 ``get`` 按写入顺序返回，不排序终点会错）。
     没有 ``npos`` 的条目（不带位置的旧集合）没有区间，评测按「不在表里」处理。
     """
     got = collection.get(include=["metadatas"])
-    rows = [(meta["npos"], chunk_id)
+    rows = [(meta["npos"], chunk_id, meta.get("nend"))
             for chunk_id, meta in zip(got["ids"], got["metadatas"])
             if isinstance(meta, dict) and isinstance(meta.get("npos"), int)]
-    rows.sort()
+    rows.sort(key=lambda row: (row[0], row[1]))
     spans: dict[str, tuple[int, int]] = {}
-    for i, (start, chunk_id) in enumerate(rows):
-        end = rows[i + 1][0] if i + 1 < len(rows) else source_norm_len
+    for i, (start, chunk_id, nend) in enumerate(rows):
+        if isinstance(nend, int):
+            end = nend
+        else:
+            end = rows[i + 1][0] if i + 1 < len(rows) else source_norm_len
         spans[chunk_id] = (start, end)
     return spans
 
