@@ -40,15 +40,14 @@ def _detect_emotion(text: str) -> str:
 
 @dataclass(frozen=True)
 class ChunkScheme:
-    """场景切法。``para``：单换行分段，连续整段攒到 ``chars`` 字，单段超预算只在句末切；
-    ``fixed``：固定 ``chars`` 字、相邻块重叠 ``overlap`` 字。"""
+    """场景切法：单换行分段，连续整段攒到 ``chars`` 字，单段超预算只在句末切。"""
 
-    mode: Literal["para", "fixed"]
+    mode: Literal["para"]
     chars: int
     overlap: int = 0
 
     def __post_init__(self) -> None:
-        if self.mode not in ("para", "fixed") or self.chars <= 0 or not 0 <= self.overlap < self.chars:
+        if self.mode != "para" or self.chars <= 0 or self.overlap != 0:
             raise ValueError(f"非法切法：{self}")
 
     def key(self) -> str:
@@ -62,12 +61,18 @@ class ChunkScheme:
         if len(parts) != 3:
             raise ValueError(f"切法须为 mode:chars:overlap，实得 {key!r}")
         mode, chars, overlap = parts
+        if mode != "para":
+            raise ValueError(f"切法只支持 para，固定切法已删除：{key!r}")
+        if overlap != "0":
+            raise ValueError(f"para 切法的 overlap 必须为 0：{key!r}")
         return cls(mode=mode, chars=int(chars), overlap=int(overlap))  # type: ignore[arg-type]
 
 
-# 占位：S4 按实测 R@3 换成胜出变体（A/B/C），其余变体不留路径。字数预算待 S3 量出
-# token/字比例后定（spec §3），此值未核实。
-CHUNK_SCHEME = ChunkScheme(mode="para", chars=300, overlap=0)
+# 召回 r1 定稿：A = para:238:0。依据：2026-10-27 第 4d 步在 SG run3 题库 239 题上按
+# 2,500 token fill-to-budget（2601.14123 §2）、向量顺序不重排实测：A 命中 0.573 vs
+# B（para:401:0）0.469，逐题配对 A−B = +0.105，95% bootstrap [0.050, 0.159]。
+# 238 字 = QChunker（WWW 2026）块均 178 token × 实测字/token 比例；固定切法同日淘汰。
+CHUNK_SCHEME = ChunkScheme(mode="para", chars=238, overlap=0)
 
 # 集合 metadata 里记切法的键名；切法不同即重建（存卡、开卡两条路径都比）。
 _CHUNK_SCHEME_KEY = "chunk_scheme"
@@ -118,20 +123,6 @@ def _chunk_paragraphs(text: str, budget: int) -> list[tuple[int, int]]:
                      if (t := _trim(text, sm.start(), sm.end())) is not None]
         blocks += _pack(text, sentences, budget)
     return blocks + _pack(text, run, budget)
-
-
-def _chunk_fixed(text: str, size: int, overlap: int) -> list[tuple[int, int]]:
-    """固定长度窗口，步长 ``size - overlap``，最后一块到全文末尾；全是空白的窗口不成块。"""
-    out: list[tuple[int, int]] = []
-    start, step = 0, size - overlap
-    while start < len(text):
-        end = min(start + size, len(text))
-        if text[start:end].strip():
-            out.append((start, end))
-        if end == len(text):
-            break
-        start += step
-    return out
 
 
 # 集合 metadata 里存场景幂等键的那个键名（含它的集合即「本正文已建好」）。
@@ -246,10 +237,7 @@ class SceneIndexer:
         """
         if re.search(r'^\[\d{4}-\d{2}-\d{2}\]', text, re.MULTILINE):
             return [(s, s + len(scene), scene) for s, scene in self._split_chat_scenes(text)]
-        if scheme.mode == "fixed":
-            spans = _chunk_fixed(text, scheme.chars, scheme.overlap)
-        else:
-            spans = _chunk_paragraphs(text, scheme.chars)
+        spans = _chunk_paragraphs(text, scheme.chars)
         return [(s, e, text[s:e]) for s, e in spans]
 
     def _split_chat_scenes(self, text: str) -> list[tuple[int, str]]:

@@ -5,7 +5,7 @@
 
 1. 块内文本 = 原文对应区间原样；所有块首尾相接覆盖全文（除空白）。
 2. 段落不被切断；单段超预算只在句末切；单句超预算整句成块。
-3. A/B：块长 ≤ 预算（单句超长除外）；C：固定长度、相邻块重叠 50。
+3. 块长 ≤ 预算（单句超长除外）。
 4. metadata 带 npos 与 nend；chunk_spans 有 nend 用 nend，没有退回下一块起点。
 5. 0c 理想检索对照在新切法下 R@3 = 1.0，越界判得出。
 6. 集合 metadata 带 chunk_scheme；存卡、开卡两条路径都按它判复用；POS_SCHEMA 不变。
@@ -48,7 +48,8 @@ def _schemes():
     return {
         "A": ChunkScheme(mode="para", chars=60, overlap=0),
         "B": ChunkScheme(mode="para", chars=120, overlap=0),
-        "C": ChunkScheme(mode="fixed", chars=100, overlap=50),
+        # 第三档预算：只在复用判断用例里充当「切法变了」的另一侧。
+        "C": ChunkScheme(mode="para", chars=200, overlap=0),
     }
 
 
@@ -66,11 +67,8 @@ def test_1_chunks_are_verbatim_and_cover_text(variant):
     cursor = 0
     for start, end, body in chunks:
         assert body == TEXT[start:end], "块内文本必须是原文区间原样"
-        if variant != "C":
-            assert TEXT[cursor:start].strip() == "", (
-                f"块之间只能隔空白，实得 {TEXT[cursor:start]!r}")
-        else:
-            assert start <= cursor, "C 相邻块必须重叠或相接，不能有缝"
+        assert TEXT[cursor:start].strip() == "", (
+            f"块之间只能隔空白，实得 {TEXT[cursor:start]!r}")
         cursor = max(cursor, end)
     assert TEXT[cursor:].strip() == "", "全文末尾有内容没进任何块"
 
@@ -95,26 +93,6 @@ def test_3_para_chunks_within_budget_except_single_sentence(variant):
     for _, _, body in _split(TEXT, scheme):
         if len(body) > scheme.chars:
             assert body == _LONG_SENTENCE, f"超预算的只能是单句：{body[:20]!r}…"
-
-
-def test_3_fixed_chunks_length_and_overlap():
-    scheme = _schemes()["C"]
-    chunks = _split(TEXT, scheme)
-    for (s0, e0, _), (s1, _, _) in zip(chunks, chunks[1:]):
-        assert e0 - s0 == scheme.chars
-        assert e0 - s1 == scheme.overlap
-    assert chunks[-1][1] == len(TEXT)
-
-
-def test_3_fixed_skips_blank_windows():
-    """全是空白的窗口不成块（否则会被拿去嵌入）；空文本不出块。"""
-    from core.scene_indexer import ChunkScheme
-    scheme = ChunkScheme(mode="fixed", chars=20, overlap=5)
-    text = "甲说：“你来了……”" + " \n" * 40 + "乙沉默不语，转身离去。"
-    chunks = _split(text, scheme)
-    assert chunks and all(body.strip() for _, _, body in chunks)
-    assert _split("", scheme) == []
-    assert _split(" \n\n  ", scheme) == []
 
 
 # ── 4–6：入库、区间、复用 ────────────────────────────────────────────────
@@ -264,6 +242,7 @@ def test_6_scheme_recorded_and_rebuilds_on_both_paths():
 
 def test_6_default_scheme_is_used_when_none_given():
     from core.scene_indexer import CHUNK_SCHEME, SceneIndexer
+    assert CHUNK_SCHEME.key() == "para:238:0"   # 定稿值；SG 评测库复用它已建的集合
     client = _Client()
     SceneIndexer().index_scenes(TEXT, _rag(client), "祈灼", collection_name=NAME)
     assert client.collections[NAME].metadata["chunk_scheme"] == CHUNK_SCHEME.key()
@@ -284,3 +263,11 @@ def test_s3_from_key_rejects_bad_values(bad):
     from core.scene_indexer import ChunkScheme
     with pytest.raises(ValueError):
         ChunkScheme.from_key(bad)
+
+
+@pytest.mark.parametrize("key", ["fixed:100:100", "fixed:100:0"])
+def test_s3_from_key_rejects_deleted_fixed_mode(key):
+    """固定切法已删除：from_key 明确拒绝，不静默解析成别的切法。"""
+    from core.scene_indexer import ChunkScheme
+    with pytest.raises(ValueError, match="固定切法已删除"):
+        ChunkScheme.from_key(key)

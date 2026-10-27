@@ -122,7 +122,7 @@ def test_eval_scene_index_builds_only_the_scene_collection(monkeypatch):
     monkeypatch.setattr(service, "_new_rag", lambda key, region: engine)
     monkeypatch.setattr(service, "_build_text_collection", _no_text_collection)
     built = _capture_index_scenes(monkeypatch, service)
-    scheme = ChunkScheme(mode="fixed", chars=512, overlap=50)
+    scheme = ChunkScheme(mode="para", chars=238, overlap=0)
 
     service.build_eval_scene_index("eval_t1_c1", SOURCE, NAME, "k", "cn")
     service.build_eval_scene_index("eval_t1_c2", SOURCE, NAME, "k", "cn", scheme=scheme)
@@ -169,9 +169,11 @@ def test_chunk_scheme_names_variant_collections(tmp_path):
     from eval_recall import _parse_args
     from core.scene_indexer import ChunkScheme
 
-    args = _parse_args(["--suite", "s.json", "--chunk-scheme", "fixed:512:50"])
-    assert args.chunk_scheme == ChunkScheme(mode="fixed", chars=512, overlap=50)
+    args = _parse_args(["--suite", "s.json", "--chunk-scheme", "para:238:0"])
+    assert args.chunk_scheme == ChunkScheme(mode="para", chars=238, overlap=0)
     assert _parse_args(["--suite", "s.json"]).chunk_scheme is None
+    with pytest.raises(SystemExit):            # 固定切法已删除，CLI 明确拒绝
+        _parse_args(["--suite", "s.json", "--chunk-scheme", "fixed:512:50"])
 
     plain = _Service()
     run_suite([_book(tmp_path, character="甲"), _book(tmp_path, character="乙")], plain)
@@ -180,7 +182,7 @@ def test_chunk_scheme_names_variant_collections(tmp_path):
     variant = _Service()
     run_suite([_book(tmp_path, character="甲"), _book(tmp_path, character="乙")], variant,
               scheme=args.chunk_scheme)
-    assert variant.built == ["eval_r1_fixed-512-50_t1_c1", "eval_r1_fixed-512-50_t1_c2"]
+    assert variant.built == ["eval_r1_para-238-0_t1_c1", "eval_r1_para-238-0_t1_c2"]
     assert variant.schemes == [args.chunk_scheme] * 2
     assert variant.sessions == variant.built
 
