@@ -11,6 +11,7 @@ from typing import Any, NamedTuple
 import chromadb
 from chromadb.api.models.Collection import Collection
 from chromadb.errors import NotFoundError
+from chromadb.utils.batch_utils import create_batches
 
 from core.embeddings import create_safe_embedding_fn
 from core.fingerprint import content_fingerprint
@@ -34,20 +35,24 @@ def positions_metadata(text: str) -> dict[str, Any]:
 
 
 def chunk_spans(collection: Collection, source_norm_len: int) -> dict[str, tuple[int, int]]:
-    """块 id → 该块在规范化原文里的完整区间 ``[本块 npos, 下一块 npos)``。
+    """块 id → 该块在规范化原文里的完整区间 ``[npos, 终点)``。
 
-    条目只存起点（``npos``），终点取**按 npos 排序后**的下一块起点，最后一块到
-    全文末尾。chroma 的 ``get`` 按写入顺序返回，不是 npos 顺序 —— 不排序终点会错。
+    条目带 ``nend``（场景切块 r1 起）就用它 —— 块可重叠、块间可隔空白，下一块起点不是
+    终点。没有 ``nend`` 的旧条目退回：终点取**按 npos 排序后**的下一块起点，最后一块到
+    全文末尾（chroma 的 ``get`` 按写入顺序返回，不排序终点会错）。
     没有 ``npos`` 的条目（不带位置的旧集合）没有区间，评测按「不在表里」处理。
     """
     got = collection.get(include=["metadatas"])
-    rows = [(meta["npos"], chunk_id)
+    rows = [(meta["npos"], chunk_id, meta.get("nend"))
             for chunk_id, meta in zip(got["ids"], got["metadatas"])
             if isinstance(meta, dict) and isinstance(meta.get("npos"), int)]
-    rows.sort()
+    rows.sort(key=lambda row: (row[0], row[1]))
     spans: dict[str, tuple[int, int]] = {}
-    for i, (start, chunk_id) in enumerate(rows):
-        end = rows[i + 1][0] if i + 1 < len(rows) else source_norm_len
+    for i, (start, chunk_id, nend) in enumerate(rows):
+        if isinstance(nend, int):
+            end = nend
+        else:
+            end = rows[i + 1][0] if i + 1 < len(rows) else source_norm_len
         spans[chunk_id] = (start, end)
     return spans
 
@@ -62,6 +67,26 @@ def _set_hits(sp, result) -> None:
 # 构建完成标记在集合元数据里的键。每次建完（全部写入之后）换一个新值。
 BUILD_MARK_KEY = "build_id"
 
+# 写入方式在集合元数据里的键。分批写入（`add_in_batches`）的集合建时就记上
+# `WRITE_MODE_BATCHED`：中途失败会留下部分条目，须有构建标记才算建完。
+WRITE_MODE_KEY = "write_mode"
+WRITE_MODE_BATCHED = "batched"
+
+
+def is_built(metadata: dict[str, Any] | None) -> bool:
+    """集合是否已建完 —— 「能不能复用 / 装载」的唯一判定。
+
+    有构建标记（`mark_built` 在全部写完后才打）→ 建完；
+    没有写入方式键 → 分批写入之前建的集合，那时所有 chroma 写入都是单次 `add`，全有或
+    全无（`git log -S "collection.add"` / `-S ".add(documents"` 覆盖 core/ 全部历史：
+    c2086347、ae47a216、2753409f 三次改动均为单次 add；scripts/rebuild_384_collections.py
+    同为单次 add + mark_built），有数据即完整 —— 也包括 cd96b2f2（2026-09-30）引入
+    `mark_built` 之前那些没有构建标记的集合；
+    有写入方式键而无构建标记 → 分批写到一半，未建完。
+    """
+    meta = metadata or {}
+    return BUILD_MARK_KEY in meta or WRITE_MODE_KEY not in meta
+
 
 def mark_built(collection: Collection) -> None:
     """给集合打「这一次构建已完成」的标记：全部写入之后调用，换一个新的构建号。
@@ -74,6 +99,28 @@ def mark_built(collection: Collection) -> None:
     metadata = dict(collection.metadata or {})
     metadata[BUILD_MARK_KEY] = uuid.uuid4().hex
     collection.modify(metadata=metadata)
+
+
+def add_in_batches(
+    client: Any,
+    collection: Collection,
+    documents: list[str],
+    ids: list[str],
+    metadatas: list[dict[str, Any]],
+) -> None:
+    """写入向量库的唯一入口：按 chroma 单批上限分片，顺序 add。
+
+    上限取 `client.get_max_batch_size()`（chromadb/api/client.py:572），切片用库自带的
+    `chromadb.utils.batch_utils.create_batches` —— 不硬编数值。一次全交超过上限会被
+    chroma 整批拒掉（《恶女训狗无数》A 切法 5492 块 > 5461）。
+
+    中途失败会留下部分条目：调用方只在本函数返回之后 `mark_built`，读方据构建标记判
+    「已建完」，不据条数。
+    """
+    for b_ids, _, b_metas, b_docs in create_batches(
+        client, ids=ids, metadatas=metadatas, documents=documents,
+    ):
+        collection.add(documents=b_docs, ids=b_ids, metadatas=b_metas)
 
 
 class CollectionUnusableError(RuntimeError):
@@ -357,7 +404,7 @@ class RAGEngine:
             collection = self._client.create_collection(
                 name=name,
                 embedding_function=self._embedding_function,
-                metadata=positions_metadata(text),
+                metadata={**positions_metadata(text), WRITE_MODE_KEY: WRITE_MODE_BATCHED},
             )
         except Exception as exc:
             print(f"创建 Chroma collection 失败：{exc}")
@@ -379,9 +426,8 @@ class RAGEngine:
             if all_characters:
                 meta["characters"] = self._tag_characters(piece, all_characters)
             metas.append(meta)
-        add_kwargs: dict[str, Any] = {"documents": filtered, "ids": ids, "metadatas": metas}
         try:
-            collection.add(**add_kwargs)
+            add_in_batches(self._client, collection, filtered, ids, metas)
             print(f"[embed-stats] RAG index text chunks={len(filtered)} collection={name}")
         except Exception as exc:
             print(f"向 Chroma collection 写入文档失败：{exc}")
@@ -680,7 +726,8 @@ class RAGEngine:
     def load_existing(self, collection_name: str) -> bool:
         """装载已存在的持久化集合，可用返回 True。
 
-        集合不存在 / 空 → False（调用方视为"无数据"，自行决定是否重建）。
+        集合不存在 / 空 / 未建完（`is_built`：分批写到一半）→ False（调用方视为"无数据"，
+        自行决定是否重建；会话装载跳过它看下一个候选）。
         get_collection 真错误 → 记日志后返回 False（不再静默 pass）。
         集合向量维度与当前 embedder 不符（如 embedder 迁移前的旧集合）→ 抛
         CollectionUnusableError：确定性不可用，显式让上层感知 —— 绝不返回 True
@@ -696,7 +743,7 @@ class RAGEngine:
         except Exception as exc:
             logger.warning("[RAGEngine] load_existing 获取集合失败（%s）：%s", collection_name, exc)
             return False
-        if col.count() == 0:
+        if col.count() == 0 or not is_built(col.metadata):
             return False
 
         expected = getattr(self._embedding_function, "_dimensions", None)

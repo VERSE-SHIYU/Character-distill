@@ -63,11 +63,28 @@ def leading_ws(s: str) -> int:
 
 
 def normalized_starts(text: str, raw_starts: Sequence[int]) -> list[int]:
-    """升序原文起点 → 规范化坐标：即 `normalize(text[:r])` 的长度。
+    """原文偏移 → 规范化坐标：即 `normalize(text[:r])` 的长度，按调用方原顺序返回。
 
     索引坐标靠的就是这条不变式（C6）：逐段规范化累加 == 规范化整段前缀长。**只此一处** ——
     场景索引与原文切片两类索引都调它，不各自再算一遍。
+
+    两条路径：
+    - 快路径：偏移排序后逐段累加 `len(normalize(text[prev:r]))`，再加尾段；总长 ==
+      `len(normalize(text))` 才采用（同 `paragraph_bounds` 的不变式与写法）。代价与全文
+      长度成正比，与偏移个数无关 —— 逐个算前缀时块数 ×7 建索引就 ×7。
+    - 退回：总长对不上（`t2s` 跨边界并字等罕见情形）时逐个算 `len(normalize(text[:r]))`，
+      宁可慢，不可用错坐标。
     """
+    order = sorted(range(len(raw_starts)), key=lambda i: raw_starts[i])
+    result = [0] * len(raw_starts)
+    acc, prev = 0, 0
+    for i in order:
+        r = raw_starts[i]
+        acc += len(normalize(text[prev:r]))
+        prev = max(prev, r)
+        result[i] = acc
+    if acc + len(normalize(text[prev:])) == len(normalize(text)):
+        return result
     return [len(normalize(text[:r])) for r in raw_starts]
 
 
