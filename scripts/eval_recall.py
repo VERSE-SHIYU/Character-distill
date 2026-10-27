@@ -33,6 +33,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from core import recall_eval, scene_retrieval  # noqa: E402
 from core.arc_view import arc_view  # noqa: E402
 from core.quotes import normalize  # noqa: E402
+from core.scene_indexer import ChunkScheme  # noqa: E402
 from core.schema import CharacterCard  # noqa: E402
 
 
@@ -207,8 +208,23 @@ def run_eval_no_phase(source: str, character: str, cases: list[dict], rag) -> li
     return rows
 
 
-def run_suite(books: list[Book], service) -> dict:
-    """一次跑完书目：有卡照旧；无卡只建场景集合（`eval_{text_id}_c{n}`，n 只数无卡行）再走会话检索。"""
+def eval_card_id(text_id: str, slot: str, scheme: ChunkScheme | None) -> str:
+    """评测集合的 card_id（集合名 = `scenes_{card_id}`）—— **只此一处**生成。
+
+    ``slot``：无卡行 `c{n}`，有卡行 `card`。不传切法沿用 0e 基线的 `eval_{text_id}_{slot}`；
+    传了带切法前缀 `eval_r1_{mode}-{chars}-{overlap}_`（Chroma 集合名不能含冒号）。
+    """
+    if scheme is None:
+        return f"eval_{text_id}_{slot}"
+    return f"eval_r1_{scheme.mode}-{scheme.chars}-{scheme.overlap}_{text_id}_{slot}"
+
+
+def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None) -> dict:
+    """一次跑完书目。无卡行建场景集合（n 只数无卡行）再走会话检索。
+
+    不传 ``scheme``：有卡行照旧读线上卡集合（0e 基线的跑法）。传了：有卡行也按该切法建
+    eval 集合（`…_card`）再检索，不读也不重建线上 `scenes_{card_id}`；窗口仍取自卡。
+    """
     rows_by_book: dict[str, list[dict]] = {}
     per_text: dict[str, int] = {}
     for book in books:
@@ -216,19 +232,25 @@ def run_suite(books: list[Book], service) -> dict:
             raise EvalAbort(f"书目行没有标注文件：{book.title}/{book.character}")
         cases = load_cases(book.cases)
         if book.card is not None:
+            card_id = book.card_id or ""
+            if scheme is not None:
+                card_id = eval_card_id(book.text_id, "card", scheme)
+                service.build_eval_scene_index(
+                    card_id, book.source, book.character,
+                    book.embedding_key, book.embedding_region, scheme=scheme)
             rag = service.get_rag_for_session(
-                book.text_id, card_id=book.card_id or "",
+                book.text_id, card_id=card_id,
                 embedding_key=book.embedding_key, embedding_region=book.embedding_region)
             if rag is None:
                 raise EvalAbort(f"无法建立会话检索：{book.title}/{book.character}")
             rows = run_eval(book.source, book.card, cases, rag)["per_query"]
         else:
-            # n 只数无卡行：有卡行不建 eval 集合，不占编号。
+            # n 只数无卡行：有卡行不占编号。
             per_text[book.text_id] = per_text.get(book.text_id, 0) + 1
-            card_id = f"eval_{book.text_id}_c{per_text[book.text_id]}"
+            card_id = eval_card_id(book.text_id, f"c{per_text[book.text_id]}", scheme)
             service.build_eval_scene_index(
                 card_id, book.source, book.character,
-                book.embedding_key, book.embedding_region)
+                book.embedding_key, book.embedding_region, scheme=scheme)
             rag = service.get_rag_for_session(
                 book.text_id, card_id=card_id,
                 embedding_key=book.embedding_key, embedding_region=book.embedding_region)
@@ -269,6 +291,13 @@ def write_from_json(path: str | Path, evidence_id: str) -> None:
     )
 
 
+def _chunk_scheme_arg(value: str) -> ChunkScheme:
+    try:
+        return ChunkScheme.from_key(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="召回评测（只读；不写库、不调大模型）")
     parser.add_argument("--user-id")
@@ -277,7 +306,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--from-json", dest="from_json", help="已有结果 JSON（只写证据）")
     parser.add_argument("--evidence-id", help="证据产物 id（须先登记；只配 --from-json）")
     parser.add_argument("--suite", help="书目 JSON（每行一本书里的一个角色）")
+    parser.add_argument("--chunk-scheme", dest="chunk_scheme", type=_chunk_scheme_arg,
+                        help="只配 --suite：按切法 mode:chars:overlap 建 eval 变体集合")
     args = parser.parse_args(argv)
+    if args.chunk_scheme and not args.suite:
+        parser.error("--chunk-scheme 只用于 --suite")
     if args.suite:
         if args.from_json or args.evidence_id or args.user_id or args.card_id or args.cases:
             parser.error("--suite 不能与单卡参数 / --from-json / --evidence-id 同用")
@@ -305,7 +338,7 @@ async def _main(args: argparse.Namespace) -> None:
         storage = get_storage()
         try:
             books = [await load_book(storage, entry) for entry in load_suite(args.suite)]
-            result = run_suite(books, get_indexing_service())
+            result = run_suite(books, get_indexing_service(), scheme=args.chunk_scheme)
             print(json.dumps(result, ensure_ascii=False, indent=2))
         finally:
             await storage.close()
