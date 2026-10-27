@@ -33,6 +33,20 @@ PLACEHOLDERS: dict[str, frozenset[str]] = {
     "multiturn": frozenset({"character", "title", "question", "entity", "feedback"}),
 }
 
+# 问法规则（spec ㉑，10-27 人工抽查 20 道：场合不明 5、人称搞反 1、片段答不了 2）。A.6 照抄论文、不查这两项，
+# 故放在起草侧。`YOU_RULE` 两份提示词逐字共用；场合规则只加在起草：多轮提示词只拿到原问句、
+# 拿不到原文，要求交代场合会逼模型编造。
+OCCASION_RULE = """\
+Pin down the occasion: include enough of the situation (who was there, where, or
+  what had just happened) that the question can only refer to the moment in this
+  window, not to something that happens many times in the story."""
+
+YOU_RULE = """\
+"You" always means {character}. Every pronoun and kinship term the user says
+  must be correct from {character}'s own point of view; if the story passage is
+  another character speaking, do not turn their "I" or "my brother" into "you" or
+  "your brother" for {character}."""
+
 # 起草提示词（spec ⑱）：论文没给，我们自己写，内容即 §5 第 2 步的规则。
 # 占位走同一个 `render`；不登记哈希，因为它属于本仓库而非论文附录。
 DRAFT_PROMPT = """\
@@ -60,6 +74,12 @@ Rules:
 - `should` must be a declarative sentence copied from the passage; never copy
   a question into `should`.
 - Ask about one thing only; do not combine several questions.
+- """ + OCCASION_RULE + """
+- """ + YOU_RULE + """
+- The `should` passage alone must answer the question: if asking who said
+  something, the speaker must be identifiable within the passage; if asking for a
+  kind of thing (a charge, a reason, a name), the passage must be exactly that kind
+  of thing.
 - `should` must be a verbatim contiguous passage of 10-40 characters copied
   exactly from the window, without ellipsis, unique within the story.
 - If the window contains nothing worth asking about, return skip.
@@ -89,6 +109,7 @@ The question mentions {entity}. Split it into two user turns:
 
 Rules:
 - Both turns are said to {character}, in second person ("you"), casual chat tone.
+- """ + YOU_RULE + """
 - Write both turns in the same language as the original question.
 - Never mention the source text, chapter numbers, the novel, or its author.
 
