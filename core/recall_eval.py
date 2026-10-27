@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import statistics
 from typing import Any, Iterable, Mapping
 
 from core.quotes import (
@@ -97,7 +98,9 @@ def score_case(
         leak = leak or _overlaps(hit_iv, should_not)
     return {"id": case.get("id"), "hit": hit, "leak": leak,
             "unlocated": unlocated, "top3_chunk_ids": chunk_ids,
-            "rerank_fallback": bool(getattr(hits, "rerank_fallback", False))}
+            "rerank_fallback": bool(getattr(hits, "rerank_fallback", False)),
+            "rerank_ms": getattr(hits, "rerank_ms", None),
+            "rerank_tokens": getattr(hits, "rerank_tokens", None)}
 
 
 def aggregate(rows: Iterable[dict]) -> dict:
@@ -114,7 +117,21 @@ def aggregate(rows: Iterable[dict]) -> dict:
 def aggregate_suite(rows_by_book: Mapping[str, Iterable[dict]]) -> dict:
     """每本各自 aggregate，总体按**全部行**算（不是各书比例的平均）。"""
     by_book = {book: aggregate(rows) for book, rows in rows_by_book.items()}
-    overall = aggregate(r for rows in rows_by_book.values() for r in rows)
-    fallbacks = sum(1 for rows in rows_by_book.values() for r in rows
-                    if r.get("rerank_fallback"))
-    return {"by_book": by_book, "overall": overall, "rerank_fallbacks": fallbacks}
+    all_rows = [r for rows in rows_by_book.values() for r in rows]
+    overall = aggregate(all_rows)
+    fallbacks = sum(1 for r in all_rows if r.get("rerank_fallback"))
+    latencies = sorted(r["rerank_ms"] for r in all_rows if r.get("rerank_ms") is not None)
+    tokens = [r["rerank_tokens"] for r in all_rows if r.get("rerank_tokens") is not None]
+    return {"by_book": by_book, "overall": overall, "rerank_fallbacks": fallbacks,
+            "rerank_ms_p50": statistics.median(latencies) if latencies else None,
+            "rerank_ms_p95": _p95(latencies),
+            "rerank_tokens_total": sum(tokens) if tokens else None}
+
+
+def _p95(values: list[int]) -> float | None:
+    """线性插值 p95（``statistics.quantiles`` inclusive）；单个值即其本身，无值 None。"""
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    return statistics.quantiles(values, n=20, method="inclusive")[-1]

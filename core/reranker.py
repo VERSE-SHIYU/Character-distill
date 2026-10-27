@@ -70,26 +70,49 @@ def _sleep_within(deadline: float | None, wait: float) -> None:
     time.sleep(min(wait, remaining - _EMBED_MARGIN_S))
 
 
-def _parse(resp: httpx.Response) -> list[tuple[int, float]]:
+class Ranked(list):
+    """``rerank()`` 的返回值：仍是按相关度降序的 ``(候选下标, 相关度)`` 列表（值不变）。
+
+    ``total_tokens`` 是响应 ``usage.total_tokens``（没有则 None），供调用方带进证据统计。
+    """
+
+    def __init__(self, pairs=(), *, total_tokens: int | None = None) -> None:
+        super().__init__(pairs)
+        self.total_tokens = total_tokens
+
+
+def _parse(resp: httpx.Response) -> Ranked:
     try:
-        results = (resp.json().get("output") or {}).get("results") or []
+        body = resp.json()
+        results = (body.get("output") or {}).get("results") or []
         pairs = [(int(it["index"]), float(it["relevance_score"])) for it in results]
     except (AttributeError, TypeError, ValueError, KeyError) as exc:
         raise RerankUnavailable("bad_response") from exc
     if not pairs:
         raise RerankUnavailable("empty")
-    return sorted(pairs, key=lambda p: p[1], reverse=True)
+    return Ranked(sorted(pairs, key=lambda p: p[1], reverse=True),
+                  total_tokens=_total_tokens(body))
+
+
+def _total_tokens(body: dict) -> int | None:
+    """``usage.total_tokens``：有就读，没有或不是整数记 None（不编数）。"""
+    usage = body.get("usage")
+    tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
+    return tokens if isinstance(tokens, int) and not isinstance(tokens, bool) else None
 
 
 def rerank(
     query: str, docs: list[str], *, api_key: str, region: str
-) -> list[tuple[int, float]]:
-    """给 ``docs`` 打分，返回 ``(候选下标, 相关度)``，按相关度降序。
+) -> Ranked:
+    """给 ``docs`` 打分，返回 ``(候选下标, 相关度)``，按相关度降序（``Ranked``，带 token 数）。
+
+    成功时记一条 INFO：``n_docs`` / ``elapsed_ms``（含重试与等待）/ ``attempts`` /
+    ``total_tokens`` —— spec S4 的延迟与用量从这里量。
 
     空文档列表不调接口；没有 key 直接视为不可用（由调用方退回向量顺序）。
     """
     if not docs:
-        return []
+        return Ranked()
     if not api_key:
         raise RerankUnavailable("no_key")
 
@@ -102,6 +125,7 @@ def rerank(
     }
 
     deadline = current_embed_deadline()
+    started = time.monotonic()
     attempt = 0
     while True:
         if deadline is not None:
@@ -124,7 +148,13 @@ def rerank(
         else:
             status = resp.status_code
             if 200 <= status < 300:
-                return _parse(resp)
+                ranked = _parse(resp)
+                logger.info(
+                    "rerank ok: n_docs=%d elapsed_ms=%d attempts=%d total_tokens=%s",
+                    len(docs), round((time.monotonic() - started) * 1000), attempt,
+                    ranked.total_tokens,
+                )
+                return ranked
             if status not in _RETRYABLE_STATUS and status < 500:
                 raise RerankUnavailable("http", status)
             failure = RerankUnavailable(
