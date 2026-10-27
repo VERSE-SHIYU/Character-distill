@@ -6,6 +6,10 @@
 
 只读：不写库、不建会话、不调大模型。每条查询只花一次查询嵌入。
 
+评测与聊天同一时限：每条查询现开 ``embed_deadline(now + SCENE_TOOL_BUDGET_S)``，
+与聊天里 ``AgentToolkit.execute`` 给场景工具的预算是同一个数（``core.agent.tools``
+唯一出处）；查询嵌入与重排共用它，超出即按聊天同样退回向量顺序（``rerank_fallback``）。
+
 算与写分开：
 
 - 检索模式（服务器上跑）：把结果 JSON 打到 stdout；不写证据。
@@ -24,6 +28,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,7 +36,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core import recall_eval, scene_retrieval  # noqa: E402
+from core.agent.tools import SCENE_TOOL_BUDGET_S  # noqa: E402
 from core.arc_view import arc_view  # noqa: E402
+from core.embeddings import embed_deadline  # noqa: E402
 from core.quotes import normalize  # noqa: E402
 from core.schema import CharacterCard  # noqa: E402
 
@@ -172,6 +179,13 @@ async def load_book(storage, entry: dict) -> Book:
     )
 
 
+def _scene_hits_in_chat_budget(rag, query: str, *, character_name, window):
+    """聊天同一次检索 + 聊天同一时限：deadline 每条查询现算，不跨查询累计。"""
+    with embed_deadline(time.monotonic() + SCENE_TOOL_BUDGET_S):
+        return scene_retrieval.scene_hits(
+            rag, query, character_name=character_name, window=window)
+
+
 def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
     """先自检标注，再逐条检索；任何检索前失败都不花一次嵌入调用。"""
     source_norm = normalize(source)
@@ -182,7 +196,7 @@ def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
     spans = rag.chunk_spans(len(source_norm))
     rows = []
     for case in cases:
-        hits = scene_retrieval.scene_hits(
+        hits = _scene_hits_in_chat_budget(
             rag, case["query"],
             character_name=card.name,
             window=views[case["phase"]].window,
@@ -201,7 +215,7 @@ def run_eval_no_phase(source: str, character: str, cases: list[dict], rag) -> li
     spans = rag.chunk_spans(len(source_norm))
     rows = []
     for case in cases:
-        hits = scene_retrieval.scene_hits(
+        hits = _scene_hits_in_chat_budget(
             rag, case["query"], character_name=character, window=None)
         rows.append(recall_eval.score_case(source_norm, case, hits, spans))
     return rows
