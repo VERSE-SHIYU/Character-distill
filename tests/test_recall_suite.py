@@ -29,7 +29,7 @@ class _Rag:
     def chunk_spans(self, source_norm_len):
         return self._spans
 
-    def query_with_emotion_ex(self, query, **kwargs):
+    def query_scenes(self, query, **kwargs):
         return [_Hit("scene_0")]
 
 

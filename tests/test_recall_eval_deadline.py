@@ -1,0 +1,84 @@
+"""评测与聊天同一时限：``eval_recall`` 每条查询在 ``SCENE_TOOL_BUDGET_S`` 内检索。
+
+聊天里场景检索由 ``AgentToolkit.execute`` 开 ``embed_deadline(now + SCENE_TOOL_BUDGET_S)``。
+评测若不开同一个 deadline，查询嵌入可按非工具路径一直等，评测就说明不了聊天里来不来得及。
+deadline 每条查询现算，不跨查询累计。
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import time
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import core.rag as rag_mod  # noqa: E402
+import eval_recall  # noqa: E402
+from core.agent.tools import SCENE_TOOL_BUDGET_S  # noqa: E402
+from core.embeddings import current_embed_deadline  # noqa: E402
+
+FRAGMENT = "丙丁戊己庚辛壬癸子丑"  # 10 字，全书唯一
+SOURCE = "乙" * 50 + FRAGMENT + "乙" * 50
+CASES = [{"id": "q01", "phase": None, "query": "你当时在场吗？", "should": [FRAGMENT]}]
+
+
+class _Collection:
+    def query(self, query_texts=None, n_results=None, include=None, where=None, **kw):
+        n = 3
+        return {
+            "ids": [[f"scene_{i}" for i in range(n)]],
+            "documents": [[f"原文片段 {i}" for i in range(n)]],
+            "distances": [[0.1 * i for i in range(n)]],
+            "metadatas": [[{"characters": "甲", "scene_index": str(i)} for i in range(n)]],
+        }
+
+
+def _engine():
+    eng = object.__new__(rag_mod.RAGEngine)
+    eng._client = None
+    eng._embedding_function = None
+    eng._collection_name = "rag_fake_default"
+    eng.collection = _Collection()
+    eng.collection_name = "scenes_eval"
+    eng._chunk_size = 500
+    eng._chunk_overlap = 50
+    eng._top_k = 3
+    eng._embedding_key = "test-key"
+    eng._embedding_region = "cn"
+    eng.chunk_spans = lambda _n: {}
+    return eng
+
+
+def _deadline_recorder(monkeypatch):
+    seen: list[float | None] = []
+
+    def recorder(rag, query, *, character_name, window):
+        seen.append(current_embed_deadline() - time.monotonic()
+                    if current_embed_deadline() is not None else None)
+        return rag_mod.EvidenceHits([])
+
+    monkeypatch.setattr(eval_recall.scene_retrieval, "scene_hits", recorder)
+    return seen
+
+
+def test_no_phase_path_opens_budget_per_query(monkeypatch):
+    seen = _deadline_recorder(monkeypatch)
+    eval_recall.run_eval_no_phase(SOURCE, "甲", CASES * 2, _engine())
+    assert len(seen) == 2
+    assert all(s is not None and 0 < s <= SCENE_TOOL_BUDGET_S for s in seen)
+
+
+def test_card_path_opens_budget_per_query(monkeypatch):
+    from core.arc_view import arc_view
+    from core.schema import ArcPhase, CharacterArc, CharacterCard
+
+    card = CharacterCard(name="甲", character_arc=CharacterArc(
+        phases=[ArcPhase(start=0)], source_fingerprint="fp-test"))
+    assert arc_view(card, 0) is not None
+    seen = _deadline_recorder(monkeypatch)
+    cases = [dict(CASES[0], phase=0)] * 2
+    eval_recall.run_eval(SOURCE, card, cases, _engine())
+    assert len(seen) == 2
+    assert all(s is not None and 0 < s <= SCENE_TOOL_BUDGET_S for s in seen)

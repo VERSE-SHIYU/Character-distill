@@ -29,17 +29,18 @@ from chromadb.errors import NotFoundError  # noqa: E402
 from core.rag import (  # noqa: E402
     CHARACTERS_NONE_TAG,
     CHARACTER_FILTER_MULTIPLIER,
+    EvidenceHits,
     RAGEngine,
-    SceneHits,
     characters_tag,
 )
+from core.scene_retrieval import SCENE_TOKEN_BUDGET  # noqa: E402
 from core.scene_indexer import SceneIndexer  # noqa: E402
 
 # 三条候选：第一条是**多角色** chunk，这正是 $eq 方案会漏掉的那条。
 ROWS = [
-    ("魏无羡与江澄并肩站在屋顶。", {"characters": "魏无羡,江澄", "emotion": "平静"}),
-    ("江澄握紧了紫电，指节发白。", {"characters": "江澄", "emotion": "愤怒"}),
-    ("金光瑶微微一笑，掩去眼底冷意。", {"characters": "金光瑶", "emotion": "温柔"}),
+    ("魏无羡与江澄并肩站在屋顶。", {"characters": "魏无羡,江澄"}),
+    ("江澄握紧了紫电，指节发白。", {"characters": "江澄"}),
+    ("金光瑶微微一笑，掩去眼底冷意。", {"characters": "金光瑶"}),
 ]
 
 
@@ -121,8 +122,8 @@ def test_chunk_without_target_not_returned():
 
 def test_candidates_exhausted_flagged_and_fewer_than_top_k():
     """变异锚点：删掉候选耗尽标记 → 本条必红。"""
-    rows = [(f"路人片段{i}", {"characters": "路人甲", "emotion": "平静"}) for i in range(6)]
-    rows.append(("唯一命中片段", {"characters": "魏无羡", "emotion": "平静"}))
+    rows = [(f"路人片段{i}", {"characters": "路人甲"}) for i in range(6)]
+    rows.append(("唯一命中片段", {"characters": "魏无羡"}))
     eng = _make_engine(_ScriptedCollection(rows))
     hits = eng.query("旧事", character_name="魏无羡", top_k=3)
     assert list(hits) == ["唯一命中片段"], f"实得 {list(hits)}"
@@ -133,8 +134,8 @@ def test_candidates_exhausted_flagged_and_fewer_than_top_k():
 
 def test_refetch_widens_candidates_once_when_not_exhausted():
     """候选刚好取满 n 但过滤后不足 → 必须扩大重取，而不是就此返回少量。"""
-    rows = [(f"路人片段{i}", {"characters": "路人甲", "emotion": "平静"}) for i in range(12)]
-    rows.append(("命中在候选之外", {"characters": "魏无羡", "emotion": "平静"}))
+    rows = [(f"路人片段{i}", {"characters": "路人甲"}) for i in range(12)]
+    rows.append(("命中在候选之外", {"characters": "魏无羡"}))
     col = _ScriptedCollection(rows)
     eng = _make_engine(col)
     hits = eng.query("旧事", character_name="魏无羡", top_k=3)
@@ -144,20 +145,20 @@ def test_refetch_widens_candidates_once_when_not_exhausted():
     print("  [PASS] 候选未取尽时扩大重取一次（1 次 → 2 次查询，候选倍数递增）")
 
 
-def test_query_with_emotion_uses_same_filter_and_flag():
+def test_query_scenes_uses_same_filter_and_flag():
     eng = _make_engine(_ScriptedCollection())
-    hits = eng.query_with_emotion("旧事", current_emotion="平静", character_name="江澄", top_k=3)
-    assert list(hits) == [ROWS[0][0], ROWS[1][0]], f"实得 {list(hits)}"
-    assert isinstance(hits, SceneHits)
-    none_hits = eng.query_with_emotion("旧事", current_emotion="平静", top_k=3)
+    hits = eng.query_scenes("旧事", character_name="江澄", token_budget=SCENE_TOKEN_BUDGET)
+    assert [h.text for h in hits] == [ROWS[0][0], ROWS[1][0]], f"实得 {list(hits)}"
+    assert isinstance(hits, EvidenceHits)
+    none_hits = eng.query_scenes("旧事", token_budget=SCENE_TOKEN_BUDGET)
     assert len(none_hits) == 3, "不传 character_name 时应不过滤"
-    print("  [PASS] query_with_emotion 同一过滤与标记；不传角色名时不过滤")
+    print("  [PASS] query_scenes 同一过滤与标记；不传角色名时不过滤")
 
 
 def test_no_collection_returns_empty_hits():
     eng = _make_engine(None)
-    assert list(eng.query("q")) == [] and list(eng.query_with_emotion("q")) == []
-    print("  [PASS] 无集合 → 空 SceneHits（行为不变）")
+    assert list(eng.query("q")) == [] and list(eng.query_scenes("q", token_budget=SCENE_TOKEN_BUDGET)) == []
+    print("  [PASS] 无集合 → 空结果（行为不变）")
 
 
 # ── 写入格式单点：rag 与 scene_indexer 不得各写一份 ──
@@ -236,7 +237,7 @@ def main() -> int:
         test_chunk_without_target_not_returned,
         test_candidates_exhausted_flagged_and_fewer_than_top_k,
         test_refetch_widens_candidates_once_when_not_exhausted,
-        test_query_with_emotion_uses_same_filter_and_flag,
+        test_query_scenes_uses_same_filter_and_flag,
         test_no_collection_returns_empty_hits,
         test_characters_write_format_single_source,
     ]

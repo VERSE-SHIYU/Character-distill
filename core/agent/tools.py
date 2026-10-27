@@ -27,6 +27,16 @@ EMPTY_RESULT = "未找到相关内容"
 _EXECUTE_DEADLINE_MARGIN_S = 1.0
 
 
+def tool_budget_s(timeout: float) -> float | None:
+    """工具执行给检索（查询嵌入）的预算秒数：``timeout − margin``；≤0 时 None（不夹逼）。
+
+    聊天（``AgentToolkit.execute``）与评测（``scripts/eval_recall.py``）都从这里取，
+    预算数字只在这一处。
+    """
+    budget = timeout - _EXECUTE_DEADLINE_MARGIN_S
+    return budget if budget > 0 else None
+
+
 def _run_with_deadline(deadline: float | None, fn, arg):
     """在真正跑 handler 的线程内打开 embed deadline scope 再调 handler。
 
@@ -227,8 +237,8 @@ class AgentToolkit:
             # 让 handler 内检索/embed 子 span 挂到 execute_tool 下而非孤儿。
             # D2：_run_with_deadline 在 worker 内开 embed scope，预算 = timeout − margin，
             # 让库内 embed 在 fut.result(timeout) 弃船前自行收手（见模块注释）。
-            budget_s = entry.timeout - _EXECUTE_DEADLINE_MARGIN_S
-            deadline = time.monotonic() + budget_s if budget_s > 0 else None
+            budget_s = tool_budget_s(entry.timeout)
+            deadline = time.monotonic() + budget_s if budget_s is not None else None
             fut = C.ctx_submit(pool, _run_with_deadline, deadline, entry.handler, query)
             result = fut.result(timeout=entry.timeout)
         except TimeoutError:
@@ -263,3 +273,7 @@ class AgentToolkit:
 # 从 `_table()` 现推：它只挂绑定方法和读类属性超时，不读 ctx，故 `ctx_engine=None` 也建得
 # 出来。**有哪几行只在 _table() 里写一次** —— 加工具 = schema 常量 + 表里一行。
 ALL_SCHEMAS: tuple[dict[str, Any], ...] = tuple(e.schema for e in AgentToolkit(None)._table())
+
+
+# 场景检索工具的预算（聊天 execute 实际给的同一个数）；评测据此开同一时限。
+SCENE_TOOL_BUDGET_S = tool_budget_s(AgentToolkit.SCENE_TIMEOUT)

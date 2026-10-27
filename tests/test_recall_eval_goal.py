@@ -3,8 +3,8 @@
 测的是「达成目标」，不是「符合 spec」：
 
 1. 聊天与评测工具**走同一次检索调用**（替换 ``core.scene_retrieval.scene_hits``
-   为记录参数的替身后，两次调用的参数相同；``top_k`` / ``current_emotion`` 由
-   ``scene_hits`` 内部给出，故单独锁一次它的委托参数）。
+   为记录参数的替身后，两次调用的参数相同；``token_budget`` 由 ``scene_hits`` 内部给出，
+   故单独锁一次它的委托参数）。
 2. 指标算得对：区间重叠即命中 / 越界；命中段被截断仍算重叠；都不重叠两项都不计。
 3. 标注先自检：找不到、不止一处、短于 10 字、落在所选阶段之后 —— 在检索前报错
    并列出是哪一条，不发任何检索调用。
@@ -69,7 +69,7 @@ def _card() -> CharacterCard:
 
 def _scene(text: str, chunk_id: str = "scene_0"):
     return scene_evidence(
-        text=text, final=0.5, semantic=0.5, emotion_affinity=0.5,
+        text=text, vector_rank=0,
         chunk_id=chunk_id, chapter=None,
     )
 
@@ -106,15 +106,14 @@ class TestSameRetrievalCall:
         for key in ("rag", "query", "character_name", "window"):
             assert chat[key] == tool[key], f"{key} 不一致：聊天与评测量的不是同一次调用"
 
-    def test_scene_hits_delegates_top3_and_detected_emotion(self):
+    def test_scene_hits_delegates_token_budget(self):
         import core.scene_retrieval as sr
-        from core.scene_indexer import _detect_emotion
 
         class _FakeRag:
             def __init__(self):
                 self.seen = None
 
-            def query_with_emotion_ex(self, query, **kwargs):
+            def query_scenes(self, query, **kwargs):
                 self.seen = (query, kwargs)
                 return EvidenceHits([])
 
@@ -124,10 +123,10 @@ class TestSameRetrievalCall:
 
         query, kwargs = rag.seen
         assert query == QUERY
-        assert kwargs["top_k"] == 3
+        assert kwargs["token_budget"] == sr.SCENE_TOKEN_BUDGET
+        assert "top_k" not in kwargs
         assert kwargs["character_name"] == "祈灼"
         assert kwargs["window"] is sentinel_window
-        assert kwargs["current_emotion"] == _detect_emotion(QUERY)
 
 
 class TestMetrics:
@@ -143,7 +142,8 @@ class TestMetrics:
             {"scene_0": seg_span(0)},
         )
         assert row == {"id": "q1", "hit": True, "leak": False,
-                       "unlocated": 0, "top3_chunk_ids": ["scene_0"]}
+                       "unlocated": 0, "top3_chunk_ids": ["scene_0"],
+                       "injected_tokens": None, "retrieval_failed": False}
 
     def test_truncated_hit_still_overlaps(self):
         # 返回文本只含片段前半（截到 800 字内的自然形态），块区间仍把它包住。
@@ -161,7 +161,8 @@ class TestMetrics:
             {"scene_0": seg_span(2)},
         )
         assert row == {"id": "q3", "hit": False, "leak": True,
-                       "unlocated": 0, "top3_chunk_ids": ["scene_0"]}
+                       "unlocated": 0, "top3_chunk_ids": ["scene_0"],
+                       "injected_tokens": None, "retrieval_failed": False}
 
     def test_no_overlap_counts_neither(self):
         row = self._score(
@@ -217,7 +218,8 @@ class TestMetrics:
             {"id": "q4", "hit": False, "leak": False, "top3_chunk_ids": []},
         ]
         assert recall_eval.aggregate(rows) == {
-            "r_at_3": 0.5, "leak_rate": 0.25, "n": 4, "per_query": rows,
+            "r_at_3": 0.5, "leak_rate": 0.25, "n": 4, "retrieval_failed": 0,
+            "per_query": rows,
         }
 
 

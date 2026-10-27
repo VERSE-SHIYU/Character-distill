@@ -16,10 +16,14 @@ from chromadb.utils.batch_utils import create_batches
 from core.embeddings import create_safe_embedding_fn
 from core.fingerprint import content_fingerprint
 from core.quotes import leading_ws, normalized_starts
-from core.schema import RetrievalWindow, scene_evidence
+from core.schema import EvidenceItem, RetrievalWindow, scene_evidence
+from core.tokens import count_tokens
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 logger = logging.getLogger(__name__)
+
+# 向量候选池，供角色过滤后再填块；无重排时只取到填满预算为止。
+VECTOR_CANDIDATE_POOL = 50
 
 
 # 集合元数据里与「按位置截断」有关的键 —— **只在这里定义**，建集合（本模块 `index`、
@@ -208,11 +212,20 @@ class EvidenceHits(list):
 
     元素是 ``core.schema.EvidenceItem``。与 SceneHits 分成两个类型是有意的 ——
     字符串出口与结构化出口互不改变对方的返回语义（开闭：新增而非修改已稳定代码）。
+
+    ``injected_tokens``：返回各块 ``count_tokens`` 之和，即这次实际注入的场景 token 数。
     """
 
-    def __init__(self, items: Any = (), *, candidates_exhausted: bool = False) -> None:
+    def __init__(
+        self,
+        items: Any = (),
+        *,
+        candidates_exhausted: bool = False,
+        injected_tokens: int = 0,
+    ) -> None:
         super().__init__(items)
         self.candidates_exhausted = candidates_exhausted
+        self.injected_tokens = injected_tokens
 
 
 class _Candidates(NamedTuple):
@@ -227,21 +240,6 @@ class _Candidates(NamedTuple):
     dists: list[float]
     metas: list[dict[str, Any] | None]
     exhausted: bool
-
-
-class _ScoredScene(NamedTuple):
-    """一条已打分的场景候选 —— ``_rank_with_emotion`` 的产出。
-
-    ``semantic`` / ``emotion_affinity`` 是**未加权原始分量**，``final`` 是
-    ``0.7·semantic + 0.3·emotion_affinity``；``chunk_id`` 是 **chroma 的真 id**，
-    不是 metadata 里 scene_index 那份影子副本（两份 id 必然漂移）。
-    """
-    final: float
-    semantic: float
-    emotion_affinity: float
-    chunk_id: str
-    text: str
-    meta: dict[str, Any] | None
 
 
 _CHROMA_CLIENTS: dict[str, Any] = {}
@@ -293,9 +291,11 @@ class RAGEngine:
             raise
 
         try:
+            self._embedding_key: str = config.get("embedding_key", "")
+            self._embedding_region: str = config.get("embedding_region", "cn")
             self._embedding_function = create_safe_embedding_fn(
-                api_key=config.get("embedding_key", ""),
-                region=config.get("embedding_region", "cn"),
+                api_key=self._embedding_key,
+                region=self._embedding_region,
             )
         except Exception as exc:
             print(f"初始化 embedding 失败：{exc}")
@@ -541,6 +541,8 @@ class RAGEngine:
                     f"（候选 {len(docs)}/{n}，重取 {refetches} 次）"
                 )
 
+            keep = keep[:want]
+
             def _take(seq: list) -> list:
                 return [seq[i] for i in keep] if len(seq) == len(docs) else []
 
@@ -548,146 +550,57 @@ class RAGEngine:
                 _take(ids), _take(docs), _take(dists), _take(metas), exhausted
             )
 
-    def _rank_with_emotion(
+    @T.spanned("rag.query_scenes", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
+    def query_scenes(
         self,
         query_text: str,
-        current_emotion: str,
-        character_name: str | None,
-        top_k: int,
+        character_name: str | None = None,
+        *,
+        token_budget: int,
         window: RetrievalWindow | None = None,
-    ) -> tuple[list[_ScoredScene], bool]:
-        """情感加权排序的**唯一实现**，两个公开出口都从这里取序。
+    ) -> EvidenceHits:
+        """向量取 ``VECTOR_CANDIDATE_POOL`` 条候选，按向量顺序填块到 ``token_budget``。
 
-        Returns:
-            ``(ranked, exhausted)``。ranked 是截断到 top_k、按 final 降序的
-            ``_ScoredScene`` 列表。
+        填块：逐块累加 ``count_tokens``，加上下一块会超预算就停 —— 不跳过、不截断块；
+        第一块单独就超预算时只返回这一块（结果不为空）。
 
-        semantic / emotion_affinity 是**未加权原始分量**，final 是
-        ``0.7·semantic + 0.3·emotion_affinity``。拆开存是硬要求：只留 final，
-        「这条凭什么排在前面」就无从解释。
-
-        排序稳定性：list.sort 稳定，同分项保持候选原序；两个出口从同一个列表取序，
-        故条序与内容必然一致（锁见 tests/test_rag_evidence_contract.py）。
+        ``chunk_id`` 取 **chroma 的真 id**，不取 metadata 里 scene_index 那份影子副本；
+        ``vector_rank`` 是候选在向量结果里的位次，即最终顺序。
         """
         if self.collection is None:
-            return [], False
+            return EvidenceHits([])
 
         cand = self._fetch_candidates(
             query_text,
             character_name,
-            top_k,
-            ["documents", "distances", "metadatas"],
+            VECTOR_CANDIDATE_POOL,
+            ["documents", "metadatas"],
             window=window,
         )
-
         if not cand.docs:
-            return [], cand.exhausted
+            return EvidenceHits([], candidates_exhausted=cand.exhausted)
 
-        _EMO_DISTANCE: dict[tuple[str, str], float] = {
-            ("悲伤", "悲伤"): 1.0, ("愤怒", "愤怒"): 1.0,
-            ("温柔", "温柔"): 1.0, ("紧张", "紧张"): 1.0,
-            ("委屈", "委屈"): 1.0, ("平静", "平静"): 1.0,
-            ("悲伤", "委屈"): 0.7, ("委屈", "悲伤"): 0.7,
-            ("愤怒", "委屈"): 0.5, ("委屈", "愤怒"): 0.5,
-            ("愤怒", "紧张"): 0.6, ("紧张", "愤怒"): 0.6,
-            ("温柔", "平静"): 0.5, ("平静", "温柔"): 0.5,
-            ("悲伤", "温柔"): 0.4, ("温柔", "悲伤"): 0.4,
-            ("紧张", "委屈"): 0.4, ("委屈", "紧张"): 0.4,
-            ("愤怒", "温柔"): 0.1, ("温柔", "愤怒"): 0.1,
-            ("愤怒", "悲伤"): 0.3, ("悲伤", "愤怒"): 0.3,
-            ("愤怒", "平静"): 0.2, ("平静", "愤怒"): 0.2,
-            ("悲伤", "平静"): 0.3, ("平静", "悲伤"): 0.3,
-            ("紧张", "平静"): 0.3, ("平静", "紧张"): 0.3,
-            ("紧张", "温柔"): 0.3, ("温柔", "紧张"): 0.3,
-            ("委屈", "温柔"): 0.4, ("温柔", "委屈"): 0.4,
-            ("委屈", "平静"): 0.3, ("平静", "委屈"): 0.3,
-            ("紧张", "悲伤"): 0.4, ("悲伤", "紧张"): 0.4,
-        }
-
-        def emo_sim(e1: str, e2: str) -> float:
-            return _EMO_DISTANCE.get((e1, e2)) or _EMO_DISTANCE.get((e2, e1)) or 0.2
-
-        max_dist = max(cand.dists) if cand.dists else 1.0
-        max_dist = max(max_dist, 1e-6)
-        ranked: list[_ScoredScene] = []
-        # 按下标而非 zip：zip 在任何一列短了时**静默截断**，这里要的是当场炸。
-        # （ids/docs/dists/metas 长度由 chroma 保证一致；乱了就是契约被违反。）
-        for i, doc in enumerate(cand.docs):
-            meta = cand.metas[i]
-            semantic = 1.0 - cand.dists[i] / max_dist
-            emotion = (meta or {}).get("emotion", "平静")
-            emotion_affinity = emo_sim(current_emotion, emotion)
-            final = 0.7 * semantic + 0.3 * emotion_affinity
-            ranked.append(
-                _ScoredScene(final, semantic, emotion_affinity, cand.ids[i], doc, meta)
+        items: list[EvidenceItem] = []
+        used = 0
+        for idx, doc in enumerate(cand.docs):
+            n_tokens = count_tokens(doc)
+            if items and used + n_tokens > token_budget:
+                break
+            used += n_tokens
+            items.append(
+                scene_evidence(
+                    # 章节今天无生产方，恒 None（不许塞假章节号）。
+                    chapter=(cand.metas[idx] or {}).get("chapter"),
+                    chunk_id=cand.ids[idx],
+                    text=doc,
+                    vector_rank=idx,
+                )
             )
-
-        ranked.sort(key=lambda x: x.final, reverse=True)
-        return ranked[:top_k], cand.exhausted
-
-    @T.spanned("rag.query_emotion", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
-    def query_with_emotion(
-        self,
-        query_text: str,
-        current_emotion: str = "平静",
-        character_name: str | None = None,
-        top_k: int = 3,
-        window: RetrievalWindow | None = None,
-    ) -> list[str]:
-        """情感加权检索：语义相似度 0.7 + 情感匹配 0.3。
-
-        Args:
-            query_text: 用户消息。
-            current_emotion: 当前对话情感（由调用方判断）。
-            character_name: 按角色过滤。
-            top_k: 最终返回数量。
-            window: 检索时间窗（阶段投影的检索截断）；None 不截断。
-
-        Returns:
-            按 final_score 排序的 SceneHits。过滤后取不满时 ``candidates_exhausted``
-            为 True（日志同时如实报告），不静默少返回。
-        """
-        ranked, exhausted = self._rank_with_emotion(
-            query_text, current_emotion, character_name, top_k, window
+        return EvidenceHits(
+            items,
+            candidates_exhausted=cand.exhausted,
+            injected_tokens=used,
         )
-        return SceneHits([s.text for s in ranked], candidates_exhausted=exhausted)
-
-    @T.spanned("rag.query_emotion", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
-    def query_with_emotion_ex(
-        self,
-        query_text: str,
-        current_emotion: str = "平静",
-        character_name: str | None = None,
-        top_k: int = 3,
-        window: RetrievalWindow | None = None,
-    ) -> EvidenceHits:
-        """``query_with_emotion`` 的结构化出口：同一份排序，附解释字段。
-
-        **prompt 侧产出与原方法逐字节相等** —— ``[e.text for e in 本方法(...)]``
-        与原方法返回逐元素相同、同序。这是硬不变量，双向锁在
-        ``tests/test_rag_evidence_contract.py``（离线基线 + 两出口相等）。
-        prompt 一变模型行为就漂移，40 例离线评测的结论会静默作废。
-
-        与 ``query_with_emotion`` **共用 span 名** ``rag.query_emotion``：检索命中
-        指标口径不因多一条出口而分叉。
-        """
-        ranked, exhausted = self._rank_with_emotion(
-            query_text, current_emotion, character_name, top_k, window
-        )
-        items = [
-            scene_evidence(
-                # 章节今天无生产方，恒 None（不许塞假章节号）；chunk_id 取
-                # **chroma 的真 id**，不取 metadata 里 scene_index 那份影子副本。
-                chapter=(s.meta or {}).get("chapter"),
-                chunk_id=s.chunk_id,
-                text=s.text,
-                semantic=s.semantic,
-                emotion_affinity=s.emotion_affinity,
-                final=s.final,
-            )
-            for s in ranked
-        ]
-        return EvidenceHits(items, candidates_exhausted=exhausted)
 
     @staticmethod
     def _peek_dimension(col: Collection) -> int | None:

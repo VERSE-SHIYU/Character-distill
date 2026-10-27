@@ -330,7 +330,7 @@ def test_m15_scene_items_passes_the_bound_and_fingerprint():
     seen: dict = {}
 
     class _RAG:
-        def query_with_emotion_ex(self, query, **kw):
+        def query_scenes(self, query, **kw):
             seen.update(kw)
             return []
 
@@ -394,7 +394,7 @@ def test_agent_search_respects_window():
     seen: dict = {}
 
     class _RAG:
-        def query_with_emotion_ex(self, query, **kw):
+        def query_scenes(self, query, **kw):
             seen.update(kw)
             return []
 

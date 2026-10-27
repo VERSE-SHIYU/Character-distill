@@ -101,7 +101,7 @@ class _NoopRAG:
     def index(self, *_a, **_kw):
         return None
 
-    def query_with_emotion_ex(self, *_a, **_kw):
+    def query_scenes(self, *_a, **_kw):
         return []
 
 

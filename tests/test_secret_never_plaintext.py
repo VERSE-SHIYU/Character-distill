@@ -36,6 +36,7 @@ from conftest import PG_ENV, main_loop_registered
 
 import deps
 from core.indexing_service import IndexingService
+from core.scene_retrieval import SCENE_TOKEN_BUDGET  # noqa: E402
 from core.schema import CharacterCard
 from core.text_manager import TextManager
 from routers.chat import _ensure_session
@@ -92,7 +93,7 @@ class _FakeRAGEngine:
     def index(self, *_a, collection_name=None, **_kw) -> None:
         self.collection_name = collection_name
 
-    def query_with_emotion_ex(self, *_a, **_kw):
+    def query_scenes(self, *_a, **_kw):
         return []
 
 
@@ -276,7 +277,7 @@ def test_indexing_service_never_logs_the_embedding_key(capsys, caplog):
         svc._build_text_collection("text_abc", "正文", None,
                                    embedding_key=secret, embedding_region="cn", rebuild=True)
         svc.get_rag_for_session("text_abc", card_id="c_abc", embedding_key=secret,
-                                embedding_region="cn").query_with_emotion_ex("q")
+                                embedding_region="cn").query_scenes("q", token_budget=SCENE_TOKEN_BUDGET)
 
     _assert_no_credential_in_text(_captured(capsys, caplog), {"embedding_key": secret})
 

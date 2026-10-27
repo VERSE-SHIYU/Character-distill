@@ -129,9 +129,9 @@ MUTANTS = [
      [("repl", RAG, [("            if (meta.get(POS_SCHEMA_KEY) != POS_SCHEMA\n",
                       "            if True or (meta.get(POS_SCHEMA_KEY) != POS_SCHEMA\n")])], "RED"),
     ("M10b 接线 SessionRag 吞掉 window（不透传）", _p("test_u7_session_rag_unmarked_collection_returns_empty"),
-     [("repl", ISVC, [("            return self._engine.query_with_emotion_ex(query_text, **kwargs)",
+     [("repl", ISVC, [("            return self._engine.query_scenes(query_text, **kwargs)",
                        "            kwargs.pop(\"window\", None)\n"
-                       "            return self._engine.query_with_emotion_ex(query_text, **kwargs)")])], "RED"),
+                       "            return self._engine.query_scenes(query_text, **kwargs)")])], "RED"),
     ("M11 放宽 场景作业忽略 need_positions（指纹相同就跳过）",
      _p("test_u15_scene_job_rebuilds_when_need_positions_and_no_pos_schema"),
      [("repl", SCN, [("                    if not (need_positions and meta.get(_POS_SCHEMA_KEY) != _POS_SCHEMA_VERSION):",

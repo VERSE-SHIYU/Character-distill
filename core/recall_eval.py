@@ -1,9 +1,11 @@
 """召回评测的指标与标注自检 —— **纯函数，零 IO**。
 
-命中看**块**是否进前 3：每块的完整区间由 ``core.rag.chunk_spans`` 从集合的
-``npos`` / ``nend`` 算出（评测脚本传入 ``spans``），标注片段换算成原文的**连续**规范化
-区间，相交即算 —— 只看区间，不看返回文本（旧集合只存了每块前 800 字，新集合存整块）。
-这样不依赖场景怎么切，以后重切场景 / 改成按事件入库，标注不用重做。
+命中看**块**是否在 ``scene_hits`` 按 token 预算填入的那组里。字段沿用旧名、含义已变：
+``r_at_3`` = 命中落在注入的块里的题占比；``top3_chunk_ids`` = 注入的块（不再固定 3 块）。
+每块的完整区间由 ``core.rag.chunk_spans`` 从集合的 ``npos`` / ``nend`` 算出（评测脚本传入
+``spans``），标注片段换算成原文的**连续**规范化区间，相交即算 —— 只看区间，不看返回文本
+（旧集合只存了每块前 800 字，新集合存整块）。这样不依赖场景怎么切，以后重切场景 /
+改成按事件入库，标注不用重做。
 
 不复用 ``core.quotes.locate_in_normalized``：那是为「省略号拼接核对」设计的，位置只取
 最长一段、宽度却按整段算，命中段含省略号时区间会跨过中间无关段落（假命中）。连续区间
@@ -80,7 +82,7 @@ def score_case(
     hits: Iterable[Any],
     spans: Mapping[str, tuple[int, int]],
 ) -> dict:
-    """一条查询的命中 / 越界判定；``hits`` 是前 3 段，``spans`` 是块 id → 完整区间。"""
+    """一条查询的命中 / 越界判定；``hits`` 是 ``scene_hits`` 按 token 预算填的那组块，``spans`` 是块 id → 完整区间。"""
     should = [iv for f in case.get("should") or [] for iv in intervals_in_normalized(source_norm, f)]
     should_not = [iv for f in case.get("should_not") or [] for iv in intervals_in_normalized(source_norm, f)]
 
@@ -96,16 +98,28 @@ def score_case(
         hit = hit or _overlaps(hit_iv, should)
         leak = leak or _overlaps(hit_iv, should_not)
     return {"id": case.get("id"), "hit": hit, "leak": leak,
-            "unlocated": unlocated, "top3_chunk_ids": chunk_ids}
+            # top3_chunk_ids 沿用旧名，含义 = 注入的块（按 token 预算填，块数不定）。
+            "unlocated": unlocated, "top3_chunk_ids": chunk_ids,
+            "injected_tokens": getattr(hits, "injected_tokens", None),
+            "retrieval_failed": False}
+
+
+def failed_case(case: Mapping[str, Any]) -> dict:
+    """检索失败的一题：按「注入为空」计分（聊天同样降级为空结果），并记 ``retrieval_failed``。"""
+    return {"id": case.get("id"), "hit": False, "leak": False,
+            "unlocated": 0, "top3_chunk_ids": [],
+            "injected_tokens": 0, "retrieval_failed": True}
 
 
 def aggregate(rows: Iterable[dict]) -> dict:
     rows = list(rows)
     n = len(rows)
     return {
+        # r_at_3 沿用旧名，含义 = 命中落在注入的块里的题占比（不再是前 3 块）。
         "r_at_3": sum(1 for r in rows if r["hit"]) / n if n else 0.0,
         "leak_rate": sum(1 for r in rows if r["leak"]) / n if n else 0.0,
         "n": n,
+        "retrieval_failed": sum(1 for r in rows if r.get("retrieval_failed")),
         "per_query": rows,
     }
 
@@ -113,5 +127,7 @@ def aggregate(rows: Iterable[dict]) -> dict:
 def aggregate_suite(rows_by_book: Mapping[str, Iterable[dict]]) -> dict:
     """每本各自 aggregate，总体按**全部行**算（不是各书比例的平均）。"""
     by_book = {book: aggregate(rows) for book, rows in rows_by_book.items()}
-    overall = aggregate(r for rows in rows_by_book.values() for r in rows)
-    return {"by_book": by_book, "overall": overall}
+    all_rows = [r for rows in rows_by_book.values() for r in rows]
+    overall = aggregate(all_rows)
+    return {"by_book": by_book, "overall": overall,
+            "retrieval_failed": overall["retrieval_failed"]}
