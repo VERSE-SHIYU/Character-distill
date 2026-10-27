@@ -14,7 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import recall_questions as rq  # noqa: E402
-from eval_recall import Book  # noqa: E402
+from eval_recall import Book, load_suite  # noqa: E402
 
 NAME = "甲"
 SEG = "乙" * 120
@@ -70,10 +70,17 @@ class FakeLLM:
         return reply if isinstance(reply, str) else json.dumps(reply, ensure_ascii=False)
 
 
-def _book(*, source=SOURCE, cases=None):
-    return Book(book="b", title="书", user_id="u", text_id="t1", character=NAME,
+def _book(*, source=SOURCE, cases=None, title="书", text_id="t1", character=NAME):
+    return Book(book="b", title=title, user_id="u", text_id=text_id, character=character,
                 source=source, aliases=[], cases=cases, card_id=None, card=None,
                 embedding_key="k", embedding_region="cn")
+
+
+def _row(book, **extra):
+    """书目原样行：`load_suite` 产出的字段（`cases` 已被解析为绝对路径）。"""
+    return {"book": book.book, "title": book.title, "user_id": book.user_id,
+            "text_id": book.text_id, "character": book.character,
+            "cases": book.cases, "card_id": book.card_id, **extra}
 
 
 def _cases(out_dir, stem="t1_甲"):
@@ -180,6 +187,80 @@ def test_human_rows_are_not_generated(tmp_path):
     assert summary["books"] == {}
     assert summary["b（人工题）"]["n"] == 1
     assert llm.calls == []
+
+
+XFAIL = pytest.mark.xfail(strict=True, reason="generate 尚未回填 suite_eval.json（目标检查先红）")
+
+
+@XFAIL
+def test_generate_writes_suite_with_written_cases(tmp_path):
+    """生成行的 cases 就是实际写出的 jsonl 文件名，且相对 out_dir。"""
+    book = _book()
+
+    rq.run_generate([book], FakeLLM([DRAFT]), PROMPTS, tmp_path, suite_rows=[_row(book)])
+
+    suite = json.loads((tmp_path / "suite_eval.json").read_text(encoding="utf-8"))
+    assert len(suite) == 1
+    assert suite[0]["cases"] == "t1_甲.jsonl"
+    assert (tmp_path / suite[0]["cases"]).is_file()
+
+
+@XFAIL
+def test_suite_copies_human_cases_and_rewrites_to_relative(tmp_path):
+    """人工题的 cases 文件被拷进 out_dir，行里只留文件名。"""
+    src = tmp_path / "input"
+    src.mkdir()
+    human = src / "human.jsonl"
+    human.write_text(json.dumps({"id": "q01", "query": "你当时在场吗？",
+                                 "should": [FRAG_A]}, ensure_ascii=False) + "\n",
+                     encoding="utf-8")
+    out = tmp_path / "out"
+    book = _book(cases=str(human))
+
+    rq.run_generate([book], FakeLLM([]), PROMPTS, out, suite_rows=[_row(book)])
+
+    suite = json.loads((out / "suite_eval.json").read_text(encoding="utf-8"))
+    assert [row["cases"] for row in suite] == ["human.jsonl"]
+    assert (out / "human.jsonl").read_text(encoding="utf-8") == human.read_text(encoding="utf-8")
+
+
+@XFAIL
+def test_empty_generated_role_omitted_from_suite_and_summary(tmp_path):
+    """录取 0 条的角色不写进书目（load_cases 遇空文件会抛），并在 summary 里报出来。"""
+    kept = _book(title="书一")
+    empty = _book(title="书二", text_id="t2")
+
+    def draft(prompt):
+        return {"skip": True} if "书二" in prompt else DRAFT
+
+    summary = rq.run_generate([kept, empty], FakeLLM(draft), PROMPTS, tmp_path,
+                              suite_rows=[_row(kept), _row(empty)])
+
+    suite = json.loads((tmp_path / "suite_eval.json").read_text(encoding="utf-8"))
+    assert [row["text_id"] for row in suite] == ["t1"]
+    assert summary["omitted_roles"] == ["t2_甲"]
+
+
+@XFAIL
+def test_generated_suite_reads_back_with_load_suite(tmp_path):
+    """整份书目用 eval_recall.load_suite 读回，所有 cases 都落在 out_dir 且存在。"""
+    src = tmp_path / "input"
+    src.mkdir()
+    human = src / "human.jsonl"
+    human.write_text(json.dumps({"id": "q01", "query": "你当时在场吗？",
+                                 "should": [FRAG_A]}, ensure_ascii=False) + "\n",
+                     encoding="utf-8")
+    gen = _book()
+    hum = _book(title="人工书", text_id="t9", cases=str(human))
+
+    rq.run_generate([gen, hum], FakeLLM([DRAFT]), PROMPTS, tmp_path,
+                    suite_rows=[_row(gen, note="保留"), _row(hum)])
+
+    entries = load_suite(tmp_path / "suite_eval.json")
+    assert [entry["note"] for entry in entries if "note" in entry] == ["保留"]
+    assert all(Path(entry["cases"]).is_file() for entry in entries)
+    assert {Path(entry["cases"]).parent for entry in entries} == {tmp_path.resolve()}
+    assert {Path(entry["cases"]).name for entry in entries} == {"t1_甲.jsonl", "human.jsonl"}
 
 
 def test_two_anchors_share_usage_and_stay_apart(tmp_path):
