@@ -1,4 +1,4 @@
-"""目标检查：向量取 RERANK_POOL 候选 → qwen3-rerank 打分 → 前 top_k；出错退回向量顺序。
+"""目标检查：向量取 RERANK_POOL 候选 → qwen3-rerank 打分 → 按 token 预算填块；出错退回向量顺序。
 
 第一个提交全部 ``xfail(strict=True)``；实现完成后去掉 marker 转绿。
 """
@@ -14,8 +14,15 @@ import core.rag as rag_mod
 import core.scene_indexer as scene_indexer_mod
 from core.embeddings import embed_deadline
 from core.schema import SceneMeta
+from core.tokens import count_tokens
 
 POOL = 50  # 独立写死：目标检查先于实现存在，不能从被测常量取期望值
+NO_CAP = 10**6  # 预算远大于候选总量：本文件测的是顺序 / 候选池 / 退化，不测填块（见 test_scene_token_budget_goal）
+
+
+def _fits(n: int) -> int:
+    """恰好放下 n 个「原文片段 i」(i<10，每块 token 数相同) 的预算。"""
+    return n * count_tokens("原文片段 0")
 
 
 class _Collection:
@@ -82,29 +89,29 @@ def test_pool_caps_candidates_with_and_without_character_filter(monkeypatch):
     _install_rerank(monkeypatch, sink=sink)
     eng = _engine(60)
 
-    eng.query_scenes("q", top_k=3)
+    eng.query_scenes("q", token_budget=NO_CAP)
     assert len(sink[0]["docs"]) == POOL
 
     sink.clear()
-    eng.query_scenes("q", character_name="甲", top_k=3)
+    eng.query_scenes("q", character_name="甲", token_budget=NO_CAP)
     assert len(sink[0]["docs"]) == POOL
 
 
 def test_short_pool_is_reported_as_is(monkeypatch):
     sink = []
     _install_rerank(monkeypatch, sink=sink)
-    hits = _engine(4).query_scenes("q", top_k=10)
+    hits = _engine(4).query_scenes("q", token_budget=NO_CAP)
     assert len(sink[0]["docs"]) == 4
     assert len(hits) == 4
 
 
-# 2. 前 3 = 重排分数最高的 3 条（按 index 映射回候选）
+# 2. 返回块 = 重排分数从高到低（预算放得下 3 条时即前 3 条）（按 index 映射回候选）
 def test_top3_follow_rerank_scores_not_vector_order(monkeypatch):
     sink = []
     _install_rerank(
         monkeypatch, scores={0: 0.1, 1: 0.9, 2: 0.5, 3: 0.99, 4: 0.2}, sink=sink
     )
-    hits = _engine(5).query_scenes("q", top_k=3)
+    hits = _engine(5).query_scenes("q", token_budget=_fits(3))
 
     assert [h.text for h in hits] == ["原文片段 3", "原文片段 1", "原文片段 2"]
     assert [h.meta["vector_rank"] for h in hits] == [3, 1, 2]
@@ -132,7 +139,7 @@ def test_rerank_failure_falls_back_to_vector_order(
     eng = _engine(10)
 
     with caplog.at_level(logging.WARNING):
-        hits = eng.query_scenes("q", top_k=3)
+        hits = eng.query_scenes("q", token_budget=_fits(3))
 
     assert [h.text for h in hits] == ["原文片段 0", "原文片段 1", "原文片段 2"]
     assert hits.rerank_fallback is True
@@ -165,7 +172,7 @@ def test_deadline_without_room_sends_nothing(monkeypatch, caplog):
     monkeypatch.setattr(rr.httpx, "Client", _Client)
 
     with embed_deadline(100.05), caplog.at_level(logging.WARNING):
-        hits = _engine(10).query_scenes("q", top_k=3)
+        hits = _engine(10).query_scenes("q", token_budget=_fits(3))
 
     assert sent == []
     assert hits.rerank_fallback is True
@@ -207,7 +214,7 @@ def test_deadline_caps_request_timeout(monkeypatch):
     monkeypatch.setattr(rr.httpx, "Client", _Client)
 
     with embed_deadline(110.0):
-        hits = _engine(3).query_scenes("q", top_k=1)
+        hits = _engine(3).query_scenes("q", token_budget=_fits(1))
 
     assert seen and max(seen) <= 10.0 - 0.1
     assert hits.rerank_fallback is False
@@ -218,7 +225,7 @@ def test_deadline_caps_request_timeout(monkeypatch):
 def test_key_and_region_come_from_the_engine(monkeypatch):
     sink = []
     _install_rerank(monkeypatch, sink=sink)
-    _engine(5, key="user-key", region="intl").query_scenes("q", top_k=1)
+    _engine(5, key="user-key", region="intl").query_scenes("q", token_budget=NO_CAP)
 
     assert sink[0]["api_key"] == "user-key"
     assert sink[0]["region"] == "intl"
@@ -243,7 +250,7 @@ def test_emotion_ranking_is_gone():
 # 7. SceneMeta 契约改为 rerank_score / vector_rank
 def test_scene_meta_exposes_rerank_fields(monkeypatch):
     _install_rerank(monkeypatch, scores={0: 0.2, 1: 0.9})
-    hits = _engine(2).query_scenes("q", top_k=2)
+    hits = _engine(2).query_scenes("q", token_budget=NO_CAP)
 
     assert set(SceneMeta.__annotations__) == {
         "chapter", "chunk_id", "rerank_score", "vector_rank",
@@ -258,7 +265,7 @@ def test_fallback_keeps_vector_order_and_no_rerank_score(monkeypatch):
     from core.reranker import RerankUnavailable
 
     _install_rerank(monkeypatch, exc=RerankUnavailable("timeout"))
-    hits = _engine(3).query_scenes("q", top_k=3)
+    hits = _engine(3).query_scenes("q", token_budget=NO_CAP)
 
     assert [h.meta["vector_rank"] for h in hits] == [0, 1, 2]
     assert all(h.meta["rerank_score"] is None for h in hits)

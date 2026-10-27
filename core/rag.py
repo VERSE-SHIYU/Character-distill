@@ -19,6 +19,7 @@ from core.embeddings import create_safe_embedding_fn
 from core.fingerprint import content_fingerprint
 from core.quotes import leading_ws, normalized_starts
 from core.schema import EvidenceItem, RetrievalWindow, scene_evidence
+from core.tokens import count_tokens
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 logger = logging.getLogger(__name__)
@@ -219,6 +220,8 @@ class EvidenceHits(list):
 
     ``rerank_ms`` / ``rerank_tokens``：这次重排花的毫秒与 token。退回向量顺序时
     ``rerank_ms`` 是已花的时间、``rerank_tokens`` 为 None；没调重排（无候选）两者都 None。
+
+    ``injected_tokens``：返回各块 ``count_tokens`` 之和，即这次实际注入的场景 token 数。
     """
 
     def __init__(
@@ -229,12 +232,14 @@ class EvidenceHits(list):
         rerank_fallback: bool = False,
         rerank_ms: int | None = None,
         rerank_tokens: int | None = None,
+        injected_tokens: int = 0,
     ) -> None:
         super().__init__(items)
         self.candidates_exhausted = candidates_exhausted
         self.rerank_fallback = rerank_fallback
         self.rerank_ms = rerank_ms
         self.rerank_tokens = rerank_tokens
+        self.injected_tokens = injected_tokens
 
 
 class _Candidates(NamedTuple):
@@ -564,10 +569,14 @@ class RAGEngine:
         self,
         query_text: str,
         character_name: str | None = None,
-        top_k: int = 3,
+        *,
+        token_budget: int,
         window: RetrievalWindow | None = None,
     ) -> EvidenceHits:
-        """向量取 ``RERANK_POOL`` 条候选 → 重排打分 → 前 ``top_k``。
+        """向量取 ``RERANK_POOL`` 条候选 → 重排打分 → 按 ``token_budget`` 填块。
+
+        填块：按重排后的顺序逐块累加 ``count_tokens``，加上下一块会超预算就停 ——
+        不跳过、不截断块；第一块单独就超预算时只返回这一块（结果不为空）。
 
         重排不可用（超时 / 限流 / 4xx / 5xx / 预算不够）时退回向量顺序，结果带
         ``rerank_fallback=True`` 并记一条 WARNING —— 退化必须可观测，且不抛到聊天。
@@ -578,7 +587,6 @@ class RAGEngine:
         if self.collection is None:
             return EvidenceHits([])
 
-        want = max(top_k, 1)
         cand = self._fetch_candidates(
             query_text,
             character_name,
@@ -616,11 +624,16 @@ class RAGEngine:
         rerank_ms = round((time.monotonic() - rerank_started) * 1000)
 
         items: list[EvidenceItem] = []
+        used = 0
         seen: set[int] = set()
         for idx, score in ranked:
             if idx in seen or not 0 <= idx < len(cand.docs):
                 continue
             seen.add(idx)
+            n_tokens = count_tokens(cand.docs[idx])
+            if items and used + n_tokens > token_budget:
+                break
+            used += n_tokens
             items.append(
                 scene_evidence(
                     # 章节今天无生产方，恒 None（不许塞假章节号）。
@@ -631,14 +644,13 @@ class RAGEngine:
                     vector_rank=idx,
                 )
             )
-            if len(items) >= want:
-                break
         return EvidenceHits(
             items,
             candidates_exhausted=cand.exhausted,
             rerank_fallback=fallback,
             rerank_ms=rerank_ms,
             rerank_tokens=tokens,
+            injected_tokens=used,
         )
 
     @staticmethod

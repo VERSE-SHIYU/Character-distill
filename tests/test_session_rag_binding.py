@@ -37,6 +37,7 @@ from fastapi import HTTPException
 
 import core.indexing_service as IS
 from core.rag import CollectionUnusableError, RAGEngine
+from core.scene_retrieval import SCENE_TOKEN_BUDGET  # noqa: E402
 from core.schema import CharacterCard
 from core.text_manager import TextManager
 
@@ -151,7 +152,7 @@ def _view(svc, text_id: str, card_id: str):
 
 def _ask(view) -> None:
     view.query_scenes("那天廊下说了什么",
-                      character_name="魏无羡", top_k=3)
+                      character_name="魏无羡", token_budget=SCENE_TOKEN_BUDGET)
 
 
 def _run_jobs(fn):
@@ -215,7 +216,7 @@ def test_a3_no_collection_is_empty_and_nothing_is_built(monkeypatch):
     monkeypatch.setattr(RAGEngine, "index", lambda self, *a, **kw: built.append(kw))
 
     view = _view(_svc(), "t1", "c1")
-    hits = view.query_scenes("问题", character_name="魏无羡", top_k=3)
+    hits = view.query_scenes("问题", character_name="魏无羡", token_budget=SCENE_TOKEN_BUDGET)
 
     assert built == [], f"会话检索路径调用了 index()：请求里不许建集合（{built}）"
     assert list(hits) == [], "一个集合都没有时本轮应是空结果"

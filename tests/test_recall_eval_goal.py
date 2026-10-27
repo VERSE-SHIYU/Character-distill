@@ -3,7 +3,7 @@
 测的是「达成目标」，不是「符合 spec」：
 
 1. 聊天与评测工具**走同一次检索调用**（替换 ``core.scene_retrieval.scene_hits``
-   为记录参数的替身后，两次调用的参数相同；``top_k`` 由 ``scene_hits`` 内部给出，
+   为记录参数的替身后，两次调用的参数相同；``token_budget`` 由 ``scene_hits`` 内部给出，
    故单独锁一次它的委托参数）。
 2. 指标算得对：区间重叠即命中 / 越界；命中段被截断仍算重叠；都不重叠两项都不计。
 3. 标注先自检：找不到、不止一处、短于 10 字、落在所选阶段之后 —— 在检索前报错
@@ -106,7 +106,7 @@ class TestSameRetrievalCall:
         for key in ("rag", "query", "character_name", "window"):
             assert chat[key] == tool[key], f"{key} 不一致：聊天与评测量的不是同一次调用"
 
-    def test_scene_hits_delegates_top3(self):
+    def test_scene_hits_delegates_token_budget(self):
         import core.scene_retrieval as sr
 
         class _FakeRag:
@@ -123,7 +123,8 @@ class TestSameRetrievalCall:
 
         query, kwargs = rag.seen
         assert query == QUERY
-        assert kwargs["top_k"] == 3
+        assert kwargs["token_budget"] == sr.SCENE_TOKEN_BUDGET
+        assert "top_k" not in kwargs
         assert kwargs["character_name"] == "祈灼"
         assert kwargs["window"] is sentinel_window
 
@@ -143,7 +144,8 @@ class TestMetrics:
         assert row == {"id": "q1", "hit": True, "leak": False,
                        "unlocated": 0, "top3_chunk_ids": ["scene_0"],
                        "rerank_fallback": False,
-                       "rerank_ms": None, "rerank_tokens": None}
+                       "rerank_ms": None, "rerank_tokens": None,
+                       "injected_tokens": None}
 
     def test_truncated_hit_still_overlaps(self):
         # 返回文本只含片段前半（截到 800 字内的自然形态），块区间仍把它包住。
@@ -163,7 +165,8 @@ class TestMetrics:
         assert row == {"id": "q3", "hit": False, "leak": True,
                        "unlocated": 0, "top3_chunk_ids": ["scene_0"],
                        "rerank_fallback": False,
-                       "rerank_ms": None, "rerank_tokens": None}
+                       "rerank_ms": None, "rerank_tokens": None,
+                       "injected_tokens": None}
 
     def test_no_overlap_counts_neither(self):
         row = self._score(

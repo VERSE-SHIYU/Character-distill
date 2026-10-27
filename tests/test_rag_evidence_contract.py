@@ -20,6 +20,7 @@ from __future__ import annotations
 import pytest
 
 from core.rag import RAGEngine
+from core.scene_retrieval import SCENE_TOKEN_BUDGET  # noqa: E402
 from core.schema import EVIDENCE_META, EvidenceItem, MemoryMeta, SceneMeta, WebMeta
 
 # 行 = (chroma id, 原文, metadata)。id 与 metadata 键集**逐键对齐
@@ -76,8 +77,8 @@ class TestSceneMetaValueSources:
     """键集对 ≠ 取值对：meta 每个值取自哪里，必须有专属红源。"""
 
     def test_chunk_id_is_the_chroma_id_not_a_metadata_copy(self):
-        ex = _ex(query_text="旧事", top_k=3)
-        assert [e.meta["chunk_id"] for e in ex] == ["scene_0", "scene_1", "scene_2"]
+        ex = _ex(query_text="旧事", token_budget=SCENE_TOKEN_BUDGET)
+        assert [e.meta["chunk_id"] for e in ex] == ["scene_0", "scene_1", "scene_2", "scene_3"]
 
     def test_chunk_id_follows_the_character_filter(self):
         """过滤后 chunk_id 跟着走 —— 与 docs 同一套 keep 下标，不许错位。
@@ -86,7 +87,7 @@ class TestSceneMetaValueSources:
         过滤与不过滤取值相同，判别力为零 —— 变异「``_take(ids)`` 退回 ``ids``（ids 与
         docs 错位）」在原用例上**全绿**（实测），锁的就是这个失效形态：原文对、来源 id 错。
         """
-        ex = _ex(query_text="旧事", character_name="金光瑶", top_k=3)
+        ex = _ex(query_text="旧事", character_name="金光瑶", token_budget=SCENE_TOKEN_BUDGET)
         assert [e.text for e in ex] == ["金光瑶微微一笑。"]
         assert [e.meta["chunk_id"] for e in ex] == ["scene_2"]
 
@@ -97,23 +98,23 @@ class TestSceneMetaValueSources:
         """
         lying = [(rid, doc, {**meta, "scene_index": "999"}) for rid, doc, meta in ROWS]
         ex = _make_engine(_ScriptedCollection(lying)).query_scenes(
-            query_text="旧事", top_k=3)
-        assert [e.meta["chunk_id"] for e in ex] == ["scene_0", "scene_1", "scene_2"]
+            query_text="旧事", token_budget=SCENE_TOKEN_BUDGET)
+        assert [e.meta["chunk_id"] for e in ex] == ["scene_0", "scene_1", "scene_2", "scene_3"]
 
     def test_chapter_is_none_today(self):
         """今天无生产方就必须是 None —— 将来谁塞假章节号必须红。"""
-        ex = _ex(query_text="旧事", top_k=3)
+        ex = _ex(query_text="旧事", token_budget=SCENE_TOKEN_BUDGET)
         assert ex, "本用例需要非空命中"
         assert all(e.meta["chapter"] is None for e in ex)
 
     def test_vector_rank_is_the_candidate_position(self):
         """退回向量顺序时，vector_rank 就是候选位次（0 起），与返回序一致。"""
-        ex = _ex(query_text="旧事", top_k=3)
-        assert [e.meta["vector_rank"] for e in ex] == [0, 1, 2]
+        ex = _ex(query_text="旧事", token_budget=SCENE_TOKEN_BUDGET)
+        assert [e.meta["vector_rank"] for e in ex] == [0, 1, 2, 3]
 
     def test_fallback_has_no_rerank_score(self):
         """重排不可用（本引擎无 key）→ rerank_score / score 都是 None，不许编一个数。"""
-        ex = _ex(query_text="旧事", top_k=3)
+        ex = _ex(query_text="旧事", token_budget=SCENE_TOKEN_BUDGET)
         assert ex and ex.rerank_fallback is True
         assert all(e.meta["rerank_score"] is None for e in ex)
         assert all(e.score is None for e in ex)
@@ -143,7 +144,7 @@ class TestMetaKeyContract:
         assert {"emo_affinity", "final"} <= set(MemoryMeta.__annotations__)
 
     def test_produced_scene_meta_satisfies_the_contract(self):
-        ex = _ex(query_text="旧事", top_k=3)
+        ex = _ex(query_text="旧事", token_budget=SCENE_TOKEN_BUDGET)
         assert ex, "本用例需要非空命中"
         for e in ex:
             assert set(e.meta) == set(SceneMeta.__annotations__)

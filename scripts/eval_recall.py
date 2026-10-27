@@ -2,7 +2,7 @@
 """召回评测（段 0a 工具；0a 不跑真数据）。
 
 读一次卡片与原文 → 用**聊天同一次检索**（``core.scene_retrieval.scene_hits``）
-取前 3 段 → 交给 ``core.recall_eval`` 算 R@3 / 越界率 → 走 ``write_evidence``。
+按 token 预算取块 → 交给 ``core.recall_eval`` 算命中率（沿用 R@3 字段名）/ 越界率 → 走 ``write_evidence``。
 
 只读：不写库、不建会话、不调大模型。每条查询只花一次查询嵌入。
 
@@ -275,7 +275,7 @@ def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None) -> 
     return recall_eval.aggregate_suite(rows_by_book)
 
 
-_ENV = ("用户自己的百炼 embedding key；检索 = 聊天同一次 scene_hits（top_k=3）；"
+_ENV = ("用户自己的百炼 embedding key；检索 = 聊天同一次 scene_hits（按 SCENE_TOKEN_BUDGET 填块）；"
         "基线 tag recall-baseline-2026-10")
 
 

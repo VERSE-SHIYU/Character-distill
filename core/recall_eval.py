@@ -1,9 +1,10 @@
 """召回评测的指标与标注自检 —— **纯函数，零 IO**。
 
-命中看**块**是否进前 3：每块的完整区间由 ``core.rag.chunk_spans`` 从集合的
-``npos`` / ``nend`` 算出（评测脚本传入 ``spans``），标注片段换算成原文的**连续**规范化
-区间，相交即算 —— 只看区间，不看返回文本（旧集合只存了每块前 800 字，新集合存整块）。
-这样不依赖场景怎么切，以后重切场景 / 改成按事件入库，标注不用重做。
+命中看**块**是否在 ``scene_hits`` 按 token 预算填入的那组里（字段名 ``r_at_3`` / ``top3_chunk_ids`` 沿用旧名）：
+每块的完整区间由 ``core.rag.chunk_spans`` 从集合的 ``npos`` / ``nend`` 算出（评测脚本传入
+``spans``），标注片段换算成原文的**连续**规范化区间，相交即算 —— 只看区间，不看返回文本
+（旧集合只存了每块前 800 字，新集合存整块）。这样不依赖场景怎么切，以后重切场景 /
+改成按事件入库，标注不用重做。
 
 不复用 ``core.quotes.locate_in_normalized``：那是为「省略号拼接核对」设计的，位置只取
 最长一段、宽度却按整段算，命中段含省略号时区间会跨过中间无关段落（假命中）。连续区间
@@ -81,7 +82,7 @@ def score_case(
     hits: Iterable[Any],
     spans: Mapping[str, tuple[int, int]],
 ) -> dict:
-    """一条查询的命中 / 越界判定；``hits`` 是前 3 段，``spans`` 是块 id → 完整区间。"""
+    """一条查询的命中 / 越界判定；``hits`` 是 ``scene_hits`` 按 token 预算填的那组块，``spans`` 是块 id → 完整区间。"""
     should = [iv for f in case.get("should") or [] for iv in intervals_in_normalized(source_norm, f)]
     should_not = [iv for f in case.get("should_not") or [] for iv in intervals_in_normalized(source_norm, f)]
 
@@ -100,7 +101,8 @@ def score_case(
             "unlocated": unlocated, "top3_chunk_ids": chunk_ids,
             "rerank_fallback": bool(getattr(hits, "rerank_fallback", False)),
             "rerank_ms": getattr(hits, "rerank_ms", None),
-            "rerank_tokens": getattr(hits, "rerank_tokens", None)}
+            "rerank_tokens": getattr(hits, "rerank_tokens", None),
+            "injected_tokens": getattr(hits, "injected_tokens", None)}
 
 
 def aggregate(rows: Iterable[dict]) -> dict:
