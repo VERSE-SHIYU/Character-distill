@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-import time
 import uuid
 from typing import Any, NamedTuple
 
@@ -14,7 +13,6 @@ from chromadb.api.models.Collection import Collection
 from chromadb.errors import NotFoundError
 from chromadb.utils.batch_utils import create_batches
 
-from core import reranker
 from core.embeddings import create_safe_embedding_fn
 from core.fingerprint import content_fingerprint
 from core.quotes import leading_ws, normalized_starts
@@ -24,8 +22,8 @@ from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原
 
 logger = logging.getLogger(__name__)
 
-# 向量召回后交给重排的候选数。top_k 只决定重排后截几条，两个数各管一件。
-RERANK_POOL = 50
+# 向量候选池，供角色过滤后再填块；无重排时只取到填满预算为止。
+VECTOR_CANDIDATE_POOL = 50
 
 
 # 集合元数据里与「按位置截断」有关的键 —— **只在这里定义**，建集合（本模块 `index`、
@@ -215,12 +213,6 @@ class EvidenceHits(list):
     元素是 ``core.schema.EvidenceItem``。与 SceneHits 分成两个类型是有意的 ——
     字符串出口与结构化出口互不改变对方的返回语义（开闭：新增而非修改已稳定代码）。
 
-    ``rerank_fallback``：本次重排不可用、结果退回向量顺序。调用方要能看见这次退化，
-    不能把「没重排」当成「重排后就是这样」。
-
-    ``rerank_ms`` / ``rerank_tokens``：这次重排花的毫秒与 token。退回向量顺序时
-    ``rerank_ms`` 是已花的时间、``rerank_tokens`` 为 None；没调重排（无候选）两者都 None。
-
     ``injected_tokens``：返回各块 ``count_tokens`` 之和，即这次实际注入的场景 token 数。
     """
 
@@ -229,16 +221,10 @@ class EvidenceHits(list):
         items: Any = (),
         *,
         candidates_exhausted: bool = False,
-        rerank_fallback: bool = False,
-        rerank_ms: int | None = None,
-        rerank_tokens: int | None = None,
         injected_tokens: int = 0,
     ) -> None:
         super().__init__(items)
         self.candidates_exhausted = candidates_exhausted
-        self.rerank_fallback = rerank_fallback
-        self.rerank_ms = rerank_ms
-        self.rerank_tokens = rerank_tokens
         self.injected_tokens = injected_tokens
 
 
@@ -573,16 +559,13 @@ class RAGEngine:
         token_budget: int,
         window: RetrievalWindow | None = None,
     ) -> EvidenceHits:
-        """向量取 ``RERANK_POOL`` 条候选 → 重排打分 → 按 ``token_budget`` 填块。
+        """向量取 ``VECTOR_CANDIDATE_POOL`` 条候选，按向量顺序填块到 ``token_budget``。
 
-        填块：按重排后的顺序逐块累加 ``count_tokens``，加上下一块会超预算就停 ——
-        不跳过、不截断块；第一块单独就超预算时只返回这一块（结果不为空）。
-
-        重排不可用（超时 / 限流 / 4xx / 5xx / 预算不够）时退回向量顺序，结果带
-        ``rerank_fallback=True`` 并记一条 WARNING —— 退化必须可观测，且不抛到聊天。
+        填块：逐块累加 ``count_tokens``，加上下一块会超预算就停 —— 不跳过、不截断块；
+        第一块单独就超预算时只返回这一块（结果不为空）。
 
         ``chunk_id`` 取 **chroma 的真 id**，不取 metadata 里 scene_index 那份影子副本；
-        ``vector_rank`` 是候选在向量结果里的位次，重排失败时它就是最终顺序。
+        ``vector_rank`` 是候选在向量结果里的位次，即最终顺序。
         """
         if self.collection is None:
             return EvidenceHits([])
@@ -590,47 +573,17 @@ class RAGEngine:
         cand = self._fetch_candidates(
             query_text,
             character_name,
-            RERANK_POOL,
+            VECTOR_CANDIDATE_POOL,
             ["documents", "metadatas"],
             window=window,
         )
         if not cand.docs:
             return EvidenceHits([], candidates_exhausted=cand.exhausted)
 
-        fallback = False
-        tokens: int | None = None
-        rerank_started = time.monotonic()
-        try:
-            ranked = reranker.rerank(
-                query_text,
-                cand.docs,
-                api_key=getattr(self, "_embedding_key", "") or "",
-                region=getattr(self, "_embedding_region", "cn") or "cn",
-            )
-            tokens = getattr(ranked, "total_tokens", None)
-        except reranker.RerankUnavailable as exc:
-            fallback = True
-            label = {
-                "timeout": "超时", "network": "超时", "deadline": "deadline",
-                "rate_limit": "限流",
-            }.get(exc.kind, "其他")
-            logger.warning(
-                "场景重排失败（%s%s），退回向量顺序：集合 %s",
-                label,
-                f" status={exc.status}" if exc.status is not None else "",
-                self.collection_name,
-            )
-            ranked = [(i, None) for i in range(len(cand.docs))]
-        rerank_ms = round((time.monotonic() - rerank_started) * 1000)
-
         items: list[EvidenceItem] = []
         used = 0
-        seen: set[int] = set()
-        for idx, score in ranked:
-            if idx in seen or not 0 <= idx < len(cand.docs):
-                continue
-            seen.add(idx)
-            n_tokens = count_tokens(cand.docs[idx])
+        for idx, doc in enumerate(cand.docs):
+            n_tokens = count_tokens(doc)
             if items and used + n_tokens > token_budget:
                 break
             used += n_tokens
@@ -639,17 +592,13 @@ class RAGEngine:
                     # 章节今天无生产方，恒 None（不许塞假章节号）。
                     chapter=(cand.metas[idx] or {}).get("chapter"),
                     chunk_id=cand.ids[idx],
-                    text=cand.docs[idx],
-                    rerank_score=score,
+                    text=doc,
                     vector_rank=idx,
                 )
             )
         return EvidenceHits(
             items,
             candidates_exhausted=cand.exhausted,
-            rerank_fallback=fallback,
-            rerank_ms=rerank_ms,
-            rerank_tokens=tokens,
             injected_tokens=used,
         )
 

@@ -69,7 +69,7 @@ def _card() -> CharacterCard:
 
 def _scene(text: str, chunk_id: str = "scene_0"):
     return scene_evidence(
-        text=text, rerank_score=0.5, vector_rank=0,
+        text=text, vector_rank=0,
         chunk_id=chunk_id, chapter=None,
     )
 
@@ -143,8 +143,6 @@ class TestMetrics:
         )
         assert row == {"id": "q1", "hit": True, "leak": False,
                        "unlocated": 0, "top3_chunk_ids": ["scene_0"],
-                       "rerank_fallback": False,
-                       "rerank_ms": None, "rerank_tokens": None,
                        "injected_tokens": None}
 
     def test_truncated_hit_still_overlaps(self):
@@ -164,8 +162,6 @@ class TestMetrics:
         )
         assert row == {"id": "q3", "hit": False, "leak": True,
                        "unlocated": 0, "top3_chunk_ids": ["scene_0"],
-                       "rerank_fallback": False,
-                       "rerank_ms": None, "rerank_tokens": None,
                        "injected_tokens": None}
 
     def test_no_overlap_counts_neither(self):

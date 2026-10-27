@@ -91,7 +91,6 @@ def http_calls(monkeypatch):
 
 
 # ① 不发任何重排请求
-@pytest.mark.xfail(strict=True, reason="目标检查先红：query_scenes 仍在调重排")
 def test_query_scenes_sends_no_rerank_request(http_calls):
     hits = _engine([_doc(i, 12) for i in range(20)]).query_scenes("q", token_budget=BUDGET)
     assert len(hits) >= 1

@@ -1,24 +1,20 @@
 """评测与聊天同一时限：``eval_recall`` 每条查询在 ``SCENE_TOOL_BUDGET_S`` 内检索。
 
-聊天里场景检索由 ``AgentToolkit.execute`` 开 ``embed_deadline(now + SCENE_TOOL_BUDGET_S)``，
-查询嵌入与重排共用这段预算。评测若不开同一个 deadline，重排可按非工具路径一直等，
-``rerank_fallbacks = 0`` 就说明不了聊天里来不来得及。
-
-替身只换网络：真 ``reranker.rerank`` + 真 ``RAGEngine.query_scenes``；httpx 客户端替身
-照生产行为 —— 请求耗时超过 ``timeout`` 就抛 ``httpx.TimeoutException``；时钟是假的，不真睡。
+聊天里场景检索由 ``AgentToolkit.execute`` 开 ``embed_deadline(now + SCENE_TOOL_BUDGET_S)``。
+评测若不开同一个 deadline，查询嵌入可按非工具路径一直等，评测就说明不了聊天里来不来得及。
+deadline 每条查询现算，不跨查询累计。
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-import httpx
-import pytest
+import time
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import core.rag as rag_mod  # noqa: E402
-import core.reranker as rr  # noqa: E402
 import eval_recall  # noqa: E402
 from core.agent.tools import SCENE_TOOL_BUDGET_S  # noqa: E402
 from core.embeddings import current_embed_deadline  # noqa: E402
@@ -55,57 +51,11 @@ def _engine():
     return eng
 
 
-def _install_network(monkeypatch, cost_s: float):
-    """假时钟 + 照生产行为的 httpx 替身：耗时 ``cost_s``，超过 timeout 即超时。"""
-    now = [1000.0]
-    monkeypatch.setattr(rr.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(rr.time, "sleep", lambda s: now.__setitem__(0, now[0] + s))
-
-    class _Resp:
-        status_code = 200
-        headers: dict = {}
-
-        def json(self):
-            return {"output": {"results": [{"index": i, "relevance_score": 1.0 - i / 10}
-                                           for i in range(3)]},
-                    "usage": {"total_tokens": 123}}
-
-    class _Client:
-        def __init__(self, timeout=None, **kw):
-            self.timeout = timeout
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def post(self, *a, **k):
-            if self.timeout is not None and cost_s > self.timeout:
-                now[0] += self.timeout
-                raise httpx.TimeoutException("read timeout")
-            now[0] += cost_s
-            return _Resp()
-
-    monkeypatch.setattr(rr.httpx, "Client", _Client)
-
-
-@pytest.mark.parametrize(
-    ("cost_s", "fallback"),
-    [(SCENE_TOOL_BUDGET_S + 1.0, True), (SCENE_TOOL_BUDGET_S / 4, False)],
-    ids=["slower_than_budget", "within_budget"],
-)
-def test_rerank_fallback_follows_chat_budget(monkeypatch, cost_s, fallback):
-    _install_network(monkeypatch, cost_s)
-    rows = eval_recall.run_eval_no_phase(SOURCE, "甲", CASES, _engine())
-    assert [r["rerank_fallback"] for r in rows] == [fallback]
-
-
 def _deadline_recorder(monkeypatch):
     seen: list[float | None] = []
 
     def recorder(rag, query, *, character_name, window):
-        seen.append(current_embed_deadline() - rr.time.monotonic()
+        seen.append(current_embed_deadline() - time.monotonic()
                     if current_embed_deadline() is not None else None)
         return rag_mod.EvidenceHits([])
 

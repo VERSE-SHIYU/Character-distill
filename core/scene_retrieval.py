@@ -1,8 +1,8 @@
 """聊天取原文场景的**唯一**调用入口。
 
 ``ContextEngine._scene_items`` 与召回评测脚本都走这里，测评量的才是聊天实际在用的
-那次调用（按 ``SCENE_TOKEN_BUDGET`` 填块 + 重排）。以后改检索做法（候选池大小、
-重排模型、原句双路…）只改这一处。
+那次调用（按向量顺序、``SCENE_TOKEN_BUDGET`` 填块）。以后改检索做法（候选池大小、
+重排、原句双路…）只改这一处。
 """
 from __future__ import annotations
 

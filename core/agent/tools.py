@@ -28,7 +28,7 @@ _EXECUTE_DEADLINE_MARGIN_S = 1.0
 
 
 def tool_budget_s(timeout: float) -> float | None:
-    """工具执行给检索（查询嵌入 + 重排）的预算秒数：``timeout − margin``；≤0 时 None（不夹逼）。
+    """工具执行给检索（查询嵌入）的预算秒数：``timeout − margin``；≤0 时 None（不夹逼）。
 
     聊天（``AgentToolkit.execute``）与评测（``scripts/eval_recall.py``）都从这里取，
     预算数字只在这一处。
