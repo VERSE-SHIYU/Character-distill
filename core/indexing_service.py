@@ -36,7 +36,7 @@ from core.rag import (
     RAGEngine,
     chunk_spans as rag_chunk_spans,
 )
-from core.scene_indexer import SceneIndexer
+from core.scene_indexer import ChunkScheme, SceneIndexer
 
 logger = logging.getLogger(__name__)
 
@@ -281,19 +281,22 @@ class IndexingService:
 
     def build_eval_scene_index(
         self, card_id: str, content: str, char_name: str,
-        embedding_key: str, embedding_region: str,
+        embedding_key: str, embedding_region: str, scheme: ChunkScheme | None = None,
     ) -> None:
         """评测专用：只建 `scenes_{card_id}`，不建原文集合（不整本嵌入）。(sync)
 
         会话检索按 `_session_candidates` 先装载 `scenes_{card_id}`，有它就不读
         `text_{text_id}`；场景切分只用私有引擎的客户端与嵌入函数，不依赖原文集合。
+        ``scheme`` 给切法变体评测用（None = 产品缺省 `CHUNK_SCHEME`）。
         """
         rag = self._new_rag(embedding_key, embedding_region)
-        self._index_scene_collection(rag, card_id, content, char_name, need_positions=False)
+        self._index_scene_collection(rag, card_id, content, char_name, need_positions=False,
+                                     scheme=scheme)
 
     @staticmethod
     def _index_scene_collection(
         rag: RAGEngine, card_id: str, content: str, char_name: str, need_positions: bool,
+        scheme: ChunkScheme | None = None,
     ) -> None:
         """建（或按指纹复用）`scenes_{card_id}`，构建期间登记为「正在建」。(sync)"""
         # rag 是调用方私有的，`index_scenes` 把它改指到场景集合不影响任何会话。
@@ -301,7 +304,7 @@ class IndexingService:
         with _builds.building(name):
             SceneIndexer().index_scenes(
                 content, rag, char_name, collection_name=name,
-                need_positions=need_positions,
+                need_positions=need_positions, scheme=scheme,
             )
 
     def _run_in_background(

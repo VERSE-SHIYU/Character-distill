@@ -6,31 +6,115 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from typing import Literal
 
 from chromadb.errors import NotFoundError
 
 from core.fingerprint import content_fingerprint
 from core.quotes import leading_ws, normalized_starts
 from core.rag import (
-    FINGERPRINT_KEY, POS_SCHEMA, POS_SCHEMA_KEY,
-    CollectionUnusableError, RAGEngine, characters_tag, mark_built,
+    FINGERPRINT_KEY, POS_SCHEMA, POS_SCHEMA_KEY, WRITE_MODE_BATCHED, WRITE_MODE_KEY,
+    CollectionUnusableError, RAGEngine, add_in_batches, characters_tag, is_built, mark_built,
 )
 
 
-def _span_texts(pattern, text: str, base: int = 0) -> list[tuple[int, int]]:
-    """`text` 被 `pattern` 分隔后各段的半开区间 `[起, 止)`，相对 `base` 偏移。
+# ── 切法（召回 r1，docs/specs/recall-r1-chunking.md §4）──────────────────────
 
-    分隔符本身不计入 —— 与 `re.split` 丢分隔符同形，但保留下标（切分坐标的来源）。
-    """
+@dataclass(frozen=True)
+class ChunkScheme:
+    """场景切法。``para``：单换行分段，连续整段攒到 ``chars`` 字，单段超预算只在句末切；
+    ``fixed``：固定 ``chars`` 字、相邻块重叠 ``overlap`` 字。"""
+
+    mode: Literal["para", "fixed"]
+    chars: int
+    overlap: int = 0
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("para", "fixed") or self.chars <= 0 or not 0 <= self.overlap < self.chars:
+            raise ValueError(f"非法切法：{self}")
+
+    def key(self) -> str:
+        """写进集合 metadata 的稳定字符串 —— 复用判断只认它。"""
+        return f"{self.mode}:{self.chars}:{self.overlap}"
+
+    @classmethod
+    def from_key(cls, key: str) -> ChunkScheme:
+        """`key()` 的反函数 —— 切法字符串只在这里解析；非法值抛 ValueError。"""
+        parts = key.split(":")
+        if len(parts) != 3:
+            raise ValueError(f"切法须为 mode:chars:overlap，实得 {key!r}")
+        mode, chars, overlap = parts
+        return cls(mode=mode, chars=int(chars), overlap=int(overlap))  # type: ignore[arg-type]
+
+
+# 占位：S4 按实测 R@3 换成胜出变体（A/B/C），其余变体不留路径。字数预算待 S3 量出
+# token/字比例后定（spec §3），此值未核实。
+CHUNK_SCHEME = ChunkScheme(mode="para", chars=300, overlap=0)
+
+# 集合 metadata 里记切法的键名；切法不同即重建（存卡、开卡两条路径都比）。
+_CHUNK_SCHEME_KEY = "chunk_scheme"
+
+# 句末：。！？… 及其后紧跟的右引号 / 右括号（spec §1 第 2 条）。
+_SENTENCE = re.compile(r"[^。！？…]*[。！？…]+[”’」』）)]*|[^。！？…]+$")
+_PARAGRAPH = re.compile(r"[^\n]+")
+
+
+def _trim(text: str, start: int, end: int) -> tuple[int, int] | None:
+    """`[start, end)` 去掉首尾空白后的区间；全是空白返回 None。"""
+    piece = text[start:end]
+    if not piece.strip():
+        return None
+    return start + leading_ws(piece), end - (len(piece) - len(piece.rstrip()))
+
+
+def _pack(text: str, units: list[tuple[int, int]], budget: int) -> list[tuple[int, int]]:
+    """把相邻单元攒成块：加上下一个单元超预算就收口；单个单元超预算独自成块。"""
     out: list[tuple[int, int]] = []
-    pos = 0
-    for m in pattern.finditer(text):
-        out.append((base + pos, base + m.start()))
-        pos = m.end()
-    out.append((base + pos, base + len(text)))
+    cur: tuple[int, int] | None = None
+    for s, e in units:
+        if cur is not None and e - cur[0] <= budget:
+            cur = (cur[0], e)
+        else:
+            if cur is not None:
+                out.append(cur)
+            cur = (s, e)
+    if cur is not None:
+        out.append(cur)
     return out
 
 
+def _chunk_paragraphs(text: str, budget: int) -> list[tuple[int, int]]:
+    """连续整段攒到预算；单段超预算按句末切开再攒（不与别段混块）。"""
+    blocks: list[tuple[int, int]] = []
+    run: list[tuple[int, int]] = []          # 正在攒的整段
+    for m in _PARAGRAPH.finditer(text):
+        span = _trim(text, m.start(), m.end())
+        if span is None:
+            continue
+        if span[1] - span[0] <= budget:
+            run.append(span)
+            continue
+        blocks += _pack(text, run, budget)
+        run = []
+        sentences = [t for sm in _SENTENCE.finditer(text, span[0], span[1])
+                     if (t := _trim(text, sm.start(), sm.end())) is not None]
+        blocks += _pack(text, sentences, budget)
+    return blocks + _pack(text, run, budget)
+
+
+def _chunk_fixed(text: str, size: int, overlap: int) -> list[tuple[int, int]]:
+    """固定长度窗口，步长 ``size - overlap``，最后一块到全文末尾；全是空白的窗口不成块。"""
+    out: list[tuple[int, int]] = []
+    start, step = 0, size - overlap
+    while start < len(text):
+        end = min(start + size, len(text))
+        if text[start:end].strip():
+            out.append((start, end))
+        if end == len(text):
+            break
+        start += step
+    return out
 
 
 # 集合 metadata 里存场景幂等键的那个键名（含它的集合即「本正文已建好」）。
@@ -43,13 +127,6 @@ _POS_SCHEMA_VERSION = POS_SCHEMA
 class SceneIndexer:
     """将原文按场景切分，存入 RAGEngine 的 ChromaDB，携带角色与位置 metadata。"""
 
-    # 场景边界触发词（时间/地点/视角转换）
-    SCENE_BREAKS = re.compile(
-        r"(?:第[一二三四五六七八九十百千\d]+[章节回]|"
-        r"\n{2,}|"
-        r"(?:次日|翌日|傍晚|深夜|清晨|午后|几天后|多年后))"
-    )
-
     def index_scenes(
         self,
         text: str,
@@ -57,6 +134,7 @@ class SceneIndexer:
         character_name: str,
         collection_name: str | None = None,
         need_positions: bool = False,
+        scheme: ChunkScheme | None = None,
     ) -> int:
         """切分场景并写入 RAG，返回场景数量。**幂等**：正文没变即复用已建好的集合。
 
@@ -71,14 +149,20 @@ class SceneIndexer:
         挡不住隔了很久的第二次。而重建要付两笔代价：一次全量 embedding，以及
         `delete_collection` 先于 `create_collection` 的那段空窗 —— 这期间会话
         检索跳过本集合（回落原文集合，或本轮记为失败）。故先按正文指纹复用；
-        正文变了（重解析）或维度不符才重建。
+        正文变了（重解析）或维度不符才重建。只复用**已建完**的集合（`is_built`）：
+        分批写入中途失败留下的半截集合带着正文指纹，但没有构建标记。
 
         ``need_positions`` 只在**带起点的卡存卡**时由 `save_distilled_card` 传 True：
         指纹相同但集合没有 `pos_schema`（这条 feature 之前建的）时也重建一次，把
         `npos` 补上（覆盖重蒸同名卡沿用 card_id 的情况）。不带该标志的既有调度
-        （打开卡片等）幂等规则不变 —— 旧卡不会被重新嵌入。
+        （打开卡片等）不比 `pos_schema`。
+
+        **切法**（``scheme``，缺省 `CHUNK_SCHEME`）记在集合 metadata 的 `chunk_scheme`；
+        两条路径都比它，不一致即重建 —— 换切法不靠升 `POS_SCHEMA`（检索窗口依赖那个值）。
+        每块存整块原文，条目带 `npos` / `nend`（规范化坐标，一次算出）。
         """
-        scenes = self._split_scenes(text)
+        scheme = scheme or CHUNK_SCHEME
+        scenes = self._split_scenes(text, scheme)
         if not scenes:
             return 0
 
@@ -88,9 +172,12 @@ class SceneIndexer:
         try:
             if rag.load_existing(name):
                 meta = rag.collection.metadata or {}
-                if meta.get(_FINGERPRINT_KEY) == fingerprint:
-                    if not (need_positions and meta.get(_POS_SCHEMA_KEY) != _POS_SCHEMA_VERSION):
-                        return rag.collection.count()
+                if (is_built(meta)
+                        and meta.get(_FINGERPRINT_KEY) == fingerprint
+                        and meta.get(_CHUNK_SCHEME_KEY) == scheme.key()
+                        and not (need_positions
+                                 and meta.get(_POS_SCHEMA_KEY) != _POS_SCHEMA_VERSION)):
+                    return rag.collection.count()
         except CollectionUnusableError:
             # 维度与当前 embedder 不符（换过 embedding 配置）：旧集合查询恒失败，
             # 不是「已建好」，落到下面按当前 embedder 重建。
@@ -105,22 +192,25 @@ class SceneIndexer:
         collection = rag._client.create_collection(
             name=name,
             embedding_function=rag._embedding_function,
-            metadata={_FINGERPRINT_KEY: fingerprint, _POS_SCHEMA_KEY: _POS_SCHEMA_VERSION},
+            metadata={_FINGERPRINT_KEY: fingerprint, _POS_SCHEMA_KEY: _POS_SCHEMA_VERSION,
+                      _CHUNK_SCHEME_KEY: scheme.key(), WRITE_MODE_KEY: WRITE_MODE_BATCHED},
         )
 
-        npos = normalized_starts(text, [start for start, _ in scenes])
+        coords = normalized_starts(text, [s for s, _, _ in scenes] + [e for _, e, _ in scenes])
+        npos, nend = coords[:len(scenes)], coords[len(scenes):]
         ids, docs, metas = [], [], []
-        for i, (start, scene) in enumerate(scenes):
+        for i, (_, _, scene) in enumerate(scenes):
             ids.append(f"scene_{i}")
-            docs.append(scene[:800])
+            docs.append(scene)
             metas.append({
                 # 格式唯一出处：core.rag.characters_tag（与 text_* 集合写入一致）
                 "characters": characters_tag([character_name]),
                 "scene_index": str(i),
                 "npos": npos[i],
+                "nend": nend[i],
             })
 
-        collection.add(documents=docs, ids=ids, metadatas=metas)
+        add_in_batches(rag._client, collection, docs, ids, metas)
         mark_built(collection)
         print(f"[embed-stats] Scene index scenes={len(docs)} collection={name}")
 
@@ -129,28 +219,19 @@ class SceneIndexer:
 
         return len(scenes)
 
-    def _split_scenes(self, text: str) -> list[tuple[int, str]]:
-        """按场景边界切分，返回 `(原文起点, 片段)`，每段 200-1000 字。
+    def _split_scenes(self, text: str, scheme: ChunkScheme) -> list[tuple[int, int, str]]:
+        """按 ``scheme`` 切块，返回 `(原文起点, 原文终点, text[起点:终点])`。
 
-        起点在切分时就知道（切分本来就是按下标切），**不回找** —— `text.find` 对重复
-        段落会取到第一处，起点就错了（C25）。
+        坐标在切分时就知道（按下标切），**不回找** —— `text.find` 对重复段落会取到第一处，
+        起点就错了（C25）。聊天记录仍按日期分组（`_split_chat_scenes`，不受切法影响）。
         """
         if re.search(r'^\[\d{4}-\d{2}-\d{2}\]', text, re.MULTILINE):
-            return self._split_chat_scenes(text)
-
-        scenes: list[tuple[int, str]] = []
-        for s, e in _span_texts(self.SCENE_BREAKS, text):
-            p = text[s:e].strip()
-            if len(p) < 50:
-                continue
-            if len(p) > 1000:
-                for a, b in _span_texts(re.compile(r"\n\n"), text[s:e], base=s):
-                    seg = text[a:b].strip()
-                    if len(seg) > 50:
-                        scenes.append((a + leading_ws(text[a:b]), seg))
-            else:
-                scenes.append((s + leading_ws(text[s:e]), p))
-        return scenes
+            return [(s, s + len(scene), scene) for s, scene in self._split_chat_scenes(text)]
+        if scheme.mode == "fixed":
+            spans = _chunk_fixed(text, scheme.chars, scheme.overlap)
+        else:
+            spans = _chunk_paragraphs(text, scheme.chars)
+        return [(s, e, text[s:e]) for s, e in spans]
 
     def _split_chat_scenes(self, text: str) -> list[tuple[int, str]]:
         """按日期分组，每天一个场景，返回 `(原文起点, 片段)`。"""

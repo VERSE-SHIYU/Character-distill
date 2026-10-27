@@ -192,6 +192,11 @@ class _CapturingClient:
         # 真件不一致，测的就不是生产形态）。
         raise NotFoundError(f"Collection {name} does not exist")
 
+    def get_max_batch_size(self):  # 真 ClientAPI 接口；写入按它分批
+
+        return 5461
+
+
     def create_collection(self, name=None, embedding_function=None, metadata=None):
         self.col = _CapturingCollection(metadata)
         return self.col
