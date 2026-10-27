@@ -160,6 +160,23 @@ def test_4_old_single_add_collection_without_both_keys_is_usable():
     assert _rag(client).load_existing("text_t1") is True
 
 
+def test_4_half_written_new_collection_is_not_loaded():
+    from core.rag import WRITE_MODE_KEY
+    client = _Client()
+    _col_with(client, "text_t1", {WRITE_MODE_KEY: "batched"})
+    assert _rag(client).load_existing("text_t1") is False
+
+
+def test_4_session_skips_half_written_scenes_and_falls_back_to_text():
+    from core.indexing_service import IndexingService
+    from core.rag import WRITE_MODE_KEY
+    client = _Client()
+    _col_with(client, "scenes_c1", {WRITE_MODE_KEY: "batched"})
+    _rag(client).index("一二三四五六七八九十", collection_name="text_t1")
+    rag, why = IndexingService._load_session_rag(_rag(client), "t1", "c1")
+    assert why is None and rag.collection_name == "text_t1"
+
+
 def test_4_new_builds_record_write_mode_and_count_as_built():
     from core.rag import WRITE_MODE_KEY, is_built
     client = _Client()
