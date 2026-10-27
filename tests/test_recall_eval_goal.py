@@ -142,7 +142,8 @@ class TestMetrics:
         )
         assert row == {"id": "q1", "hit": True, "leak": False,
                        "unlocated": 0, "top3_chunk_ids": ["scene_0"],
-                       "rerank_fallback": False}
+                       "rerank_fallback": False,
+                       "rerank_ms": None, "rerank_tokens": None}
 
     def test_truncated_hit_still_overlaps(self):
         # 返回文本只含片段前半（截到 800 字内的自然形态），块区间仍把它包住。
@@ -161,7 +162,8 @@ class TestMetrics:
         )
         assert row == {"id": "q3", "hit": False, "leak": True,
                        "unlocated": 0, "top3_chunk_ids": ["scene_0"],
-                       "rerank_fallback": False}
+                       "rerank_fallback": False,
+                       "rerank_ms": None, "rerank_tokens": None}
 
     def test_no_overlap_counts_neither(self):
         row = self._score(

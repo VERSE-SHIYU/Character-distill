@@ -117,6 +117,9 @@ class TestSceneMetaValueSources:
         assert ex and ex.rerank_fallback is True
         assert all(e.meta["rerank_score"] is None for e in ex)
         assert all(e.score is None for e in ex)
+        # 退回时 token 不编数；耗时照实记（已花的时间，可为 0）。
+        assert ex.rerank_tokens is None
+        assert isinstance(ex.rerank_ms, int) and ex.rerank_ms >= 0
 
 
 class TestMetaKeyContract:

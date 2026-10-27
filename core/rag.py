@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 import uuid
 from typing import Any, NamedTuple
 
@@ -168,6 +169,9 @@ class EvidenceHits(list):
 
     ``rerank_fallback``：本次重排不可用、结果退回向量顺序。调用方要能看见这次退化，
     不能把「没重排」当成「重排后就是这样」。
+
+    ``rerank_ms`` / ``rerank_tokens``：这次重排花的毫秒与 token。退回向量顺序时
+    ``rerank_ms`` 是已花的时间、``rerank_tokens`` 为 None；没调重排（无候选）两者都 None。
     """
 
     def __init__(
@@ -176,10 +180,14 @@ class EvidenceHits(list):
         *,
         candidates_exhausted: bool = False,
         rerank_fallback: bool = False,
+        rerank_ms: int | None = None,
+        rerank_tokens: int | None = None,
     ) -> None:
         super().__init__(items)
         self.candidates_exhausted = candidates_exhausted
         self.rerank_fallback = rerank_fallback
+        self.rerank_ms = rerank_ms
+        self.rerank_tokens = rerank_tokens
 
 
 class _Candidates(NamedTuple):
@@ -536,6 +544,8 @@ class RAGEngine:
             return EvidenceHits([], candidates_exhausted=cand.exhausted)
 
         fallback = False
+        tokens: int | None = None
+        rerank_started = time.monotonic()
         try:
             ranked = reranker.rerank(
                 query_text,
@@ -543,6 +553,7 @@ class RAGEngine:
                 api_key=getattr(self, "_embedding_key", "") or "",
                 region=getattr(self, "_embedding_region", "cn") or "cn",
             )
+            tokens = getattr(ranked, "total_tokens", None)
         except reranker.RerankUnavailable as exc:
             fallback = True
             label = {
@@ -556,6 +567,7 @@ class RAGEngine:
                 self.collection_name,
             )
             ranked = [(i, None) for i in range(len(cand.docs))]
+        rerank_ms = round((time.monotonic() - rerank_started) * 1000)
 
         items: list[EvidenceItem] = []
         seen: set[int] = set()
@@ -576,7 +588,11 @@ class RAGEngine:
             if len(items) >= want:
                 break
         return EvidenceHits(
-            items, candidates_exhausted=cand.exhausted, rerank_fallback=fallback
+            items,
+            candidates_exhausted=cand.exhausted,
+            rerank_fallback=fallback,
+            rerank_ms=rerank_ms,
+            rerank_tokens=tokens,
         )
 
     @staticmethod
