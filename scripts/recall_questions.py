@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""出题命令行（0d）：``probe`` / ``generate``。
+"""出题命令行（0d）：``probe`` / ``generate`` / ``multiturn``。
 
 - ``probe``：人工题（剔除寒暄）过指定的模型关（A.5 / A.6）各两次，只量误判率与
   两次一致率，不改任何题。
 - ``generate``（spec ⑱）：一条命令跑完「锚点 → 起草 → g_ground → A.5 → A.6 →
   修两轮」，中途不停；起草与判定都用 DeepSeek。
+- ``multiturn``：读已出好的题库，把问句里点了名单中他人名的题改成两轮（上文点名、
+  问句只用代词），答案片段原样沿用，过关 1（确定性）与 A.6 后写新题库。
 
 关卡规则全在 `core.recall_synth`（本文件不判通过条件），模型 JSON 解析走
 `core.llm_json.loads_llm_json`，照抄的提示词只从本地 `prompts/` 读并逐份核哈希；
@@ -48,6 +50,7 @@ USER_TURN = "Proceed with the judgment."
 DRAFT_WORKERS = 8
 
 # ⑲：一律只用本名找锚点；林黛玉本名只出现 284 次，原文主要叫「黛玉」（1375 次）。
+# multiturn 选题也只认本名 + 这张表（别名混有通称与别人的名字，不参与选题）。
 ANCHOR_NAME_OVERRIDES: dict[str, list[str]] = {"林黛玉": ["黛玉"]}
 
 
@@ -152,14 +155,18 @@ def _a5_once(llm: Any, prompts: dict[str, str], case: dict,
     return _ask_once(llm, prompt, usage)
 
 
+def _verifier_prompt(prompts: dict[str, str], question: str, should: list[str]) -> str:
+    """A.6 提示词的唯一拼法：问句 + 证据块 + 表 4 意图槽。"""
+    return recall_synth.render(
+        "verifier_A6", prompts["verifier_A6"],
+        question=question, quotes=recall_synth.quotes_block(should),
+        **recall_synth.intent_slots(prompts["intent_factual_A3"]))
+
+
 def _a6_once(llm: Any, prompts: dict[str, str], case: dict,
              usage: dict[str, int]) -> dict | None:
-    should = case.get("should") or []
-    prompt = recall_synth.render(
-        "verifier_A6", prompts["verifier_A6"],
-        question=case["query"], quotes=recall_synth.quotes_block(should),
-        **recall_synth.intent_slots(prompts["intent_factual_A3"]))
-    return _ask_once(llm, prompt, usage)
+    return _ask_once(llm, _verifier_prompt(prompts, case["query"], case.get("should") or []),
+                     usage)
 
 
 def _a6_flags(raws: list[dict | None]) -> dict[str, int]:
@@ -310,11 +317,8 @@ def _run_gates(
         return result, raws
 
     evidence_ids = recall_synth.evidence_ids(should)
-    verifier_prompt = recall_synth.render(
-        "verifier_A6", prompts["verifier_A6"], question=question, quotes=quotes,
-        **recall_synth.intent_slots(prompts["intent_factual_A3"]))
     verdict = _ask_gate(
-        llm, verifier_prompt,
+        llm, _verifier_prompt(prompts, question, should),
         lambda value: recall_synth.verify_ok(value, evidence_ids), usage)
     if verdict is None:
         return _parse_discard(draft, attempt), raws
@@ -375,9 +379,11 @@ def _one_anchor(
     raise AssertionError("judge 未在 MAX_ATTEMPTS 内给出终态")
 
 
-def _repair_passes(outcomes: list[dict]) -> dict[str, dict[str, int]]:
+def _repair_passes(
+    outcomes: list[dict], gates: tuple[str, ...] = ("ground", "critic", "verify"),
+) -> dict[str, dict[str, int]]:
     """各关退回后「修 1 / 2 次通过」的条数，按最后一次退回的关分桶。"""
-    counts = {str(n): {"ground": 0, "critic": 0, "verify": 0}
+    counts = {str(n): dict.fromkeys(gates, 0)
               for n in range(1, recall_synth.MAX_ATTEMPTS)}
     for outcome in outcomes:
         history = outcome["attempts"]
@@ -503,8 +509,155 @@ def run_generate(
     return summary
 
 
+MULTITURN_GATES = ("multiturn", "verify")
+
+
+def _turns_shape(value: dict) -> dict | None:
+    """改写结果的结构：``{"turn1", "turn2"}`` 两个非空字符串；其余算未解析。"""
+    turns = {key: value.get(key) for key in ("turn1", "turn2")}
+    if not all(isinstance(v, str) and v.strip() for v in turns.values()):
+        return None
+    return turns
+
+
+def _one_multiturn(
+    book: Book, case: dict, entity: str, call_names: list[str], leak_names: list[str],
+    llm: Any, prompts: dict[str, str],
+) -> dict:
+    """一条题：改写 → 关 1 → A.6；不过把原因填回反馈位重写（共 MAX_ATTEMPTS 次），仍不过丢弃。
+
+    适配器副本的理由同 `_one_anchor`（``last_usage`` 是共享槽）。
+    """
+    worker_llm = copy.copy(llm)
+    usage = _new_usage()
+    case_id = f"{case['id']}_mt"
+    should = case.get("should") or []
+    evidence_ids = recall_synth.evidence_ids(should)
+    history: list[dict] = []
+    feedback = ""
+
+    def done(status: str, gate: str | None, new_case: dict | None = None) -> dict:
+        return {"id": case_id, "source_id": case["id"], "status": status, "gate": gate,
+                "case": new_case, "attempts": history, "usage": usage}
+
+    for attempt in range(1, recall_synth.MAX_ATTEMPTS + 1):
+        prompt = recall_synth.render(
+            "multiturn", prompts["multiturn"], character=book.character, title=book.title,
+            question=case["query"], entity=entity, feedback=feedback)
+        turns = _ask_gate(worker_llm, prompt, _turns_shape, usage)
+        if turns is None:
+            history.append(_parse_discard({"id": case_id}, attempt))
+            return done("discarded", "parse")
+        turn1, turn2 = turns["turn1"], turns["turn2"]
+        record = {"id": case_id, "source_id": case["id"], "entity": entity,
+                  "attempt": attempt, "turn1": turn1, "turn2": turn2, "raw": None}
+
+        gate = "multiturn"
+        problems = recall_synth.multiturn_problems(turn1, turn2, call_names, leak_names)
+        if not problems:
+            gate = "verify"
+            # A.6 没有上文占位：上文按 `multiturn_question` 的约定拼进 {question}。
+            verdict = _ask_gate(
+                worker_llm,
+                _verifier_prompt(prompts, recall_synth.multiturn_question(turn1, turn2), should),
+                lambda value: recall_synth.verify_ok(value, evidence_ids), usage)
+            if verdict is None:
+                history.append(_parse_discard({"id": case_id}, attempt))
+                return done("discarded", "parse")
+            record["raw"] = verdict
+            if recall_synth.verify_ok(verdict, evidence_ids):
+                history.append({**record, "status": "passed", "gate": None, "problems": []})
+                return done("passed", None, {
+                    **case, "id": case_id, "query": turn2,
+                    "history": [{"role": "user", "content": turn1}],
+                    "source_id": case["id"], "entity": entity})
+            problems = [verdict["notes"]] if verdict["notes"].strip() else []
+
+        final = attempt >= recall_synth.MAX_ATTEMPTS
+        history.append({**record, "status": "discarded" if final else f"{gate}_fail",
+                        "gate": gate, "problems": problems})
+        if final:
+            return done("discarded", gate)
+        feedback = _feedback(problems)
+
+    raise AssertionError("未在 MAX_ATTEMPTS 内给出终态")
+
+
+def run_multiturn(
+    books: list[Book], rosters: list[list[dict]], llm: Any, prompts: dict[str, str],
+    out_dir: str | Path, *, workers: int = DRAFT_WORKERS,
+    suite_rows: list[dict] | None = None,
+) -> dict:
+    """已出好的题库 → 两轮题库（答案片段原样沿用）；丢弃的不补题。
+
+    ``rosters[i]`` 是 ``books[i]`` 那本书的角色名单（``cached_characters`` 的行）。
+    写 `<stem>.multiturn.jsonl`、`suite_eval.json`（相对 out_dir，可直接 `eval_recall --suite`）、
+    `verdicts.jsonl`、`summary.json`。
+    """
+    started = time.monotonic()
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    source_rows = suite_rows if suite_rows is not None else [_suite_row(book) for book in books]
+    if not (len(source_rows) == len(books) == len(rosters)):
+        raise EvalAbort(f"书目行 / 书对象 / 名单数不一致：{len(source_rows)} / {len(books)} / {len(rosters)}")
+    usage = _new_usage()
+    verdict_rows: list[dict] = []
+    summary: dict[str, Any] = {"books": {}}
+    suite: list[dict] = []
+
+    for book, row, roster in zip(books, source_rows, rosters):
+        if not book.cases:
+            continue
+        stem = _stem(book)
+        picks = []
+        for case in load_cases(book.cases):
+            if not case.get("should"):  # 寒暄没有证据片段，A.6 无从核
+                continue
+            found = recall_synth.multiturn_entity(
+                case["query"], roster, book.character, ANCHOR_NAME_OVERRIDES)
+            if found:
+                picks.append((case, *found))
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [C.ctx_submit(pool, _one_multiturn, book, case, entity, calls, leak,
+                                    llm, prompts)
+                       for case, entity, calls, leak in picks]
+            outcomes = [future.result() for future in futures]
+
+        cases = [outcome["case"] for outcome in outcomes if outcome["case"]]
+        _write_jsonl(out / f"{stem}.multiturn.jsonl", cases)
+        if cases:
+            suite.append({**row, "cases": f"{stem}.multiturn.jsonl"})
+
+        book_usage = _new_usage()
+        for outcome in outcomes:
+            for key, value in outcome["usage"].items():
+                book_usage[key] += value
+                usage[key] += value
+            for result in outcome["attempts"]:
+                verdict_rows.append({"book": book.book, "character": book.character, **result})
+        discarded: dict[str, int] = {}
+        for outcome in outcomes:
+            if outcome["status"] == "discarded":
+                discarded[outcome["gate"]] = discarded.get(outcome["gate"], 0) + 1
+        summary["books"][stem] = {
+            "candidates": len(picks),
+            "passed": len(cases),
+            "discarded": discarded,
+            "repair_passes": _repair_passes(outcomes, MULTITURN_GATES),
+            "usage": book_usage,
+        }
+
+    _write_json(out / "suite_eval.json", suite)
+    _write_jsonl(out / "verdicts.jsonl", verdict_rows)
+    summary["usage"] = usage
+    summary["duration_s"] = round(time.monotonic() - started, 1)
+    _write_json(out / "summary.json", summary)
+    return summary
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="0d 出题工具（probe / generate）")
+    parser = argparse.ArgumentParser(description="0d 出题工具（probe / generate / multiturn）")
     sub = parser.add_subparsers(dest="command", required=True)
 
     probe = sub.add_parser("probe", help="人工题过指定模型关各两次（不改题）")
@@ -518,10 +671,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     generate.add_argument("--prompts", required=True)
     generate.add_argument("--out-dir", dest="out_dir", required=True)
     generate.add_argument("--k", type=int, default=30)
+
+    multiturn = sub.add_parser("multiturn", help="已有题库 → 两轮题（关 1 + A.6，修两轮）")
+    multiturn.add_argument("--suite", required=True)
+    multiturn.add_argument("--prompts", required=True)
+    multiturn.add_argument("--out-dir", dest="out_dir", required=True)
     return parser.parse_args(argv)
 
 
 async def _main(args: argparse.Namespace) -> None:
+    from core.character_roster import cached_characters
     from web.deps import get_storage, get_user_llm
 
     entries = load_suite(args.suite)
@@ -532,6 +691,11 @@ async def _main(args: argparse.Namespace) -> None:
             prompts = _load_prompts(args.prompts)
             if args.command == "generate":
                 prompts["draft"] = recall_synth.DRAFT_PROMPT
+            elif args.command == "multiturn":
+                prompts["multiturn"] = recall_synth.MULTITURN_PROMPT
+                # load_book 已核过名单非空；此处取同一份缓存给选题用。
+                rosters = [await cached_characters(storage, b.text_id, b.user_id) or []
+                           for b in books]
             user_ids = sorted({book.user_id for book in books})
             if len(user_ids) != 1:
                 raise EvalAbort(f"书目跨多个用户：{user_ids}（本次只取一个用户的 key）")
@@ -540,6 +704,9 @@ async def _main(args: argparse.Namespace) -> None:
                 raise EvalAbort("该用户没有自己的 LLM key（模型关只走用户自己的 key）")
             if args.command == "probe":
                 summary = run_probe(books, llm, prompts, args.out, tuple(args.gates))
+            elif args.command == "multiturn":
+                summary = run_multiturn(books, rosters, llm, prompts, args.out_dir,
+                                        suite_rows=entries)
             else:
                 summary = run_generate(books, llm, prompts, args.out_dir, k=args.k,
                                        suite_rows=entries)
