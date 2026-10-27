@@ -726,7 +726,8 @@ class RAGEngine:
     def load_existing(self, collection_name: str) -> bool:
         """装载已存在的持久化集合，可用返回 True。
 
-        集合不存在 / 空 → False（调用方视为"无数据"，自行决定是否重建）。
+        集合不存在 / 空 / 未建完（`is_built`：分批写到一半）→ False（调用方视为"无数据"，
+        自行决定是否重建；会话装载跳过它看下一个候选）。
         get_collection 真错误 → 记日志后返回 False（不再静默 pass）。
         集合向量维度与当前 embedder 不符（如 embedder 迁移前的旧集合）→ 抛
         CollectionUnusableError：确定性不可用，显式让上层感知 —— 绝不返回 True
@@ -742,7 +743,7 @@ class RAGEngine:
         except Exception as exc:
             logger.warning("[RAGEngine] load_existing 获取集合失败（%s）：%s", collection_name, exc)
             return False
-        if col.count() == 0:
+        if col.count() == 0 or not is_built(col.metadata):
             return False
 
         expected = getattr(self._embedding_function, "_dimensions", None)
