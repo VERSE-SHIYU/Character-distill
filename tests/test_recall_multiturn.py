@@ -20,7 +20,11 @@ ROSTER = [
     {"name": "甲", "aliases": ["阿甲"]},
     {"name": "乙", "aliases": ["小乙"]},
     {"name": "丙", "aliases": []},
+    # ⑲：别名混有通称与别人的名字 —— 只能拿来查泄漏，不能拿来选题
+    {"name": "云绮", "aliases": ["小姐", "云汐玥"]},
+    {"name": "林黛玉", "aliases": ["林姑娘"]},
 ]
+OVERRIDES = rq.ANCHOR_NAME_OVERRIDES
 FRAG = "丙丁戊己庚辛壬癸子丑"
 
 PROMPTS = {
@@ -32,7 +36,7 @@ PROMPTS = {
 GOOD = {"answerable": True, "sufficient": True, "per_doc": {"e1": True}, "necessary": [True],
         "leak": False, "intent_match": True, "notes": ""}
 BAD = {**GOOD, "answerable": False, "notes": "上文没交代是谁"}
-TURNS = {"turn1": "我最近老想起小乙。", "turn2": "你跟他后来去了哪儿？"}
+TURNS = {"turn1": "我最近老想起乙。", "turn2": "你跟他后来去了哪儿？"}
 
 
 class FakeLLM:
@@ -89,24 +93,33 @@ def _mt_cases(out):
 
 # ── 选题 ──────────────────────────────────────────────────────────────
 
-def test_entity_only_from_roster_others_with_aliases():
-    pick = recall_synth.multiturn_entity
-    assert pick("你和小乙后来怎样了？", ROSTER, NAME) == ("乙", ["乙", "小乙"])
-    assert pick("你和丙吵过架吗？", ROSTER, NAME) == ("丙", ["丙"])
-    # 本人名与本人别名不选；名单外的地名 / 事件名不选
-    assert pick("阿甲，你那天在哪？", ROSTER, NAME) is None
-    assert pick("你去过长安城吗？", ROSTER, NAME) is None
+def _pick(question):
+    return recall_synth.multiturn_entity(question, ROSTER, NAME, OVERRIDES)
+
+
+def test_entity_by_real_name_only_aliases_kept_for_leak_check():
+    assert _pick("你和乙后来怎样了？") == ("乙", ["乙"], ["乙", "小乙"])
+    assert _pick("你和丙吵过架吗？") == ("丙", ["丙"], ["丙"])
+    # 别名不参与选题：「小姐」是云绮的别名，问句里没有任何本名 → 不选
+    assert _pick("小姐那天穿的什么？") is None
+    assert _pick("云汐玥后来怎样了？") is None        # 别名里混进的别人名字也不选
+    # 覆盖表（与找锚点同一张 ANCHOR_NAME_OVERRIDES）：「黛玉」→ 林黛玉
+    assert _pick("黛玉那天哭了吗？") == (
+        "林黛玉", ["林黛玉", "黛玉"], ["林黛玉", "黛玉", "林姑娘"])
+    # 本人不选；名单外的地名 / 事件名不选
+    assert _pick("甲，你那天在哪？") is None
+    assert _pick("你去过长安城吗？") is None
 
 
 # ── 关 1 ──────────────────────────────────────────────────────────────
 
-def test_gate1_blocks_entity_or_alias_in_turn2_and_missing_in_turn1():
+def test_gate1_turn1_needs_real_name_turn2_blocks_name_and_every_alias():
     check = recall_synth.multiturn_problems
-    names = ["乙", "小乙"]
-    assert check("我想起小乙了。", "你们后来去哪了？", names) == []
-    assert check("我想起乙了。", "你和小乙后来去哪了？", names)   # turn2 含别名
-    assert check("我想起乙了。", "你和乙后来去哪了？", names)     # turn2 含本名
-    assert check("我想起一个人。", "你们后来去哪了？", names)      # turn1 没提实体
+    call, leak = ["林黛玉", "黛玉"], ["林黛玉", "黛玉", "林姑娘"]
+    assert check("我想起黛玉了。", "你们后来去哪了？", call, leak) == []
+    assert check("我想起林姑娘了。", "你们后来去哪了？", call, leak)  # turn1 只有别名
+    assert check("我想起黛玉了。", "林姑娘后来去哪了？", call, leak)  # turn2 含别名
+    assert check("我想起黛玉了。", "你和黛玉后来去哪了？", call, leak)  # turn2 含覆盖称呼
 
 
 def test_real_multiturn_prompt_renders_with_registered_slots():
@@ -119,7 +132,7 @@ def test_real_multiturn_prompt_renders_with_registered_slots():
 # ── 主流程 ────────────────────────────────────────────────────────────
 
 def test_a6_question_carries_context_and_output_fields(tmp_path):
-    case = _case("q1", "你和小乙后来去哪了？", extra_field="keep")
+    case = _case("q1", "你和乙后来去哪了？", extra_field="keep")
     llm = FakeLLM([TURNS])
     summary, out = _run(tmp_path, [case, _case("q2", "你那天吃了什么？")], llm)
 
@@ -174,7 +187,7 @@ def test_unparsed_rewrite_twice_is_parse_discard(tmp_path):
 
 
 def test_suite_reads_back_with_eval_recall(tmp_path):
-    _, out = _run(tmp_path, [_case("q1", "你和小乙后来去哪了？")], FakeLLM([TURNS]))
+    _, out = _run(tmp_path, [_case("q1", "你和乙后来去哪了？")], FakeLLM([TURNS]))
     entries = load_suite(out / "suite_eval.json")
     assert [Path(e["cases"]).name for e in entries] == ["t1_甲.multiturn.jsonl"]
     assert load_cases(entries[0]["cases"])[0]["id"] == "q1_mt"

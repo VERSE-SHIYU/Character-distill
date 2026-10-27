@@ -156,31 +156,38 @@ def multiturn_entity(
     question: str,
     roster: Iterable[Mapping[str, Any]],
     character: str,
-) -> tuple[str, list[str]] | None:
-    """多轮选题：问句里出现名单中「问答角色本人以外」的人名或别名 → ``(本名, [本名, *别名])``。
+    name_overrides: Mapping[str, Sequence[str]],
+) -> tuple[str, list[str], list[str]] | None:
+    """多轮选题：问句里出现名单中「问答角色本人以外」的人的**本名** → ``(本名, 称呼, 查泄漏用名)``。
 
-    名单即 ``character_roster.cached_characters`` 的行（``name`` / ``aliases``）；地名、
-    事件名没有可靠名单，不选。出现多人时取问句里最先出现的，同位置取较长的称呼。
+    选题只认本名，外加 ``name_overrides``（调用方传入找锚点用的同一张表，如林黛玉 → 黛玉）；
+    别名不参与选题 —— 别名混有「小姐」「公主」和别人的名字（spec ⑲）。查泄漏用名 =
+    称呼 + 全部别名，交给关 1 的 turn2 检查（宁严勿漏）。名单即 ``cached_characters`` 的行；
+    地名、事件名没有可靠名单，不选。出现多人时取问句里最先出现的，同位置取较长的称呼。
     """
-    best: tuple[int, int, str, list[str]] | None = None
+    best: tuple[int, int, str, list[str], list[str]] | None = None
     for person in roster:
         name = person.get("name")
         if not name or name == character:
             continue
-        names = list(dict.fromkeys(n for n in [name, *(person.get("aliases") or [])] if n))
-        for n in names:
+        calls = list(dict.fromkeys([name, *name_overrides.get(name, ())]))
+        for n in calls:
             pos = question.find(n)
             if pos >= 0 and (best is None or (pos, -len(n)) < (best[0], -best[1])):
-                best = (pos, len(n), name, names)
-    return None if best is None else (best[2], best[3])
+                leak = list(dict.fromkeys(
+                    x for x in [*calls, *(person.get("aliases") or [])] if x))
+                best = (pos, len(n), name, calls, leak)
+    return None if best is None else best[2:]
 
 
-def multiturn_problems(turn1: str, turn2: str, names: Sequence[str]) -> list[str]:
-    """关 1（确定性）：turn1 须点名实体（本名或任一别名），turn2 不得出现本名与任何别名。"""
+def multiturn_problems(
+    turn1: str, turn2: str, call_names: Sequence[str], leak_names: Sequence[str],
+) -> list[str]:
+    """关 1（确定性）：turn1 须含本名或覆盖表里的称呼；turn2 不得出现本名与任何别名。"""
     problems: list[str] = []
-    if not any(n in turn1 for n in names):
-        problems.append(f"turn1 没有提到「{names[0]}」（本名或别名：{'、'.join(names)}）")
-    leaked = [n for n in names if n in turn2]
+    if not any(n in turn1 for n in call_names):
+        problems.append(f"turn1 没有提到「{call_names[0]}」（可用称呼：{'、'.join(call_names)}）")
+    leaked = [n for n in leak_names if n in turn2]
     if leaked:
         problems.append(f"turn2 不能出现「{'、'.join(leaked)}」，改用代词或省略")
     return problems

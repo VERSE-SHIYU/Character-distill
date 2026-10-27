@@ -50,6 +50,7 @@ USER_TURN = "Proceed with the judgment."
 DRAFT_WORKERS = 8
 
 # ⑲：一律只用本名找锚点；林黛玉本名只出现 284 次，原文主要叫「黛玉」（1375 次）。
+# multiturn 选题也只认本名 + 这张表（别名混有通称与别人的名字，不参与选题）。
 ANCHOR_NAME_OVERRIDES: dict[str, list[str]] = {"林黛玉": ["黛玉"]}
 
 
@@ -520,7 +521,7 @@ def _turns_shape(value: dict) -> dict | None:
 
 
 def _one_multiturn(
-    book: Book, case: dict, entity: str, names: list[str],
+    book: Book, case: dict, entity: str, call_names: list[str], leak_names: list[str],
     llm: Any, prompts: dict[str, str],
 ) -> dict:
     """一条题：改写 → 关 1 → A.6；不过把原因填回反馈位重写（共 MAX_ATTEMPTS 次），仍不过丢弃。
@@ -552,7 +553,7 @@ def _one_multiturn(
                   "attempt": attempt, "turn1": turn1, "turn2": turn2, "raw": None}
 
         gate = "multiturn"
-        problems = recall_synth.multiturn_problems(turn1, turn2, names)
+        problems = recall_synth.multiturn_problems(turn1, turn2, call_names, leak_names)
         if not problems:
             gate = "verify"
             # A.6 没有上文占位：上文按 `multiturn_question` 的约定拼进 {question}。
@@ -612,13 +613,15 @@ def run_multiturn(
         for case in load_cases(book.cases):
             if not case.get("should"):  # 寒暄没有证据片段，A.6 无从核
                 continue
-            found = recall_synth.multiturn_entity(case["query"], roster, book.character)
+            found = recall_synth.multiturn_entity(
+                case["query"], roster, book.character, ANCHOR_NAME_OVERRIDES)
             if found:
                 picks.append((case, *found))
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [C.ctx_submit(pool, _one_multiturn, book, case, entity, names, llm, prompts)
-                       for case, entity, names in picks]
+            futures = [C.ctx_submit(pool, _one_multiturn, book, case, entity, calls, leak,
+                                    llm, prompts)
+                       for case, entity, calls, leak in picks]
             outcomes = [future.result() for future in futures]
 
         cases = [outcome["case"] for outcome in outcomes if outcome["case"]]
