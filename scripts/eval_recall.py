@@ -193,25 +193,35 @@ def _scene_hits_in_chat_budget(rag, query: str, *, character_name, window):
 QUERY_FROM = ("query", "should")
 
 
-def _check_query_from(cases: list[dict], query_from: str) -> None:
-    """检索前核对：``should`` 模式下每题都要有证据片段，否则列出题号中止（不花嵌入调用）。"""
+def select_cases(cases: list[dict], query_from: str) -> tuple[list[dict], list]:
+    """本次能拿去检索的题 + 跳过的题号 —— 跳过规则只在这里。
+
+    ``should`` 模式下没有证据片段的题（如寒暄题）没有正向对照可做：跳过、不中止，统计只算
+    留下的题，跳过的题号由调用方写进输出。``query`` 模式不跳过。
+    """
     if query_from not in QUERY_FROM:
         raise EvalAbort(f"--query-from 只能是 {QUERY_FROM}：{query_from!r}")
-    if query_from == "should":
-        bad = [case.get("id") for case in cases if not case.get("should")]
-        if bad:
-            raise EvalAbort(f"--query-from should 需要每题至少一段 should：{bad}")
+    if query_from != "should":
+        return list(cases), []
+    kept = [case for case in cases if case.get("should")]
+    return kept, [case.get("id") for case in cases if not case.get("should")]
 
 
 def query_text(case: dict, query_from: str) -> str:
-    """本题实际拿去检索的文本 —— 查询文本只在这里取。"""
+    """本题实际拿去检索的文本 —— 查询文本只在这里取。调用方须先过 ``select_cases``。"""
     return case["should"][0] if query_from == "should" else case["query"]
+
+
+def _skipped(ids: list) -> dict:
+    return {"n": len(ids), "ids": ids}
 
 
 def run_eval(source: str, card: CharacterCard, cases: list[dict], rag,
              query_from: str = "query") -> dict:
-    """先自检标注，再逐条检索；任何检索前失败都不花一次嵌入调用。"""
-    _check_query_from(cases, query_from)
+    """先自检标注，再逐条检索；任何检索前失败都不花一次嵌入调用。
+
+    ``cases`` 须已过 ``select_cases``（跳过哪些题由调用方决定并写进输出）。
+    """
     source_norm = normalize(source)
     views = {case["phase"]: arc_view(card, case["phase"]) for case in cases}
     recall_eval.validate_cases(
@@ -231,8 +241,10 @@ def run_eval(source: str, card: CharacterCard, cases: list[dict], rag,
 
 def run_eval_no_phase(source: str, character: str, cases: list[dict], rag,
                       query_from: str = "query") -> list[dict]:
-    """没有卡的书：窗口恒 None，`phase` 必须为 null（`suite.json` 的生成题）。"""
-    _check_query_from(cases, query_from)
+    """没有卡的书：窗口恒 None，`phase` 必须为 null（`suite.json` 的生成题）。
+
+    ``cases`` 须已过 ``select_cases``。
+    """
     for case in cases:
         if case.get("phase") is not None:
             raise EvalAbort(f"没有卡的题 phase 必须为 null：{case.get('id')}")
@@ -266,11 +278,13 @@ def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None,
     eval 集合（`…_card`）再检索，不读也不重建线上 `scenes_{card_id}`；窗口仍取自卡。
     """
     rows_by_book: dict[str, list[dict]] = {}
+    skipped: list[str] = []
     per_text: dict[str, int] = {}
     for book in books:
         if not book.cases:
             raise EvalAbort(f"书目行没有标注文件：{book.title}/{book.character}")
-        cases = load_cases(book.cases)
+        cases, skipped_ids = select_cases(load_cases(book.cases), query_from)
+        skipped += [f"{book.title}/{book.character}:{cid}" for cid in skipped_ids]
         if book.card is not None:
             card_id = book.card_id or ""
             if scheme is not None:
@@ -283,7 +297,8 @@ def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None,
                 embedding_key=book.embedding_key, embedding_region=book.embedding_region)
             if rag is None:
                 raise EvalAbort(f"无法建立会话检索：{book.title}/{book.character}")
-            rows = run_eval(book.source, book.card, cases, rag, query_from)["per_query"]
+            rows = run_eval(book.source, book.card, cases, rag,
+                            query_from=query_from)["per_query"]
         else:
             # n 只数无卡行：有卡行不占编号。
             per_text[book.text_id] = per_text.get(book.text_id, 0) + 1
@@ -296,9 +311,10 @@ def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None,
                 embedding_key=book.embedding_key, embedding_region=book.embedding_region)
             if rag is None:
                 raise EvalAbort(f"无法建立会话检索：{book.title}/{book.character}")
-            rows = run_eval_no_phase(book.source, book.character, cases, rag, query_from)
+            rows = run_eval_no_phase(book.source, book.character, cases, rag,
+                                     query_from=query_from)
         rows_by_book[f"{book.title}/{book.character}"] = rows
-    return recall_eval.aggregate_suite(rows_by_book)
+    return {**recall_eval.aggregate_suite(rows_by_book), "skipped": _skipped(skipped)}
 
 
 _ENV = ("用户自己的百炼 embedding key；检索 = 聊天同一次 scene_hits（按 SCENE_TOKEN_BUDGET 填块）；"
@@ -349,7 +365,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--chunk-scheme", dest="chunk_scheme", type=_chunk_scheme_arg,
                         help="只配 --suite：按切法 mode:chars:overlap 建 eval 变体集合")
     parser.add_argument("--query-from", dest="query_from", choices=QUERY_FROM, default="query",
-                        help="检索文本：query=问题原文（缺省）；should=该题第一段证据片段原文")
+                        help="检索文本：query=问题原文（缺省）；should=该题第一段证据片段原文"
+                             "（无片段的题跳过，输出 skipped 列出题号与条数）")
     args = parser.parse_args(argv)
     if args.chunk_scheme and not args.suite:
         parser.error("--chunk-scheme 只用于 --suite")
@@ -391,7 +408,7 @@ async def _main(args: argparse.Namespace) -> None:
     storage = get_storage()
     try:
         loaded = await load_inputs(storage, user_id=args.user_id, card_id=args.card_id)
-        cases = load_cases(args.cases)
+        cases, skipped_ids = select_cases(load_cases(args.cases), args.query_from)
         rag = get_indexing_service().get_rag_for_session(
             loaded.text_id,
             card_id=args.card_id,
@@ -401,7 +418,9 @@ async def _main(args: argparse.Namespace) -> None:
         if rag is None:
             raise EvalAbort("无法建立会话检索（原文为空或没有 embedding key）")
 
-        result = run_eval(loaded.source, loaded.card, cases, rag, args.query_from)
+        result = {**run_eval(loaded.source, loaded.card, cases, rag,
+                             query_from=args.query_from),
+                  "skipped": _skipped(skipped_ids)}
         print(json.dumps(result, ensure_ascii=False, indent=2))
     finally:
         await storage.close()

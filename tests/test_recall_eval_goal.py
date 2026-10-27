@@ -295,7 +295,7 @@ class TestWriteSeparation:
         monkeypatch.setitem(sys.modules, "evidence_writer", writer)
 
         ev.main(["--user-id", "u1", "--card-id", "c1", "--cases", "cases.jsonl"])
-        assert json.loads(capsys.readouterr().out) == self.RESULT
+        assert json.loads(capsys.readouterr().out) == {**self.RESULT, "skipped": {"n": 0, "ids": []}}
 
     def test_from_json_only_writes_evidence(self, tmp_path, monkeypatch):
         import scripts.eval_recall as ev
