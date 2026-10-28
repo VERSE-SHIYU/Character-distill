@@ -62,7 +62,6 @@ class _Ctx:
         return RetrievalResult(source="memory", block="", items=[], status="empty")
 
 
-@GOAL
 @pytest.mark.parametrize(
     ("router_query", "expected"),
     [
@@ -93,7 +92,6 @@ def _scene_query_description() -> str:
     return schema["function"]["parameters"]["properties"]["query"]["description"]
 
 
-@GOAL
 @pytest.mark.parametrize("text_of", [_scene_query_description,
                                      lambda: agent_loop.ROUTER_SYSTEM_PROMPT])
 def test_rewrite_rule_is_stated(text_of):
@@ -102,12 +100,10 @@ def test_rewrite_rule_is_stated(text_of):
         assert phrase in text, f"缺「{phrase}」"
 
 
-@GOAL
 def test_scene_query_is_no_longer_keywords():
     assert "搜索关键词" not in _scene_query_description()
 
 
-@GOAL
 def test_router_routes_correction_to_scenes():
     prompt = agent_loop.ROUTER_SYSTEM_PROMPT
     i = prompt.index("改口")

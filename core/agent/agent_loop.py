@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,8 +29,12 @@ ROUTER_SYSTEM_PROMPT = (
     "判断依据："
     "对方提及过往交流或共同回忆→search_memory；"
     "涉及角色原著经历/情节→search_scenes；"
+    "对方改口/纠正上一问→search_scenes；"
     "需要现实世界实时或事实信息→web_search；"
     "纯寒暄、情绪表达、即兴互动→不调用。"
+    "调用 search_scenes 时，query 写成不依赖上文的独立问题："
+    "只把代词、省略替换为上文所指，不添加原话没有的内容；"
+    "对方改口时，把上一问套到纠正后的对象，不提被否定的对象。"
 )
 
 
@@ -97,7 +102,9 @@ class AgentLoop:
         else:
             router_sp = ROUTER_SYSTEM_PROMPT
 
+        route_ms: list[int] = []
         for _ in range(self.MAX_STEPS):
+            step_started = time.monotonic()
             try:
                 msg = self._llm.chat_with_tools(
                     router_sp, messages, self._toolkit.get_schemas()
@@ -116,6 +123,7 @@ class AgentLoop:
 
             # 每步决策都是一次真实 LLM 花费，紧跟调用后落账。last_usage 在 chat_with_tools
             # 入口已置 None，故厂商未回 usage 时记「无数据」而非冒用上一轮的值（串号比漏记更糟）。
+            route_ms.append(round((time.monotonic() - step_started) * 1000))
             try_record_usage(self._storage, self._llm, action="chat_agent_route", source="AgentLoop")
 
             if not msg.tool_calls:
@@ -169,7 +177,7 @@ class AgentLoop:
                     "content": result_content,
                 })
 
-        print(f"[AgentLoop] steps={len(steps)} tools={[s['tool'] for s in steps]}")
+        print(f"[AgentLoop] steps={len(steps)} tools={[s['tool'] for s in steps]} route_ms={route_ms}")
         return AgentLoopResult(
             messages=messages, steps=steps, degraded=False,
             retrieved=retrieved, evidence=evidence,
