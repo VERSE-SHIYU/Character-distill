@@ -44,8 +44,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from core import recall_eval, scene_retrieval  # noqa: E402
 from core.agent.agent_loop import AgentLoop  # noqa: E402
-from core.agent.tools import SCENE_TOOL_BUDGET_S, AgentToolkit  # noqa: E402
-from core.context_engine import RetrievalResult  # noqa: E402
+from core.agent.tools import SCENE_TOOL_BUDGET_S, AgentToolkit, scene_query  # noqa: E402
+from core.context_engine import _SCENE_FMT, ContextEngine, RetrievalResult  # noqa: E402
 from core.arc_view import arc_view  # noqa: E402
 from core.embeddings import embed_deadline  # noqa: E402
 from core.quotes import normalize  # noqa: E402
@@ -200,11 +200,13 @@ def _scene_hits_in_chat_budget(rag, query: str, *, character_name, window):
 
 
 class _RouterCtx:
-    """评测用的 ContextEngine 替身：场景检索走聊天同一次 ``scene_hits``，记下每次返回的块；
+    """评测用的 ContextEngine 替身：场景检索走聊天同一次 ``scene_hits``，并经生产同一个
+    ``ContextEngine._retrieve_via`` 渲染块、降级异常 —— 路由看到的工具结果与聊天逐字一致。
     记忆 / 联网恒空（本评测只量场景召回）。工具时限由真实 ``AgentToolkit.execute`` 开。
 
-    一题里路由可能调多次 search_scenes：生产把每次成功的结果都拼进【检索参考】
-    （``core/agent/agent_loop.py`` 的 ``retrieved``），所以计分用全部调用的并集（``merged_hits``）。"""
+    一题里路由可能调多次 search_scenes：生产把每次**成功且非空**的结果都拼进【检索参考】
+    （``core/agent/agent_loop.py`` 的 ``retrieved``），失败或超时的那次只影响它自己。
+    所以按检索词记下每次结果，计分时只取路由台账里 ``ok`` 的那几次（``merged_hits``）。"""
 
     web_search_enabled = False
 
@@ -212,25 +214,30 @@ class _RouterCtx:
         self._rag = rag
         self._character_name = character_name
         self._window = window
-        self.calls: list = []  # 每次 search_scenes 返回的 EvidenceHits，按调用顺序
-        self.failure: CollectionUnusableError | None = None
+        self.hits_by_query: dict[str, EvidenceHits] = {}  # 组装后的检索词 → 这次返回的块
+        self.failures: list[CollectionUnusableError] = []
 
-    def _retrieve_scenes_ex(self, query: str) -> RetrievalResult:
+    def _produce(self, query: str):
         try:
             hits = scene_retrieval.scene_hits(
                 self._rag, query, character_name=self._character_name, window=self._window)
         except CollectionUnusableError as exc:
-            self.failure = exc
+            self.failures.append(exc)
             raise
-        self.calls.append(hits)
-        status = "hit" if hits else "empty"
-        return RetrievalResult(source="scene", block="", items=list(hits), status=status)
+        self.hits_by_query[query] = hits
+        return list(hits), None
 
-    def merged_hits(self) -> EvidenceHits:
-        """全部调用的块按 ``chunk_id`` 去重、保持先后合并；重排统计按次累加（任一次退回即退回）。
+    def _retrieve_scenes_ex(self, query: str) -> RetrievalResult:
+        # 生产的块渲染 + 异常降级只此一份（_retrieve_via 只用到入参，不读 ContextEngine 状态）
+        return ContextEngine._retrieve_via(
+            self, "scene RAG", "scene", lambda: self._produce(query), _SCENE_FMT)
+
+    def merged_hits(self, queries: list[str]) -> EvidenceHits:
+        """给定这几次（按调用顺序）的块按 ``chunk_id`` 去重合并；重排统计按次累加（任一次退回即退回）。
         ``injected_tokens`` 是各次注入之和 —— 生产里每次结果分别注入，重复块也各算一次。"""
+        calls = [self.hits_by_query[q] for q in queries if q in self.hits_by_query]
         items, seen = [], set()
-        for hits in self.calls:
+        for hits in calls:
             for item in hits:
                 key = (item.meta or {}).get("chunk_id")
                 if key is not None and key in seen:
@@ -239,13 +246,13 @@ class _RouterCtx:
                 items.append(item)
 
         def _sum(attr):
-            vals = [getattr(h, attr, None) for h in self.calls]
+            vals = [getattr(h, attr, None) for h in calls]
             vals = [v for v in vals if v is not None]
             return sum(vals) if vals else None
 
         return EvidenceHits(
             items,
-            rerank_fallback=any(getattr(h, "rerank_fallback", False) for h in self.calls),
+            rerank_fallback=any(getattr(h, "rerank_fallback", False) for h in calls),
             rerank_ms=_sum("rerank_ms"),
             rerank_tokens=_sum("rerank_tokens"),
             injected_tokens=_sum("injected_tokens") or 0,
@@ -259,19 +266,26 @@ class _RouterCtx:
 
 
 def _score_via_router(rag, source_norm, case, spans, *, character_name, window, llm) -> dict:
-    """路由决定查不查、查什么：真实 ``AgentLoop`` + ``AgentToolkit``（与聊天同一组装、同一时限）。"""
+    """路由决定查不查、查什么：真实 ``AgentLoop`` + ``AgentToolkit``（与聊天同一组装、同一时限）。
+
+    计分只取路由台账里 ``ok`` 的场景调用（成功且非空，生产里真正注入的那几次）；
+    只有「调过、一次都没 ok、且有检索失败」才整题记 ``retrieval_failed``。"""
     ctx = _RouterCtx(rag, character_name=character_name, window=window)
     toolkit = AgentToolkit(ctx, user_message=case["query"])
     messages = list(case.get("history") or []) + [{"role": "user", "content": case["query"]}]
     result = AgentLoop(llm, toolkit).run(character_name or "", messages)
     calls = [s for s in result.steps if s["tool"] == "search_scenes"]
-    if ctx.failure is not None:
-        logger.warning("评测题 %s 检索失败，按注入为空计分：%s", case.get("id"), ctx.failure)
+    ok_queries = [scene_query(case["query"], c["args"].get("query", ""))
+                  for c in calls if c.get("ok")]
+    if not ok_queries and ctx.failures:
+        logger.warning("评测题 %s 检索失败，按注入为空计分：%s", case.get("id"), ctx.failures[-1])
         row = recall_eval.failed_case(case)
     else:
-        row = recall_eval.score_case(source_norm, case, ctx.merged_hits(), spans)
+        row = recall_eval.score_case(source_norm, case, ctx.merged_hits(ok_queries), spans)
     row["router_called"] = bool(calls)
-    row["router_scene_calls"] = len(calls)
+    row["router_scene_calls"] = len(calls)          # 尝试次数（含失败 / 超时 / 空）
+    row["router_scene_ok"] = len(ok_queries)        # 真正注入的次数
+    row["router_scene_failed"] = len(ctx.failures)  # 检索本体失败次数
     row["router_query"] = [c["args"].get("query") for c in calls]
     return row
 

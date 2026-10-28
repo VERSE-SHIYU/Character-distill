@@ -357,3 +357,56 @@ def test_session_paths_pass_user_sentence_to_toolkit():
         calls = re.findall(r"AgentToolkit\(([^)]*)\)", (root / rel).read_text(encoding="utf-8"))
         assert calls, rel
         assert all("user_message=" in c for c in calls), (rel, calls)
+
+
+
+# ⑤c 评测保真：单次检索失败只影响那一次；路由收到的工具结果与生产同一渲染（不是「未找到」）。
+
+class _RagFailSecond(_RagByQuery):
+    def query_scenes(self, query, **kw):
+        if query.endswith("坏"):
+            self.queries.append(query)
+            from core.rag import CollectionUnusableError
+            raise CollectionUnusableError("embed timeout")
+        return super().query_scenes(query, **kw)
+
+
+def test_eval_via_router_one_failed_call_keeps_successful_ones():
+    import eval_recall
+
+    rag = _RagFailSecond({"好": [0]})
+    rows = eval_recall.run_eval_no_phase(SOURCE, "祈灼", CASES[:1], rag,
+                                         router_llm=_TwoCallRouter("好", "坏"))
+    row = rows[0]
+    assert row["hit"] is True and not row.get("retrieval_failed")
+    assert (row["router_scene_calls"], row["router_scene_ok"], row["router_scene_failed"]) == (2, 1, 1)
+
+
+def test_eval_via_router_all_calls_failed_is_retrieval_failed():
+    import eval_recall
+
+    rows = eval_recall.run_eval_no_phase(SOURCE, "祈灼", CASES[:1], _RagFailSecond({}),
+                                         router_llm=_TwoCallRouter("坏", "又坏"))
+    assert rows[0]["retrieval_failed"] is True and rows[0]["router_scene_ok"] == 0
+    assert rows[0]["router_scene_failed"] == 2
+
+
+def test_eval_router_sees_production_rendered_tool_result():
+    import eval_recall
+    from core.agent.tools import EMPTY_RESULT
+
+    llm = _TwoCallRouter("好", "好2")
+    eval_recall.run_eval_no_phase(SOURCE, "祈灼", CASES[:1],
+                                  _RagByQuery({"好": [0], "好2": [1]}), router_llm=llm)
+    tool_msgs = [m for m in llm.seen[-1][1] if m.get("role") == "tool"]
+    assert tool_msgs and all(EMPTY_RESULT not in m["content"] for m in tool_msgs)
+    assert FRAGMENTS[0] in tool_msgs[0]["content"]
+
+
+def test_multi_call_rate_counts_only_successful_calls():
+    import eval_recall
+    from core import recall_eval
+
+    rows = eval_recall.run_eval_no_phase(SOURCE, "祈灼", CASES[:1], _RagFailSecond({"好": [0]}),
+                                         router_llm=_TwoCallRouter("好", "坏"))
+    assert recall_eval.aggregate_suite({"书/祈灼": rows})["router_multi_call_rate"] == 0.0

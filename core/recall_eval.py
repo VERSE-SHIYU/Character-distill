@@ -153,9 +153,9 @@ def _router_stats(rows: list[dict]) -> dict:
         return {}
     n = len(routed)
     return {"router_call_rate": sum(1 for r in routed if r["router_called"]) / n,
-            # 一题调 ≥2 次场景检索的占比：并集计分时，这部分题的注入量可能超过单次预算
+            # 一题 ≥2 次场景检索真正注入的占比（按成功次数）：这部分题的注入量可能超过单次预算
             "router_multi_call_rate": sum(
-                1 for r in routed if r.get("router_scene_calls", 0) >= 2) / n}
+                1 for r in routed if r.get("router_scene_ok", 0) >= 2) / n}
 
 
 def _p95(values: list[int]) -> float | None:
