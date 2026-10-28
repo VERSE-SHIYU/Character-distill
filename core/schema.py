@@ -382,11 +382,15 @@ SourceStatus = Literal["hit", "empty", "failed", "timeout"]
 class SceneMeta(TypedDict):
     """scene 类来源的解释字段。
 
-    ``vector_rank`` 是它在向量召回候选池里的名次（0 起），也就是注入顺序 —— 场景按向量
-    顺序填块，没有另一个分数。``EvidenceItem.score`` 因此恒为 None（不编一个数）。
+    ``rerank_score`` 是 qwen3-rerank 给的相关度；``vector_rank`` 是它在向量召回候选池里
+    的名次（0 起）—— 两者并列才解释得了「为什么排在这里」。重排不可用时退回向量顺序：
+    此时 ``rerank_score`` 为 None，``vector_rank`` 仍是向量名次，读完即知这次没重排。
+
+    ``rerank_score`` 只在**本次查询内**可比，跨查询不可比（重排接口的分数尺度不承诺绝对）。
     """
     chapter: str | None       # 章节；今天无生产方（scene_indexer 只写 characters/scene_index），恒 None
     chunk_id: str | None      # 块标识，取 **chroma 返回的真 id**（如 scene_3），不取 metadata 影子副本
+    rerank_score: float | None  # 重排相关度；重排不可用时为 None
     vector_rank: int          # 向量召回候选池里的名次（0 起）
 
 
@@ -582,6 +586,7 @@ def parse_evidence(raw: Any) -> list[EvidenceSnapshot] | None:
 def scene_evidence(
     *,
     text: str,
+    rerank_score: float | None,
     vector_rank: int,
     chunk_id: str | None,
     chapter: str | None,
@@ -590,10 +595,11 @@ def scene_evidence(
     return EvidenceItem(
         kind="scene",
         text=text,
-        score=None,
+        score=rerank_score,
         meta=SceneMeta(
             chapter=chapter,
             chunk_id=chunk_id,
+            rerank_score=rerank_score,
             vector_rank=vector_rank,
         ),
     )

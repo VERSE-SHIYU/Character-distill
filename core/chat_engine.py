@@ -387,7 +387,7 @@ class ChatEngine:
         from core.agent.tools import AgentToolkit
         from core.agent.agent_loop import AgentLoop
 
-        toolkit = AgentToolkit(self._ctx_engine, current_mood=self._mood)
+        toolkit = AgentToolkit(self._ctx_engine, current_mood=self._mood, user_message=user_message)
         result = AgentLoop(self.llm, toolkit, storage=self._storage).run(system_prompt, llm_messages)
         set_current_attr("degraded", bool(result.degraded))
         if result.degraded:

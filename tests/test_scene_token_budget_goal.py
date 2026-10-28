@@ -6,8 +6,9 @@
 ② 块小的切法返回的块数多于块大的切法，两者 ``injected_tokens`` 都 ≤ 预算；
 ⑤ 评测判命中用的正是 ``scene_hits`` 返回的那组块（且 ``scene_hits`` 按预算取，不按条数）。
 
-「按向量顺序累计 ≤ 预算、下一块会超就停、第一块总收」由
-``tests/test_scene_vector_fill_goal.py`` 锁，不在这里重复。
+「按顺序累计 ≤ 预算、下一块会超就停、第一块总收」由
+``tests/test_scene_vector_fill_goal.py`` 锁，重排顺序由 ``tests/test_scene_rerank_goal.py`` 锁，
+不在这里重复。
 
 夹具带省略号、中文引号、换行 —— token 数用产品的 ``count_tokens`` 现算，不手填。
 """
@@ -59,7 +60,7 @@ def _engine(docs: list[str]):
     eng._chunk_size = 500
     eng._chunk_overlap = 50
     eng._top_k = 3
-    eng._embedding_key = "test-key"
+    eng._embedding_key = ""  # 无 key → 重排不可用、按向量顺序填块，不碰网络（本文件只测预算）
     eng._embedding_region = "cn"
     return eng
 
@@ -102,7 +103,7 @@ def test_eval_scores_exactly_the_blocks_scene_hits_returned(monkeypatch):
 
     source = "满月宴那天祈灼在廊下听见了那支曲子后来他独自去了后山没有告诉任何人"
     items = [
-        scene_evidence(text=t, vector_rank=i, chunk_id=f"c{i}", chapter=None)
+        scene_evidence(text=t, rerank_score=None, vector_rank=i, chunk_id=f"c{i}", chapter=None)
         for i, t in enumerate(["满月宴那天", "后来他独自", "没有告诉"])
     ]
     returned = EvidenceHits(items, injected_tokens=37)

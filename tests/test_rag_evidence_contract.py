@@ -1,14 +1,14 @@
 """Evidence 契约层：scene 结构化出口的 meta 键集与**取值来源**契约。
 
-召回第 2 轮**有意重写**本文件：``SceneMeta`` 从 ``semantic / emotion_affinity / final``
-改为只留 ``vector_rank``（删情绪排序，按向量顺序填块），旧的「两出口逐字节等价 +
-0.7/0.3 合成」不再是契约。保留下来的是两条与排序算法无关的锁：
+召回第 2 轮（rerank）**有意重写**本文件：``SceneMeta`` 从
+``semantic / emotion_affinity / final`` 改为 ``rerank_score / vector_rank``，旧的
+「两出口逐字节等价 + 0.7/0.3 合成」不再是契约。保留下来的是两条与排序算法无关的锁：
 
 - **(1) meta 取值来源**：键集对不代表取值对 —— ``chunk_id`` 必须取 chroma 的真 id，
   不取 metadata 里的影子副本；``chapter`` 今天无生产方，恒 None。
 - **(2) meta 键集契约**：由 TypedDict 声明、运行期强制，无第二份手维护清单。
 
-排序与填块（按向量顺序、2,500 token 预算）由 ``tests/test_scene_vector_fill_goal.py``
+排序本身（重排分数决定前 3、失败退回向量顺序）由 ``tests/test_scene_rerank_goal.py``
 锁，不在这里重复。
 
 为什么用假集合：本机（Windows）chroma 对**非空**集合 query 会段错误，真库跑不了。
@@ -56,7 +56,7 @@ class _ScriptedCollection:
 
 
 def _make_engine(collection) -> RAGEngine:
-    """不跑 __init__；没有 ``_embedding_key``；场景按向量顺序填块，不碰网络。"""
+    """不跑 __init__；没有 ``_embedding_key`` → 重排视为不可用，走向量顺序（不碰网络）。"""
     eng = object.__new__(RAGEngine)
     eng._client = None
     eng._embedding_function = None
@@ -108,15 +108,19 @@ class TestSceneMetaValueSources:
         assert all(e.meta["chapter"] is None for e in ex)
 
     def test_vector_rank_is_the_candidate_position(self):
-        """vector_rank 就是候选位次（0 起），与返回序一致。"""
+        """退回向量顺序时，vector_rank 就是候选位次（0 起），与返回序一致。"""
         ex = _ex(query_text="旧事", token_budget=SCENE_TOKEN_BUDGET)
         assert [e.meta["vector_rank"] for e in ex] == [0, 1, 2, 3]
 
-    def test_scene_has_no_score(self):
-        """场景按向量顺序填块，没有可比分数 → score 是 None，不许编一个数。"""
+    def test_fallback_has_no_rerank_score(self):
+        """重排不可用（本引擎无 key）→ rerank_score / score 都是 None，不许编一个数。"""
         ex = _ex(query_text="旧事", token_budget=SCENE_TOKEN_BUDGET)
-        assert ex
+        assert ex and ex.rerank_fallback is True
+        assert all(e.meta["rerank_score"] is None for e in ex)
         assert all(e.score is None for e in ex)
+        # 退回时 token 不编数；耗时照实记（已花的时间，可为 0）。
+        assert ex.rerank_tokens is None
+        assert isinstance(ex.rerank_ms, int) and ex.rerank_ms >= 0
 
 
 class TestMetaKeyContract:
@@ -128,7 +132,7 @@ class TestMetaKeyContract:
     @pytest.mark.parametrize("kind,cls", list(EVIDENCE_META.items()))
     def test_declared_keys_match_the_spec(self, kind, cls):
         expected = {
-            "scene": {"chapter", "chunk_id", "vector_rank"},
+            "scene": {"chapter", "chunk_id", "rerank_score", "vector_rank"},
             "memory": {"relevance", "importance", "age_seconds", "mood",
                        "emo_affinity", "final"},
             "web": {"url", "source", "fetched_at"},

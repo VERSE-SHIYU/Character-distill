@@ -11,6 +11,11 @@
 唯一出处）。某题检索失败（含查询嵌入超时）按聊天同样降级为空结果计分，记
 ``retrieval_failed``，不中止整套。
 
+``--via-router``：每题把 case 的 ``history`` + 当前句交给真实 ``AgentLoop`` + ``AgentToolkit``
+（LLM = 书目所属用户自己的 key），路由调 ``search_scenes`` 时用它的 query 检索（与聊天同一处
+组装检索词、同一工具时限）；路由不调 → 该题记未命中、``router_called=False``。路由的角色背景
+只给角色名 —— **本评测不覆盖角色 system prompt**。
+
 算与写分开：
 
 - 检索模式（服务器上跑）：把结果 JSON 打到 stdout；不写证据。
@@ -38,7 +43,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core import recall_eval, scene_retrieval  # noqa: E402
-from core.agent.tools import SCENE_TOOL_BUDGET_S  # noqa: E402
+from core.agent.agent_loop import AgentLoop  # noqa: E402
+from core.agent.tools import SCENE_TOOL_BUDGET_S, AgentToolkit  # noqa: E402
+from core.context_engine import RetrievalResult  # noqa: E402
 from core.arc_view import arc_view  # noqa: E402
 from core.embeddings import embed_deadline  # noqa: E402
 from core.quotes import normalize  # noqa: E402
@@ -192,13 +199,69 @@ def _scene_hits_in_chat_budget(rag, query: str, *, character_name, window):
             rag, query, character_name=character_name, window=window)
 
 
-def _score_query(rag, source_norm: str, case: dict, spans, *, character_name, window) -> dict:
+class _RouterCtx:
+    """评测用的 ContextEngine 替身：场景检索走聊天同一次 ``scene_hits``，记下返回的块；
+    记忆 / 联网恒空（本评测只量场景召回）。工具时限由真实 ``AgentToolkit.execute`` 开。"""
+
+    web_search_enabled = False
+
+    def __init__(self, rag, *, character_name, window):
+        self._rag = rag
+        self._character_name = character_name
+        self._window = window
+        self.hits = None
+        self.failure: CollectionUnusableError | None = None
+
+    def _retrieve_scenes_ex(self, query: str) -> RetrievalResult:
+        try:
+            hits = scene_retrieval.scene_hits(
+                self._rag, query, character_name=self._character_name, window=self._window)
+        except CollectionUnusableError as exc:
+            self.failure = exc
+            raise
+        if self.hits is None:  # 只计第一次场景检索
+            self.hits = hits
+        status = "hit" if hits else "empty"
+        return RetrievalResult(source="scene", block="", items=list(hits), status=status)
+
+    def _retrieve_memories_ex(self, query: str, current_mood=None) -> RetrievalResult:
+        return RetrievalResult(source="memory", block="", items=[], status="empty")
+
+    def _search_web_ex(self, query: str) -> RetrievalResult:
+        return RetrievalResult(source="web", block="", items=[], status="empty")
+
+
+def _score_via_router(rag, source_norm, case, spans, *, character_name, window, llm) -> dict:
+    """路由决定查不查、查什么：真实 ``AgentLoop`` + ``AgentToolkit``（与聊天同一组装、同一时限）。"""
+    ctx = _RouterCtx(rag, character_name=character_name, window=window)
+    toolkit = AgentToolkit(ctx, user_message=case["query"])
+    messages = list(case.get("history") or []) + [{"role": "user", "content": case["query"]}]
+    result = AgentLoop(llm, toolkit).run(character_name or "", messages)
+    calls = [s for s in result.steps if s["tool"] == "search_scenes"]
+    router_query = calls[0]["args"].get("query") if calls else None
+    if ctx.failure is not None:
+        logger.warning("评测题 %s 检索失败，按注入为空计分：%s", case.get("id"), ctx.failure)
+        row = recall_eval.failed_case(case)
+    else:
+        row = recall_eval.score_case(source_norm, case, ctx.hits or [], spans)
+    row["router_called"] = bool(calls)
+    row["router_query"] = router_query
+    return row
+
+
+def _score_query(rag, source_norm: str, case: dict, spans, *, character_name, window,
+                 router_llm=None) -> dict:
     """检索一题并计分；检索失败（含查询嵌入超时）与聊天同样降级为空结果，不中止整套。
 
     聊天侧 ``AgentToolkit.execute`` 把场景工具的异常收成 ``failed`` 态、空结果继续；
     检索本体的失败统一以 ``CollectionUnusableError`` 上抛（``RAGEngine._fetch_candidates``），
     这里只接这一类 —— 评测自身的错误照常抛出，不被当成「检索失败」吞掉。
+
+    ``router_llm`` 非空 → 走路由（``--via-router``）。
     """
+    if router_llm is not None:
+        return _score_via_router(rag, source_norm, case, spans, character_name=character_name,
+                                 window=window, llm=router_llm)
     try:
         hits = _scene_hits_in_chat_budget(
             rag, case["query"], character_name=character_name, window=window)
@@ -208,7 +271,8 @@ def _score_query(rag, source_norm: str, case: dict, spans, *, character_name, wi
     return recall_eval.score_case(source_norm, case, hits, spans)
 
 
-def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
+def run_eval(source: str, card: CharacterCard, cases: list[dict], rag, *,
+             router_llm=None) -> dict:
     """先自检标注，再逐条检索；任何检索前失败都不花一次嵌入调用。"""
     source_norm = normalize(source)
     views = {case["phase"]: arc_view(card, case["phase"]) for case in cases}
@@ -220,11 +284,13 @@ def run_eval(source: str, card: CharacterCard, cases: list[dict], rag) -> dict:
     for case in cases:
         rows.append(_score_query(
             rag, source_norm, case, spans,
-            character_name=card.name, window=views[case["phase"]].window))
+            character_name=card.name, window=views[case["phase"]].window,
+            router_llm=router_llm))
     return recall_eval.aggregate(rows)
 
 
-def run_eval_no_phase(source: str, character: str, cases: list[dict], rag) -> list[dict]:
+def run_eval_no_phase(source: str, character: str, cases: list[dict], rag, *,
+                      router_llm=None) -> list[dict]:
     """没有卡的书：窗口恒 None，`phase` 必须为 null（`suite.json` 的生成题）。"""
     for case in cases:
         if case.get("phase") is not None:
@@ -235,7 +301,8 @@ def run_eval_no_phase(source: str, character: str, cases: list[dict], rag) -> li
     rows = []
     for case in cases:
         rows.append(_score_query(
-            rag, source_norm, case, spans, character_name=character, window=None))
+            rag, source_norm, case, spans, character_name=character, window=None,
+            router_llm=router_llm))
     return rows
 
 
@@ -250,7 +317,8 @@ def eval_card_id(text_id: str, slot: str, scheme: ChunkScheme | None) -> str:
     return f"eval_r1_{scheme.mode}-{scheme.chars}-{scheme.overlap}_{text_id}_{slot}"
 
 
-def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None) -> dict:
+def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None, *,
+              router_llm=None) -> dict:
     """一次跑完书目。无卡行建场景集合（n 只数无卡行）再走会话检索。
 
     不传 ``scheme``：有卡行照旧读线上卡集合（0e 基线的跑法）。传了：有卡行也按该切法建
@@ -274,7 +342,8 @@ def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None) -> 
                 embedding_key=book.embedding_key, embedding_region=book.embedding_region)
             if rag is None:
                 raise EvalAbort(f"无法建立会话检索：{book.title}/{book.character}")
-            rows = run_eval(book.source, book.card, cases, rag)["per_query"]
+            rows = run_eval(book.source, book.card, cases, rag,
+                            router_llm=router_llm)["per_query"]
         else:
             # n 只数无卡行：有卡行不占编号。
             per_text[book.text_id] = per_text.get(book.text_id, 0) + 1
@@ -287,7 +356,8 @@ def run_suite(books: list[Book], service, scheme: ChunkScheme | None = None) -> 
                 embedding_key=book.embedding_key, embedding_region=book.embedding_region)
             if rag is None:
                 raise EvalAbort(f"无法建立会话检索：{book.title}/{book.character}")
-            rows = run_eval_no_phase(book.source, book.character, cases, rag)
+            rows = run_eval_no_phase(book.source, book.character, cases, rag,
+                                     router_llm=router_llm)
         rows_by_book[f"{book.title}/{book.character}"] = rows
     return recall_eval.aggregate_suite(rows_by_book)
 
@@ -339,7 +409,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--suite", help="书目 JSON（每行一本书里的一个角色）")
     parser.add_argument("--chunk-scheme", dest="chunk_scheme", type=_chunk_scheme_arg,
                         help="只配 --suite：按切法 mode:chars:overlap 建 eval 变体集合")
+    parser.add_argument("--via-router", dest="via_router", action="store_true",
+                        help="每题经真实路由（AgentLoop）决定是否检索、检索什么；"
+                             "LLM 用书目所属用户自己的 key（会花 LLM 调用）")
     args = parser.parse_args(argv)
+    if args.via_router and args.from_json:
+        parser.error("--via-router 不用于 --from-json")
     if args.chunk_scheme and not args.suite:
         parser.error("--chunk-scheme 只用于 --suite")
     if args.suite:
@@ -358,6 +433,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+async def _router_llm(storage, user_id: str):
+    """路由用的 LLM：书目所属用户自己的 key（同 ``scripts/recall_questions.py``）。"""
+    from web.deps import get_user_llm
+
+    llm = await get_user_llm(user_id, storage)
+    if llm is None:
+        raise EvalAbort("该用户没有自己的 LLM key（模型关只走用户自己的 key）")
+    return llm
+
+
 async def _main(args: argparse.Namespace) -> None:
     if args.from_json:
         write_from_json(args.from_json, args.evidence_id)
@@ -369,7 +454,14 @@ async def _main(args: argparse.Namespace) -> None:
         storage = get_storage()
         try:
             books = [await load_book(storage, entry) for entry in load_suite(args.suite)]
-            result = run_suite(books, get_indexing_service(), scheme=args.chunk_scheme)
+            router_llm = None
+            if args.via_router:
+                user_ids = sorted({book.user_id for book in books})
+                if len(user_ids) != 1:
+                    raise EvalAbort(f"书目跨多个用户：{user_ids}（本次只取一个用户的 key）")
+                router_llm = await _router_llm(storage, user_ids[0])
+            result = run_suite(books, get_indexing_service(), scheme=args.chunk_scheme,
+                               router_llm=router_llm)
             print(json.dumps(result, ensure_ascii=False, indent=2))
         finally:
             await storage.close()
@@ -389,7 +481,8 @@ async def _main(args: argparse.Namespace) -> None:
         if rag is None:
             raise EvalAbort("无法建立会话检索（原文为空或没有 embedding key）")
 
-        result = run_eval(loaded.source, loaded.card, cases, rag)
+        router_llm = await _router_llm(storage, args.user_id) if args.via_router else None
+        result = run_eval(loaded.source, loaded.card, cases, rag, router_llm=router_llm)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     finally:
         await storage.close()

@@ -93,7 +93,11 @@ _SCENE_SCHEMA: dict[str, Any] = {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "搜索关键词，用中文描述当前话题涉及的角色经历或情节。",
+                    "description": (
+                        "用中文写成不依赖上文的独立问题：只把代词、省略替换为上文所指，"
+                        "不添加原话没有的内容；对方改口时，把上一问套到纠正后的对象，"
+                        "不提被否定的对象。"
+                    ),
                 }
             },
             "required": ["query"],
@@ -138,6 +142,21 @@ _WEB_SCHEMA: dict[str, Any] = {
 }
 
 
+def scene_query(user_message: str | None, router_query: str) -> str:
+    """场景检索词的**唯一**组装处：``原句 | 路由改写``。
+
+    依据 2606.28352 表 2：「最后一句 | 改写」拼接 nDCG@5 0.4150，与只用改写 0.4144 持平、
+    且保住原句字面。改写与原句相同或为空 → 只用原句；没有原句（MCP 等无会话入口）→ 只用改写。
+    """
+    user = (user_message or "").strip()
+    rewrite = (router_query or "").strip()
+    if not user:
+        return rewrite
+    if not rewrite or rewrite == user:
+        return user
+    return f"{user} | {rewrite}"
+
+
 class _ToolEntry(NamedTuple):
     """工具表的一行：schema + handler + 超时预算 + 来源词汇 + 是否绑联网开关。
 
@@ -171,9 +190,13 @@ class AgentToolkit:
     MEMORY_TIMEOUT = 5
     WEB_TIMEOUT = 15
 
-    def __init__(self, ctx_engine, current_mood: str | None = None) -> None:
+    def __init__(
+        self, ctx_engine, current_mood: str | None = None, user_message: str | None = None,
+    ) -> None:
         self._ctx = ctx_engine
         self.current_mood = current_mood
+        # 用户这一轮的原句：场景检索词由它与路由改写的 query 组装（``scene_query``）。
+        self.user_message = user_message
 
     def _table(self) -> tuple[_ToolEntry, ...]:
         """三路工具的**唯一**一张表：schema / handler / 超时 / 来源 / 可用性各一行。"""
@@ -193,7 +216,7 @@ class AgentToolkit:
         return [e.schema for e in self._available()]
 
     def _call_search_scenes(self, query: str) -> "RetrievalResult":
-        return self._ctx._retrieve_scenes_ex(query)
+        return self._ctx._retrieve_scenes_ex(scene_query(self.user_message, query))
 
     def _call_search_memory(self, query: str) -> "RetrievalResult":
         return self._ctx._retrieve_memories_ex(query, current_mood=self.current_mood)

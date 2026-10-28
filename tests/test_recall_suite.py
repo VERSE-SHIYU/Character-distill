@@ -201,7 +201,7 @@ def test_card_row_builds_eval_collection_in_variant_mode(tmp_path, monkeypatch):
     service = _Service()
     seen = []
     monkeypatch.setattr(eval_recall, "run_eval",
-                        lambda source, c, cases, rag: seen.append((c, rag)) or {"per_query": []})
+                        lambda source, c, cases, rag, **k: seen.append((c, rag)) or {"per_query": []})
     scheme = ChunkScheme(mode="para", chars=300, overlap=0)
 
     run_suite(books, service, scheme=scheme)

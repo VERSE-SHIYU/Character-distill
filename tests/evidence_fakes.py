@@ -244,7 +244,7 @@ def make_item(source: str, text: str = "片段") -> EvidenceItem:
     """
     if source == "scene":
         return scene_evidence(
-            text=text, vector_rank=0,
+            text=text, rerank_score=0.5, vector_rank=0,
             chunk_id="fake_0", chapter=None,
         )
     if source == "memory":

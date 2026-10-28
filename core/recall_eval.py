@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import statistics
 from typing import Any, Iterable, Mapping
 
 from core.quotes import (
@@ -100,6 +101,9 @@ def score_case(
     return {"id": case.get("id"), "hit": hit, "leak": leak,
             # top3_chunk_ids 沿用旧名，含义 = 注入的块（按 token 预算填，块数不定）。
             "unlocated": unlocated, "top3_chunk_ids": chunk_ids,
+            "rerank_fallback": bool(getattr(hits, "rerank_fallback", False)),
+            "rerank_ms": getattr(hits, "rerank_ms", None),
+            "rerank_tokens": getattr(hits, "rerank_tokens", None),
             "injected_tokens": getattr(hits, "injected_tokens", None),
             "retrieval_failed": False}
 
@@ -108,6 +112,7 @@ def failed_case(case: Mapping[str, Any]) -> dict:
     """检索失败的一题：按「注入为空」计分（聊天同样降级为空结果），并记 ``retrieval_failed``。"""
     return {"id": case.get("id"), "hit": False, "leak": False,
             "unlocated": 0, "top3_chunk_ids": [],
+            "rerank_fallback": False, "rerank_ms": None, "rerank_tokens": None,
             "injected_tokens": 0, "retrieval_failed": True}
 
 
@@ -129,5 +134,30 @@ def aggregate_suite(rows_by_book: Mapping[str, Iterable[dict]]) -> dict:
     by_book = {book: aggregate(rows) for book, rows in rows_by_book.items()}
     all_rows = [r for rows in rows_by_book.values() for r in rows]
     overall = aggregate(all_rows)
+    fallbacks = sum(1 for r in all_rows if r.get("rerank_fallback"))
+    latencies = sorted(r["rerank_ms"] for r in all_rows if r.get("rerank_ms") is not None)
+    tokens = [r["rerank_tokens"] for r in all_rows if r.get("rerank_tokens") is not None]
     return {"by_book": by_book, "overall": overall,
-            "retrieval_failed": overall["retrieval_failed"]}
+            "retrieval_failed": overall["retrieval_failed"],
+            "rerank_fallbacks": fallbacks,
+            "rerank_ms_p50": statistics.median(latencies) if latencies else None,
+            "rerank_ms_p95": _p95(latencies),
+            "rerank_tokens_total": sum(tokens) if tokens else None,
+            **_router_stats(all_rows)}
+
+
+def _router_stats(rows: list[dict]) -> dict:
+    """``--via-router`` 的行带 ``router_called``：报路由调场景检索的题占比；不走路由的行没有此键。"""
+    routed = [r for r in rows if "router_called" in r]
+    if not routed:
+        return {}
+    return {"router_call_rate": sum(1 for r in routed if r["router_called"]) / len(routed)}
+
+
+def _p95(values: list[int]) -> float | None:
+    """线性插值 p95（``statistics.quantiles`` inclusive）；单个值即其本身，无值 None。"""
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    return statistics.quantiles(values, n=20, method="inclusive")[-1]
