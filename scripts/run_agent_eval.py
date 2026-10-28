@@ -397,7 +397,7 @@ async def _run_agent(
         engine._attach_turn_blocks(llm_messages)
 
         # Step 2: AgentLoop 决策
-        toolkit = AgentToolkit(engine._ctx_engine, current_mood=engine._mood)
+        toolkit = AgentToolkit(engine._ctx_engine, current_mood=engine._mood, user_message=msg)
         loop_result = AgentLoop(llm, toolkit).run(system_prompt, llm_messages)
         if loop_result.degraded:
             sp_tokens = sp_tokens_before
