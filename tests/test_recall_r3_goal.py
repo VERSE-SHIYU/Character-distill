@@ -147,12 +147,9 @@ def client_double(monkeypatch):
 
     _ClientDouble.created = 0
     monkeypatch.setattr(reranker.httpx, "Client", _ClientDouble)
-    # 进程级缓存清空：别的用例建过的真客户端不许混进来。
-    monkeypatch.setattr(reranker, "_CLIENTS", {}, raising=False)
     return _ClientDouble
 
 
-@GOAL
 def test_two_reranks_open_one_connection(client_double):
     from core import reranker
 
@@ -161,7 +158,6 @@ def test_two_reranks_open_one_connection(client_double):
     assert client_double.created == 1
 
 
-@GOAL
 def test_keys_share_region_client_with_their_own_headers(client_double):
     from core import reranker
 
@@ -202,7 +198,6 @@ def _engine(n: int):
     return eng
 
 
-@GOAL
 def test_rerank_without_deadline_room_falls_back_to_vector_order(client_double):
     with embed_deadline(time.monotonic() + 0.05):
         hits = _engine(5).query_scenes("q", token_budget=10**6)

@@ -117,6 +117,15 @@ def _jwt_secret_for_tests(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_rerank_clients(monkeypatch):
+    """``core.reranker._CLIENTS`` 是进程级的按地域长期客户端缓存。用例里替换
+    ``httpx.Client`` 后建出的替身会被缓存，不隔离就会漏进后面的用例（后者以为发了真请求）。
+    每个用例拿一份空缓存。"""
+    from core import reranker
+    monkeypatch.setattr(reranker, "_CLIENTS", {})
+
+
+@pytest.fixture(autouse=True)
 def _isolate_rate_limiter():
     """web/limiter.py 的 limiter 是进程级单例，用 memory 存储，按 client IP 计数；所有 TestClient
     都是同一个 IP「testclient」。不清空的话，全量跑时各用例共用一个桶，会互相顶成 429。
