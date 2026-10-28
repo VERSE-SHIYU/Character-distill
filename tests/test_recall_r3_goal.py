@@ -269,12 +269,15 @@ def test_eval_via_router():
     assert "祈灼" in llm.seen[0][0]
     # 检索用路由的 query（经 ① 与原句拼接）
     assert rag.queries == [f"{USER} | {ROUTER_Q}"]
-    assert rows[0]["router_called"] is True and rows[0]["router_query"] == ROUTER_Q
+    assert rows[0]["router_called"] is True and rows[0]["router_query"] == [ROUTER_Q]
+    assert rows[0]["router_scene_calls"] == 1
     assert rows[0]["hit"] is True
     # 不调路由 → 未命中
-    assert rows[1]["router_called"] is False and rows[1]["router_query"] is None
+    assert rows[1]["router_called"] is False and rows[1]["router_query"] == []
+    assert rows[1]["router_scene_calls"] == 0
     assert rows[1]["hit"] is False
-    assert recall_eval.aggregate_suite({"书/祈灼": rows})["router_call_rate"] == 0.5
+    agg = recall_eval.aggregate_suite({"书/祈灼": rows})
+    assert agg["router_call_rate"] == 0.5 and agg["router_multi_call_rate"] == 0.0
 
 
 def test_eval_without_router_has_no_router_fields():
@@ -282,3 +285,128 @@ def test_eval_without_router_has_no_router_fields():
 
     rows = eval_recall.run_eval_no_phase(SOURCE, "祈灼", CASES, _Rag())
     assert all("router_called" not in r and "router_query" not in r for r in rows)
+
+
+# ⑤b 一题多次 search_scenes：生产把每次成功结果都注入（agent_loop 的 retrieved），计分取并集。
+
+class _RagByQuery(_Rag):
+    """按检索词返回不同的块；``plan`` 把检索词里的路由改写映射到块序号列表。"""
+
+    def __init__(self, plan: dict[str, list[int]]):
+        super().__init__()
+        self.plan = plan
+
+    def query_scenes(self, query, **kw):
+        self.queries.append(query)
+        idx = next(v for k, v in self.plan.items() if query.endswith(k))
+        items = [SimpleNamespace(text=FRAGMENTS[i], meta={"chunk_id": f"c{i}"}) for i in idx]
+        return EvidenceHits(items, injected_tokens=10 * len(items))
+
+
+class _TwoCallRouter(_RouterLLM):
+    """第 1 步查 Q1，第 2 步查 Q2，第 3 步不再调工具。"""
+
+    def __init__(self, q1, q2):
+        super().__init__()
+        self.plan = [q1, q2]
+
+    def chat_with_tools(self, system_prompt, messages, schemas):
+        self.seen.append((system_prompt, list(messages)))
+        if self.plan:
+            return SimpleNamespace(content="", tool_calls=[
+                _Call("search_scenes", {"query": self.plan.pop(0)})])
+        return SimpleNamespace(content="", tool_calls=None)
+
+
+def test_eval_via_router_scores_union_of_all_scene_calls():
+    import eval_recall
+    from core import recall_eval
+
+    # 第一次只取到无关块 c1，第二次取到答案块 c0 → 该题命中
+    rag = _RagByQuery({"查偏": [1], "查对": [0]})
+    rows = eval_recall.run_eval_no_phase(SOURCE, "祈灼", CASES[:1], rag,
+                                         router_llm=_TwoCallRouter("查偏", "查对"))
+    row = rows[0]
+    assert row["hit"] is True
+    assert row["router_scene_calls"] == 2
+    assert row["router_query"] == ["查偏", "查对"]
+    assert row["top3_chunk_ids"] == ["c1", "c0"]
+    assert row["injected_tokens"] == 20
+    assert recall_eval.aggregate_suite({"书/祈灼": rows})["router_multi_call_rate"] == 1.0
+
+
+def test_eval_via_router_union_dedups_same_chunk():
+    import eval_recall
+
+    rag = _RagByQuery({"甲": [0], "乙": [0, 1]})
+    rows = eval_recall.run_eval_no_phase(SOURCE, "祈灼", CASES[:1], rag,
+                                         router_llm=_TwoCallRouter("甲", "乙"))
+    assert rows[0]["top3_chunk_ids"] == ["c0", "c1"]
+    # 生产里两次结果各自注入，重复块也各算一次
+    assert rows[0]["injected_tokens"] == 30
+
+
+def test_session_paths_pass_user_sentence_to_toolkit():
+    """有用户原句的入口（聊天、复刻聊天的 agent 评测）都要把原句交给 ``AgentToolkit``，
+    检索词才会是 ``原句 | 改写``。MCP 是无会话通道、没有原句，按设计不传。"""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for rel in ("core/chat_engine.py", "scripts/run_agent_eval.py"):
+        calls = re.findall(r"AgentToolkit\(([^)]*)\)", (root / rel).read_text(encoding="utf-8"))
+        assert calls, rel
+        assert all("user_message=" in c for c in calls), (rel, calls)
+
+
+
+# ⑤c 评测保真：单次检索失败只影响那一次；路由收到的工具结果与生产同一渲染（不是「未找到」）。
+
+class _RagFailSecond(_RagByQuery):
+    def query_scenes(self, query, **kw):
+        if query.endswith("坏"):
+            self.queries.append(query)
+            from core.rag import CollectionUnusableError
+            raise CollectionUnusableError("embed timeout")
+        return super().query_scenes(query, **kw)
+
+
+def test_eval_via_router_one_failed_call_keeps_successful_ones():
+    import eval_recall
+
+    rag = _RagFailSecond({"好": [0]})
+    rows = eval_recall.run_eval_no_phase(SOURCE, "祈灼", CASES[:1], rag,
+                                         router_llm=_TwoCallRouter("好", "坏"))
+    row = rows[0]
+    assert row["hit"] is True and not row.get("retrieval_failed")
+    assert (row["router_scene_calls"], row["router_scene_ok"], row["router_scene_failed"]) == (2, 1, 1)
+
+
+def test_eval_via_router_all_calls_failed_is_retrieval_failed():
+    import eval_recall
+
+    rows = eval_recall.run_eval_no_phase(SOURCE, "祈灼", CASES[:1], _RagFailSecond({}),
+                                         router_llm=_TwoCallRouter("坏", "又坏"))
+    assert rows[0]["retrieval_failed"] is True and rows[0]["router_scene_ok"] == 0
+    assert rows[0]["router_scene_failed"] == 2
+
+
+def test_eval_router_sees_production_rendered_tool_result():
+    import eval_recall
+    from core.agent.tools import EMPTY_RESULT
+
+    llm = _TwoCallRouter("好", "好2")
+    eval_recall.run_eval_no_phase(SOURCE, "祈灼", CASES[:1],
+                                  _RagByQuery({"好": [0], "好2": [1]}), router_llm=llm)
+    tool_msgs = [m for m in llm.seen[-1][1] if m.get("role") == "tool"]
+    assert tool_msgs and all(EMPTY_RESULT not in m["content"] for m in tool_msgs)
+    assert FRAGMENTS[0] in tool_msgs[0]["content"]
+
+
+def test_multi_call_rate_counts_only_successful_calls():
+    import eval_recall
+    from core import recall_eval
+
+    rows = eval_recall.run_eval_no_phase(SOURCE, "祈灼", CASES[:1], _RagFailSecond({"好": [0]}),
+                                         router_llm=_TwoCallRouter("好", "坏"))
+    assert recall_eval.aggregate_suite({"书/祈灼": rows})["router_multi_call_rate"] == 0.0
