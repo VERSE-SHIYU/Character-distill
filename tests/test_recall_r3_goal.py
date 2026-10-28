@@ -37,8 +37,6 @@ from core.context_engine import RetrievalResult  # noqa: E402
 from core.embeddings import embed_deadline  # noqa: E402
 from core.rag import EvidenceHits  # noqa: E402
 
-GOAL = pytest.mark.xfail(strict=True, reason="目标检查先红：第 3 轮未实现")
-
 USER = "他那次为什么没来？"
 ROUTER_Q = "祈灼满月宴那次为什么没来？"
 
@@ -259,7 +257,6 @@ class _RouterLLM:
         return SimpleNamespace(content="", tool_calls=None)
 
 
-@GOAL
 def test_eval_via_router():
     import eval_recall
     from core import recall_eval

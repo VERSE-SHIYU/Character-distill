@@ -142,7 +142,16 @@ def aggregate_suite(rows_by_book: Mapping[str, Iterable[dict]]) -> dict:
             "rerank_fallbacks": fallbacks,
             "rerank_ms_p50": statistics.median(latencies) if latencies else None,
             "rerank_ms_p95": _p95(latencies),
-            "rerank_tokens_total": sum(tokens) if tokens else None}
+            "rerank_tokens_total": sum(tokens) if tokens else None,
+            **_router_stats(all_rows)}
+
+
+def _router_stats(rows: list[dict]) -> dict:
+    """``--via-router`` 的行带 ``router_called``：报路由调场景检索的题占比；不走路由的行没有此键。"""
+    routed = [r for r in rows if "router_called" in r]
+    if not routed:
+        return {}
+    return {"router_call_rate": sum(1 for r in routed if r["router_called"]) / len(routed)}
 
 
 def _p95(values: list[int]) -> float | None:
