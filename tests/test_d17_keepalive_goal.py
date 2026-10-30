@@ -37,7 +37,6 @@ def _has_so_keepalive(options) -> bool:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="D17 未实现：core.http_keepalive 尚不存在")
 def test_embedding_pool_keepalive_and_socket_options():
     from core.http_keepalive import EMBED_KEEPALIVE_S
 
@@ -52,7 +51,6 @@ def test_with_options_shares_underlying_httpx_client():
     assert emb._client_no_retry._client is emb._client._client
 
 
-@pytest.mark.xfail(strict=True, reason="D17 未实现：core.http_keepalive 尚不存在")
 def test_rerank_pool_keepalive_and_socket_options():
     from core.http_keepalive import EMBED_KEEPALIVE_S
 
@@ -109,7 +107,6 @@ class _EmbeddingHandler(BaseHTTPRequestHandler):
         pass
 
 
-@pytest.mark.xfail(strict=True, reason="D17 未实现：keepalive_expiry=5 s，6 s 后必须重连")
 def test_two_requests_six_seconds_apart_reuse_one_tcp_connection(monkeypatch):
     monkeypatch.setattr(la, "_call_guard", None, raising=False)
     server = _CountingServer(("127.0.0.1", 0), _EmbeddingHandler)
@@ -130,7 +127,6 @@ def test_two_requests_six_seconds_apart_reuse_one_tcp_connection(monkeypatch):
         server.server_close()
 
 
-@pytest.mark.xfail(strict=True, reason="D17 未实现：core.http_keepalive 尚不存在")
 def test_keepalive_env_override(monkeypatch):
     from core.http_keepalive import _keepalive_from_env
 

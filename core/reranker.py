@@ -23,6 +23,7 @@ from core.embeddings import (
     _EMBED_MIN_S,
     current_embed_deadline,
 )
+from core.http_keepalive import EMBED_KEEPALIVE_S, KEEPALIVE_SOCKET_OPTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,8 @@ _RERANK_PATH = "/api/v1/services/rerank/text-rerank/text-rerank"
 
 
 # 按地域缓存的长期客户端（httpx 连接池复用）。每次新建 Client 要重新握手：D15 实测建连
-# p50 684 ms，复用后 50 块重排 p50 878 ms / p95 1,363 ms。httpx.Client 可跨线程共享
+# p50 684 ms；复用连接池省掉这次建连（D15b 已复现不了 878 ms 的复用后总延迟，不再引用
+# 那组数）。httpx.Client 可跨线程共享
 # （httpx 0.28.1 ``Client`` docstring「It can be shared between threads」；httpcore 连接池
 # 状态在 ThreadLock 内变更）。key 不进客户端：请求头按次传，不同用户共用同一地域的池。
 # 超时也按次传（``post(timeout=)``），deadline 逻辑不变。同嵌入 ``core/embeddings.py``
@@ -48,7 +50,19 @@ def _client(region: str) -> httpx.Client:
     with _CLIENTS_LOCK:
         client = _CLIENTS.get(region)
         if client is None:
-            client = httpx.Client(timeout=_EMBED_ATTEMPT_S)
+            # 传 transport 后 Client 级 limits 不生效（httpx _client.py:728），
+            # 保活与 socket 选项必须放进 HTTPTransport；环境代理同时被关掉（:685）。
+            client = httpx.Client(
+                timeout=_EMBED_ATTEMPT_S,
+                transport=httpx.HTTPTransport(
+                    limits=httpx.Limits(
+                        max_connections=100,
+                        max_keepalive_connections=20,
+                        keepalive_expiry=EMBED_KEEPALIVE_S,
+                    ),
+                    socket_options=KEEPALIVE_SOCKET_OPTIONS,
+                ),
+            )
             _CLIENTS[region] = client
         return client
 

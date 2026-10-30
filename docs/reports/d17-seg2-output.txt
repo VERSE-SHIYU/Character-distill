@@ -1,0 +1,678 @@
+========================================================================
+D17 seg2 — 原始输出归档
+base: 81f02b80 (origin/main)
+branch: fix/d17-keepalive
+generated: 2026-10-30T01:31:48Z
+worktree HEAD: 096ba2c96248587215a3da938add1fbb91a49029
+========================================================================
+
+## 0. 环境与版本
+
+$ git rev-parse 81f02b8
+81f02b806897630a0fabaebbd4f217885f6b885b
+
+$ grep -nE "^(openai|httpx|httpx2)==" requirements.txt
+124:httpx==0.28.1
+131:httpx2==2.13.0
+189:openai==3.13.0
+
+$ python - <<PY (versions)
+openai 3.13.0
+httpx 0.28.1
+httpx2 2.13.0
+httpcore 1.0.9
+httpcore2 2.13.0
+anthropic: not installed in this venv
+
+## 1. S0 — 仓库代码逐条复核（81f02b8）
+
+### core/embeddings.py:50-60（_EMBED_ATTEMPT_S 写法）
+$ git show 81f02b8:core/embeddings.py | sed -n "50,60p"
+
+# ── D2 bounded 单次调用上限组 ──────────────────────────────────
+# ceiling 8.0 = 旧 client timeout 默认值（保留非工具路径 ~24s 上限）；env 可覆盖，默认不变。
+# margin/min 只服务 bounded 循环收尾：剩余不足撑一次有效 attempt 则拒发，不做会把
+# timeout=0/负 变成 no-timeout 假请求的死亡窗 create。
+_EMBED_ATTEMPT_S = max(float(os.getenv("EMBED_ATTEMPT_S", "8.0")), 0.1)
+_EMBED_MARGIN_S = 0.1
+_EMBED_MIN_S = 0.1
+_EMBED_WINDOW_S = _EMBED_MARGIN_S + _EMBED_MIN_S
+_EMBED_ATTEMPTS = 3  # bounded 路径总尝试上限（对齐旧 SDK max_retries=2 → ≤3 次 HTTP）
+
+
+### core/embeddings.py:220-240（EMBEDDING_BASE_URL / OpenAI / with_options）
+$ git show 81f02b8:core/embeddings.py | sed -n "220,240p"
+        dimensions: int = 1024,
+    ):
+        from openai import OpenAI
+
+        # EMBEDDING_BASE_URL 覆盖（②④ Step 2：本地压测剥离 DashScope 网络延迟）；
+        # 未设置时取 DASHSCOPE_BASE_URLS，与改前内联的那两个字面量逐字节一致。
+        base_url = os.environ.get("EMBEDDING_BASE_URL") or DASHSCOPE_BASE_URLS[region]
+        # 门的判定对象是**这个生效的** URL（含上面的 env 覆盖），与 LLM 侧判用户配置里
+        # 那个 base_url 同一口径：判的是真出门的东西，不是「本该是什么」。
+        self._base_url = base_url
+        self._client = OpenAI(
+            api_key=api_key, base_url=base_url, timeout=8.0, max_retries=2
+        )
+        # D2：bounded 路径用 max_retries=0 克隆 —— SDK 内部重试会复用同一 per-request
+        # timeout（挂死=3×timeout，严格吃不到 deadline），必须撤掉黑盒重试，改由
+        # _call_api 自己做受 deadline 约束的显式重试。with_options 共享同一 httpx 连接池。
+        self._client_no_retry = self._client.with_options(max_retries=0)
+        self._model = model
+        self._dimensions = dimensions
+
+    MAX_BATCH = 10  # 百炼 text-embedding-v4 单次最多 10 条
+
+### core/embeddings.py:430-446（按地域 + key 指纹缓存）
+$ git show 81f02b8:core/embeddings.py | sed -n "430,446p"
+
+# 没配向量检索 key 时给用户的唯一提示语（嵌入函数构造处与 /reindex 共用）。
+EMBEDDING_KEY_REQUIRED = "请先在设置页配置阿里云百炼 API Key，配置后才能使用向量检索"
+
+
+def create_safe_embedding_fn(
+    api_key: str = "",
+    region: str = "cn",
+) -> EmbeddingFunction:
+    """Create a DashScope embedding function. Requires api_key to be configured."""
+    if not api_key:
+        raise RuntimeError(EMBEDDING_KEY_REQUIRED)
+    cache_key = f"dashscope:{region}:{key_fingerprint(api_key)}"
+    if cache_key not in _cache:
+        _cache[cache_key] = DashScopeEmbedding(api_key, region)
+    return _cache[cache_key]
+
+
+### core/reranker.py:30-55（长期客户端 / :51）
+$ git show 81f02b8:core/reranker.py | sed -n "30,55p"
+_RERANK_PATH = "/api/v1/services/rerank/text-rerank/text-rerank"
+
+
+# 按地域缓存的长期客户端（httpx 连接池复用）。每次新建 Client 要重新握手：D15 实测建连
+# p50 684 ms，复用后 50 块重排 p50 878 ms / p95 1,363 ms。httpx.Client 可跨线程共享
+# （httpx 0.28.1 ``Client`` docstring「It can be shared between threads」；httpcore 连接池
+# 状态在 ThreadLock 内变更）。key 不进客户端：请求头按次传，不同用户共用同一地域的池。
+# 超时也按次传（``post(timeout=)``），deadline 逻辑不变。同嵌入 ``core/embeddings.py``
+# 构造期建一次 OpenAI 客户端、``with_options`` 共享连接池的做法。
+_CLIENTS: dict[str, httpx.Client] = {}
+_CLIENTS_LOCK = threading.Lock()
+
+
+def _client(region: str) -> httpx.Client:
+    """该地域的长期客户端：惰性创建，进程内复用。"""
+    client = _CLIENTS.get(region)
+    if client is not None:
+        return client
+    with _CLIENTS_LOCK:
+        client = _CLIENTS.get(region)
+        if client is None:
+            client = httpx.Client(timeout=_EMBED_ATTEMPT_S)
+            _CLIENTS[region] = client
+        return client
+
+
+
+### core/memory_manager.py:300-332（用户记忆视图缓存；提示词写 :303-330，实际 :302-329）
+$ git show 81f02b8:core/memory_manager.py | sed -n "300,332p"
+        from core.embeddings import Mem0BridgeEmbedder
+        from core.fingerprint import key_fingerprint
+
+        cache_key = (
+            f"{user_id}:{llm.credential_fingerprint()}:"
+            f"{key_fingerprint(embedding_key)}:{embedding_region}"
+        )
+        with self._lock:
+            view = self._views.get(cache_key)
+            if view is not None:
+                return view
+            extractor = llm.derive(
+                # 本地压测把提炼导到 mock（tests/perf/e2e_otel.py）；未设置沿用用户自己的地址。
+                base_url=os.environ.get("MEM0_LLM_BASE_URL") or None,
+                temperature=_EXTRACT_TEMPERATURE,
+                presence_penalty=_EXTRACT_PRESENCE_PENALTY,
+                top_p=_EXTRACT_TOP_P,
+            )
+            from core.mem0_llm import AdapterLLM
+
+            embedder = Mem0BridgeEmbedder(
+                api_key=embedding_key,
+                region=embedding_region,
+                model="text-embedding-v4",
+                dimensions=1024,
+            )
+            mem = self._build(llm=AdapterLLM(extractor), llm_key=_UNUSED_KEY,
+                              embedder=embedder, embed_key=_UNUSED_KEY)
+            view = MemoryView(mem, self._search_top_k, self._context_window)
+            self._views[cache_key] = view
+            logger.info("Mem0 view built for user_id=%s (LLM: %s)", user_id, extractor.model)
+            return view
+
+
+### tests/test_embeddings.py:80-100（EMBEDDING_BASE_URL 用法 / :96-97 按实例替 _client）
+$ git show 81f02b8:tests/test_embeddings.py | sed -n "80,100p"
+        import adapters.llm_adapter as la
+
+        override = "http://mock-embed.invalid:9/v1"
+        monkeypatch.setenv("EMBEDDING_BASE_URL", override)
+        verdict: dict = {"fn": lambda url: None}
+        monkeypatch.setattr(la, "_call_guard", lambda url: verdict["fn"](url))
+
+        emb = DashScopeEmbedding(api_key="test_key")
+        assert emb(["放行时真出站"])  # 正控：守卫放行时确实走到了客户端
+        assert mock_openai_client.embeddings.create.call_count == 1
+
+        class _Poison:
+            def __getattr__(self, name):
+                raise AssertionError(f"出站客户端被触碰了：.{name} —— 门没挡住")
+
+        # 实例是缓存的：**判定**不能跟着构造期一起被缓存。构造已过去，现在换答案。
+        emb._client = _Poison()
+        emb._client_no_retry = _Poison()
+        verdict["fn"] = lambda url: "当前网络环境（中国大陆）暂不支持境外模型"
+
+        with pytest.raises(la.LLMCallRefused) as ei:
+
+### tests/test_embeddings.py:405-445（:412-443 按实例替 _client_no_retry）
+$ git show 81f02b8:tests/test_embeddings.py | sed -n "405,445p"
+        t.join()
+        assert seen["v"] is None
+
+    def test_deadline_via_scope_bounds_hanging_call(self, mock_openai_client):
+        # 真实路径：mem0/chroma 库内 embed 拿不到函数参数，靠活跃 scope 夹逼（断言 (b)）。
+        emb = _emb()
+        hang = _HangUntilTimeoutClient()
+        emb._client_no_retry = hang
+        t0 = time.monotonic()
+        with pytest.raises(RuntimeError, match="no time for an attempt"):
+            with embed_deadline(time.monotonic() + 0.5):
+                emb._call_api(["novel query text that must miss shared cache"])
+        assert time.monotonic() - t0 < 1.0
+        assert hang.calls[0]["timeout"] < 0.5  # per-attempt timeout 被剩余窗夹逼
+
+    def test_deadline_param_bounds_hanging_call(self, mock_openai_client):
+        # 直接传 deadline 参数（_call_api 签名保留，供单元直测）
+        emb = _emb()
+        hang = _HangUntilTimeoutClient()
+        emb._client_no_retry = hang
+        t0 = time.monotonic()
+        with pytest.raises(RuntimeError):
+            emb._call_api(["x"], deadline=time.monotonic() + 0.5)
+        assert time.monotonic() - t0 < 1.0
+
+    def test_429_retried_then_succeeds_within_deadline(self, mock_openai_client):
+        # bounded 不归零：瞬时 429 必须在窗口内显式重试，不能直接变空检索。
+        emb = _emb()
+        fake = MagicMock()
+        n = {"v": 0}
+
+        def side(**kw):
+            if n["v"] == 0:
+                n["v"] += 1
+                raise _RateLimit429()
+            return _FakeEmbeddingResponse([[0.1] * 1024])
+
+        fake.embeddings.create.side_effect = side
+        emb._client_no_retry = fake
+        out = emb._call_api(["a"], deadline=time.monotonic() + 2.0)
+        assert len(out) == 1
+
+### tests/test_recall_eval_goal.py:10-18（提示词引用 :14；实际是文档字符串，不是 marker）
+$ git show 81f02b8:tests/test_recall_eval_goal.py | sed -n "10,18p"
+   并列出是哪一条，不发任何检索调用。
+4. （0c）评测按**块完整区间**判命中：含标注的块进前 3 即算，与返回文本截到
+   800 字无关；跨块片段任一块命中；区间表取自检索实际绑定的集合。
+
+模块尚不存在时函数内 import 会失败 → ``xfail(strict=True)`` 记红；实现落地后
+去掉 marker，这些用例必须真绿。
+"""
+from __future__ import annotations
+
+
+### core/agent/tools.py:235-245（elapsed_ms 日志 :241）
+$ git show 81f02b8:core/agent/tools.py | sed -n "235,245p"
+        """五条出口共用：算耗时、打日志、装结果。日志里的 ok= 读派生值，与旧输出一致。"""
+        res = ToolResult(
+            content=content,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            trace=trace,
+        )
+        print(f"[AgentTool] {name} args={arguments} ok={res.ok} {res.elapsed_ms}ms")
+        return res
+
+    def execute(self, name: str, arguments: dict) -> ToolResult:
+        started = time.monotonic()
+
+### 四个 reranker 测试替身的 __init__（均接受 *a, **kw）
+$ git show 81f02b8:tests/test_scene_rerank_goal.py | grep -n "def __init__"
+29:    def __init__(self, n: int = 60):
+159:        def __init__(self, *a, **k):
+197:        def __init__(self, *a, **kw):
+
+$ git show 81f02b8:tests/test_recall_r3_goal.py | grep -n "def __init__"
+52:    def __init__(self):
+119:    def __init__(self, *a, **kw):
+174:    def __init__(self, n: int):
+222:    def __init__(self):
+235:    def __init__(self, name, args):
+247:    def __init__(self):
+295:    def __init__(self, plan: dict[str, list[int]]):
+309:    def __init__(self, q1, q2):
+
+$ git show 81f02b8:tests/test_recall_eval_deadline.py | grep -n "def __init__"
+77:        def __init__(self, *a, **kw):
+
+$ git show 81f02b8:tests/test_rerank_stats.py | grep -n "def __init__"
+27:    def __init__(self, n: int = 3):
+65:        def __init__(self, status):
+78:        def __init__(self, *a, **kw):
+
+## 2. S0 — 第三方库源码行（仓库锁定版本）
+
+### httpx2 2.13.0 Limits 默认 keepalive_expiry=5.0（_config.py:174）
+$ sed -n "170,175p" httpx2/_config.py
+    """
+
+    max_connections: int | None = None
+    max_keepalive_connections: int | None = None
+    keepalive_expiry: float | None = 5.0
+
+
+### httpx2 2.13.0 allow_env_proxies（:659）/ transport 直返（:700-701）
+$ sed -n "655,661p" httpx2/_client.py; sed -n "697,702p" httpx2/_client.py
+                    "Using http2=True, but the 'h2' package is not installed. "
+                    "Make sure to install httpx using `pip install httpx[http2]`."
+                ) from None
+
+        allow_env_proxies = trust_env and transport is None
+        proxy_map = self._get_proxy_map(proxy, allow_env_proxies)
+
+        limits: Limits = DEFAULT_LIMITS,
+        transport: BaseTransport | None = None,
+    ) -> BaseTransport:
+        if transport is not None:
+            return transport
+
+
+### httpx2 2.13.0 HTTPTransport -> httpcore2.ConnectionPool（_transports/default.py:140-165）
+$ sed -n "140,165p" httpx2/_transports/default.py
+        proxy: ProxyTypes | None = None,
+        uds: str | None = None,
+        local_address: str | None = None,
+        retries: int = 0,
+        socket_options: typing.Iterable[SOCKET_OPTION] | None = None,
+    ) -> None:
+        import httpcore2
+
+        proxy = Proxy(url=proxy) if isinstance(proxy, (str, URL)) else proxy
+        ssl_context = create_ssl_context(verify=verify, cert=cert, trust_env=trust_env)
+
+        if proxy is None:
+            self._pool = httpcore2.ConnectionPool(
+                ssl_context=ssl_context,
+                max_connections=limits.max_connections,
+                max_keepalive_connections=limits.max_keepalive_connections,
+                keepalive_expiry=limits.keepalive_expiry,
+                http1=http1,
+                http2=http2,
+                uds=uds,
+                local_address=local_address,
+                retries=retries,
+                socket_options=socket_options,
+            )
+        elif proxy.url.scheme in ("http", "https"):
+            self._pool = httpcore2.HTTPProxy(
+
+### httpcore2 2.13.0 连接池属性（:100 _keepalive_expiry / :108 _socket_options）
+$ sed -n "96,110p" httpcore2/_sync/connection_pool.py
+            sys.maxsize if max_keepalive_connections is None else max_keepalive_connections
+        )
+        self._max_keepalive_connections = min(self._max_connections, self._max_keepalive_connections)
+
+        self._keepalive_expiry = keepalive_expiry
+        self._http1 = http1
+        self._http2 = http2
+        self._retries = retries
+        self._local_address = local_address
+        self._uds = uds
+
+        self._network_backend = SyncBackend() if network_backend is None else network_backend
+        self._socket_options = socket_options
+
+        # The mutable state on a connection pool is the queue of incoming requests,
+
+### openai 3.13.0 DEFAULT_CONNECTION_LIMITS（_constants.py:9）
+$ sed -n "1,12p" openai/_constants.py
+import httpx2
+
+RAW_RESPONSE_HEADER = "X-Stainless-Raw-Response"
+OVERRIDE_CAST_TO_HEADER = "____stainless_override_cast_to"
+
+# default timeout is 10 minutes
+DEFAULT_TIMEOUT = httpx2.Timeout(timeout=600, connect=5.0)
+DEFAULT_MAX_RETRIES = 2
+DEFAULT_CONNECTION_LIMITS = httpx2.Limits(max_connections=1000, max_keepalive_connections=100)
+
+INITIAL_RETRY_DELAY = 0.5
+MAX_RETRY_DELAY = 8.0
+
+### openai 3.13.0 DefaultHttpxClient（_base_client.py:863-880）/ http_client 赋值（:944）
+$ sed -n "863,880p" openai/_base_client.py; sed -n "940,948p" openai/_base_client.py
+class _DefaultHttpxClient(httpx2.Client):
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
+        kwargs.setdefault("limits", DEFAULT_CONNECTION_LIMITS)
+        kwargs.setdefault("follow_redirects", True)
+        super().__init__(**kwargs)
+
+
+if TYPE_CHECKING:
+    DefaultHttpxClient = httpx2.Client
+    """An alias to `httpx2.Client` that provides the same defaults that this SDK
+    uses internally.
+
+    This is useful because overriding the `http_client` with your own instance of
+    `httpx2.Client` will result in HTTPX2's defaults being used, not ours.
+    """
+else:
+    DefaultHttpxClient = _DefaultHttpxClient
+            custom_query=custom_query,
+            custom_headers=custom_headers,
+            _strict_response_validation=_strict_response_validation,
+        )
+        self._client = http_client or SyncHttpxClientWrapper(
+            base_url=base_url,
+            # cast to a valid type because mypy doesn't understand our type narrowing
+            timeout=cast(Timeout, timeout),
+        )
+
+### openai 3.13.0 with_options 克隆共用 http_client（_client.py:755）
+$ sed -n "750,758p" openai/_client.py
+        if default_query is not None:
+            params = {**params, **default_query}
+        elif set_default_query is not None:
+            params = set_default_query
+
+        http_client = http_client or self._client
+
+        next_provider = self._provider if isinstance(provider, NotGiven) else provider
+        explicit_base_url = base_url is not None and not isinstance(base_url, NotGiven)
+
+### httpx 0.28.1 Limits 默认 keepalive_expiry=5.0（_config.py:178）
+$ sed -n "172,181p" httpx/_config.py
+
+    def __init__(
+        self,
+        *,
+        max_connections: int | None = None,
+        max_keepalive_connections: int | None = None,
+        keepalive_expiry: float | None = 5.0,
+    ) -> None:
+        self.max_connections = max_connections
+        self.max_keepalive_connections = max_keepalive_connections
+
+### httpx 0.28.1 allow_env_proxies（:685）/ transport 直返（:728）
+$ sed -n "683,687p" httpx/_client.py; sed -n "726,730p" httpx/_client.py
+                ) from None
+
+        allow_env_proxies = trust_env and transport is None
+        proxy_map = self._get_proxy_map(proxy, allow_env_proxies)
+
+        transport: BaseTransport | None = None,
+    ) -> BaseTransport:
+        if transport is not None:
+            return transport
+
+
+### httpcore 1.0.9 连接池属性（:106 _keepalive_expiry / :116 _socket_options）
+$ sed -n "102,118p" httpcore/_sync/connection_pool.py
+        self._max_keepalive_connections = min(
+            self._max_connections, self._max_keepalive_connections
+        )
+
+        self._keepalive_expiry = keepalive_expiry
+        self._http1 = http1
+        self._http2 = http2
+        self._retries = retries
+        self._local_address = local_address
+        self._uds = uds
+
+        self._network_backend = (
+            SyncBackend() if network_backend is None else network_backend
+        )
+        self._socket_options = socket_options
+
+        # The mutable state on a connection pool is the queue of incoming requests,
+
+### anthropic：本 venv 未安装 2.3.0；本机可核对的 0.101.0 同一段（_base_client.py:845-875）
+（v2.3.0 raw 文件已用 WebFetch 核对到同一组 socket options 片段，但行号无法本地确认）
+$ sed -n "845,875p" anthropic/_base_client.py  # from TradingAgents venv
+        kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
+        kwargs.setdefault("limits", DEFAULT_CONNECTION_LIMITS)
+        kwargs.setdefault("follow_redirects", True)
+
+        if "transport" not in kwargs:
+            socket_options: List[Tuple[int, int, Union[int, bool]]] = [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)]
+
+            TCP_KEEPINTVL = getattr(socket, "TCP_KEEPINTVL", None)
+
+            if TCP_KEEPINTVL is not None:
+                socket_options.append((socket.IPPROTO_TCP, TCP_KEEPINTVL, 60))
+            elif sys.platform == "darwin":
+                TCP_KEEPALIVE = getattr(socket, "TCP_KEEPALIVE", 0x10)
+                socket_options.append((socket.IPPROTO_TCP, TCP_KEEPALIVE, 60))
+
+            TCP_KEEPCNT = getattr(socket, "TCP_KEEPCNT", None)
+            if TCP_KEEPCNT is not None:
+                socket_options.append((socket.IPPROTO_TCP, TCP_KEEPCNT, 5))
+
+            TCP_KEEPIDLE = getattr(socket, "TCP_KEEPIDLE", None)
+            if TCP_KEEPIDLE is not None:
+                socket_options.append((socket.IPPROTO_TCP, TCP_KEEPIDLE, 60))
+
+            proxy_map = {key: None if url is None else Proxy(url=url) for key, url in get_environment_proxies().items()}
+
+            transport_kwargs = {
+                arg: kwargs[arg] for arg in ("verify", "cert", "trust_env", "http1", "http2", "limits") if arg in kwargs
+            }
+
+            transport_kwargs["socket_options"] = socket_options
+
+
+## 3. S0 — 部署配置代理检查
+$ grep -rniE "http_proxy|https_proxy|all_proxy|no_proxy" .env .env.example docker-compose*.yml Dockerfile* deploy/
+(no matches)
+
+## 4. 目标检查 — 红（提交 096ba2c9）
+$ pytest tests/test_d17_keepalive_goal.py -q -rx
+x.xxx                                                                    [100%]
+=========================== short test summary info ===========================
+XFAIL tests/test_d17_keepalive_goal.py::test_embedding_pool_keepalive_and_socket_options - D17 未实现：core.http_keepalive 尚不存在
+XFAIL tests/test_d17_keepalive_goal.py::test_rerank_pool_keepalive_and_socket_options - D17 未实现：core.http_keepalive 尚不存在
+XFAIL tests/test_d17_keepalive_goal.py::test_two_requests_six_seconds_apart_reuse_one_tcp_connection - D17 未实现：keepalive_expiry=5 s，6 s 后必须重连
+XFAIL tests/test_d17_keepalive_goal.py::test_keepalive_env_override - D17 未实现：core.http_keepalive 尚不存在
+1 passed, 4 xfailed in 11.14s
+
+$ pytest ...::test_two_requests_six_seconds_apart_reuse_one_tcp_connection -q --runxfail
+F                                                                        [100%]
+================================== FAILURES ===================================
+________ test_two_requests_six_seconds_apart_reuse_one_tcp_connection _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FE4576CDD0>
+
+    @pytest.mark.xfail(strict=True, reason="D17 δʵ�֣�keepalive_expiry=5 s��6 s ���������")
+    def test_two_requests_six_seconds_apart_reuse_one_tcp_connection(monkeypatch):
+        monkeypatch.setattr(la, "_call_guard", None, raising=False)
+        server = _CountingServer(("127.0.0.1", 0), _EmbeddingHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            monkeypatch.setenv(
+                "EMBEDDING_BASE_URL",
+                f"http://127.0.0.1:{server.server_address[1]}/v1",
+            )
+            emb = embeddings_mod.DashScopeEmbedding("k", "cn")
+            emb._call_api(["first"])
+            time.sleep(6)
+            emb._call_api(["second"])
+>           assert server.accepts == 1
+E           assert 2 == 1
+E            +  where 2 = <test_d17_keepalive_goal._CountingServer object at 0x000001FE453012E0>.accepts
+
+tests\test_d17_keepalive_goal.py:127: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_d17_keepalive_goal.py::test_two_requests_six_seconds_apart_reuse_one_tcp_connection
+1 failed in 12.11s
+
+## 5. 目标检查 — 绿（本提交）
+$ pytest tests/test_d17_keepalive_goal.py -q
+.....                                                                    [100%]
+5 passed in 13.00s
+
+## 6. 既有用例逐个
+$ pytest tests/test_embeddings.py -q
+...............................                                          [100%]
+31 passed in 8.46s
+
+$ pytest tests/test_recall_r3_goal.py -q
+....................                                                     [100%]
+20 passed in 11.96s
+
+$ pytest tests/test_scene_rerank_goal.py -q
+.............                                                            [100%]
+13 passed in 6.22s
+
+$ pytest tests/test_rerank_stats.py -q
+..........                                                               [100%]
+10 passed in 8.66s
+
+$ pytest tests/test_recall_eval_deadline.py -q
+....                                                                     [100%]
+4 passed in 5.99s
+
+$ pytest tests/test_failure_alerting.py -q
+......                                                                   [100%]
+============================== warnings summary ===============================
+tests/test_failure_alerting.py::test_unhandled_exception_is_logged_and_alerts_while_response_is_unchanged
+  E:\Study\ANU\ai coding\Character-distill\.claude\worktrees\d17-keepalive\web\routers\market.py:139: FastAPIDeprecationWarning: `regex` has been deprecated, please use `pattern` instead
+    sort: str = Query("new", regex="^(new|hot)$"),
+
+tests/test_failure_alerting.py::test_unhandled_exception_is_logged_and_alerts_while_response_is_unchanged
+  E:\Study\ANU\ai coding\Character-distill\.venv\Lib\site-packages\starlette\testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+6 passed, 2 warnings in 10.28s
+
+## 7. census（只取数；本 PR 不新增派生点）
+$ python tests/census_llm_call_contexts.py
+扫描 184 个工作区 .py（不含 tests/；含未 git add 的）
+派生点 87 处
+
+  core/agent/tools.py                  265  ctx_submit       AgentToolkit.execute
+  core/character_roster.py             112  to_thread        resolve_characters
+  core/context_engine.py               323  ctx_submit       ContextEngine.build_ex
+  core/context_engine.py               324  ctx_submit       ContextEngine.build_ex
+  core/distiller.py                    785  ctx_thread       _run_async_in_ctx_thread
+  core/distiller.py                   2285  create_task      Distiller._run_map_concurrent
+  core/distiller.py                   2330  create_task      Distiller._run_reduce_concurrent
+  core/distiller.py                   2361  to_thread        Distiller._single_reduce_async
+  core/distiller.py                   2646  ctx_thread       Distiller._format_groups
+  core/distiller.py                   2654  ctx_thread       Distiller._format_groups
+  core/distiller.py                   2828  ctx_thread       Distiller.distill_incremental_stream
+  core/distiller.py                   2928  ctx_thread       Distiller.distill_incremental_stream
+  core/examples_pending.py              84  to_thread        refind
+  core/group_session.py                173  create_task      GroupSession.send
+  core/group_session.py                174  to_thread        GroupSession.send
+  core/group_session.py                359  create_task      GroupSession._reply_for_broadcast
+  core/group_session.py                360  to_thread        GroupSession._reply_for_broadcast
+  core/indexing_service.py             334  create_task      IndexingService._run_in_background
+  core/indexing_service.py             417  to_thread        _run_job
+  core/memory_manager.py               471  ctx_thread       MemoryView.add
+  core/memory_manager.py               565  ctx_thread       MemoryView.reflect
+  core/moderation/card_guard.py        131  ctx_thread       judge_card
+  core/relationship_batch.py            85  ctx_submit       _fan_out
+  core/retro_cache.py                   30  to_thread        resolve_retro_regions
+  core/session_restore.py               29  to_thread        restore_engine_state
+  core/session_restore.py               32  to_thread        restore_engine_state
+  core/text_manager.py                 119  to_thread        TextManager._guard_card
+  core/text_manager.py                 259  to_thread        TextManager._check_length
+  core/text_manager.py                 275  to_thread        TextManager.upload_text_from_file
+  core/text_manager.py                 277  to_thread        TextManager.upload_text_from_file
+  core/text_manager.py                 474  to_thread        TextManager.get_or_distill
+  core/text_manager.py                 480  to_thread        TextManager.get_or_distill
+  core/text_manager.py                 525  to_thread        TextManager.get_or_distill
+  core/text_manager.py                 542  to_thread        TextManager.get_or_distill
+  core/text_manager.py                 543  to_thread        TextManager.get_or_distill
+  core/text_manager.py                 623  to_thread        TextManager.save_distilled_card
+  core/text_manager.py                 624  to_thread        TextManager.save_distilled_card
+  core/trash_service.py                134  to_thread        _purge_memory
+  mcp_server/server.py                 193  to_thread        _toolkit_for
+  mcp_server/server.py                 256  to_thread        main.call_tool
+  scripts/recall_questions.py          440  ctx_submit       run_generate
+  scripts/recall_questions.py          622  ctx_submit       run_multiturn
+  scripts/replay_distill.py            476  to_thread        _replay
+  scripts/replay_distill.py            492  to_thread        _replay
+  scripts/run_agent_eval.py            193  run_in_executor  run_case
+  scripts/run_agent_eval.py            345  run_in_executor  _run_legacy
+  scripts/run_agent_eval.py            407  run_in_executor  _run_agent
+  scripts/run_agent_eval.py            431  run_in_executor  _run_agent
+  speech/funasr_server.py               42  to_thread        FunASRServer._load_model_async
+  speech/funasr_server.py               94  to_thread        FunASRServer.handle
+  speech/funasr_server.py              124  create_task      FunASRServer.start
+  web/deps.py                          210  to_thread        refresh_user_llm
+  web/group_engines.py                  35  to_thread        group_engine_deps
+  web/routers/chat.py                  118  to_thread        _decide_retraction
+  web/routers/chat.py                  188  to_thread        _ensure_session
+  web/routers/chat.py                  192  to_thread        _ensure_session
+  web/routers/chat.py                  334  to_thread        _do_chat
+  web/routers/chat.py                  502  to_thread        _do_chat_stream._event_generator
+  web/routers/chat.py                  513  to_thread        _do_chat_stream._event_generator
+  web/routers/chat.py                  565  to_thread        _do_chat_stream._event_generator
+  web/routers/distill.py               685  to_thread        _do_identify
+  web/routers/distill.py               714  to_thread        _resolve_character_name
+  web/routers/distill.py               960  ctx_thread       _distill_start_impl
+  web/routers/distill.py              1173  to_thread        distill_stream._event_gen
+  web/routers/distill.py              1216  to_thread        distill_stream._event_gen
+  web/routers/distill.py              1226  to_thread        distill_stream._event_gen
+  web/routers/distill.py              1253  to_thread        distill_stream._event_gen
+  web/routers/distill.py              1599  to_thread        start_session
+  web/routers/distill.py              1613  to_thread        start_session
+  web/routers/distill.py              1630  to_thread        start_session
+  web/routers/distill.py              1659  to_thread        start_session
+  web/routers/group.py                 259  to_thread        _run_group_affinity
+  web/routers/group.py                 523  create_task      send_message
+  web/routers/group.py                 699  create_task      broadcast_message.event_generator
+  web/routers/history.py               224  to_thread        resume_session
+  web/routers/history.py               228  to_thread        resume_session
+  web/routers/history.py               278  to_thread        resume_session
+  web/routers/market.py                880  to_thread        at_reply
+  web/routers/memory.py                 58  to_thread        _user_view
+  web/routers/memory.py                107  to_thread        list_memories
+  web/routers/memory.py                129  to_thread        add_memory
+  web/routers/memory.py                153  to_thread        update_memory
+  web/routers/memory.py                173  to_thread        delete_memory
+  web/routers/memory.py                193  to_thread        clear_memories
+  web/routers/text.py                  217  ctx_thread       upload_text
+  web/server.py                        142  create_task      _lifespan
+  web/server.py                        143  create_task      _lifespan
+
+LLMAdapter 出站方法（现算）：['achat', 'async_chat', 'chat', 'chat_stream', 'chat_stream_long', 'chat_with_tools', 'credential_fingerprint', 'derive', 'preflight', 'select_by_schema']
+
+注意：**归属判定不在本模块内** —— 「哪条派生点能到出站方法」「父是不是请求」要跨函数追链，见模块 docstring 的两张表。此处只摆事实。
+
+## 8. 本提交 diff 统计（新增模块 + 改动；docs 报告本身不计入）
+$ git diff --stat 096ba2c9 -- core/http_keepalive.py core/embeddings.py core/reranker.py tests/test_d17_keepalive_goal.py
+ core/embeddings.py               | 26 ++++++++++++++++--
+ core/http_keepalive.py           | 57 ++++++++++++++++++++++++++++++++++++++++
+ core/reranker.py                 | 18 +++++++++++--
+ tests/test_d17_keepalive_goal.py |  4 ---
+ 4 files changed, 97 insertions(+), 8 deletions(-)
+
+## 9. git status（提交前）
+$ git status --short
+ M core/embeddings.py
+ A core/http_keepalive.py
+ M core/reranker.py
+ M tests/test_d17_keepalive_goal.py
+?? docs/reports/

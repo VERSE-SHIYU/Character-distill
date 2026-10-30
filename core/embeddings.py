@@ -6,6 +6,7 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from contextvars import ContextVar
 
+import httpx2
 from chromadb.api.types import EmbeddingFunction
 
 from adapters.llm_adapter import (  # 出站门（缺陷 73）：与 LLM 出站同一处判定
@@ -13,9 +14,18 @@ from adapters.llm_adapter import (  # 出站门（缺陷 73）：与 LLM 出站�
     check_outbound_guard,
 )
 from core.fingerprint import key_fingerprint
+from core.http_keepalive import EMBED_KEEPALIVE_S, KEEPALIVE_SOCKET_OPTIONS
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 logger = logging.getLogger(__name__)
+
+# openai 3.13 默认池是 max_connections=1000 / max_keepalive_connections=100
+# （_constants.py:9）；这里只把 keepalive_expiry 从 httpx2 的 5 s 拉到 D17 的 300 s。
+_LIMITS = httpx2.Limits(
+    max_connections=1000,
+    max_keepalive_connections=100,
+    keepalive_expiry=EMBED_KEEPALIVE_S,
+)
 
 # ── Active embed deadline（D2：线程/上下文级，杜绝跨请求污染）────────────────
 # 挂死的 embed 发生在 mem0/chroma 库内部（它们各自调 embedding_model.embed /
@@ -219,7 +229,7 @@ class DashScopeEmbedding(EmbeddingFunction):
         model: str = "text-embedding-v4",
         dimensions: int = 1024,
     ):
-        from openai import OpenAI
+        from openai import DefaultHttpxClient, OpenAI
 
         # EMBEDDING_BASE_URL 覆盖（②④ Step 2：本地压测剥离 DashScope 网络延迟）；
         # 未设置时取 DASHSCOPE_BASE_URLS，与改前内联的那两个字面量逐字节一致。
@@ -227,8 +237,20 @@ class DashScopeEmbedding(EmbeddingFunction):
         # 门的判定对象是**这个生效的** URL（含上面的 env 覆盖），与 LLM 侧判用户配置里
         # 那个 base_url 同一口径：判的是真出门的东西，不是「本该是什么」。
         self._base_url = base_url
+        # 传 transport 后 Client 级 limits 不再生效（httpx2 _client.py:700-701），
+        # 保活必须放进 HTTPTransport；同时环境代理走不到这套传输（:659），本仓部署
+        # 无 HTTP(S)_PROXY。timeout=8.0 仍按 per-request 生效，max_retries 不动。
         self._client = OpenAI(
-            api_key=api_key, base_url=base_url, timeout=8.0, max_retries=2
+            api_key=api_key,
+            base_url=base_url,
+            timeout=8.0,
+            max_retries=2,
+            http_client=DefaultHttpxClient(
+                transport=httpx2.HTTPTransport(
+                    limits=_LIMITS,
+                    socket_options=KEEPALIVE_SOCKET_OPTIONS,
+                )
+            ),
         )
         # D2：bounded 路径用 max_retries=0 克隆 —— SDK 内部重试会复用同一 per-request
         # timeout（挂死=3×timeout，严格吃不到 deadline），必须撤掉黑盒重试，改由
