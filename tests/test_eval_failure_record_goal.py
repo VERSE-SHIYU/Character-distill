@@ -6,8 +6,6 @@
 2. 走路由（``_score_via_router``）同上 —— 套件一次跑多本，题号跨书重复，只有角色名能定位。
 3. 证据产物保留 ``retrieval_failed`` 计数，且不被记为脱敏字段；落点被隔离到 tmp，
    仓库里的 ``docs/evidence/`` 一个字节都不动。
-
-实现前这些断言不成立 → 模块级 ``xfail(strict=True)``；实现落地后去掉标记，必须真绿。
 """
 from __future__ import annotations
 
@@ -15,8 +13,6 @@ import json
 import logging
 import sys
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -49,7 +45,6 @@ def _warning_messages(caplog) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
 
 
-@pytest.mark.xfail(strict=True, reason="尚未实现：失败日志还不带角色名")
 def test_direct_path_warning_names_character(caplog):
     from scripts.eval_recall import _score_query
 
@@ -63,7 +58,6 @@ def test_direct_path_warning_names_character(caplog):
         f"检索失败日志没有同时带上题号与角色名：{messages}")
 
 
-@pytest.mark.xfail(strict=True, reason="尚未实现：失败日志还不带角色名")
 def test_router_path_warning_names_character(caplog):
     from scripts.eval_recall import _score_via_router
 
@@ -81,7 +75,6 @@ def test_router_path_warning_names_character(caplog):
         f"检索失败日志没有同时带上题号与角色名：{messages}")
 
 
-@pytest.mark.xfail(strict=True, reason="尚未实现：retrieval_failed 不在证据白名单里")
 def test_evidence_keeps_retrieval_failed(tmp_path, monkeypatch):
     import evidence_writer
 
