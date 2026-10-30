@@ -28,6 +28,15 @@ logger = logging.getLogger(__name__)
 VECTOR_CANDIDATE_POOL = 50
 
 
+def _scene_rerank_enabled() -> bool:
+    """场景重排开关：``SCENE_RERANK=1`` 才开，其余（含未设置）为关。
+
+    每次调用现读环境变量（不做模块级常量）。默认关的原因：百炼重排服务本身
+    P50 约 3.5 s（D15b），生产 5 s 工具时限下会整次丢场景；查清慢因后再打开。
+    """
+    return os.getenv("SCENE_RERANK", "") == "1"
+
+
 # 集合元数据里与「按位置截断」有关的键 —— **只在这里定义**，建集合（本模块 `index`、
 # `scene_indexer`）与判适用性（`_fetch_candidates`）都用它们（审计 A1）。
 FINGERPRINT_KEY = "content_fingerprint"   # 集合讲的是哪份正文（整段 sha256）
@@ -573,7 +582,11 @@ class RAGEngine:
         token_budget: int,
         window: RetrievalWindow | None = None,
     ) -> EvidenceHits:
-        """向量取 ``VECTOR_CANDIDATE_POOL`` 条候选 → 重排打分 → 按 ``token_budget`` 填块。
+        """向量取 ``VECTOR_CANDIDATE_POOL`` 条候选 →（可选）重排打分 → 按 ``token_budget`` 填块。
+
+        重排开关 ``SCENE_RERANK``：默认不重排，按向量顺序填块（结果同 cedbb233 的向量顺序），
+        ``rerank_fallback=False``、``rerank_ms`` / ``rerank_tokens`` 为 None、不记 WARNING；
+        ``SCENE_RERANK=1`` 才调重排，下面两段说的是开着时的行为。
 
         填块：按重排后的顺序逐块累加 ``count_tokens``，加上下一块会超预算就停 ——
         不跳过、不截断块；第一块单独就超预算时只返回这一块（结果不为空）。
@@ -597,31 +610,38 @@ class RAGEngine:
         if not cand.docs:
             return EvidenceHits([], candidates_exhausted=cand.exhausted)
 
-        fallback = False
-        tokens: int | None = None
-        rerank_started = time.monotonic()
-        try:
-            ranked = reranker.rerank(
-                query_text,
-                cand.docs,
-                api_key=getattr(self, "_embedding_key", "") or "",
-                region=getattr(self, "_embedding_region", "cn") or "cn",
-            )
-            tokens = getattr(ranked, "total_tokens", None)
-        except reranker.RerankUnavailable as exc:
-            fallback = True
-            label = {
-                "timeout": "超时", "network": "超时", "deadline": "deadline",
-                "rate_limit": "限流",
-            }.get(exc.kind, "其他")
-            logger.warning(
-                "场景重排失败（%s%s），退回向量顺序：集合 %s",
-                label,
-                f" status={exc.status}" if exc.status is not None else "",
-                self.collection_name,
-            )
+        if not _scene_rerank_enabled():
+            # 默认关：不调重排，按向量顺序填块（同 cedbb233）；没调重排 → 不算退化、不计时。
             ranked = [(i, None) for i in range(len(cand.docs))]
-        rerank_ms = round((time.monotonic() - rerank_started) * 1000)
+            fallback = False
+            rerank_ms = None
+            tokens = None
+        else:
+            fallback = False
+            tokens: int | None = None
+            rerank_started = time.monotonic()
+            try:
+                ranked = reranker.rerank(
+                    query_text,
+                    cand.docs,
+                    api_key=getattr(self, "_embedding_key", "") or "",
+                    region=getattr(self, "_embedding_region", "cn") or "cn",
+                )
+                tokens = getattr(ranked, "total_tokens", None)
+            except reranker.RerankUnavailable as exc:
+                fallback = True
+                label = {
+                    "timeout": "超时", "network": "超时", "deadline": "deadline",
+                    "rate_limit": "限流",
+                }.get(exc.kind, "其他")
+                logger.warning(
+                    "场景重排失败（%s%s），退回向量顺序：集合 %s",
+                    label,
+                    f" status={exc.status}" if exc.status is not None else "",
+                    self.collection_name,
+                )
+                ranked = [(i, None) for i in range(len(cand.docs))]
+            rerank_ms = round((time.monotonic() - rerank_started) * 1000)
 
         items: list[EvidenceItem] = []
         used = 0

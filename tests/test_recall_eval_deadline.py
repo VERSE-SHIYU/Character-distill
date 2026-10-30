@@ -26,6 +26,12 @@ import eval_recall  # noqa: E402
 from core.agent.tools import SCENE_TOOL_BUDGET_S  # noqa: E402
 from core.embeddings import current_embed_deadline  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _scene_rerank_on(monkeypatch):
+    """本文件测重排开着时的行为；生产默认关（SCENE_RERANK 未设），这里显式打开。"""
+    monkeypatch.setenv("SCENE_RERANK", "1")
+
 FRAGMENT = "丙丁戊己庚辛壬癸子丑"  # 10 字，全书唯一
 SOURCE = "乙" * 50 + FRAGMENT + "乙" * 50
 CASES = [{"id": "q01", "phase": None, "query": "你当时在场吗？", "should": [FRAGMENT]}]

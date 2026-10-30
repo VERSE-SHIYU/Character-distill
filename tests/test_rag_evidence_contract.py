@@ -23,6 +23,12 @@ from core.rag import RAGEngine
 from core.scene_retrieval import SCENE_TOKEN_BUDGET  # noqa: E402
 from core.schema import EVIDENCE_META, EvidenceItem, MemoryMeta, SceneMeta, WebMeta
 
+
+@pytest.fixture(autouse=True)
+def _scene_rerank_on(monkeypatch):
+    """本文件测重排开着时的行为；生产默认关（SCENE_RERANK 未设），这里显式打开。"""
+    monkeypatch.setenv("SCENE_RERANK", "1")
+
 # 行 = (chroma id, 原文, metadata)。id 与 metadata 键集**逐键对齐
 # core/scene_indexer.py 实际写入的形态（id=f"scene_{i}"、metadata 为
 # characters / scene_index / npos）。fixture 少了 scene_index，chunk_id 在全部

@@ -16,6 +16,12 @@ from core.embeddings import embed_deadline
 from core.schema import SceneMeta
 from core.tokens import count_tokens
 
+
+@pytest.fixture(autouse=True)
+def _scene_rerank_on(monkeypatch):
+    """本文件测重排开着时的行为；生产默认关（SCENE_RERANK 未设），这里显式打开。"""
+    monkeypatch.setenv("SCENE_RERANK", "1")
+
 POOL = 50  # 独立写死：目标检查先于实现存在，不能从被测常量取期望值
 NO_CAP = 10**6  # 预算远大于候选总量：本文件测的是顺序 / 候选池 / 退化，不测填块（见 test_scene_token_budget_goal）
 

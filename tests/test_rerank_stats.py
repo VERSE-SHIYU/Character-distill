@@ -23,6 +23,12 @@ from core.embeddings import embed_deadline
 from core.rag import EvidenceHits
 
 
+@pytest.fixture(autouse=True)
+def _scene_rerank_on(monkeypatch):
+    """本文件测重排开着时的行为；生产默认关（SCENE_RERANK 未设），这里显式打开。"""
+    monkeypatch.setenv("SCENE_RERANK", "1")
+
+
 class _Collection:
     def __init__(self, n: int = 3):
         self.n = n

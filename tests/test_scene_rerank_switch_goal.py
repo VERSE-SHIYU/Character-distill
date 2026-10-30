@@ -7,7 +7,7 @@
 2. ``SCENE_RERANK=0`` / 空串：同 1。
 3. ``SCENE_RERANK=1``：重排调用一次，顺序按重排分数。
 
-第一个提交里 1、2 为 ``xfail(strict=True)``（现状仍调重排），3 现状即绿。
+第一个提交里 1、2 为 ``xfail(strict=True)``（当时仍调重排），实现提交去掉标记。
 """
 
 from __future__ import annotations
@@ -39,7 +39,6 @@ def _assert_vector_order_no_rerank(hits, caplog):
     assert not any("场景重排失败" in m for m in warns), warns
 
 
-@pytest.mark.xfail(strict=True, reason="实现前：未设开关时仍调重排")
 def test_unset_skips_rerank(monkeypatch, caplog):
     monkeypatch.delenv("SCENE_RERANK", raising=False)
     _forbid_rerank(monkeypatch)
@@ -48,7 +47,6 @@ def test_unset_skips_rerank(monkeypatch, caplog):
     _assert_vector_order_no_rerank(hits, caplog)
 
 
-@pytest.mark.xfail(strict=True, reason="实现前：开关非 1 时仍调重排")
 @pytest.mark.parametrize("value", ["0", ""])
 def test_off_values_skip_rerank(monkeypatch, caplog, value):
     monkeypatch.setenv("SCENE_RERANK", value)
