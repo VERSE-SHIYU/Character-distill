@@ -31,6 +31,12 @@ from core import recall_eval  # noqa: E402
 from core.rag import CollectionUnusableError, EvidenceHits  # noqa: E402
 from core.tokens import count_tokens  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _scene_rerank_on(monkeypatch):
+    """本文件测重排开着时的行为；生产默认关（SCENE_RERANK 未设），这里显式打开。"""
+    monkeypatch.setenv("SCENE_RERANK", "1")
+
 BUDGET = 2500  # 独立写死：目标检查不从被测常量取期望值
 
 _SENTENCE = "“你还记得满月宴那天吗……”他在廊下低声问，\n她没有回头。"

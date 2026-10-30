@@ -37,6 +37,12 @@ from core.context_engine import RetrievalResult  # noqa: E402
 from core.embeddings import embed_deadline  # noqa: E402
 from core.rag import EvidenceHits  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _scene_rerank_on(monkeypatch):
+    """本文件测重排开着时的行为；生产默认关（SCENE_RERANK 未设），这里显式打开。"""
+    monkeypatch.setenv("SCENE_RERANK", "1")
+
 USER = "他那次为什么没来？"
 ROUTER_Q = "祈灼满月宴那次为什么没来？"
 
