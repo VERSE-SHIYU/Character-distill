@@ -1415,9 +1415,10 @@ class ChatEngine:
                 return ""
 
             # Build system prompt identical to normal chat
+            # 重逢没有用户原话可检索；记忆由 _build_reunion_memories 提供。
             system_prompt = self._ctx_engine.build(
                 "", self.user_role,
-                current_mood=self._mood,
+                current_mood=self._mood, include_dynamic=False,
             )
             system_prompt += self._build_all_enhancements()
 

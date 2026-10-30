@@ -64,7 +64,6 @@ def _old_session_data(hours_ago: int = 12) -> dict:
     }
 
 
-@pytest.mark.xfail(strict=True, reason="D22 红源：当前用空串跑场景/记忆检索")
 def test_reunion_greeting_runs_no_empty_query_retrieval(retrieval_calls):
     engine = _make_engine()
 
@@ -76,7 +75,6 @@ def test_reunion_greeting_runs_no_empty_query_retrieval(retrieval_calls):
     )
 
 
-@pytest.mark.xfail(strict=True, reason="D22 红源：当前用空串跑场景/记忆检索")
 def test_friend_stage_reunion_memory_still_reaches_llm(monkeypatch, retrieval_calls):
     engine = _make_engine()
     engine._scoped = MagicMock()
