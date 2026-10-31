@@ -30,11 +30,6 @@ from core.embeddings import (
     reset_embed_stats,
 )
 
-pytestmark = pytest.mark.xfail(
-    strict=True,
-    reason="D19 follow-up: every attempt is not metered yet, retries ignore cancel",
-)
-
 BATCH_SIZE = DashScopeEmbedding.MAX_BATCH
 
 
