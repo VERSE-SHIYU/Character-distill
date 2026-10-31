@@ -133,10 +133,6 @@ class _Transient429Client:
         return _FakeResponse([_vec_for(t) for t in texts])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D19 实现前是顺序发：550 条 ≈ 11 s，且峰值为 1（不是红在并发上，是耗时）",
-)
 def test_goal_1_bounded_concurrency_is_at_least_4x_faster(monkeypatch):
     slow = _SlowClient()
     _install(monkeypatch, slow.client)
@@ -155,13 +151,9 @@ def test_goal_1_bounded_concurrency_is_at_least_4x_faster(monkeypatch):
         f"耗时 {elapsed:.2f}s 未达到顺序版 {sequential:.2f}s 的 1/4"
     )
     assert slow.peak <= CONCURRENCY_LIMIT, f"在途峰值 {slow.peak} 超过 {CONCURRENCY_LIMIT}"
-    assert out == expected, "并发返回的向量与顺序版不一致"
+    assert [list(map(float, v)) for v in out] == expected, "并发返回的向量与顺序版不一致"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D8 实现前单批 429 直接包成 RuntimeError，不会按官方退避重试",
-)
 def test_goal_2_transient_429_on_one_batch_recovers(monkeypatch):
     sleeps: list[float] = []
     monkeypatch.setattr(
@@ -179,7 +171,8 @@ def test_goal_2_transient_429_on_one_batch_recovers(monkeypatch):
     out = emb(texts)
 
     assert len(out) == len(texts)
-    assert out == expected, "重试后的向量与无故障结果不一致"
+    assert [list(map(float, v)) for v in out] == expected, "重试后的向量与无故障结果不一致"
     assert transient.failures == 3
-    assert transient.calls == 3 + 1, "3 次 429 + 第 4 次成功"
+    # 标记批：3 次 429 + 第 4 次成功；另两批各 1 次。
+    assert transient.calls == 3 + 1 + 2, "标记批 3 次 429 + 第 4 次成功，另两批各 1 次"
     assert sleeps, "退避没有经过可注入的 sleep"
