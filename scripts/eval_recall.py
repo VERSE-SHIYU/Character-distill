@@ -278,7 +278,8 @@ def _score_via_router(rag, source_norm, case, spans, *, character_name, window, 
     ok_queries = [scene_query(case["query"], c["args"].get("query", ""))
                   for c in calls if c.get("ok")]
     if not ok_queries and ctx.failures:
-        logger.warning("评测题 %s 检索失败，按注入为空计分：%s", case.get("id"), ctx.failures[-1])
+        logger.warning("评测题 %s（%s）检索失败，按注入为空计分：%s",
+                       case.get("id"), character_name, ctx.failures[-1])
         row = recall_eval.failed_case(case)
     else:
         row = recall_eval.score_case(source_norm, case, ctx.merged_hits(ok_queries), spans)
@@ -307,7 +308,8 @@ def _score_query(rag, source_norm: str, case: dict, spans, *, character_name, wi
         hits = _scene_hits_in_chat_budget(
             rag, case["query"], character_name=character_name, window=window)
     except CollectionUnusableError as exc:
-        logger.warning("评测题 %s 检索失败，按注入为空计分：%s", case.get("id"), exc)
+        logger.warning("评测题 %s（%s）检索失败，按注入为空计分：%s",
+                       case.get("id"), character_name, exc)
         return recall_eval.failed_case(case)
     return recall_eval.score_case(source_norm, case, hits, spans)
 
