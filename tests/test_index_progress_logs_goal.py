@@ -11,8 +11,6 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import pytest
-
 from core import indexing_service
 from core.indexing_service import IndexingService, _run_job
 from core.stdout_logging import install_stdout_logging
@@ -50,7 +48,6 @@ def _records(caplog, needle: str) -> list[logging.LogRecord]:
     return [r for r in caplog.records if needle in r.getMessage()]
 
 
-@pytest.mark.xfail(strict=True, reason="INFO 不进生产日志；目标：两条都变 WARNING")
 def test_index_build_logs_are_warning(monkeypatch, caplog):
     monkeypatch.setattr(indexing_service, "RAGEngine", _BuildRagEngine)
     with caplog.at_level(logging.DEBUG, logger="core.indexing_service"):
@@ -62,7 +59,6 @@ def test_index_build_logs_are_warning(monkeypatch, caplog):
     assert done[0].levelno == logging.WARNING, done[0].levelname
 
 
-@pytest.mark.xfail(strict=True, reason="INFO 被 WARNING handler 丢弃；目标：两条都写到 stdout")
 def test_index_build_logs_reach_stdout(monkeypatch, capsys):
     monkeypatch.setattr(indexing_service, "RAGEngine", _BuildRagEngine)
     # capsys 在用例开始时已生效（handler 读时取 sys.stdout），这里才装，顺序不能反。
