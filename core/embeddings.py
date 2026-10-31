@@ -568,15 +568,14 @@ class DashScopeEmbedding(EmbeddingFunction):
                     sem.release()
                     raise
             for _batch_no, fut in futures:
-                try:
-                    batch_results, calls, blocked = fut.result()
-                except _EmbedCancelled:
-                    continue          # 别的批已失败；真实异常收完后原样抛出
-                except BaseException as exc:
-                    with failure_lock:
-                        if not failure:
-                            failure.append(exc)
-                    continue
+                exc = fut.exception()
+                if exc is not None:
+                    if not isinstance(exc, _EmbedCancelled):
+                        with failure_lock:
+                            if not failure:
+                                failure.append(exc)
+                    continue          # 取消信号跳过；真实异常收完后原样抛出
+                batch_results, calls, blocked = fut.result()
                 results.extend(batch_results)
                 api_calls += calls
                 moderation_blocked += blocked
