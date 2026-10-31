@@ -292,15 +292,15 @@ def _score_via_router(rag, source_norm, case, spans, *, character_name, window, 
     计分只取路由台账里 ``ok`` 的场景调用（成功且非空，生产里真正注入的那几次）；
     只有「调过、一次都没 ok、且有检索失败」才整题记 ``retrieval_failed``。
 
-    角色背景由 ``_production_character_hint`` 按生产组装；``card`` 为空时退回裸角色名
-    （仅为兼容直接调用的旧入口）。"""
+    角色背景一律由 ``_production_character_hint`` 按生产组装；没有卡（直接调用本函数）时
+    用 ``CharacterCard(name=character_name)`` 最小卡代替，与无卡行的入口同一条路径。"""
+    if card is None:
+        card = CharacterCard(name=character_name or "")
+        arc_phase = None
     ctx = _RouterCtx(rag, character_name=character_name, window=window)
     toolkit = AgentToolkit(ctx, user_message=case["query"])
     messages = list(case.get("history") or []) + [{"role": "user", "content": case["query"]}]
-    if card is not None:
-        hint = _production_character_hint(card, arc_phase, case["query"], llm)
-    else:
-        hint = character_name or ""
+    hint = _production_character_hint(card, arc_phase, case["query"], llm)
     result = AgentLoop(llm, toolkit).run(hint, messages)
     calls = [s for s in result.steps if s["tool"] == "search_scenes"]
     ok_queries = [scene_query(case["query"], c["args"].get("query", ""))
