@@ -262,7 +262,7 @@ class IndexingService:
                 return rag
             _t = time.time()
             rag.index(text, collection_name=col_name, all_characters=all_characters)
-            logger.info("RAG text collection built: text_id=%s in %.1fs", text_id, time.time() - _t)
+            logger.warning("RAG text collection built: text_id=%s in %.1fs", text_id, time.time() - _t)
         return rag
 
     def build_scene_index(
@@ -415,7 +415,7 @@ async def _run_job(label: str, job: Callable[..., Any], args: tuple[Any, ...]) -
     _t = time.time()
     try:
         await asyncio.to_thread(job, *args)
-        logger.info("%s done in %.1fs", label, time.time() - _t)
+        logger.warning("%s done in %.1fs", label, time.time() - _t)
     except CollectionUnusableError as exc:
         # 维度不符集合：确定性不可用，跳过（非致命），不自动重建。
         logger.warning("%s skipped: collection unusable (not rebuilt): %s", label, exc)
