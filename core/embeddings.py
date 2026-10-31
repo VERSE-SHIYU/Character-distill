@@ -111,6 +111,10 @@ def _embed_wait(retry_state: tenacity.RetryCallState) -> float:
     return max(base, retry_after or 0.0)
 
 
+class _EmbedCancelled(Exception):
+    """多批路径被取消的内部信号：不可重试、只用于让工作函数退出，永不外泄。"""
+
+
 # ── Factory cache: region:key_fingerprint → DashScopeEmbedding singleton ──
 _cache: dict[str, "DashScopeEmbedding"] = {}
 
@@ -333,22 +337,48 @@ class DashScopeEmbedding(EmbeddingFunction):
                 if wait > 0:
                     time.sleep(wait)
 
-    def _call_api_with_retry(self, texts: list[str]) -> list[list[float]]:
-        """多批路径的单批调用：官方退避（O4），走无 SDK 重试的克隆（spec §2-4）。"""
+    def _call_api_with_retry(
+        self, texts: list[str], *, limiter, cancel: threading.Event, prepaid: bool,
+    ) -> list[list[float]]:
+        """多批路径的单批调用：官方退避（O4），每次尝试都经 `_metered_attempt`。
+
+        `prepaid=True` 只给每批首次尝试：令牌已由主线程先取（O6 次序）；重试与审核
+        降级逐条传 False，每次尝试各取一份。取消后 acquire 返回 False，工作函数退出。
+        """
+        first = [prepaid]
+
         @tenacity.retry(
             retry=tenacity.retry_if_exception(_is_retryable_embed),
             wait=_embed_wait,
-            stop=tenacity.stop_after_attempt(_EMBED_RETRY_ATTEMPTS),
+            stop=tenacity.stop_after_attempt(_EMBED_RETRY_ATTEMPTS)
+            | tenacity.stop_when_event_set(cancel),
             reraise=True,
         )
         def _call() -> list[list[float]]:
-            check_outbound_guard(self._base_url)
-            resp = self._client_no_retry.embeddings.create(
-                model=self._model, input=texts, dimensions=self._dimensions,
+            use_prepaid = first[0]
+            first[0] = False
+            return self._metered_attempt(
+                texts, limiter=limiter, cancel=cancel, prepaid=use_prepaid,
             )
-            return [resp.data[i].embedding for i in range(len(texts))]
 
         return _call()
+
+    def _metered_attempt(
+        self, texts: list[str], *, limiter, cancel: threading.Event, prepaid: bool,
+    ) -> list[list[float]]:
+        """多批路径唯一出网入口：一次尝试在此付一份令牌、看取消、过出站门。"""
+        if cancel.is_set():
+            raise _EmbedCancelled()
+        if not prepaid:
+            # TPM 预扣口径同主线程：字符数 // 2（O7，spec §2-3）
+            tokens = max(1, sum(len(t) for t in texts) // 2)
+            if not limiter.acquire(tokens, cancel=cancel):
+                raise _EmbedCancelled()
+        check_outbound_guard(self._base_url)
+        resp = self._client_no_retry.embeddings.create(
+            model=self._model, input=texts, dimensions=self._dimensions,
+        )
+        return [resp.data[i].embedding for i in range(len(texts))]
 
     def _embed_impl(self, input: list[str]) -> list[list[float]]:
         """Raw embedding logic — returns pure Python list[list[float]].
@@ -415,14 +445,27 @@ class DashScopeEmbedding(EmbeddingFunction):
 
     def _embed_one_batch(
         self, batch: list[tuple[int, str]], batch_no: int, *, retry: bool,
+        limiter=None, cancel: threading.Event | None = None,
     ) -> tuple[list[tuple[int, list[float]]], int, int]:
         """单批嵌入；审核降级、OutboundRefused 原样、F9 原文都与顺序版一致。
 
         返回 (下标向量列表, api_calls, moderation_blocked)。`retry=True` 只给多批
         路径用（官方退避）；单批查询路径仍走 SDK 自己的 max_retries=2。
+        多批路径每次尝试都经 `_metered_attempt`：首次用主线程预付，重试与降级逐条各付一份。
         """
         texts = [t for _, t in batch]
-        call = self._call_api_with_retry if retry else self._call_api
+        if retry:
+            def call(batch_texts):
+                return self._call_api_with_retry(
+                    batch_texts, limiter=limiter, cancel=cancel, prepaid=True,
+                )
+
+            def call_item(batch_texts):
+                return self._call_api_with_retry(
+                    batch_texts, limiter=limiter, cancel=cancel, prepaid=False,
+                )
+        else:
+            call = call_item = self._call_api
         try:
             embeddings = call(texts)
             for (orig_idx, orig_text), emb in zip(batch, embeddings):
@@ -432,6 +475,9 @@ class DashScopeEmbedding(EmbeddingFunction):
                 len(texts),
                 0,
             )
+        except _EmbedCancelled:
+            # 取消是内部信号：不包成 F9、不记 WARNING；由多批主线程统一丢弃。
+            raise
         except OutboundRefused:
             # 门拦下的不是「嵌入失败」：请求根本没出网，包成下面的
             # RuntimeError("百炼 embedding 失败") 会把类型吃掉 —— `/test-embedding`
@@ -459,7 +505,7 @@ class DashScopeEmbedding(EmbeddingFunction):
             blocked = 0
             for orig_idx, orig_text in batch:
                 try:
-                    single_emb = call([orig_text])
+                    single_emb = call_item([orig_text])
                     calls += 1
                     _shared_cache_put(orig_text, single_emb[0])
                     results.append((orig_idx, single_emb[0]))
@@ -482,11 +528,20 @@ class DashScopeEmbedding(EmbeddingFunction):
         limiter = get_limiter(self._key_fp, self._region)
         sem = threading.BoundedSemaphore(EMBED_BUILD_CONCURRENCY)
         cancel = threading.Event()
+        failure: list[BaseException] = []
+        failure_lock = threading.Lock()
 
         def work(batch, batch_no):
             try:
-                return self._embed_one_batch(batch, batch_no, retry=True)
-            except BaseException:
+                return self._embed_one_batch(
+                    batch, batch_no, retry=True, limiter=limiter, cancel=cancel,
+                )
+            except _EmbedCancelled:
+                raise                 # 取消信号不是真实失败，主线程跳过
+            except BaseException as exc:
+                with failure_lock:
+                    if not failure:
+                        failure.append(exc)   # 第一个真实失败，原样留给调用方
                 cancel.set()          # 第一个非审核类失败：停止取令牌
                 limiter.wake()
                 raise
@@ -513,10 +568,19 @@ class DashScopeEmbedding(EmbeddingFunction):
                     sem.release()
                     raise
             for _batch_no, fut in futures:
+                exc = fut.exception()
+                if exc is not None:
+                    if not isinstance(exc, _EmbedCancelled):
+                        with failure_lock:
+                            if not failure:
+                                failure.append(exc)
+                    continue          # 取消信号跳过；真实异常收完后原样抛出
                 batch_results, calls, blocked = fut.result()
                 results.extend(batch_results)
                 api_calls += calls
                 moderation_blocked += blocked
+            if failure:
+                raise failure[0]
         finally:
             cancel.set()
             limiter.wake()
