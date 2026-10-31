@@ -13,8 +13,9 @@
 
 ``--via-router``：每题把 case 的 ``history`` + 当前句交给真实 ``AgentLoop`` + ``AgentToolkit``
 （LLM = 书目所属用户自己的 key），路由调 ``search_scenes`` 时用它的 query 检索（与聊天同一处
-组装检索词、同一工具时限）；路由不调 → 该题记未命中、``router_called=False``。路由的角色背景
-只给角色名 —— **本评测不覆盖角色 system prompt**。
+组装检索词、同一工具时限）；路由不调 → 该题记未命中、``router_called=False``。路由看到的角色
+背景与生产 agent 阶段逐字同源：由 ``ChatEngine._compose_system_prompt`` 现组装（有卡行用卡 +
+phase，无卡行用 ``CharacterCard(name=character)`` 最小卡）。
 
 算与写分开：
 
@@ -32,6 +33,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import io
 import json
 import logging
 import sys
@@ -45,6 +48,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from core import recall_eval, scene_retrieval  # noqa: E402
 from core.agent.agent_loop import AgentLoop  # noqa: E402
 from core.agent.tools import SCENE_TOOL_BUDGET_S, AgentToolkit, scene_query  # noqa: E402
+from core.chat_engine import ChatEngine  # noqa: E402
 from core.context_engine import _SCENE_FMT, ContextEngine, RetrievalResult  # noqa: E402
 from core.arc_view import arc_view  # noqa: E402
 from core.embeddings import embed_deadline  # noqa: E402
@@ -265,15 +269,39 @@ class _RouterCtx:
         return RetrievalResult(source="web", block="", items=[], status="empty")
 
 
-def _score_via_router(rag, source_norm, case, spans, *, character_name, window, llm) -> dict:
+def _production_character_hint(card: CharacterCard, arc_phase: int | None,
+                               user_message: str, llm) -> str:
+    """路由看到的角色背景 = 生产 agent 阶段传给 ``AgentLoop.run`` 的那一份。
+
+    生产在 ``chat`` 里先 ``_compose_system_prompt(..., include_dynamic=not agent_mode)``
+    再交给 ``_run_agent_phase``；这里用同一个组装函数、同一组新会话默认值。
+    ``ContextEngine`` 构造时会向 stdout 打预算行，会破坏评测的 JSON 输出，故吞掉。
+    """
+    with contextlib.redirect_stdout(io.StringIO()):
+        engine = ChatEngine(
+            llm=llm, rag=None, card=card, arc_phase=arc_phase,
+            storage=None, session_id="", is_new_session=True)
+        engine.agent_mode = True
+        return engine._compose_system_prompt(user_message, include_dynamic=False)
+
+
+def _score_via_router(rag, source_norm, case, spans, *, character_name, window, llm,
+                      card=None, arc_phase=None) -> dict:
     """路由决定查不查、查什么：真实 ``AgentLoop`` + ``AgentToolkit``（与聊天同一组装、同一时限）。
 
     计分只取路由台账里 ``ok`` 的场景调用（成功且非空，生产里真正注入的那几次）；
-    只有「调过、一次都没 ok、且有检索失败」才整题记 ``retrieval_failed``。"""
+    只有「调过、一次都没 ok、且有检索失败」才整题记 ``retrieval_failed``。
+
+    角色背景一律由 ``_production_character_hint`` 按生产组装；没有卡（直接调用本函数）时
+    用 ``CharacterCard(name=character_name)`` 最小卡代替，与无卡行的入口同一条路径。"""
+    if card is None:
+        card = CharacterCard(name=character_name or "")
+        arc_phase = None
     ctx = _RouterCtx(rag, character_name=character_name, window=window)
     toolkit = AgentToolkit(ctx, user_message=case["query"])
     messages = list(case.get("history") or []) + [{"role": "user", "content": case["query"]}]
-    result = AgentLoop(llm, toolkit).run(character_name or "", messages)
+    hint = _production_character_hint(card, arc_phase, case["query"], llm)
+    result = AgentLoop(llm, toolkit).run(hint, messages)
     calls = [s for s in result.steps if s["tool"] == "search_scenes"]
     ok_queries = [scene_query(case["query"], c["args"].get("query", ""))
                   for c in calls if c.get("ok")]
@@ -292,7 +320,7 @@ def _score_via_router(rag, source_norm, case, spans, *, character_name, window, 
 
 
 def _score_query(rag, source_norm: str, case: dict, spans, *, character_name, window,
-                 router_llm=None) -> dict:
+                 router_llm=None, card=None, arc_phase=None) -> dict:
     """检索一题并计分；检索失败（含查询嵌入超时）与聊天同样降级为空结果，不中止整套。
 
     聊天侧 ``AgentToolkit.execute`` 把场景工具的异常收成 ``failed`` 态、空结果继续；
@@ -303,7 +331,8 @@ def _score_query(rag, source_norm: str, case: dict, spans, *, character_name, wi
     """
     if router_llm is not None:
         return _score_via_router(rag, source_norm, case, spans, character_name=character_name,
-                                 window=window, llm=router_llm)
+                                 window=window, llm=router_llm, card=card,
+                                 arc_phase=arc_phase)
     try:
         hits = _scene_hits_in_chat_budget(
             rag, case["query"], character_name=character_name, window=window)
@@ -328,7 +357,7 @@ def run_eval(source: str, card: CharacterCard, cases: list[dict], rag, *,
         rows.append(_score_query(
             rag, source_norm, case, spans,
             character_name=card.name, window=views[case["phase"]].window,
-            router_llm=router_llm))
+            router_llm=router_llm, card=card, arc_phase=case["phase"]))
     return recall_eval.aggregate(rows)
 
 
@@ -341,11 +370,12 @@ def run_eval_no_phase(source: str, character: str, cases: list[dict], rag, *,
     source_norm = normalize(source)
     recall_eval.validate_cases(cases, source_norm, {None: None})
     spans = rag.chunk_spans(len(source_norm))
+    minimal_card = CharacterCard(name=character)
     rows = []
     for case in cases:
         rows.append(_score_query(
             rag, source_norm, case, spans, character_name=character, window=None,
-            router_llm=router_llm))
+            router_llm=router_llm, card=minimal_card, arc_phase=None))
     return rows
 
 
