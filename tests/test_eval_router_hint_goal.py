@@ -1,4 +1,4 @@
-"""目标检查（D20 第 1 步）：评测传给路由的角色背景与生产一致（先红）。
+"""目标检查（D20 第 1 步）：评测传给路由的角色背景与生产一致。
 
 测的是「达成目标」，不是「符合 spec」：
 
@@ -76,7 +76,6 @@ def _rag():
     return types.SimpleNamespace(chunk_spans=lambda _n: {})
 
 
-@pytest.mark.xfail(strict=True, reason="D20 第 1 步未实现：评测只传裸角色名")
 def test_card_row_hint_matches_production(captured_hints):
     import scripts.eval_recall as ev
 
@@ -90,7 +89,6 @@ def test_card_row_hint_matches_production(captured_hints):
     assert eval_hint[:300] == prod_hint[:300], "路由看到的前 300 字与生产不一致"
 
 
-@pytest.mark.xfail(strict=True, reason="D20 第 1 步未实现：无卡行只传裸角色名")
 def test_no_card_row_hint_uses_minimal_card(captured_hints):
     import scripts.eval_recall as ev
 
