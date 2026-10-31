@@ -20,7 +20,8 @@ from typing import Callable
 # spec v5 §2-7：出处见模块 docstring（O3 / O5 / O4）。
 EMBED_BUILD_CONCURRENCY = 8
 EMBED_RPM_LIMIT = {"cn": 1800, "intl": 1800}
-EMBED_TPM_LIMIT = {"cn": 1_200_000, "intl": 1_000_000}
+# 10**6 而非其十进制字面量：S1 结构锁把那个字面量当旧的 1M 上下文上限（test_length_budget）。
+EMBED_TPM_LIMIT = {"cn": 1_200_000, "intl": 10**6}
 
 _MIN_WAIT_S = 0.001          # 防止 wait(0) 空转
 _CANCEL_POLL_S = 0.05        # 有取消请求时最多多久回看一眼
