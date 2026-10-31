@@ -84,7 +84,7 @@ def _compute_budgets(model: str) -> dict[str, int]:
     total = MODEL_BUDGET_MAP.get(model)
     if total is None:
         total = 32000
-        print(f"[ContextEngine] WARNING: unknown model {model!r}, falling back to {total}")
+        logger.warning("[ContextEngine] unknown model %r, falling back to %d", model, total)
     return {
         "total": total,
         "history": round(total * _HISTORY_RATIO),
@@ -243,7 +243,7 @@ class ContextEngine:
         self.MAX_SCENE = budgets["scene"]
         self.MAX_MEMORY = budgets["memory"]
         self.MAX_CARD_EXT = budgets["card_ext"]
-        print(f"[ContextEngine] TOTAL_BUDGET={self.TOTAL_BUDGET} (model={model!r})")
+        logger.info("[ContextEngine] TOTAL_BUDGET=%d (model=%r)", self.TOTAL_BUDGET, model)
 
     def set_llm(self, llm: Any) -> None:
         """换到新连接，并按**新模型**重算预算。
@@ -347,9 +347,9 @@ class ContextEngine:
 
         total_used = count_tokens(result)
         if total_used > self.TOTAL_BUDGET * 0.9:
-            print(
-                f"[ContextEngine] WARNING: prompt ~{total_used} tok, "
-                f"budget={self.TOTAL_BUDGET}"
+            logger.warning(
+                "[ContextEngine] prompt ~%d tok, budget=%d",
+                total_used, self.TOTAL_BUDGET,
             )
 
         return BuildResult(prompt=result, traces=traces)
