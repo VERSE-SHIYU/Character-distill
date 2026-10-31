@@ -78,7 +78,10 @@ const net = ({ history = 1, byText = [CARD] } = {}) => {
     if (u.startsWith('/api/history/list')) {
       return json(history > 0 ? { total: history, items: [{ id: 'a1', title: '旧会话' }] } : { total: 0, items: [] })
     }
-    if (u.startsWith('/api/distill/cards/by-text/')) return json(byText)
+    // 复现用负载：loadCards 取卡延迟，放大「弹窗挂载 effect 与 change 抢时序」的窗口
+    if (u.startsWith('/api/distill/cards/by-text/')) {
+      return new Promise((resolve) => setTimeout(() => resolve(json(byText)), 100))
+    }
     if (u === '/api/text/list') return json([{ id: 't1', filename: 'a.md' }])
     return json({})
   })
@@ -95,7 +98,8 @@ beforeEach(() => {
     authUser: { id: 'u1', role: 'user' },
     currentView: 'home', viewHistory: [],
     currentTextId: 't1', texts: [{ id: 't1', filename: 'a.md' }],
-    cards: [CARD], currentCard: CARD, cardAvatars: {}, userRolesByCard: {},
+    // 卡片记住的身份非空：挂载 effect 的初值才在输入框上可见，才能等它落定
+    cards: [CARD], currentCard: CARD, cardAvatars: {}, userRolesByCard: { card1: '旧身份' },
     sessionId: null, messages: [], distillTasks: [],
     archiveModalOpen: false, archiveList: [], pendingCard: null, _pendingChatCardId: null,
   })
@@ -123,9 +127,14 @@ const renderWorkbenchTaskDetail = async () => {
 }
 
 // 身份弹窗两步：填角色名 → 确认并开始对话 → 进入对话。
-// 「确认并开始对话」在角色名为空时是 disabled —— 名字填进去后要等重渲染把它解锁再点，
+// 先等挂载 effect 把输入框重置为卡片记住的身份，再改一次——否则这次 change 会被它覆盖；
+// 「确认并开始对话」在角色名为空时是 disabled，名字填进去后还要等重渲染解锁再点，
 // 否则重页面（蒸馏任务详情）里那一次点击会打在还 disabled 的按钮上、静默失效。
 const confirmIdentity = async (role = '魏无羡') => {
+  const initialRole = useAppStore.getState().getUserRole(CARD.id)
+  await waitFor(() =>
+    expect(document.querySelector('#role-setup-input')).toHaveValue(initialRole),
+  )
   fireEvent.change(document.querySelector('#role-setup-input'), { target: { value: role } })
   await waitFor(() =>
     expect(screen.getByRole('button', { name: '确认并开始对话' })).toBeEnabled(),
@@ -184,8 +193,7 @@ describe('试聊 / 开始对话 共用同一个 StartChatButton', () => {
     fireEvent.click(screen.getByRole('button', { name: '试聊当前版本' }))
 
     await waitFor(() => expect(loadCardsSpy).toHaveBeenCalledWith('t1'))
-    // 弹窗在 loadCards 的 await 之后才开，先在 act 里把它挂载副作用跑完，
-    // 否则紧接着的 change 会被挂载时那次 setRole('') 覆盖掉。
+    // 弹窗在 loadCards 的 await 之后才开；挂载 effect 的落定由 confirmIdentity 等。
     await screen.findByRole('button', { name: '确认并开始对话' })
     expect(document.querySelector('#role-setup-input')).toBeInTheDocument()
 
