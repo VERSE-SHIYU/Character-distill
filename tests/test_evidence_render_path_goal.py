@@ -10,8 +10,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[1]
 NODEID = (
     "tests/test_evidence_integrity_mutations.py::test_mutation_reds_its_own_assertion"
@@ -19,7 +17,6 @@ NODEID = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="输出路径仍在导入时算死：单跑变异用例报 FileNotFoundError")
 def test_single_mutation_run_passes_without_prior_import():
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", NODEID],

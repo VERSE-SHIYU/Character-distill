@@ -696,7 +696,7 @@ class TestRenderedResumeList:
         import render_evidence
         entries = _manifest()
         assert entries, "清单为空 —— 这条断言会空过，先查为什么没有条目"
-        assert render_evidence.OUT.read_text(encoding="utf-8") == render_evidence.render(entries), (
+        assert render_evidence.out_path().read_text(encoding="utf-8") == render_evidence.render(entries), (
             "docs/evidence/resume-numbers.md 与清单不一致 —— 重跑 "
             "`python tests/perf/render_evidence.py`（本文件是渲染产物，勿手改）")
 

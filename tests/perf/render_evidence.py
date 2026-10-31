@@ -14,11 +14,19 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import evidence_writer
 from evidence_annotations import compose
-from evidence_writer import EVIDENCE_DIR, MANIFEST
 
-OUT = EVIDENCE_DIR / "resume-numbers.md"
+
+def out_path() -> Path:
+    """渲染产物的落点 —— 由本文件定位，不读 `evidence_writer.EVIDENCE_DIR`。
+
+    后者会被测试 monkeypatch 到 tmp；本产物是仓库里的真实文件，路径必须不随之漂移。
+    """
+    return Path(__file__).resolve().parents[2] / "docs" / "evidence" / "resume-numbers.md"
+
 
 _WRITABLE = "verified"
 _UNWRITABLE_REASON = {
@@ -106,10 +114,11 @@ def render(entries: list[dict]) -> str:
 def main() -> None:
     # 两层合成后才渲染：机器层（manifest.json）给 id/claim/status，人工层（annotations.json）
     # 给 derived 等 —— 渲染读的是视图，不是某一个文件
-    entries = compose(json.loads(MANIFEST.read_text(encoding="utf-8")))
-    OUT.write_text(render(entries), encoding="utf-8")
+    entries = compose(json.loads(evidence_writer.MANIFEST.read_text(encoding="utf-8")))
+    out = out_path()
+    out.write_text(render(entries), encoding="utf-8")
     # ASCII 输出：Windows 控制台默认 GBK，中文会打成乱码（本脚本是要给人手跑的）
-    print(f"wrote {OUT.name} ({len(entries)} entries)")
+    print(f"wrote {out.name} ({len(entries)} entries)")
 
 
 if __name__ == "__main__":
