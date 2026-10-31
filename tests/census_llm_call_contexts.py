@@ -131,6 +131,22 @@ adapter。`mcp_server/` 与 `scripts/` 是独立进程、不注册守卫，保�
   的重建循环。少了它，那两处的嵌入出站会以 `LLMCallerMissing` fail-closed。
 - §二、§三 的读数表是**日期快照**，上面两条不改表，只作订正。
 
+## 五、现跑现数（2026-10-31，D19 后）
+
+按 §上述方法重跑（`python tests/census_llm_call_contexts.py`），逐类读数：
+
+总 **88 处** —— `to_thread` 57、`create_task` 10、`ctx_thread` 10、`ctx_submit` 7、
+`run_in_executor` 4。
+
+相对 §四 的 59 处，增量主要来自主线自身漂移（`to_thread` 33→57、`ctx_thread` 8→10、
+`create_task` 11→10）；D19 只新增 1 处：
+
+- `core/embeddings.py:510` `ctx_submit`，所属 `DashScopeEmbedding._embed_batches_concurrent`。
+  派生体内是嵌入出站（`_call_api_with_retry` → `check_outbound_guard`，不经 `LLMAdapter`）；
+  父为建索引请求（`indexing_service._run_job` 经 `asyncio.to_thread`，标准库语义已传
+  contextvar），身份随 `ctx_submit` 带到工作线程，结论同 §二 的 embedding 两格：
+  **继承、无需声明**。`system_llm_context()` 的生产调用点仍为 §四 记的 2 处。
+
 ## 用法
 
 `python tests/census_llm_call_contexts.py` 打印读数；pytest 侧取数用裸模块名

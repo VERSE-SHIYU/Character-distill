@@ -3,18 +3,22 @@ import os
 import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
 
 import httpx2
+import tenacity
 from chromadb.api.types import EmbeddingFunction
 
 from adapters.llm_adapter import (  # 出站门（缺陷 73）：与 LLM 出站同一处判定
     OutboundRefused,
     check_outbound_guard,
 )
+from core.embed_rate_limit import EMBED_BUILD_CONCURRENCY, get_limiter
 from core.fingerprint import key_fingerprint
 from core.http_keepalive import EMBED_KEEPALIVE_S, KEEPALIVE_SOCKET_OPTIONS
+from core import concurrency as C  # ctx_submit：工作线程带调用方 contextvar（F7）
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 logger = logging.getLogger(__name__)
@@ -67,6 +71,8 @@ _EMBED_MARGIN_S = 0.1
 _EMBED_MIN_S = 0.1
 _EMBED_WINDOW_S = _EMBED_MARGIN_S + _EMBED_MIN_S
 _EMBED_ATTEMPTS = 3  # bounded 路径总尝试上限（对齐旧 SDK max_retries=2 → ≤3 次 HTTP）
+# 建索引多批路径按官方基础策略（spec v5 §2-4 / O4）：1–60 s 随机指数退避，最多 6 次尝试。
+_EMBED_RETRY_ATTEMPTS = 6
 
 
 def _retry_after_secs(exc: Exception) -> float | None:
@@ -94,6 +100,15 @@ def _is_retryable_embed(exc: Exception) -> bool:
     if "openai" in mod:
         return name in ("APIConnectionError", "APITimeoutError")
     return name in ("TimeoutError", "ConnectionError")
+
+
+def _embed_wait(retry_state: tenacity.RetryCallState) -> float:
+    """官方退避 1–60 s；若 429 带 Retry-After 则取二者较大（O4 / spec §2-4）。"""
+    base = tenacity.wait_random_exponential(min=1, max=60)(retry_state)
+    outcome = retry_state.outcome
+    exc = outcome.exception() if outcome is not None else None
+    retry_after = _retry_after_secs(exc) if exc is not None else None
+    return max(base, retry_after or 0.0)
 
 
 # ── Factory cache: region:key_fingerprint → DashScopeEmbedding singleton ──
@@ -258,6 +273,9 @@ class DashScopeEmbedding(EmbeddingFunction):
         self._client_no_retry = self._client.with_options(max_retries=0)
         self._model = model
         self._dimensions = dimensions
+        # 令牌桶按 (key 指纹, 地域) 共享（spec v5 §2-3 / F14），实例只记身份。
+        self._region = region
+        self._key_fp = key_fingerprint(api_key)
 
     MAX_BATCH = 10  # 百炼 text-embedding-v4 单次最多 10 条
     MAX_CHARS = 3000  # 单条安全长度（~8192 token 的保守字符数）
@@ -315,6 +333,23 @@ class DashScopeEmbedding(EmbeddingFunction):
                 if wait > 0:
                     time.sleep(wait)
 
+    def _call_api_with_retry(self, texts: list[str]) -> list[list[float]]:
+        """多批路径的单批调用：官方退避（O4），走无 SDK 重试的克隆（spec §2-4）。"""
+        @tenacity.retry(
+            retry=tenacity.retry_if_exception(_is_retryable_embed),
+            wait=_embed_wait,
+            stop=tenacity.stop_after_attempt(_EMBED_RETRY_ATTEMPTS),
+            reraise=True,
+        )
+        def _call() -> list[list[float]]:
+            check_outbound_guard(self._base_url)
+            resp = self._client_no_retry.embeddings.create(
+                model=self._model, input=texts, dimensions=self._dimensions,
+            )
+            return [resp.data[i].embedding for i in range(len(texts))]
+
+        return _call()
+
     def _embed_impl(self, input: list[str]) -> list[list[float]]:
         """Raw embedding logic — returns pure Python list[list[float]].
 
@@ -350,60 +385,25 @@ class DashScopeEmbedding(EmbeddingFunction):
         api_calls = 0
         moderation_blocked = 0
 
-        # 未命中的调 API
+        # 未命中的调 API：≤ MAX_BATCH 走原顺序路径；多批走有界并发（spec v5 §2-1/2）
         batch_size = self.MAX_BATCH
-        for batch_start in range(0, len(uncached), batch_size):
-            batch = uncached[batch_start : batch_start + batch_size]
-            texts = [t for _, t in batch]
-            try:
-                embeddings = self._call_api(texts)
-                api_calls += len(texts)
-                for (orig_idx, orig_text), emb in zip(batch, embeddings):
-                    _shared_cache_put(orig_text, emb)
-                    all_results.append((orig_idx, emb))
-            except OutboundRefused:
-                # 门拦下的不是「嵌入失败」：请求根本没出网，包成下面的
-                # RuntimeError("百炼 embedding 失败") 会把类型吃掉 —— `/test-embedding`
-                # 正是靠它回 403 + 理由，MCP／脚本里少写 `system_llm_context()` 的
-                # `LLMCallerMissing` 也靠它保持可辨。排在宽 except 前，与 `/test-embedding`
-                # 那条放行同一个写法。
-                raise
-            except Exception as exc:
-                exc_str = str(exc)
-                if _is_moderation_error(exc_str):
-                    # 内容审核拦截：降级为逐条重试，跳过违规段
-                    logger.warning(
-                        "[embed-stats] moderation detected in batch, "
-                        "falling back to per-item retry: %s",
-                        exc_str[:120],
-                    )
-                    for orig_idx, orig_text in batch:
-                        try:
-                            single_emb = self._call_api([orig_text])
-                            api_calls += 1
-                            _shared_cache_put(orig_text, single_emb[0])
-                            all_results.append((orig_idx, single_emb[0]))
-                        except Exception as inner_exc:
-                            if _is_moderation_error(str(inner_exc)):
-                                moderation_blocked += 1
-                                logger.info(
-                                    "[embed-stats] moderation_blocked: "
-                                    "len=%s source=%s",
-                                    len(orig_text), self.source,
-                                )
-                                # 零向量占位，保持 ChromaDB 对齐
-                                all_results.append(
-                                    (orig_idx, [0.0] * self._dimensions)
-                                )
-                            else:
-                                raise
-                else:
-                    lengths = [len(t) for t in texts]
-                    raise RuntimeError(
-                        f"百炼 embedding 失败：第{batch_start // batch_size + 1}批，"
-                        f"{len(texts)}条，单条长度{lengths}。"
-                        f"可能超长或超限: {exc}"
-                    ) from exc
+        batches = [
+            uncached[start : start + batch_size]
+            for start in range(0, len(uncached), batch_size)
+        ]
+        if len(batches) <= 1:
+            for batch_no, batch in enumerate(batches, 1):
+                results, calls, blocked = self._embed_one_batch(
+                    batch, batch_no, retry=False
+                )
+                all_results.extend(results)
+                api_calls += calls
+                moderation_blocked += blocked
+        else:
+            results, calls, blocked = self._embed_batches_concurrent(batches)
+            all_results.extend(results)
+            api_calls += calls
+            moderation_blocked += blocked
 
         # 统计
         total_tokens = sum(len(t) for _, t in cleaned) // 2
@@ -412,6 +412,116 @@ class DashScopeEmbedding(EmbeddingFunction):
         # 按原始顺序恢复
         all_results.sort(key=lambda x: x[0])
         return [emb for _, emb in all_results]
+
+    def _embed_one_batch(
+        self, batch: list[tuple[int, str]], batch_no: int, *, retry: bool,
+    ) -> tuple[list[tuple[int, list[float]]], int, int]:
+        """单批嵌入；审核降级、OutboundRefused 原样、F9 原文都与顺序版一致。
+
+        返回 (下标向量列表, api_calls, moderation_blocked)。`retry=True` 只给多批
+        路径用（官方退避）；单批查询路径仍走 SDK 自己的 max_retries=2。
+        """
+        texts = [t for _, t in batch]
+        call = self._call_api_with_retry if retry else self._call_api
+        try:
+            embeddings = call(texts)
+            for (orig_idx, orig_text), emb in zip(batch, embeddings):
+                _shared_cache_put(orig_text, emb)
+            return (
+                [(idx, emb) for (idx, _), emb in zip(batch, embeddings)],
+                len(texts),
+                0,
+            )
+        except OutboundRefused:
+            # 门拦下的不是「嵌入失败」：请求根本没出网，包成下面的
+            # RuntimeError("百炼 embedding 失败") 会把类型吃掉 —— `/test-embedding`
+            # 正是靠它回 403 + 理由，MCP／脚本里少写 `system_llm_context()` 的
+            # `LLMCallerMissing` 也靠它保持可辨。排在宽 except 前。
+            raise
+        except Exception as exc:
+            exc_str = str(exc)
+            if not _is_moderation_error(exc_str):
+                lengths = [len(t) for t in texts]
+                raise RuntimeError(
+                    f"百炼 embedding 失败：第{batch_no}批，"
+                    f"{len(texts)}条，单条长度{lengths}。"
+                    f"可能超长或超限: {exc}"
+                ) from exc
+
+            # 内容审核拦截：降级为逐条重试，跳过违规段
+            logger.warning(
+                "[embed-stats] moderation detected in batch, "
+                "falling back to per-item retry: %s",
+                exc_str[:120],
+            )
+            results: list[tuple[int, list[float]]] = []
+            calls = 0
+            blocked = 0
+            for orig_idx, orig_text in batch:
+                try:
+                    single_emb = call([orig_text])
+                    calls += 1
+                    _shared_cache_put(orig_text, single_emb[0])
+                    results.append((orig_idx, single_emb[0]))
+                except Exception as inner_exc:
+                    if not _is_moderation_error(str(inner_exc)):
+                        raise
+                    blocked += 1
+                    logger.info(
+                        "[embed-stats] moderation_blocked: len=%s source=%s",
+                        len(orig_text), self.source,
+                    )
+                    # 零向量占位，保持 ChromaDB 对齐
+                    results.append((orig_idx, [0.0] * self._dimensions))
+            return results, calls, blocked
+
+    def _embed_batches_concurrent(
+        self, batches: list[list[tuple[int, str]]],
+    ) -> tuple[list[tuple[int, list[float]]], int, int]:
+        """多批：先令牌、再并发槽、最后 ctx_submit（spec v5 §2-3）。"""
+        limiter = get_limiter(self._key_fp, self._region)
+        sem = threading.BoundedSemaphore(EMBED_BUILD_CONCURRENCY)
+        cancel = threading.Event()
+
+        def work(batch, batch_no):
+            try:
+                return self._embed_one_batch(batch, batch_no, retry=True)
+            except BaseException:
+                cancel.set()          # 第一个非审核类失败：停止取令牌
+                limiter.wake()
+                raise
+            finally:
+                sem.release()
+
+        results: list[tuple[int, list[float]]] = []
+        api_calls = 0
+        moderation_blocked = 0
+        futures = []
+        executor = ThreadPoolExecutor(max_workers=EMBED_BUILD_CONCURRENCY)
+        try:
+            for batch_no, batch in enumerate(batches, 1):
+                # TPM 预扣口径同 _update_stats：字符数 // 2（O7，spec §2-3）
+                tokens = max(1, sum(len(t) for _, t in batch) // 2)
+                if not limiter.acquire(tokens, cancel=cancel):
+                    break             # 已有批失败；未开始的批不再发
+                sem.acquire()
+                try:
+                    futures.append(
+                        (batch_no, C.ctx_submit(executor, work, batch, batch_no))
+                    )
+                except BaseException:
+                    sem.release()
+                    raise
+            for _batch_no, fut in futures:
+                batch_results, calls, blocked = fut.result()
+                results.extend(batch_results)
+                api_calls += calls
+                moderation_blocked += blocked
+        finally:
+            cancel.set()
+            limiter.wake()
+            executor.shutdown(wait=False, cancel_futures=True)
+        return results, api_calls, moderation_blocked
 
     def __call__(self, input: list[str]) -> list[list[float]]:
         """ChromaDB EmbeddingFunction interface — delegates to _embed_impl."""
