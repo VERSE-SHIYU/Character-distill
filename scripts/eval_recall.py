@@ -33,8 +33,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
-import io
 import json
 import logging
 import sys
@@ -275,14 +273,12 @@ def _production_character_hint(card: CharacterCard, arc_phase: int | None,
 
     生产在 ``chat`` 里先 ``_compose_system_prompt(..., include_dynamic=not agent_mode)``
     再交给 ``_run_agent_phase``；这里用同一个组装函数、同一组新会话默认值。
-    ``ContextEngine`` 构造时会向 stdout 打预算行，会破坏评测的 JSON 输出，故吞掉。
     """
-    with contextlib.redirect_stdout(io.StringIO()):
-        engine = ChatEngine(
-            llm=llm, rag=None, card=card, arc_phase=arc_phase,
-            storage=None, session_id="", is_new_session=True)
-        engine.agent_mode = True
-        return engine._compose_system_prompt(user_message, include_dynamic=False)
+    engine = ChatEngine(
+        llm=llm, rag=None, card=card, arc_phase=arc_phase,
+        storage=None, session_id="", is_new_session=True)
+    engine.agent_mode = True
+    return engine._compose_system_prompt(user_message, include_dynamic=False)
 
 
 def _score_via_router(rag, source_norm, case, spans, *, character_name, window, llm,

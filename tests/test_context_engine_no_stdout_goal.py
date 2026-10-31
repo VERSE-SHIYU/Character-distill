@@ -15,8 +15,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -24,10 +22,6 @@ if str(ROOT) not in sys.path:
 from core.arc_view import project_card  # noqa: E402
 from core.context_engine import ContextEngine  # noqa: E402
 from core.schema import CharacterCard  # noqa: E402
-
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="ContextEngine 仍用 print 写 stdout（P8 目标检查）"
-)
 
 LOGGER = "core.context_engine"
 
