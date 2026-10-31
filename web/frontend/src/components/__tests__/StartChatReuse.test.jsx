@@ -139,6 +139,8 @@ const confirmIdentity = async (role = '魏无羡') => {
   await waitFor(() =>
     expect(screen.getByRole('button', { name: '确认并开始对话' })).toBeEnabled(),
   )
+  // enabled 不等于值没被挂载 effect 覆盖回初值，所以值也要再核一次
+  expect(document.querySelector('#role-setup-input')).toHaveValue(role)
   fireEvent.click(screen.getByRole('button', { name: '确认并开始对话' }))
   fireEvent.click(await screen.findByRole('button', { name: '进入对话' }))
 }
