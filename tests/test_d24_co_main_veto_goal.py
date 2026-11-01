@@ -19,8 +19,6 @@ merge：一条反证即阻止合并）；门槛 ≥ 2 片是本项目自定（�
 
 from __future__ import annotations
 
-import pytest
-
 from core.roster_aggregate import (
     group_identify_entries,
     merge_identify_groups,
@@ -54,7 +52,6 @@ def _same_main(per, idx, alias):
     return per
 
 
-@pytest.mark.xfail(strict=True, reason="同片主名否决尚未实现（目标检查）")
 def test_alias_merge_is_vetoed_by_shared_main_chunks(caplog):
     """#1 甲甲、乙乙在片 0–2 同为主名；片 5 把乙乙写成甲甲的别名 → 两组分开。"""
     per = _chunks({**{i: [("甲甲", False), ("乙乙", False)] for i in range(3)},
@@ -70,7 +67,6 @@ def test_alias_merge_is_vetoed_by_shared_main_chunks(caplog):
     assert "甲" in msgs[0] and "乙" in msgs[0] and "3" in msgs[0], msgs[0]
 
 
-@pytest.mark.xfail(strict=True, reason="同片主名否决尚未实现（目标检查）")
 def test_judge_pair_is_vetoed_by_shared_main_chunks(caplog):
     """#2 甲甲、乙乙在片 0–2 同为主名；判定组对 [甲甲,乙乙] → 仍是两组。"""
     per = _chunks({i: [("甲甲", False), ("乙乙", False)] for i in range(3)}, 6)
@@ -105,12 +101,10 @@ def test_alias_merge_without_shared_main_chunks_still_happens():
     assert _all_members(groups) == {frozenset({"甲甲", "乙乙"})}
 
 
-@pytest.mark.xfail(strict=True, reason="同片主名否决尚未实现（目标检查）")
 def test_veto_is_checked_per_pair_not_per_group():
     """#5 甲甲–乙乙可并，乙乙–丙丙不可（丙丙与甲甲同片）→ 丙丙仍单独一组。"""
-    per = _chunks({**{i: [("甲甲", False)] for i in range(3)},
-                   **{i: [("乙乙", False)] for i in range(3, 6)},
-                   **{i: [("丙丙", False)] for i in range(3)}}, 6)
+    per = _chunks({**{i: [("甲甲", False), ("丙丙", False)] for i in range(3)},
+                   **{i: [("乙乙", False)] for i in range(3, 6)}}, 6)
     groups = group_identify_entries(per)
 
     merged = merge_identify_groups(groups, [("甲甲", "乙乙"), ("乙乙", "丙丙")])
@@ -119,7 +113,6 @@ def test_veto_is_checked_per_pair_not_per_group():
         frozenset({"甲甲", "乙乙"}), frozenset({"丙丙"})}
 
 
-@pytest.mark.xfail(strict=True, reason="同片主名否决尚未实现（目标检查）")
 def test_replay_roster_applies_the_same_veto():
     """#6 用 #1 的数据拼 trace（judge pairs 为空）→ 重算结果里是两行。"""
     per = _chunks({**{i: [("甲甲", False), ("乙乙", False)] for i in range(3)},
