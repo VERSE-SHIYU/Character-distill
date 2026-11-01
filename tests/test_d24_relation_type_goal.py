@@ -22,7 +22,6 @@ _NOTE = "本角色弧线的阶段（略）。"
 
 # ── 判据 ────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="relation_violation 尚未实现")
 def test_pronoun_relation_is_rejected():
     from core.relationship_batch import relation_violation
 
@@ -30,7 +29,6 @@ def test_pronoun_relation_is_rejected():
     assert why is not None and "她" in why
 
 
-@pytest.mark.xfail(strict=True, reason="relation_violation 尚未实现")
 def test_overlong_relation_is_rejected():
     from core.relationship_batch import relation_violation
 
@@ -38,7 +36,6 @@ def test_overlong_relation_is_rejected():
     assert why is not None and "20" in why
 
 
-@pytest.mark.xfail(strict=True, reason="relation_violation 尚未实现")
 def test_valid_relations_pass():
     from core.relationship_batch import relation_violation
 
@@ -48,7 +45,6 @@ def test_valid_relations_pass():
 
 # ── 提示词与前后端上限 ─────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="RELATIONSHIP_RULES 尚未恢复字段定义")
 def test_rules_restore_relation_type_definition():
     from core.relationship_batch import REL_RELATION_MAX, RELATIONSHIP_RULES
 
@@ -56,7 +52,6 @@ def test_rules_restore_relation_type_definition():
     assert str(REL_RELATION_MAX) in RELATIONSHIP_RULES
 
 
-@pytest.mark.xfail(strict=True, reason="后端上限常量尚未定义")
 def test_backend_limits_match_frontend_max_length():
     from core.relationship_batch import REL_ATTITUDE_MAX, REL_RELATION_MAX
 
@@ -70,7 +65,6 @@ def test_backend_limits_match_frontend_max_length():
 
 # ── 补跑：缺人与不合口径合成一次 ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="补跑尚未把 relation 违规纳入")
 def test_violating_relation_is_rewritten_in_retry():
     calls: list[tuple[list[str], str]] = []
 
@@ -89,7 +83,6 @@ def test_violating_relation_is_rewritten_in_retry():
     assert {r["target"]: r["relation"] for r in out}["谢凛羽"] == "青梅竹马"
 
 
-@pytest.mark.xfail(strict=True, reason="补跑尚未把 relation 违规纳入")
 def test_still_violating_after_retry_warns_but_keeps_result(caplog):
     calls: list[list[str]] = []
 
@@ -109,7 +102,6 @@ def test_still_violating_after_retry_warns_but_keeps_result(caplog):
     assert "谢凛羽" in warnings[0].getMessage() and "她" in warnings[0].getMessage()
 
 
-@pytest.mark.xfail(strict=True, reason="补跑尚未把缺人与违规合成一次")
 def test_missing_and_violating_share_one_retry():
     calls: list[tuple[list[str], str]] = []
 
