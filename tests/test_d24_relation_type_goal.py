@@ -132,6 +132,26 @@ def test_all_valid_makes_no_retry():
     assert len(calls) == 1
 
 
+def test_recovered_missing_with_bad_relation_still_warns(caplog):
+    """补回来的人 relation 也不合口径时同样记 WARNING（他不在补跑前的违规名单里）。"""
+    calls: list[list[str]] = []
+
+    def fake(system: str, user: str, batch: list[str]):
+        calls.append(list(batch))
+        if len(calls) == 1:
+            return []
+        return [{"target": t, "relation": "她是我唯一的光"} for t in batch]
+
+    with caplog.at_level(logging.WARNING, logger="core.relationship_batch"):
+        out = batch_relationships(["谢凛羽"], _NOTE, stream_call=fake,
+                                  prefix="P", name="主角")
+
+    assert out[0]["relation"] == "她是我唯一的光"
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "谢凛羽" in warnings[0].getMessage() and "她" in warnings[0].getMessage()
+
+
 def test_missing_after_retry_still_raises():
     calls: list[list[str]] = []
 

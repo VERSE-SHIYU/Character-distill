@@ -35,7 +35,7 @@ class RelationshipBatchError(RuntimeError):
 
 
 # 关系生成的口径（八条）：**只在这里写一次**（锁 S13），由 `_batch_prompt` 引用。
-# 主调用维度 F 的「只出名单」讲的是「这一步先别写关系详情」，这五条讲的是「这一步怎么写」，
+# 主调用维度 F 的「只出名单」讲的是「这一步先别写关系详情」，这八条讲的是「这一步怎么写」，
 # 是同一件事的两步、两句话 —— 规则若也内联进 distiller 的维度说明就成了「一处两写」。
 RELATIONSHIP_RULES = (
     "## 关系生成口径\n"
@@ -192,8 +192,8 @@ def batch_relationships(targets: list[str], phase_note: str, *,
         still = [k for k in want if k not in found]
         if still:
             raise RelationshipBatchError(f"关系生成缺少人物：{'、'.join(still)}")
-        for k in want:
-            if k in bad and k in found:
+        for k in retry:
+            if k in found:
                 why = relation_violation(str(found[k].get("relation") or ""))
                 if why:
                     logger.warning("关系类型仍不合第 8 条：%s：%s", k, why)
