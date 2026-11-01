@@ -8,11 +8,15 @@ from pydantic import BaseModel, model_validator
 
 logger = logging.getLogger(__name__)
 
-# 预设标签列表 — 用于角色分类和 AI 自动打标
+# 预设标签列表 — 市场分类按钮
 PRESET_TAGS = [
     "恋爱", "动漫", "游戏", "治愈", "悬疑", "古风", "校园",
     "奇幻", "科幻", "日常", "虐心", "搞笑", "男频", "女频", "原创",
 ]
+# 来源类：书的出处。自动打标只看得到角色信息，猜不出来，别让它瞎猜后进 market_tags。
+SOURCE_TAGS = ("动漫", "游戏", "男频", "女频", "原创")
+# 题材类：自动打标与发布兜底可用的部分。
+GENRE_TAGS = tuple(t for t in PRESET_TAGS if t not in SOURCE_TAGS)
 
 
 class SpeakingStyle(BaseModel):

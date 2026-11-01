@@ -61,7 +61,6 @@ def _ask_model(reply: str) -> tuple[Distiller, _FakeLLM]:
 # ── 1. 自动打标丢掉来源类标签 ────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ② 未实现：自动打标仍保留来源类标签")
 def test_auto_tag_drops_source_tags():
     distiller, _ = _ask_model('["原创","古风","男频"]')
     assert distiller._auto_tag({"name": "张三"}) == ["古风"]
@@ -70,7 +69,6 @@ def test_auto_tag_drops_source_tags():
 # ── 2. 提示词不再列来源类候选 ────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ② 未实现：提示词仍列来源类候选")
 def test_auto_tag_prompt_has_no_source_tags():
     distiller, llm = _ask_model("[]")
     distiller._auto_tag({"name": "张三"})
@@ -143,7 +141,6 @@ async def _publish_and_read_market_tags(store, uid, card_tags, body) -> str:
 # ── 3. 没填 market_tags：兜底只抄题材类 ──────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ② 未实现：兜底仍抄全部标签")
 @PG_ENV.skipif("市场发布兜底用例")
 async def test_publish_fallback_keeps_only_genre_tags(store, owner, _review_pass):
     assert await _publish_and_read_market_tags(store, owner, ["原创", "古风"], {}) == "古风"
