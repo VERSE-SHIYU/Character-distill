@@ -313,7 +313,9 @@ class TestImpersonalPropagation:
     """
 
     def test_generic_merged_into_a_real_person_is_not_impersonal(self):
-        per = _chunks({i: [("甲", True), ("婆子", False)] for i in range(7)}, 7)
+        per = _chunks(
+            {**{i: [("甲", True)] for i in range(7)},
+             **{i: [("婆子", False)] for i in range(7, 14)}}, 14)
         row = _row(per, pairs=[("甲", "婆子")], impersonal=["婆子"])
 
         assert row["importance"] == "主要", "一个真人物并进泛称组，那组就是具体的人"
@@ -340,13 +342,16 @@ class TestSpeakCountAcrossMergedGroups:
         assert row["importance"] == "主要", "各自 4 片不够，并完 8 片才够"
 
     def test_overlapping_chunks_are_counted_once(self):
-        per = [[{"name": "甲", "aliases": [], "spoke": True, "reason": "a"},
-                {"name": "乙", "aliases": [], "spoke": True, "reason": "b"}]
-               for _ in range(4)]
+        # 片 3 两人都在（显式写出 —— 用 `{**a, **b}` 合并时同号的键会被后者覆盖，
+        # 重叠就没了，重复计数也一样得 7，用例守不住「只计一次」）。
+        per = _chunks(
+            {**{i: [("甲", True)] for i in range(3)},
+             3: [("甲", True), ("乙", True)],
+             **{i: [("乙", True)] for i in range(4, 7)}}, 7)
         row = _row(per, pairs=[("甲", "乙")])
 
-        assert row["speak_chunks"] == 4, "同一片里两人都说话仍只算一片"
-        assert row["importance"] == "次要"
+        assert row["speak_chunks"] == 7, "只在片 3 重叠：4 + 4 − 1"
+        assert row["importance"] == "主要", "7 片 ≥ 门槛 6"
 
 
 class TestRosterShape:

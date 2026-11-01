@@ -24,13 +24,24 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, NamedTuple, Sequence
+import logging
+from typing import Any, Callable, Iterable, Mapping, NamedTuple, Sequence
+
+logger = logging.getLogger(__name__)
 
 #: 判「主要」的说话分片数门槛：卡片里的说话风格与对话示例直接取自原文对话，铁律 1
 #: 要求一个特质至少在 2 个不同场景出现、核心性格至少 3 个 ⇒ 至少 6 个不同分片里
 #: 有本人说话，才可能蒸出一张性格准确的卡。出场多但几乎不说话的（「和尚」形态）
 #: 出不了卡，判次要。
 MIN_SPEAK_CHUNKS = 6
+
+#: 同片主名否决的门槛：两个名字在 ≥ 2 个分片里**各自是主名** → 判为两个人，不并。
+#: 依据 Vala et al., EMNLP 2015（同一处各自出现的名字对视为不同人，删去路径边拆图）
+#: 与 arXiv 2607.26298（verified merge：簇对簇有一条反证即阻止合并）。门槛 2 是本
+#: 项目自定：模型偶尔在同一片里把同一个人列成两条；数据里正确合并的组对同片主名数为
+#: 0–1，错误合并的为 18–85（恶女训狗无数 290 片）。样本只有一本书一次识别，出现反例
+#: 只改这一处。被否决的组对记 WARNING，也可由 texts.characters_trace 重算。
+CO_MAIN_VETO_CHUNKS = 2
 
 
 class _Obs(NamedTuple):
@@ -44,10 +55,23 @@ class _Obs(NamedTuple):
 
 
 class _UnionFind:
-    """并查集 —— 两处并组都是「按若干条等价关系求连通分量」：别名并组、模型给的组对。"""
+    """并查集 —— 两处并组都是「按若干条等价关系求连通分量」：别名并组、模型给的组对。
 
-    def __init__(self, keys: Sequence[Any]) -> None:
+    `union` 带同片主名否决：每根记下成员作为主名出现过的分片号，待并两根的交集
+    ≥ `CO_MAIN_VETO_CHUNKS` 就不并。反证查在「组对组」这一层 —— 整组并查集可传递，
+    并进去就再也拆不开。
+    """
+
+    def __init__(
+        self, keys: Sequence[Any],
+        main_chunks: Mapping[Any, Iterable[int]],
+        label: Callable[[Any], str],
+    ) -> None:
         self._parent = {k: k for k in keys}
+        self._chunks = {k: set(main_chunks.get(k, ())) for k in keys}
+        self._label = label
+        # 已记过 WARNING 的根对：别名并组是不动点循环，同一对每轮都会再试一次，只记一条。
+        self._vetoed: set[frozenset[Any]] = set()
 
     def find(self, key: Any) -> Any:
         parent = self._parent
@@ -56,10 +80,23 @@ class _UnionFind:
             key = parent[key]
         return key
 
-    def union(self, a: Any, b: Any) -> None:
+    def union(self, a: Any, b: Any) -> bool:
+        """合并两键；被同片主名否决时返回 False 且不动。"""
         ra, rb = self.find(a), self.find(b)
-        if ra != rb:
-            self._parent[rb] = ra
+        if ra == rb:
+            return True
+        shared = self._chunks[ra] & self._chunks[rb]
+        if len(shared) >= CO_MAIN_VETO_CHUNKS:
+            pair = frozenset((ra, rb))
+            if pair not in self._vetoed:
+                self._vetoed.add(pair)
+                logger.warning(
+                    "[distill] identify veto: %s × %s 同片主名 %d 片，不并",
+                    self._label(ra), self._label(rb), len(shared))
+            return False
+        self._parent[rb] = ra
+        self._chunks[ra] |= self._chunks[rb]
+        return True
 
 
 def _norm(value: Any) -> str:
@@ -210,7 +247,10 @@ def group_identify_entries(
 
     order: list[str] = list(dict.fromkeys(o.name for o in obs))
     names = set(order)
-    uf = _UnionFind(order)
+    main_chunks: dict[str, set[int]] = {}
+    for o in obs:
+        main_chunks.setdefault(o.name, set()).add(o.chunk)
+    uf = _UnionFind(order, main_chunks, str)
     while True:
         grew = False
         for alias, who in owners.items():
@@ -220,8 +260,7 @@ def group_identify_entries(
             if len(roots) != 1:
                 continue    # 挂在 ≥2 个组上 = 有歧义，不并
             root = next(iter(roots))
-            if uf.find(alias) != root:
-                uf.union(alias, root)
+            if uf.find(alias) != root and uf.union(alias, root):
                 grew = True
         if not grew:
             break
@@ -292,7 +331,8 @@ def merge_identify_groups(
     """
     impersonals = set(impersonal_names)
     by_name = {g["name"]: i for i, g in enumerate(groups)}
-    uf = _UnionFind(range(len(groups)))
+    main_chunks = {i: {o.chunk for o in g["entries"]} for i, g in enumerate(groups)}
+    uf = _UnionFind(range(len(groups)), main_chunks, lambda i: groups[i]["name"])
     for pair in pairs:
         idxs = [by_name[n] for n in pair if n in by_name]
         for other in idxs[1:]:
