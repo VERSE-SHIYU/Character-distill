@@ -342,9 +342,12 @@ class TestSpeakCountAcrossMergedGroups:
         assert row["importance"] == "主要", "各自 4 片不够，并完 8 片才够"
 
     def test_overlapping_chunks_are_counted_once(self):
+        # 片 3 两人都在（显式写出 —— 用 `{**a, **b}` 合并时同号的键会被后者覆盖，
+        # 重叠就没了，重复计数也一样得 7，用例守不住「只计一次」）。
         per = _chunks(
-            {**{i: [("甲", True)] for i in range(4)},
-             **{i: [("乙", True)] for i in range(3, 7)}}, 7)
+            {**{i: [("甲", True)] for i in range(3)},
+             3: [("甲", True), ("乙", True)],
+             **{i: [("乙", True)] for i in range(4, 7)}}, 7)
         row = _row(per, pairs=[("甲", "乙")])
 
         assert row["speak_chunks"] == 7, "只在片 3 重叠：4 + 4 − 1"

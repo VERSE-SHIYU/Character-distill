@@ -70,6 +70,8 @@ class _UnionFind:
         self._parent = {k: k for k in keys}
         self._chunks = {k: set(main_chunks.get(k, ())) for k in keys}
         self._label = label
+        # 已记过 WARNING 的根对：别名并组是不动点循环，同一对每轮都会再试一次，只记一条。
+        self._vetoed: set[frozenset[Any]] = set()
 
     def find(self, key: Any) -> Any:
         parent = self._parent
@@ -85,9 +87,12 @@ class _UnionFind:
             return True
         shared = self._chunks[ra] & self._chunks[rb]
         if len(shared) >= CO_MAIN_VETO_CHUNKS:
-            logger.warning(
-                "[distill] identify veto: %s × %s 同片主名 %d 片，不并",
-                self._label(ra), self._label(rb), len(shared))
+            pair = frozenset((ra, rb))
+            if pair not in self._vetoed:
+                self._vetoed.add(pair)
+                logger.warning(
+                    "[distill] identify veto: %s × %s 同片主名 %d 片，不并",
+                    self._label(ra), self._label(rb), len(shared))
             return False
         self._parent[rb] = ra
         self._chunks[ra] |= self._chunks[rb]

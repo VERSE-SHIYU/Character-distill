@@ -124,3 +124,17 @@ def test_replay_roster_applies_the_same_veto():
 
     assert len(roster) == 2, [r["name"] for r in roster]
     assert {r["name"] for r in roster} == {"甲甲", "乙乙"}
+
+
+def test_vetoed_pair_is_logged_once_across_fixpoint_rounds(caplog):
+    """别名并组是不动点循环：别的组并上了会再转一轮，被否决的同一对只记一条 WARNING。"""
+    per = _chunks({**{i: [("甲甲", False), ("乙乙", False)] for i in range(3)},
+                   5: [("甲甲", False)], 6: [("丙丙", False)], 7: [("丁丁", False)]}, 8)
+    _same_main(per, 5, "乙乙")   # 被否决的一对
+    _same_main(per, 6, "丁丁")   # 另一对正常并上，逼出第二轮
+
+    with caplog.at_level("WARNING"):
+        groups = group_identify_entries(per)
+
+    assert frozenset({"丙丙", "丁丁"}) in _all_members(groups)
+    assert len(_veto_messages(caplog)) == 1, _veto_messages(caplog)
