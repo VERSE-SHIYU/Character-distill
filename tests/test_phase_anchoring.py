@@ -574,6 +574,9 @@ class _DraftStubDistiller:
     def _auto_tag(self, card_dict):
         return []
 
+    def draft_to_card(self, data, source_text, *, retro):
+        return card_from_draft(data, source_text, retro=retro)
+
     def finalize_card(self, card, content, name, aliases=(), roster=()):
         return card
 
@@ -596,16 +599,16 @@ def _anchoring_content_route(monkeypatch, draft):
     monkeypatch.setattr(D, "resolve_characters", _stub_roster)
     saved, _ = _run_to_card(monkeypatch, _FakeStore(), stub, content=_SRC)
 
-    # /run_stream：原文来自 text 记录。记下 `card_from_draft` 与落库各跑在哪条线程上，
-    # 供 E5 核「位置检查挪出了事件循环线程」。
+    # /run_stream：原文来自 text 记录。记下 `draft_to_card`（位置检查）与落库各跑在哪条
+    # 线程上，供 E5 核「位置检查挪出了事件循环线程」。
     threads: list[tuple[str, int]] = []
-    real_cfd = D.card_from_draft
+    real_dtc = stub.draft_to_card
 
     def _spy(data, content, *, retro):
         threads.append(("draft", threading.get_ident()))
-        return real_cfd(data, content, retro=retro)
+        return real_dtc(data, content, retro=retro)
 
-    monkeypatch.setattr(D, "card_from_draft", _spy)
+    stub.draft_to_card = _spy
 
     uid = f"usr_{uuid.uuid4().hex[:8]}"
 
@@ -651,7 +654,7 @@ def test_run_stream_anchors(monkeypatch):
     draft_thread = next(t for tag, t in threads if tag == "draft")
     save_thread = next(t for tag, t in threads if tag == "save")
     assert draft_thread != save_thread, (
-        "位置检查（card_from_draft）必须挪出事件循环线程 —— 同步跑会堵住整条 SSE")
+        "位置检查（draft_to_card）必须挪出事件循环线程 —— 同步跑会堵住整条 SSE")
 
 
 # ── 4.3 结构锁 ────────────────────────────────────────────────────────
@@ -661,31 +664,45 @@ def _code_lines(path: Path):
         yield no, line.split("#", 1)[0]
 
 
-def _card_from_draft_calls(tree):
-    """`card_from_draft(…)` 与 `to_thread(card_from_draft, …)` 两种调用形态 → (位置参数个数, 关键字名集合)。"""
+def _entry_calls(tree, name):
+    """`name(…)` 与 `to_thread(name, …)` 两种调用形态 → (位置参数个数, 关键字名集合)。"""
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         f = node.func
         fname = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
-        if fname == "card_from_draft":
+        if fname == name:
             yield len(node.args), {k.arg for k in node.keywords}
-        elif (fname == "to_thread" and node.args and isinstance(node.args[0], ast.Name)
-              and node.args[0].id == "card_from_draft"):
-            yield len(node.args) - 1, {k.arg for k in node.keywords}
+        elif fname == "to_thread" and node.args:
+            first = node.args[0]
+            if isinstance(first, ast.Name):
+                inner = first.id
+            elif isinstance(first, ast.Attribute):
+                inner = first.attr
+            else:
+                inner = None
+            if inner == name:
+                yield len(node.args) - 1, {k.arg for k in node.keywords}
 
 
-def test_s1_card_from_draft_has_five_production_callers_each_with_source_and_retro():
-    """生产调用点只此五处，每处都传草稿 + 原文两个位置参数和 `retro`（回忆区，PR-4）。"""
-    shapes: dict[str, list[tuple[int, frozenset]]] = {}
+def test_s1_draft_to_card_has_five_production_callers_each_with_source_and_retro():
+    """转卡只经 `draft_to_card`：生产调用点恰好五处，每处传草稿 + 原文两个位置参数和
+    `retro`（回忆区，PR-4）；`card_from_draft` 在生产代码里只剩它内部那一处。"""
+    entries: dict[str, list[tuple[int, frozenset]]] = {}
+    raw: dict[str, list[tuple[int, frozenset]]] = {}
     for root in ("core", "web"):
         for path in (REPO / root).rglob("*.py"):
+            rel = path.relative_to(REPO).as_posix()
             tree = ast.parse(path.read_text(encoding="utf-8"))
-            for argc, kws in _card_from_draft_calls(tree):
-                shapes.setdefault(path.relative_to(REPO).as_posix(), []).append((argc, frozenset(kws)))
-    counts = {k: len(v) for k, v in shapes.items()}
-    well_formed = all(shape == (2, frozenset({"retro"})) for v in shapes.values() for shape in v)
-    assert (counts, well_formed) == ({"core/distiller.py": 3, "web/routers/distill.py": 2}, True)
+            entries.setdefault(rel, []).extend(_entry_calls(tree, "draft_to_card"))
+            raw.setdefault(rel, []).extend(_entry_calls(tree, "card_from_draft"))
+    counts = {k: len(v) for k, v in entries.items() if v}
+    raw_counts = {k: len(v) for k, v in raw.items() if v}
+    well_formed = all(shape == (2, frozenset({"retro"}))
+                      for v in (*entries.values(), *raw.values()) for shape in v)
+    assert (counts, raw_counts, well_formed) == (
+        {"core/distiller.py": 3, "web/routers/distill.py": 2},
+        {"core/distiller.py": 1}, True)
 
 
 def test_s2_normalized_match_is_written_once():

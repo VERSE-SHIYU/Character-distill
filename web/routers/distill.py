@@ -33,7 +33,6 @@ from core import task_log
 from core.nonfatal import nonfatal_sync
 from core.unlocated import UnknownPhase, move_unlocated
 from core.export import export_tavern_json
-from core.card_draft import card_from_draft
 from core.schema import CharacterCard
 from core.utils import try_record_usage
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
@@ -566,9 +565,10 @@ def _run_distill_task(
             return
 
         try:
-            # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
+            # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 `draft_to_card`
+            # 一处（它先修查不到的摘录，再走 `card_from_draft`）。
             with task_log.step("转卡"):
-                card = card_from_draft(data, content, retro=retro)
+                card = distiller.draft_to_card(data, content, retro=retro)
         except Exception as exc:
             # ValidationError 的 str() 带字段名与输入值（可能含原文片段），只进日志
             logger.error("Card validation failed for %s: %s", name, exc, exc_info=True)
@@ -1210,10 +1210,12 @@ async def distill_stream(
             return
 
         try:
-            # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 card_from_draft 一处。
+            # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 `draft_to_card` 一处
+            # （它先修查不到的摘录，再走 `card_from_draft`）。
             # 位置检查要 normalize 整本原文（约 0.3s CPU），本生成器跑在事件循环线程上 ——
             # 同步跑会堵住它，故挪进 to_thread。
-            card = await asyncio.to_thread(card_from_draft, data, content, retro=retro)
+            card = await asyncio.to_thread(
+                distiller.draft_to_card, data, content, retro=retro)
         except Exception as exc:
             logger.error("Card validation failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': '蒸馏失败：数据校验错误，请重试'}, ensure_ascii=False, default=str)}\n\n"

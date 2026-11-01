@@ -41,6 +41,8 @@ from core.quotes import (
     SpeakerOptions,
     build_example,
     extract_candidates,
+    locate_in_normalized,
+    normalize,
     normalized_starts,
     pick_slot,
     pick_slot_properties,
@@ -56,9 +58,9 @@ from core.roster_aggregate import (
     tally_judge_samples,
     usable_alias,
 )
-from core.card_draft import CardDraft, card_from_draft, draft_schema
+from core.card_draft import CardDraft, card_from_draft, draft_schema, quote_slots
 from core.card_layers import REGISTRY
-from core import phase_anchoring, retro_regions
+from core import phase_anchoring, quote_repair, retro_regions
 from core.phase_excerpt import build_excerpt, excerpt_prefix
 from core.retro_regions import NOT_DETECTED, RetroRegions
 from core.relationship_batch import (
@@ -1820,6 +1822,72 @@ class Distiller:
 
         return chunks
 
+    # ── 摘录修复 → 转卡 ────────────────────────────────────────────────
+
+    def draft_to_card(self, data: Any, source_text: str, *,
+                      retro: RetroRegions) -> CharacterCard:
+        """草稿 → 存卡：先把逐字查不到的摘录换回原文原句，再走 `card_from_draft`。
+
+        模型的摘录常改几个字（「想」→「要」），逐字定位查不到，条目就进未定位区、不进
+        聊天 prompt。这里先在原文里模糊预筛候选段落，再让模型从候选里逐字抄回原句；
+        `card_from_draft` 本身保持纯函数。
+        """
+        self._repair_quotes(data, source_text)
+        return card_from_draft(data, source_text, retro=retro)
+
+    def _repair_quotes(self, data: Any, source_text: str) -> None:
+        """一张卡只调一次模型核对所有查不到的摘录；失败不挡转卡（同 `_auto_tag` 的口径）。"""
+        pairs = [(slot, slot.get("quote") or "") for slot in quote_slots(data)]
+        pairs = [(slot, quote) for slot, quote in pairs if quote]
+        if not pairs:
+            return
+        source_norm = normalize(source_text)
+        pending: list[tuple[dict, str, list[str]]] = []
+        for slot, quote in pairs:
+            if locate_in_normalized(source_norm, quote) is not None:
+                continue
+            cands = quote_repair.candidates(source_text, source_norm, quote)
+            if cands:
+                pending.append((slot, quote, cands))
+        if not pending:
+            return
+
+        items = [{"id": i, "摘录": quote, "候选段落": cands}
+                 for i, (_, quote, cands) in enumerate(pending, 1)]
+        prompt = (
+            "逐条核对下面的摘录与它的候选段落，返回 JSON 数组，每项形如 "
+            '{"id": 编号, "sentence": "从该条候选段落里逐字复制的原文句子"}；'
+            "没有对应句子时 sentence 填 null。只能逐字复制候选段落里的连续原文，"
+            "不许改写、不许拼接、不许跨段拼接。\n\n"
+            + json.dumps(items, ensure_ascii=False)
+        )
+        try:
+            reply = self._llm.chat(
+                "你是一个原文摘录核对助手。只返回 JSON 数组，不要任何其他内容。",
+                [{"role": "user", "content": prompt}],
+            )
+            self._try_record_usage("distill_quote_repair")
+            rows = json.loads(extract_json(reply))
+        except Exception as exc:
+            logger.warning("[quote_repair] 模型调用或解析失败，摘录原样保留：%s",
+                           exc, exc_info=True)
+            return
+        if not isinstance(rows, list):
+            logger.warning("[quote_repair] 模型返回不是数组，摘录原样保留：%r", reply[:200])
+            return
+        answers = {
+            row["id"]: row.get("sentence")
+            for row in rows
+            if isinstance(row, dict) and isinstance(row.get("id"), int)
+            and not isinstance(row.get("id"), bool)
+        }
+        for i, (slot, quote, _cands) in enumerate(pending, 1):
+            sentence = answers.get(i)
+            sentence = sentence.strip() if isinstance(sentence, str) else ""
+            if quote_repair.accept(source_norm, quote, sentence):
+                slot["quote"] = sentence
+                logger.warning("修摘录：%s → %s", quote, sentence)
+
     def distill(self, text: str, character_name: str) -> CharacterCard:
         """蒸馏指定角色的 ``CharacterCard``（简单截断模式，适合短文本）。
 
@@ -1848,7 +1916,7 @@ class Distiller:
         self._relationships_batched(data, prefix=book_prefix(text),
                                     character_name=character_name, material="")
         try:
-            return card_from_draft(data, text, retro=NOT_DETECTED)
+            return self.draft_to_card(data, text, retro=NOT_DETECTED)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
@@ -1933,7 +2001,7 @@ class Distiller:
                 system_prefix=book_prefix(text) + "\n\n",
                 arc_input=arc_input_for(text, character_name, aliases, retro),
             ))
-            return card_from_draft(draft.model_dump(), text, retro=retro)
+            return self.draft_to_card(draft.model_dump(), text, retro=retro)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
@@ -2559,7 +2627,7 @@ class Distiller:
                 rel_material=profile_draft,
                 action="distill_format",
             ))
-            card = card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)
+            card = self.draft_to_card(draft.model_dump(), text, retro=NOT_DETECTED)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc

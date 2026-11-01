@@ -21,7 +21,6 @@ from core.card_draft import card_from_draft
 from core.retro_regions import NOT_DETECTED, ChapterRange, RetroRegions
 from storage.sqlite_store import SQLiteStore
 import test_distill_draft_persist as P
-from routers import distill as D          # 与 test_distill_draft_persist 同一个模块对象
 
 pytestmark = pytest.mark.usefixtures("embedding_key_configured")
 
@@ -102,13 +101,13 @@ def store(tmp_path):
 
 def _spy(monkeypatch):
     seen = []
-    real = D.card_from_draft
+    real = P._DraftStub.draft_to_card
 
-    def _wrapped(data, source_text, *, retro):
+    def _wrapped(self, data, source_text, *, retro):
         seen.append(retro)
-        return real(data, source_text, retro=retro)
+        return real(self, data, source_text, retro=retro)
 
-    monkeypatch.setattr(D, "card_from_draft", _wrapped)
+    monkeypatch.setattr(P._DraftStub, "draft_to_card", _wrapped)
     monkeypatch.setattr(P, "_DraftStub", _Stub)
     return seen
 
