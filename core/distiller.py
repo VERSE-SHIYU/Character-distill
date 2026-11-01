@@ -12,6 +12,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Sequence, TypeVar
 import collections.abc as _cabc
@@ -52,9 +53,8 @@ from core.quotes import (
 )
 from core.roster_aggregate import (
     alias_prompt_rows,
-    finalize_identify_roster,
     group_identify_entries,
-    merge_identify_groups,
+    roster_from,
     tally_judge_samples,
     usable_alias,
 )
@@ -86,11 +86,21 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from storage.base import StorageBase
 
-# ── identify_characters TTL cache ───────────────────────────────────────
+# ── identify_roster TTL cache ──────────────────────────────────────────
 IDENTIFY_CACHE_TTL_SECONDS = 600
 IDENTIFY_CACHE_MAX_ENTRIES = 100
-_IDENTIFY_CACHE: OrderedDict[str, tuple[list[dict[str, Any]], float]] = OrderedDict()
+#: 缓存值是普通 dict（``{"roster", "trace"}``）而不是 dataclass —— 命中时沿用
+#: ``json.loads(json.dumps(...))`` 深拷贝隔离调用方改动，dataclass 不能直接过 json。
+_IDENTIFY_CACHE: OrderedDict[str, tuple[dict[str, Any], float]] = OrderedDict()
 _IDENTIFY_CACHE_LOCK = threading.Lock()
+
+
+@dataclass(frozen=True)
+class IdentifyResult:
+    """识别产物：名单 + 得出它的留证（与名单同一次识别）。"""
+
+    roster: list[dict[str, Any]]
+    trace: dict[str, Any]
 
 
 #: 别名收录规则：只喂给**逐片识别**那一步。合并那一步不再让模型收录别名 —— 一个人的
@@ -1476,7 +1486,15 @@ class Distiller:
     # ── public entry points (unchanged) ────────────────────────────────
 
     def identify_characters(self, text: str) -> list[dict[str, Any]]:
-        """识别**全书**中具名且有言行描写的角色。
+        """识别**全书**中具名且有言行描写的角色（只要名单，不要留证）。
+
+        落库的入口一律走 `identify_roster` —— 名单与 trace 必须来自同一次识别。
+        本方法保留给不落库的调用方（无 text_id 的两条路由）。
+        """
+        return self.identify_roster(text).roster
+
+    def identify_roster(self, text: str) -> IdentifyResult:
+        """识别**全书**中具名且有言行描写的角色，连同得出它的留证。
 
         文本按 ``_chunk_size`` 分片：单分片走一次调用（与改前逐行等价，含一次重试），
         多分片逐片识别后合并。原先只取前 10000 字 —— 红楼梦这类长篇只覆盖头两章，
@@ -1487,11 +1505,21 @@ class Distiller:
         名单会被洗成新版本号。库缓存（`characters_json`）的版本判定另在
         `core/character_roster.py` 那一层。
 
+        trace 只存模型输出与口径（可重算的中间结果不存），形状::
+
+            {"identify_version", "model", "chunk_size", "chunk_count",
+             "per_chunk": [[条目, ...], ...],          # 下标 = 分片号
+             "judge": {"raw": [5 份原始输出，失败的为 null], "failed": [下标],
+                       "pairs": [[甲, 乙], ...], "impersonal": [...]} | None}
+
+        ``judge`` 为 None 只出现在单片路径：那条路直接返回解析结果，不经归组 / 并组 /
+        finalize（`replay_roster` 据此原样返回 ``per_chunk[0]``）。
+
         Args:
             text: 原始叙事文本（全文）。
 
         Returns:
-            角色信息字典列表，**名单可以为空**（全书真的没有具名角色）。空名单照样
+            ``IdentifyResult``，**名单可以为空**（全书真的没有具名角色）。空名单照样
             落缓存：它是一次成功的识别结果。
 
         Raises:
@@ -1510,13 +1538,18 @@ class Distiller:
                 if time.time() - ts < IDENTIFY_CACHE_TTL_SECONDS:
                     logger.warning("[distill] identify cache hit")
                     # Deep copy to prevent caller mutation from polluting cache
-                    return json.loads(json.dumps(result))
+                    return IdentifyResult(
+                        json.loads(json.dumps(result["roster"])),
+                        json.loads(json.dumps(result["trace"])),
+                    )
                 else:
                     del _IDENTIFY_CACHE[key]
 
         chunks = self._split_chunks(text, self._chunk_size)
         if len(chunks) <= 1:
-            result = self._identify_single_call(text)
+            roster = self._identify_single_call(text)
+            result = IdentifyResult(roster, self._identify_trace(
+                chunk_count=1, per_chunk=[roster], judge=None))
         else:
             result = self._identify_over_chunks(chunks)
 
@@ -1524,10 +1557,28 @@ class Distiller:
         # 住一个「没有角色」的错误答案，十分钟内所有调用都跟着错。
         # deep copy 隔离调用方的改动。
         with _IDENTIFY_CACHE_LOCK:
-            _IDENTIFY_CACHE[key] = (json.loads(json.dumps(result)), time.time())
+            _IDENTIFY_CACHE[key] = (
+                {"roster": json.loads(json.dumps(result.roster)),
+                 "trace": json.loads(json.dumps(result.trace))},
+                time.time(),
+            )
             if len(_IDENTIFY_CACHE) > IDENTIFY_CACHE_MAX_ENTRIES:
                 _IDENTIFY_CACHE.popitem(last=False)
         return result
+
+    def _identify_trace(
+        self, *, chunk_count: int, per_chunk: list[list[dict[str, Any]]],
+        judge: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """trace 的骨架 —— 口径字段只在这一次拼。"""
+        return {
+            "identify_version": self.IDENTIFY_VERSION,
+            "model": self._llm.model,
+            "chunk_size": self._chunk_size,
+            "chunk_count": chunk_count,
+            "per_chunk": per_chunk,
+            "judge": judge,
+        }
 
     @staticmethod
     def _normalize_identify_items(parsed: Any) -> list[dict[str, Any]]:
@@ -1599,8 +1650,8 @@ class Distiller:
                     f"单分片两次解析均失败；最后错误：{exc}",
                 )
 
-    def _identify_over_chunks(self, chunks: list[str]) -> list[dict[str, Any]]:
-        """逐片识别 → 代码归组 → 一次别名判断 → 出名单。**编排**，算的部分在 roster 里。
+    def _identify_over_chunks(self, chunks: list[str]) -> IdentifyResult:
+        """逐片识别 → 代码归组 → 一次别名判断 → 出名单与留证。**编排**，算的部分在 roster 里。
 
         **任一分片失败即整体失败**（调用失败 + 结果解析失败同权计）：名单会经
         `resolve_characters` → `save_characters` **落库长期复用**（按「文本 + 版本」缓存），
@@ -1609,7 +1660,7 @@ class Distiller:
         ``_map_failure_exceeds_tolerance`` 线内（等号不算越线），名单是半本书建的。
         所以这里不设容忍线，**蒸馏路径那条容忍线不动**：那边有续跑兜底，识别没有。
 
-        每一片都解析成空名单 → 返回 ``[]``：这是**真的没有具名角色**，不是识别失败。
+        每一片都解析成空名单 → 返回空名单：这是**真的没有具名角色**，不是识别失败。
         与单分片同口径 —— 空名单是合法结果，失败才抛。
 
         归组、并组、判主次、取理由都是纯计算（`core/roster_aggregate.py`）；模型只判两件
@@ -1650,14 +1701,21 @@ class Distiller:
         if not groups:
             # 每一片都解析成空名单（且没有一片失败）→ 真空名单，不是失败。
             # 原先这里抛 DistillError，把「这本书没有具名角色」当成了故障。
-            return []
-        pairs, impersonal = self._judge_groups(groups)
-        merged = merge_identify_groups(groups, pairs, impersonal)
-        return finalize_identify_roster(merged)
+            # judge 仍给空结构：多分片的 trace 恒非 None，replay 才走得同一套归组。
+            return IdentifyResult([], self._identify_trace(
+                chunk_count=total, per_chunk=per_chunk, judge={
+                    "raw": [], "failed": [], "pairs": [], "impersonal": [],
+                }))
+        pairs, impersonal, judge_trace = self._judge_groups(groups)
+        return IdentifyResult(
+            roster_from(groups, pairs, impersonal),
+            self._identify_trace(
+                chunk_count=total, per_chunk=per_chunk, judge=judge_trace),
+        )
 
     def _judge_groups(
         self, groups: list[dict[str, Any]],
-    ) -> tuple[list[tuple[str, str]], set[str]]:
+    ) -> tuple[list[tuple[str, str]], set[str], dict[str, Any]]:
         """问多次模型：哪些组是同一个人（merge）、哪些主名不指具体的人（impersonal）。
 
         **只送主名、别名、出现分片数。** 不送 reason、不送原文：模型只判「这是不是
@@ -1673,7 +1731,8 @@ class Distiller:
         对象，或两键不都是数组）都不计票；合法样本不足 `IDENTIFY_JUDGE_QUORUM` 份即
         整体失败 —— 拿一两份当结论比不判更糟。
 
-        返回（生效的合并组对，生效的泛称主名）。
+        返回（生效的合并组对，生效的泛称主名，判定留证）。留证里的 ``raw`` 按样本下标
+        对齐，执行器失败的样本为 None —— 解析失败的样本仍保留原文，两者要分开看。
         """
         body = "各组如下：\n" + "\n".join(
             f"- {name}（出现 {chunks} 个分片；"
@@ -1686,8 +1745,17 @@ class Distiller:
             log_label="Identify judge sample",
         )
         failed_idx: set[int] = set()
+        # 原始输出按样本下标对齐：失败 / 未返回的位置留 None，不做压缩 —— 下标即样本号。
+        raw_samples: list[str | None] = [None] * self.IDENTIFY_JUDGE_SAMPLES
+        for idx, raw in results:
+            if 0 <= idx < len(raw_samples):
+                raw_samples[idx] = raw
         for idx, exc in failures:
             failed_idx.add(idx)
+            # 执行器对失败的调用回 ""（`_run_map_concurrent`），这里改回 None：
+            # 「调用失败」与「模型回了空」在留证里要分得开。
+            if 0 <= idx < len(raw_samples):
+                raw_samples[idx] = None
             # 未完成终态（截断等）时把 finish_reason 与已生成开头记下来 —— 验收实测
             # 每份输入约 8791 tokens，输出撞 4096 上限会真截断；不记内容就无从判断
             # 是「输出本来就这么长」还是「上限压得太低」。
@@ -1728,7 +1796,12 @@ class Distiller:
         pairs, impersonal = tally_judge_samples(parsed, self.IDENTIFY_JUDGE_QUORUM)
         logger.warning("[distill] identify judge merge=%s", pairs)
         logger.warning("[distill] identify judge impersonal=%s", sorted(impersonal))
-        return pairs, impersonal
+        return pairs, impersonal, {
+            "raw": raw_samples,
+            "failed": sorted(failed_idx),
+            "pairs": [list(pair) for pair in pairs],
+            "impersonal": sorted(impersonal),
+        }
 
     @staticmethod
     def _split_chunks(text: str, chunk_size: int) -> list[str]:

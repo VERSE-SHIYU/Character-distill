@@ -36,7 +36,7 @@ from httpx import ASGITransport, AsyncClient
 import deps
 import server
 from core.card_draft import CardDraft, card_from_draft
-from core.distiller import DISTILL_PROMPT_BEFORE_NAME, DistillError, Distiller
+from core.distiller import DISTILL_PROMPT_BEFORE_NAME, DistillError, Distiller, IdentifyResult
 from core.schema import FORMAT_GROUPS, CharacterCard
 from core.text_manager import TextManager
 from deps import get_storage
@@ -80,12 +80,18 @@ class _RaisingDistiller:
     def identify_characters(self, content):
         raise self._exc
 
+    def identify_roster(self, content):
+        return IdentifyResult(self.identify_characters(content), trace=None)
+
 
 class _EmptyRosterDistiller:
     """识别**成功**，但名单是空的 —— 这本书真的没有具名角色。"""
 
     def identify_characters(self, content):
         return []
+
+    def identify_roster(self, content):
+        return IdentifyResult(self.identify_characters(content), trace=None)
 
 
 class _OpenSemaphore:
@@ -422,6 +428,9 @@ class _RosterDistiller:
     def identify_characters(self, content):
         return [{"name": "角色"}]
 
+    def identify_roster(self, content):
+        return IdentifyResult(self.identify_characters(content), trace=None)
+
     def distill_incremental(self, content, character_name, aliases=None, **kw):
         return CharacterCard.model_validate(
             {"name": character_name, "dialogue_examples": ["模型编的示例"]})
@@ -620,6 +629,9 @@ class _SleepyDistiller:
 
     def identify_characters(self, content):
         return [{"name": "角色"}, {"name": "路人"}]
+
+    def identify_roster(self, content):
+        return IdentifyResult(self.identify_characters(content), trace=None)
 
     def distill_incremental(self, content, character_name, aliases=None, **kw):
         return CharacterCard.model_validate({"name": character_name})

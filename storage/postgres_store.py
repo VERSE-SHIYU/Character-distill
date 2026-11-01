@@ -463,17 +463,22 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] List texts failed: {exc}")
             raise
 
-    async def save_characters(self, text_id: str, characters: list, *, version: int) -> None:
+    async def save_characters(
+        self, text_id: str, characters: list, *, version: int, trace: dict | None = None,
+    ) -> None:
         """Cache identified characters for a text, tagged with the identify algorithm version.
 
-        `version` 由调用方给（`Distiller.IDENTIFY_VERSION`）—— 存储层不认识这个数，
-        只负责存（同 sqlite 侧）。
+        `version`、`trace` 都由调用方给（`Distiller.identify_roster`）—— 存储层不认识
+        它们的内容，只负责存（同 sqlite 侧）。名单与留证必须同一次识别：同一条 UPDATE
+        写三列，`trace=None` 写 NULL，不会出现新名单配旧留证。
         """
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE texts SET characters_json = $1, characters_version = $3 WHERE id = $2",
+                    "UPDATE texts SET characters_json = $1, characters_version = $3, "
+                    "characters_trace = $4 WHERE id = $2",
                     json.dumps(characters, ensure_ascii=False), text_id, version,
+                    None if trace is None else json.dumps(trace, ensure_ascii=False),
                 )
         except Exception as exc:
             print(f"[PostgresStore] Save characters failed: {exc}")

@@ -21,6 +21,7 @@ from core.card_draft import card_from_draft
 from core.retro_regions import NOT_DETECTED
 from core.card_quotes import retract_unverified
 from core.card_relationships import dedupe_relationship_targets
+from core.distiller import IdentifyResult
 from core.schema import POST_FORMAT_FIELDS, CharacterCard
 from core.text_manager import TextManager
 from routers import distill as D
@@ -85,6 +86,9 @@ class _DraftStub:
 
     def identify_characters(self, content):
         return [{"name": _CARD_NAME, "aliases": []}]
+
+    def identify_roster(self, content):
+        return IdentifyResult(self.identify_characters(content), trace=None)
 
     def distill_incremental_stream(self, text, character_name, *, aliases=None,
                                    text_type="story", on_chunk_done=None,
