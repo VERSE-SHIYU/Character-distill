@@ -1493,7 +1493,7 @@ class Distiller:
         """
         return self.identify_roster(text).roster
 
-    def identify_roster(self, text: str) -> IdentifyResult:
+    def identify_roster(self, text: str, *, fresh: bool = False) -> IdentifyResult:
         """识别**全书**中具名且有言行描写的角色，连同得出它的留证。
 
         文本按 ``_chunk_size`` 分片：单分片走一次调用（与改前逐行等价，含一次重试），
@@ -1517,6 +1517,8 @@ class Distiller:
 
         Args:
             text: 原始叙事文本（全文）。
+            fresh: 跳过进程内缓存重算；算完照旧写缓存。库缓存的判定在
+                `core/character_roster.resolve_characters` 那层。
 
         Returns:
             ``IdentifyResult``，**名单可以为空**（全书真的没有具名角色）。空名单照样
@@ -1531,19 +1533,20 @@ class Distiller:
         key = f"{text_fingerprint(text)}:{self._llm.model}:{self.IDENTIFY_VERSION}"
 
         # Check cache
-        with _IDENTIFY_CACHE_LOCK:
-            cached = _IDENTIFY_CACHE.get(key)
-            if cached is not None:
-                result, ts = cached
-                if time.time() - ts < IDENTIFY_CACHE_TTL_SECONDS:
-                    logger.warning("[distill] identify cache hit")
-                    # Deep copy to prevent caller mutation from polluting cache
-                    return IdentifyResult(
-                        json.loads(json.dumps(result["roster"])),
-                        json.loads(json.dumps(result["trace"])),
-                    )
-                else:
-                    del _IDENTIFY_CACHE[key]
+        if not fresh:
+            with _IDENTIFY_CACHE_LOCK:
+                cached = _IDENTIFY_CACHE.get(key)
+                if cached is not None:
+                    result, ts = cached
+                    if time.time() - ts < IDENTIFY_CACHE_TTL_SECONDS:
+                        logger.warning("[distill] identify cache hit")
+                        # Deep copy to prevent caller mutation from polluting cache
+                        return IdentifyResult(
+                            json.loads(json.dumps(result["roster"])),
+                            json.loads(json.dumps(result["trace"])),
+                        )
+                    else:
+                        del _IDENTIFY_CACHE[key]
 
         chunks = self._split_chunks(text, self._chunk_size)
         if len(chunks) <= 1:

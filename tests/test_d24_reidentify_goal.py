@@ -11,7 +11,7 @@
   4. force=True 且任一分片失败 → 抛 ``DistillError``，库内旧名单不变；
   5. ``POST /api/distill/identify`` 把 ``force`` 透到 ``resolve_characters``。
 
-第 2–5 行在实现前是 ``xfail(strict=True)``。期望值只用字面量或替身调用计数，
+第 2–5 行在目标检查提交里是 ``xfail(strict=True)``，实现后转正。期望值只用字面量或替身调用计数，
 不从被测模块取。
 """
 
@@ -161,7 +161,6 @@ async def test_default_hits_db_cache_without_llm(store, uid):
     assert llm.chunk_calls == 0 and llm.judge_calls == 0
 
 
-@pytest.mark.xfail(strict=True, reason="目标：force=True 必须重算并落库新名单")
 async def test_force_reidentifies_and_persists_new_roster(store, uid):
     tid = await _seed_text(store, uid)
     await _seed_roster(store, tid)
@@ -177,7 +176,6 @@ async def test_force_reidentifies_and_persists_new_roster(store, uid):
     assert trace_json is not None and json.loads(trace_json)["per_chunk"] == CHUNKS
 
 
-@pytest.mark.xfail(strict=True, reason="目标：force=True 必须跳过进程内缓存")
 async def test_force_bypasses_in_process_cache(store, uid):
     tid = await _seed_text(store, uid)
     llm = _IdentifyLLM()
@@ -192,7 +190,6 @@ async def test_force_bypasses_in_process_cache(store, uid):
     assert llm.chunk_calls > first_calls, "进程内缓存命中时 force=True 仍要调 LLM"
 
 
-@pytest.mark.xfail(strict=True, reason="目标：force=True 失败时不改库内旧名单")
 async def test_force_failure_keeps_old_roster(store, uid):
     tid = await _seed_text(store, uid)
     await _seed_roster(store, tid)
@@ -224,7 +221,6 @@ def _run_async(coro):
         loop.close()
 
 
-@pytest.mark.xfail(strict=True, reason="目标：路由把 force 透到 resolve_characters")
 def test_identify_route_forwards_force(tmp_path, monkeypatch):
     store = SQLiteStore(str(tmp_path / f"test_{uuid.uuid4().hex}.db"))
     uid = f"user_{uuid.uuid4().hex[:8]}"

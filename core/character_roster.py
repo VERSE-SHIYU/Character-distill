@@ -101,15 +101,24 @@ async def resolve_characters(
     text_id: str,
     user_id: str,
     content: str,
+    *,
+    force: bool = False,
 ) -> list[dict[str, Any]]:
     """取这部作品的名单：命中缓存即返回（不发 LLM），未命中才识别一次并写回。
 
+    ``force=True`` 跳过库缓存与进程内缓存，重算并覆盖旧名单 —— 「重新识别」按钮
+    要的就是这个，否则按（文本、版本）命中的旧名单永远原地返回。
+
     识别是同步阻塞的 LLM 调用，这里统一丢进线程，调用方不必各自 `to_thread`。
     """
-    cached = await cached_characters(storage, text_id, user_id)
-    if cached:
-        return cached
-    result = await asyncio.to_thread(distiller.identify_roster, content)
+    if force:
+        result = await asyncio.to_thread(
+            distiller.identify_roster, content, fresh=True)
+    else:
+        cached = await cached_characters(storage, text_id, user_id)
+        if cached:
+            return cached
+        result = await asyncio.to_thread(distiller.identify_roster, content)
     await storage.save_characters(
         text_id, result.roster, version=Distiller.IDENTIFY_VERSION,
         trace=result.trace)
