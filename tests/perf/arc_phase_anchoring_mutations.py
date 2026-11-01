@@ -85,13 +85,14 @@ MUTATIONS = [
     ('M9  范围用 <=（锚点位置归前一阶段）', TARGET, [("repl", ANCH, [
         (_PHASE_AT, "        if lo <= pos <= hi:")])], "RED"),
     ('M10 R1（/start 后台任务）调用点传空串作原文', TARGET, [("repl", ROUTE, [
-        ("            card = card_from_draft(data, content, retro=retro)",
-         '            card = card_from_draft(data, "", retro=retro)')])], "RED"),
+        ("                card = distiller.draft_to_card(data, content, retro=retro)",
+         '                card = distiller.draft_to_card(data, "", retro=retro)')])], "RED"),
     ('M11 阶段 k 的 source_quote 一律取第一段', TARGET, [("repl", ANCH, [
         ("                    own.setdefault(p, quote)", "                    own.setdefault(p, by_phase[p][0])")])], "RED"),
     ('M12 :1128 去掉 to_thread（位置检查回到事件循环线程）', TARGET, [("repl", ROUTE, [
-        ("            card = await asyncio.to_thread(card_from_draft, data, content, retro=retro)",
-         "            card = card_from_draft(data, content, retro=retro)")])], "RED"),
+        ("            card = await asyncio.to_thread(\n"
+         "                distiller.draft_to_card, data, content, retro=retro)",
+         "            card = distiller.draft_to_card(data, content, retro=retro)")])], "RED"),
     ('M13 监测行字段名错（ambiguous → ambig）', TARGET, [("repl", DRAFT, [
         ('"[phase_anchoring] card=%s tags=%d dropped=%d ambiguous=%d "',
          '"[phase_anchoring] card=%s tags=%d dropped=%d ambig=%d "')])], "RED"),
@@ -158,12 +159,12 @@ MUTATIONS = [
     ('M27 /run_stream 的响应码不是 200', TARGET, [("repl", ROUTE, [
         ('media_type="text/event-stream",',
          'media_type="text/event-stream", status_code=202,')])], "RED"),
-    ('M28 distiller 多出一处 card_from_draft 调用（调用点计数变 4）', TARGET, [("append", DIST,
+    ('M28 distiller 多出一处 card_from_draft 调用（调用点计数变 2）', TARGET, [("append", DIST,
         "\n\ndef _mutation_extra_call(data=None, text=None):\n"
         "    return card_from_draft(data, text, retro=NOT_DETECTED)\n")], "RED"),
     ('M29 某一调用点只传一个参数（丢掉原文）', TARGET, [("repl", DIST, [
-        ("            card = card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)",
-         "            card = card_from_draft(draft.model_dump(), retro=NOT_DETECTED)")])], "RED"),
+        ("            card = self.draft_to_card(draft.model_dump(), text, retro=NOT_DETECTED)",
+         "            card = self.draft_to_card(draft.model_dump(), retro=NOT_DETECTED)")])], "RED"),
     ('M30 草稿做法多出一个 phases 字段（存卡形态被草稿字段污染）', TARGET, [("repl", DRAFT, [
         ("    \"\"\"情境→行为：此人遇到某类情境时的具体做法；occurrences 是它在各阶段的原文摘录。\"\"\"\n"
          "    occurrences: list[DraftOccurrence] = []\n",

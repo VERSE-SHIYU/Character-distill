@@ -3,15 +3,15 @@
 
 逐行对应任务表的九种情况：
 
-  1  改字的摘录被替回原文句，条目挂上阶段、不在未定位区     （本次要改 → xfail）
-  2  模型返回原文里没有的句子 → 不替换                       （本次要改 → xfail）
-  3  模型返回原文里有、但与原摘录相似度 < 75 的句子 → 不替换 （本次要改 → xfail）
+  1  改字的摘录被替回原文句，条目挂上阶段、不在未定位区
+  2  模型返回原文里没有的句子 → 不替换
+  3  模型返回原文里有、但与原摘录相似度 < 75 的句子 → 不替换
   4  摘录找不到任何 ≥ 60 分的候选 → 不发给模型、不替换
   5  摘录规范化后不足 6 字 → 不处理
   6  所有摘录都能逐字定位 → 不调模型，结果与 card_from_draft 相同
   7  模型调用抛异常 → 打 warning，照常转卡，结果与改前相同
   8  草稿里的阶段锚点查不到 → 不处理（锚点不是摘录槽位）
-  9  一张卡有多条待修摘录 → 只调用模型一次                   （本次要改 → xfail）
+  9  一张卡有多条待修摘录 → 只调用模型一次
 
 原文与草稿都是字面量，不从被测模块取期望值 —— 从源码 import 就自证自明，变异杀不掉。
 """
@@ -20,8 +20,6 @@ from __future__ import annotations
 import copy
 import json
 import logging
-
-import pytest
 
 from core.card_draft import card_from_draft
 from core.distiller import Distiller
@@ -86,7 +84,6 @@ def _unlocated(card):
 
 # ── 1 / 2 / 3 / 9：本次要改的行为（先红）────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="D24 ③a：draft_to_card 尚未实现")
 def test_row1_changed_quote_is_replaced_and_lands_in_its_phase():
     data = _draft([_behavior(_CHANGED)])
     card, _llm = _convert(data, json.dumps([{"id": 1, "sentence": _ORIGINAL}]))
@@ -97,7 +94,6 @@ def test_row1_changed_quote_is_replaced_and_lands_in_its_phase():
     assert _unlocated(card) == []
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ③a：draft_to_card 尚未实现")
 def test_row2_sentence_absent_from_source_is_rejected():
     data = _draft([_behavior(_CHANGED)])
     card, _llm = _convert(data, json.dumps([{"id": 1, "sentence": "她偏要做那投潭的石头"}]))
@@ -106,7 +102,6 @@ def test_row2_sentence_absent_from_source_is_rejected():
     assert len(_unlocated(card)) == 1                  # 照旧进未定位区
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ③a：draft_to_card 尚未实现")
 def test_row3_low_similarity_sentence_is_rejected():
     data = _draft([_behavior(_CHANGED)])
     # 这句在原文里（第 4 行），但与原摘录的相似度远低于 75。
@@ -117,7 +112,6 @@ def test_row3_low_similarity_sentence_is_rejected():
     assert len(_unlocated(card)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ③a：draft_to_card 尚未实现")
 def test_row9_one_model_call_for_all_pending_quotes():
     data = _draft([
         _behavior(_CHANGED, situation="s1"),

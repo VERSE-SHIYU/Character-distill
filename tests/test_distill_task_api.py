@@ -27,6 +27,7 @@ from httpx import ASGITransport, AsyncClient
 
 from core import concurrency as C  # 派生与上下文传播
 import deps
+from core.card_draft import card_from_draft
 from core.distiller import DistillError, Distiller, text_fingerprint
 from deps import get_storage
 from routers import distill as D
@@ -282,6 +283,9 @@ class _CardStubDistiller:
 
     def _auto_tag(self, card_dict):
         return []
+
+    def draft_to_card(self, data, source_text, *, retro):
+        return card_from_draft(data, source_text, retro=retro)
 
     def finalize_card(self, card, content, name, aliases=(), roster=()):
         self.pick_calls.append((content, name, tuple(aliases), len(roster)))

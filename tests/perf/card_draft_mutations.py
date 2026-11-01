@@ -179,7 +179,7 @@ MUTATIONS = [
     # 撞到 [68]
     ('M20  distiller 同步入口（distill）退回 CharacterCard.model_validate（不经 card_from_draft）',
      TARGET, [("repl", DIST, [
-         ('            return card_from_draft(data, text, retro=NOT_DETECTED)\n'
+         ('            return self.draft_to_card(data, text, retro=NOT_DETECTED)\n'
           '        except ValidationError as exc:\n'
           '            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n'
           '            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n'
@@ -193,7 +193,7 @@ MUTATIONS = [
     # 撞到 [68]
     ('M21  distiller 长文同步入口（distill_incremental 长文分支）退回 model_validate',
      TARGET, [("repl", DIST, [
-         ('            return card_from_draft(draft.model_dump(), text, retro=retro)\n'
+         ('            return self.draft_to_card(draft.model_dump(), text, retro=retro)\n'
           '        except ValidationError as exc:\n'
           '            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n'
           '            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n'
@@ -207,7 +207,7 @@ MUTATIONS = [
     # 撞到 [68]
     ('M22  distiller 分片同步入口（distill_incremental 最终格式化）退回 model_validate',
      TARGET, [("repl", DIST, [
-         ('            card = card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)',
+         ('            card = self.draft_to_card(draft.model_dump(), text, retro=NOT_DETECTED)',
           '            card = CharacterCard.model_validate(draft.model_dump())'),
      ])], "RED"),
     # 撞到 [232]
@@ -259,13 +259,14 @@ MUTATIONS = [
     # 撞到 [68, 69]
     ('M29  路由 R1（/start 后台任务）退回 CharacterCard.model_validate',
      TARGET, [("repl", ROUTE, [
-         ('            card = card_from_draft(data, content, retro=retro)',
-          '            card = CharacterCard.model_validate(data)'),
+         ('                card = distiller.draft_to_card(data, content, retro=retro)',
+          '                card = CharacterCard.model_validate(data)'),
      ])], "RED"),
     # 撞到 [68, 69]
     ('M30  路由 R2（/run_stream）退回 CharacterCard.model_validate',
      TARGET, [("repl", ROUTE, [
-         ('            card = await asyncio.to_thread(card_from_draft, data, content, retro=retro)',
+         ('            card = await asyncio.to_thread(\n'
+          '                distiller.draft_to_card, data, content, retro=retro)',
           '            card = CharacterCard.model_validate(data)'),
      ])], "RED"),
     # 撞到 [304]
@@ -329,21 +330,21 @@ MUTATIONS = [
     # 宽容兜底）到不了这里了。补两条直接针对入口口径的变异：格式错误被吞成一张空卡。
     ('M39  长文同步入口吞掉格式错误，交出空卡（不再抛 DistillError）',
      TARGET, [("repl", DIST, [
-         ('            return card_from_draft(draft.model_dump(), text, retro=retro)\n'
+         ('            return self.draft_to_card(draft.model_dump(), text, retro=retro)\n'
           '        except ValidationError as exc:\n'
           '            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n'
           '            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n',
-          '            return card_from_draft(draft.model_dump(), text, retro=retro)\n'
+          '            return self.draft_to_card(draft.model_dump(), text, retro=retro)\n'
           '        except ValidationError as exc:\n'
           '            return CharacterCard(name=character_name)\n'),
      ])], "RED"),
     ('M40  分片同步入口吞掉格式错误，交出空卡（不再抛 DistillError）',
      TARGET, [("repl", DIST, [
-         ('            card = card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)\n'
+         ('            card = self.draft_to_card(draft.model_dump(), text, retro=NOT_DETECTED)\n'
           '        except ValidationError as exc:\n'
           '            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n'
           '            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n',
-          '            card = card_from_draft(draft.model_dump(), text, retro=NOT_DETECTED)\n'
+          '            card = self.draft_to_card(draft.model_dump(), text, retro=NOT_DETECTED)\n'
           '        except ValidationError as exc:\n'
           '            card = CharacterCard(name=character_name)\n'),
      ])], "RED"),

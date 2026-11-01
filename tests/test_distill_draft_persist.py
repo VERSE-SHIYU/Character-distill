@@ -95,6 +95,9 @@ class _DraftStub:
     def _auto_tag(self, card_dict):
         return []
 
+    def draft_to_card(self, data, source_text, *, retro):
+        return card_from_draft(data, source_text, retro=retro)
+
     def finalize_card(self, card, content, name, aliases=(), roster=()):
         card, _ = dedupe_relationship_targets(card)
         card, _ = retract_unverified(card, content)

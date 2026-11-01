@@ -16,7 +16,7 @@
 
 import copy
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Annotated, Any, NamedTuple
 
 from pydantic import (
@@ -173,6 +173,24 @@ _DEDICATED = {"situation_behaviors", "key_memories"}
 # 由 `list[DraftTimed]` 统一转换的状态/经历类字段（分发规则按各自的 layer 走）。
 _GENERIC_PATHS = [(p, s) for p, s in REGISTRY.items()
                   if s.layer in ("state", "experience") and p not in _DEDICATED]
+
+
+def quote_slots(data: Any) -> Iterator[dict]:
+    """草稿里所有带原文摘录的槽位（每项是一个可读写的 occurrence / 态度 dict）。
+
+    **只此一处**知道「草稿里哪些位置带摘录」；`Distiller.draft_to_card` 据此修摘录。
+    覆盖做法的 `occurrences`、记忆的 `occurrences`、登记表派生的状态/经历类的
+    `occurrences`，以及关系态度的 `quote`。**不含**阶段锚点
+    `character_arc.phases[].anchor`：锚点改错会让整卡阶段起点出错，留给 D23。
+    """
+    for path in ("situation_behaviors", "key_memories", *(p for p, _ in _GENERIC_PATHS)):
+        for row in get_path(data, path) or []:
+            if isinstance(row, dict):
+                yield from (occ for occ in row.get("occurrences") or []
+                            if isinstance(occ, dict))
+    for rel in get_path(data, "relationships") or []:
+        if isinstance(rel, dict):
+            yield from (att for att in rel.get("attitudes") or [] if isinstance(att, dict))
 
 
 def _derive_draft_model(base: type[BaseModel], prefix: str = "", *,
