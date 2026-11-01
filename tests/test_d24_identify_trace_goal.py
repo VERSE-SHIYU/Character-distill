@@ -63,7 +63,10 @@ class _IdentifyLLM:
         if "merge" in system and "impersonal" in system:
             idx = self.judge_calls
             self.judge_calls += 1
-            return self.judge_replies[idx], self._usage()
+            reply = self.judge_replies[idx]
+            if isinstance(reply, Exception):
+                raise reply
+            return reply, self._usage()
         self.chunk_calls += 1
         if self.fail_chunk and content.startswith(self.fail_chunk):
             raise RuntimeError("connection timeout")
@@ -178,6 +181,22 @@ async def test_unparseable_judge_sample_keeps_raw_text(store, uid):
 
     assert judge["raw"] == [NOT_JSON] + [MERGE_REPLY] * 4
     assert judge["failed"] == []
+    assert judge["pairs"] == [["乙", "甲"]], "4 份合法样本仍够 3 票"
+
+
+async def test_failed_judge_call_is_null_not_empty(store, uid):
+    """执行器失败的样本在 raw 里是 None（不是 ""），且只记在 failed 里。"""
+    tid = await _seed_text(store, uid)
+    llm = _IdentifyLLM(
+        judge_replies=[MERGE_REPLY, RuntimeError("judge timeout")] + [MERGE_REPLY] * 3)
+    await resolve_characters(store, _distiller(llm), tid, uid, CONTENT)
+
+    _roster, trace_json = await _read_columns(store, tid)
+    judge = json.loads(trace_json)["judge"]
+
+    assert judge["raw"][1] is None
+    assert judge["failed"] == [1]
+    assert judge["raw"][:1] + judge["raw"][2:] == [MERGE_REPLY] * 4
     assert judge["pairs"] == [["乙", "甲"]], "4 份合法样本仍够 3 票"
 
 

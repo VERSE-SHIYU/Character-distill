@@ -1752,6 +1752,10 @@ class Distiller:
                 raw_samples[idx] = raw
         for idx, exc in failures:
             failed_idx.add(idx)
+            # 执行器对失败的调用回 ""（`_run_map_concurrent`），这里改回 None：
+            # 「调用失败」与「模型回了空」在留证里要分得开。
+            if 0 <= idx < len(raw_samples):
+                raw_samples[idx] = None
             # 未完成终态（截断等）时把 finish_reason 与已生成开头记下来 —— 验收实测
             # 每份输入约 8791 tokens，输出撞 4096 上限会真截断；不记内容就无从判断
             # 是「输出本来就这么长」还是「上限压得太低」。

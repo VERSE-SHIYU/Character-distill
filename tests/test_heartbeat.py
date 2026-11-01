@@ -125,9 +125,9 @@ def test_module_imports():
                 # 数**引用**而不是数调用：唯一入口里是
                 # `asyncio.to_thread(distiller.identify_roster, content)`——
                 # 属性当实参传，不构成 Call.func，数 Call 会漏成 0。
-                # D24 ①b：落库入口改 identify_roster（名单 + 留证同一次），
-                # 不落库的调用方仍可用 identify_characters，两个名字都算。
-                if node.attr in ("identify_characters", "identify_roster"):
+                # D24 ①b：落库入口只认 identify_roster（名单 + 留证同一次）。
+                # 不认 identify_characters：入口改回它就不再留证，这里必须红。
+                if node.attr == "identify_roster":
                     self.identify_calls += 1
                 self.generic_visit(node)
 
