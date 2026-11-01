@@ -21,8 +21,6 @@ import re
 import uuid
 from pathlib import Path
 
-import pytest
-
 from core import phase_anchoring
 from core.card_draft import DraftBehavior, card_from_draft
 from core.card_layers import get_path
@@ -139,19 +137,22 @@ def test_u8_quote_not_found_is_dropped():
 
 
 def test_u9_up_to_max_occurrences_is_evidence():
-    """最长段恰好出现 3 次、一处在范围内 → 保留（3 ≤ MAX_OCCURRENCES）。两阶段都成立 → 顶层。"""
-    src = "重复重复重复此处独有"                        # 「重复」@0/2/4；阶段 2 锚点 @6
-    card = _card([_row([_occ(1, "重复"), _occ(2, "此处独有")], "三次")],
+    """最长段恰好出现 3 次、一处在所标阶段 → 保留（3 ≤ MAX_OCCURRENCES），且不按超限展开。
+
+    「重复」@0/2 在阶段 1、@8 在阶段 2；标的是阶段 1。恰好 3 次不算超限 → 只留所标阶段。
+    """
+    src = "重复重复。此处独有。重复。"
+    card = _card([_row([_occ(1, "重复")], "三次")],
                  src=src, n=2, anchors={2: "此处独有"})
-    assert _placement(card) == ([_beh("三次", quote="重复")], [[], []])
+    assert _placement(card) == ([], [[_beh("三次", quote="重复")], []])
 
 
-def test_u9b_over_max_occurrences_is_not_evidence():
-    """出现 4 次（> MAX_OCCURRENCES）→ 不作位置证据，该阶段标去掉。"""
-    src = "重复重复重复重复此处独有"                     # 「重复」×4
+def test_u9b_over_max_occurrences_is_still_evidence_for_behaviors():
+    """做法出现 4 次（> MAX_OCCURRENCES）仍作位置证据（D24 ③b）→ 两个阶段都成立 → 顶层。"""
+    src = "重复重复重复重复此处独有"                     # 「重复」×4（全在阶段 1）
     card = _card([_row([_occ(1, "重复"), _occ(2, "此处独有")], "四次")],
                  src=src, n=2, anchors={2: "此处独有"})
-    assert _placement(card) == ([], [[], [_beh("四次", quote="此处独有")]])
+    assert _placement(card) == ([_beh("四次", quote="重复")], [[], []])
 
 
 def test_u10_out_of_range_number_alone_retracts_the_row():
@@ -359,13 +360,14 @@ def test_u27_each_dropped_tag_warns_once(caplog):
 _SRC4 = "开头甲甲甲。乙乙乙。乙乙乙。乙乙乙。乙乙乙。结尾丙丙丙。"
 
 
-def test_u27b_too_frequent_quote_warns_with_its_own_reason(caplog):
-    """出现超限与「查不到」分开计、分开写原因（A3）：都是「不作位置证据」，原因不同。"""
+def test_u27b_too_frequent_behavior_is_evidence_and_does_not_warn(caplog):
+    """做法出现 4 次不再「去掉标注」（D24 ③b）：两个阶段都成立 → 顶层，且不打去掉 warning。"""
     with caplog.at_level(logging.WARNING, logger="core.phase_anchoring"):
-        _card([_row([_occ(1, "乙乙乙"), _occ(2, "结尾丙丙丙")], "太常见")],
-              src=_SRC4, n=2, anchors={2: "结尾丙丙丙"})
-    assert [r.getMessage() for r in caplog.records if "去掉标注" in r.getMessage()] == [
-        "去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录（出现 4 次：乙乙乙）"]
+        card = _card([_row([_occ(1, "乙乙乙"), _occ(2, "结尾丙丙丙")], "太常见")],
+                     src=_SRC4, n=2, anchors={2: "结尾丙丙丙"})
+    assert (_placement(card), [r.getMessage() for r in caplog.records
+                               if "去掉标注" in r.getMessage()]) == (
+        ([_beh("太常见", quote="乙乙乙")], [[], []]), [])
 
 
 # ── 4.1d 超限摘录（D24 ③b）：反复出现的摘录也作位置证据 ─────────────────
@@ -377,7 +379,6 @@ _SRC_FREQ4 = "好吵一。寒江。好吵二。孤舟。好吵三好吵四。晚
 _A4 = {2: "寒江", 3: "孤舟", 4: "晚钟"}
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ③b：做法超限摘录仍作位置证据")
 def test_u33_frequent_behavior_covering_all_phases_goes_top():
     """摘录在四个阶段都出现（共 6 次）→ 每条证据都成立 → 顶层，不进未定位区。"""
     card = _card([_row([_occ(1, "好吵")], "口头禅")], src=_SRC_FREQ4, n=4, anchors=_A4)
@@ -388,7 +389,6 @@ def test_u33_frequent_behavior_covering_all_phases_goes_top():
 _SRC_FREQ24 = "开头。寒江。来都来了。来都来了。孤舟。中段。晚钟。来都来了。来都来了。来都来了。"
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ③b：超限摘录 RELOCATE 挂全部落点")
 def test_u34_frequent_behavior_hangs_every_landing_phase():
     """标的是阶段 2，但超限摘录不作「只认所标阶段」处理 → 挂到全部落点（阶段 2 和 4）。"""
     card = _card([_row([_occ(2, "来都来了")], "口头禅")], src=_SRC_FREQ24, n=4, anchors=_A4)
@@ -400,7 +400,6 @@ def test_u34_frequent_behavior_hangs_every_landing_phase():
 _SRC_FREQ3 = "开头。寒江。常乙常丙。孤舟。常丁常戊常己。尾。"
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ③b：态度超限摘录查到即算命中所标阶段")
 def test_u35_frequent_attitude_keeps_its_tagged_phase():
     """态度（KEEP_TAGGED）出现 5 次 → 查到即命中阶段 3，不进未定位区。"""
     draft = _draft([], n=3, anchors={2: "寒江", 3: "孤舟"})

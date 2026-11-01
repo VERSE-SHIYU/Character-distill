@@ -427,12 +427,13 @@ def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[d
                          occurrences=[DraftOccurrence(phase=a.phase, quote=a.quote)])
              for i, a in flat]
     # 态度只核对、不挪阶段：态度常在后文被回忆复述，摘录位置不等于态度成立时间，
-    # 摘录查到（不超 MAX_OCCURRENCES）即算命中所标阶段（spec A1 / 调查文档第三之二节）。
+    # 摘录查到即算命中所标阶段 —— 反复出现（超 MAX_OCCURRENCES）也算查到（spec A1 /
+    # 调查文档第三之二节）。
     res = phase_anchoring.verify(
         items, _valid_number_rows(items, count, "态度",
                                   layer=REGISTRY["relationships"].layer).valid, anchors,
         kind="态度", label=lambda x: x.memory, name=name,
-        placement=phase_anchoring.Placement.KEEP_TAGGED)
+        placement=phase_anchoring.Placement.KEEP_TAGGED, frequent_counts=True)
     # 未定位的态度（`dispatch` 第三项）不在任何格子里，下面自然一个阶段都赢不下 → 进未定位区
     top, slots, _ = dispatch(res.phases, count, unlocated=res.unlocated)
     out: list[dict] = []
@@ -500,11 +501,12 @@ def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions) -> Char
         phases, source_text, retro=retro.spans(source_text) if phases else ())
     phase_anchoring.log_phase_starts(phases, source_text, anchors, draft.name)   # 每张卡只在这里打一次
 
+    # 做法是口头禅一类反复出现的摘录的大户；经历类（记忆）不传 —— 挂早了会提前泄露剧情
     b = phase_anchoring.verify(
         draft.situation_behaviors,
         _valid_number_rows(draft.situation_behaviors, count, "做法",
                            layer=REGISTRY["situation_behaviors"].layer).valid,
-        anchors, kind="做法", name=draft.name)
+        anchors, kind="做法", name=draft.name, frequent_counts=True)
     m_rows = _valid_number_rows(draft.key_memories, count, "记忆",
                                 layer=REGISTRY["key_memories"].layer)
     m = phase_anchoring.verify(
@@ -525,7 +527,8 @@ def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions) -> Char
         vr = _valid_number_rows(rows, count, path, layer=spec.layer)
         res = phase_anchoring.verify(
             rows, vr.valid, anchors,
-            kind=path, label=lambda x: x.value, name=draft.name)
+            kind=path, label=lambda x: x.value, name=draft.name,
+            frequent_counts=spec.layer != "experience")
         # 列表与单值走同一个循环：`kind` 在 `dispatch` 里决定格子容量（scalar 每格只留第一条），
         # 这里只按 `kind` 决定取值形态（list → 列表，scalar → 单值）。
         def describe(i: int, phase: int) -> str:

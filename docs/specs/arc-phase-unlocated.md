@@ -88,8 +88,8 @@ arc_phase_anchoring_mutations.py | M35 …：锚点在 phase_anchoring.py 命中
 
 `core/phase_anchoring.py::verify`：**每段摘录各是一份证据，摘录落在哪个阶段就挂哪个阶段。**
 
-a. 一段摘录查不到、或最长段在原文出现超过 `MAX_OCCURRENCES`（3）次 → 不作证据（计 `unverified_quotes`）。
-b. 有一处落在所标阶段 p → 只认 p，其余出现位置不加挂（否则一句反复出现的台词会给条目平白多挂几个阶段）。
+a. 一段摘录查不到、或最长段在原文出现超过 `MAX_OCCURRENCES`（3）次 → 不作证据（计 `unverified_quotes`）。（超限摘录见补充）
+b. 有一处落在所标阶段 p → 只认 p，其余出现位置不加挂（否则一句反复出现的台词会给条目平白多挂几个阶段）。（超限摘录见补充）
 c. 一处都不在 p → 挂到它所有出现位置所在的阶段（改挂，计入 `rehung`，按**条目**计，一条改挂两个标注也记 1）。
 d. 一条条目各段证据**取并集**，再交 `card_draft.dispatch` 套类别规则：状态类挂并集里所有阶段；经历类只挂最早的那个（`_layer_phases`）。
 e. 同一阶段既有自己的摘录、又有改挂来的摘录 → `source_quote` 取自己的。
@@ -238,7 +238,7 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
 | 数据 | 上限与来源 | 处理 |
 |---|---|---|
 | 每卡做法 | 5–13 条（4 张样本卡全量） | 未定位区同量级，列表全展示 |
-| 摘录最多出现次数 | `MAX_OCCURRENCES = 3`（`phase_anchoring.py`） | 超过不作证据 |
+| 摘录最多出现次数 | `MAX_OCCURRENCES = 3`（`phase_anchoring.py`） | 超过默认不作证据；做法 / 态度 / 非经历字段仍作证据（见补充） |
 | 阶段数 | 样本 2–4 | `common/Select` 全列 |
 | 带点的 state/experience 路径 | 7（登记表扫描） | N1、G1、G2 逐个参数化 |
 | 登记表叶子 | 37 → 40 | U1 断言 |
@@ -497,3 +497,7 @@ market.py  GET /featured  /list  /search  /global-search  /author/{user_id}  /ca
 - **基线门的实际效果**：沙箱里测试库停掉时，新版拒跑并提示「靶子上 pytest 根本没跑起来」，没有把它读成「变异打红了」。
 - **未改**：`arc_phase_unlocated_audit4_mutations.py` 是执行方的审计证据，原样保留。
 - **次要记录**：`test_n4c_…` 前后的空行数一并改成符合 PEP8。
+
+## 补充：超限摘录（D24 ③b）
+
+摘录在原文（去掉回忆区）出现超过 `MAX_OCCURRENCES` 次原先一律不作位置证据，而口头禅恰恰是出现得最多的一类 —— 云绮卡 13 条未定位里有 5 条因此被丢掉（好吵 6 次、好马不吃回头草 5 次、人之常情 9 次、我饿了 4 次、来都来了 5 次），全都不进聊天 prompt。现在 `verify` 增加 `frequent_counts: bool = False`：**做法、关系态度、非经历字段传 True**，超限摘录仍作证据 —— 态度（`KEEP_TAGGED`）查到即算命中所标阶段；做法等（`RELOCATE`）挂到这段摘录全部出现位置所在的阶段，即使其中一处落在所标阶段 p 也不只认 p。记忆等经历类不传，保持原口径：挂早了会提前泄露剧情。回忆区里的出现照旧先剔除再计数，`too_frequent` 仍统计所有超限摘录（不论是否作了证据）。默认 `False` 时行为与改前完全相同，不超限的摘录两种取值行为相同。

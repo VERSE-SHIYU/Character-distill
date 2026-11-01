@@ -57,11 +57,31 @@
       ],
       [
         "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([_beh(\"口头禅\", quote=\"好吵\")], [[], [], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        1
+      ],
+      [
+        "tests/test_phase_anchoring.py",
         "assert (top, [b[\"situation\"] for b in by[0]], [b[\"situation\"] for b in by[1]], [b[\"situation\"] for b in by[2]]",
         0
       ]
     ],
     "M2  「落进所标阶段只认所标」失效（命中时也挂全部落点）": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[_beh(\"三次\", quote=\"重复\")], []])",
+        0
+      ],
       [
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
@@ -70,6 +90,16 @@
       [
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [_beh(\"阶段3不成立\", quote=\"丙丁\")], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [(pa.phase, pa.attitude) for pa in card.relationships[0].phase_attitudes] == [(3, \"常\")]",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert result.phases == [[1]]",
         0
       ]
     ],
@@ -84,6 +114,11 @@
       [
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ( [], [[_beh(\"在阶段1\", quote=_Q1), _beh(\"错标阶段2\", quote=_Q1)], [], [_beh(\"错标阶段2\", quot",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([_beh(\"四次\", quote=\"重复\")], [[], []])",
         0
       ],
       [
@@ -118,6 +153,26 @@
       ],
       [
         "tests/test_phase_anchoring.py",
+        "assert (_placement(card), [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()]) == ( ([_beh(\"太",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([_beh(\"口头禅\", quote=\"好吵\")], [[], [], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        1
+      ],
+      [
+        "tests/test_phase_anchoring.py",
         "assert (top, [b[\"situation\"] for b in by[0]], [b[\"situation\"] for b in by[1]], [b[\"situation\"] for b in by[2]]",
         0
       ]
@@ -127,6 +182,21 @@
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([_beh(\"口头禅\", quote=\"好吵\")], [[], [], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        1
       ]
     ],
     "M5a 锚点查不到时当作全文末尾，照常检查（不跳过）": [
@@ -201,11 +271,6 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[_beh(\"错挂\", quote=_Q1)], [], []])",
         0
       ],
@@ -266,8 +331,23 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录",
+        "assert _placement(card) == ([_beh(\"口头禅\", quote=\"好吵\")], [[], [], [], []])",
         0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert ([get_path(p.overlay, \"key_memories\") for p in card.character_arc.phases], card.key_memories) == ([None",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        1
       ],
       [
         "tests/test_phase_anchoring.py",
@@ -278,12 +358,27 @@
     "M7  重复摘录要求所有位置都在所标阶段": [
       [
         "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[_beh(\"三次\", quote=\"重复\")], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
         "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[_beh(\"阶段3不成立\", quote=\"甲乙\")], [_beh(\"阶段3不成立\", quote=\"丙丁\")], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [(pa.phase, pa.attitude) for pa in card.relationships[0].phase_attitudes] == [(3, \"常\")]",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert result.phases == [[1]]",
         0
       ]
     ],
@@ -340,6 +435,21 @@
       ],
       [
         "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([_beh(\"口头禅\", quote=\"好吵\")], [[], [], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        1
+      ],
+      [
+        "tests/test_phase_anchoring.py",
         "assert (top, [b[\"situation\"] for b in by[0]], [b[\"situation\"] for b in by[1]], [b[\"situation\"] for b in by[2]]",
         0
       ]
@@ -367,12 +477,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([_beh(\"三次\", quote=\"重复\")], [[], []])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
+        "assert _placement(card) == ([_beh(\"四次\", quote=\"重复\")], [[], []])",
         0
       ],
       [
@@ -388,6 +493,11 @@
       [
         "tests/test_phase_anchoring.py",
         "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert (_placement(card), [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()]) == ( ([_beh(\"太",
         0
       ]
     ],
@@ -494,22 +604,44 @@
         0
       ]
     ],
-    "M19a 出现次数判定改 >=（恰好 3 次也不作证据）": [
+    "M19a 出现次数判定改 >=（恰好 3 次也按超限处理）": [
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([_beh(\"三次\", quote=\"重复\")], [[], []])",
+        "assert result.phases == [[1]]",
         0
       ]
     ],
     "M19b 删去次数限制": [
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
+        "assert ([get_path(p.overlay, \"key_memories\") for p in card.character_arc.phases], card.key_memories) == ([None",
+        0
+      ]
+    ],
+    "M48 超限摘录一律不作证据（frequent_counts 失效，D24 ③b）": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([_beh(\"四次\", quote=\"重复\")], [[], []])",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录",
+        "assert (_placement(card), [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()]) == ( ([_beh(\"太",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([_beh(\"口头禅\", quote=\"好吵\")], [[], [], [], []])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert [(pa.phase, pa.attitude) for pa in card.relationships[0].phase_attitudes] == [(3, \"常\")]",
         0
       ]
     ],
@@ -541,12 +673,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([_beh(\"三次\", quote=\"重复\")], [[], []])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
+        "assert _placement(card) == ([_beh(\"四次\", quote=\"重复\")], [[], []])",
         0
       ],
       [
@@ -562,6 +689,11 @@
       [
         "tests/test_phase_anchoring.py",
         "assert line == (\"[phase_anchoring] card=角色 tags=2 dropped=1 ambiguous=0 \" \"unverified_quotes=2 rehung=0 unloca",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert (_placement(card), [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()]) == ( ([_beh(\"太",
         0
       ],
       [
@@ -585,18 +717,28 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
         "assert _placement(card) == ( [], [[_beh(\"未命中挂全部落点\", quote=\"甲乙\")], [], [_beh(\"命中只认所标\", quote=\"甲乙\"), _beh(\"未命中挂全",
         0
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录",
+        "assert _placement(card) == ([_beh(\"口头禅\", quote=\"好吵\")], [[], [], [], []])",
         0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert ([get_path(p.overlay, \"key_memories\") for p in card.character_arc.phases], card.key_memories) == ([None",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        1
       ]
     ],
     "M23 分段查不到时当作位置 0（而不是 None）": [
@@ -666,11 +808,6 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[], [], []])",
         1
       ],
@@ -691,7 +828,7 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录",
+        "assert ([get_path(p.overlay, \"key_memories\") for p in card.character_arc.phases], card.key_memories) == ([None",
         0
       ]
     ],
@@ -766,11 +903,6 @@
       [
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[], [_beh(\"查不到\", quote=_Q2)], []])",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert _placement(card) == ([], [[], [_beh(\"四次\", quote=\"此处独有\")]])",
         0
       ],
       [
@@ -855,8 +987,23 @@
       ],
       [
         "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录",
+        "assert _placement(card) == ([_beh(\"口头禅\", quote=\"好吵\")], [[], [], [], []])",
         0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert ([get_path(p.overlay, \"key_memories\") for p in card.character_arc.phases], card.key_memories) == ([None",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
+        1
       ],
       [
         "tests/test_phase_anchoring.py",
@@ -912,11 +1059,6 @@
       [
         "tests/test_phase_anchoring.py",
         "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '计数' 在阶段 1 没有能定位的摘录（",
-        0
-      ],
-      [
-        "tests/test_phase_anchoring.py",
-        "assert [r.getMessage() for r in caplog.records if \"去掉标注\" in r.getMessage()] == [ \"去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录",
         0
       ]
     ],

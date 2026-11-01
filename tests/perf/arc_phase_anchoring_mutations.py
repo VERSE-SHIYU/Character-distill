@@ -55,7 +55,8 @@ _NOT_SEGS = ("    if not segs or not all(s in source_norm for s in segs):\n"
              "        return None\n")
 
 # 规则 3、4 合并后（spec arc-phase-unlocated §3.1：摘录落在哪就挂哪）的锚点
-_IN_TAGGED = "                if not loc or placement is Placement.KEEP_TAGGED or p in landed:"
+_IN_TAGGED = ("                if not loc or placement is Placement.KEEP_TAGGED"
+              " or (p in landed and not spread):")
 _REHANG = "                    hit.update(landed)"
 _PHASE_AT = "        if lo <= pos < hi:"
 
@@ -119,12 +120,15 @@ MUTATIONS = [
     ('M18 同阶段多段摘录：任一段核对不上就整阶段不成立', TARGET, [("repl", ANCH, [
         ('                    reasons.append(f"查不到：{quote}")\n                    continue\n',
          '                    reasons.append(f"查不到：{quote}")\n                    break\n')])], "RED"),
-    ('M19a 出现次数判定改 >=（恰好 3 次也不作证据）', TARGET, [("repl", ANCH, [
+    ('M19a 出现次数判定改 >=（恰好 3 次也按超限处理）', TARGET, [("repl", ANCH, [
         ("                if len(loc) > MAX_OCCURRENCES:",
          "                if len(loc) >= MAX_OCCURRENCES:")])], "RED"),
     ('M19b 删去次数限制', TARGET, [("repl", ANCH, [
         ("                if len(loc) > MAX_OCCURRENCES:",
          "                if False:  # 删去次数限制")])], "RED"),
+    ('M48 超限摘录一律不作证据（frequent_counts 失效，D24 ③b）', TARGET, [("repl", ANCH, [
+        ("                    if not frequent_counts:",
+         "                    if True:")])], "RED"),
     ('M20 阶段上界整体挪一（含下一阶段首字）', TARGET, [("repl", ANCH, [
         ("    return [(lo, hi) for lo, hi in zip(positions, [*positions[1:], norm_len])], \"\"",
          "    return [(lo, hi) for lo, hi in zip(positions, [*(p + 1 for p in positions[1:]), norm_len])], \"\"")])], "RED"),
