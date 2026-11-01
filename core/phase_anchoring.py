@@ -420,9 +420,11 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
         own: dict[int, str] = {}                 # 落进所标阶段的摘录（优先作该阶段的 source_quote）
         moved: dict[int, str] = {}               # 改挂过来的摘录
         move_pos: dict[int, int] = {}            # 每个标注第一处落点的规范化位置（打章号用）
+        item_moved = False                       # 本条是否有标注真的被改挂（按条目计 rehung）
         for p in valid:                          # 计数单位是标注（条目, 阶段），不是摘录
             tags += 1
             hit: set[int] = set()
+            moved_off = False                    # 本标注是否真的被改挂（超限摘录展开含 p 不算）
             reasons: list[str] = []              # 本标注每段摘录核对不上的原因（写进去掉那行）
             for quote in by_phase.get(p, []):    # 每段摘录各是一份证据
                 loc = locate_in_normalized(source_norm, quote)
@@ -451,12 +453,14 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
                         moved.setdefault(t, quote)
                     move_pos.setdefault(p, loc[0])
                     hit.update(landed)
+                    moved_off = moved_off or p not in landed   # 落点含 p 只是展开，不算改挂
             targets[p] = sorted(hit)
+            item_moved = item_moved or moved_off
             if not hit:                          # 去掉的标注各打一条 warning，写明每段摘录的原因
                 dropped += 1
                 logger.warning("去掉标注：%s %r 在阶段 %d 没有能定位的摘录（%s）",
                                kind, label(item), p, "；".join(reasons))
-            elif targets[p] != [p]:
+            elif moved_off:
                 # 章号换算一律放到循环外：一次 `raw_offsets` 换完所有改挂位置。
                 pending_rehang.append((kind, label(item), p, targets[p], move_pos[p]))
 
@@ -467,7 +471,7 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
         if not landed_all:                       # 没有任何位置证据 → 交调用方按类别处置
             unlocated.append(i)
             logger.warning("未定位：%s %r 的标注 %s 都没有能定位的摘录", kind, label(item), valid)
-        elif any(ts and ts != [p] for p, ts in targets.items()):
+        elif item_moved:
             rehung += 1
             rehung_items.append(i)
 

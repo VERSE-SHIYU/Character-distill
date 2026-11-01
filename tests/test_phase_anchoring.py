@@ -445,6 +445,19 @@ def test_u38_retro_occurrences_are_excluded_before_counting_frequency():
     assert result.phases == [[1]]
 
 
+def test_u39_frequent_spread_including_the_tagged_phase_is_not_a_rehang(caplog):
+    """超限摘录的落点含所标阶段（「好吵」标阶段 1、落点也是 1/2/3/4）只是展开：
+
+    卡面照旧挂全部阶段，但不算改挂 —— 不记 `rehung`、不打「改挂」warning（D24 ③b 监测口径）。
+    """
+    with caplog.at_level(logging.WARNING):
+        card = _card([_row([_occ(1, "好吵")], "口头禅")], src=_SRC_FREQ4, n=4, anchors=_A4)
+    line = [r.getMessage() for r in caplog.records if "[phase_anchoring]" in r.getMessage()][0]
+    assert (_placement(card), " rehung=0 " in line,
+            [r.getMessage() for r in caplog.records if "改挂" in r.getMessage()]) == (
+        ([_beh("口头禅", quote="好吵")], [[], [], [], []]), True, [])
+
+
 # ── 4.1b 省略号拼接档（**锚点专用**，P15）──────────────────────────────
 # 出处：oberst-lab/verifiable-by-construction `eval/citation/vccr.py` 的 `_match_elided`
 # 与 `verbatim_criteria.json`（min_fragment_len=10 / min_fragments=2）。锚点允许模型用「……」

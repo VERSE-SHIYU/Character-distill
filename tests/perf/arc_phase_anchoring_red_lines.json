@@ -72,6 +72,11 @@
       ],
       [
         "tests/test_phase_anchoring.py",
+        "assert (_placement(card), \" rehung=0 \" in line, [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessag",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
         "assert (top, [b[\"situation\"] for b in by[0]], [b[\"situation\"] for b in by[1]], [b[\"situation\"] for b in by[2]]",
         0
       ]
@@ -173,6 +178,11 @@
       ],
       [
         "tests/test_phase_anchoring.py",
+        "assert (_placement(card), \" rehung=0 \" in line, [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessag",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
         "assert (top, [b[\"situation\"] for b in by[0]], [b[\"situation\"] for b in by[1]], [b[\"situation\"] for b in by[2]]",
         0
       ]
@@ -197,6 +207,11 @@
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
         1
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert (_placement(card), \" rehung=0 \" in line, [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessag",
+        0
       ]
     ],
     "M5a 锚点查不到时当作全文末尾，照常检查（不跳过）": [
@@ -351,6 +366,11 @@
       ],
       [
         "tests/test_phase_anchoring.py",
+        "assert (_placement(card), \" rehung=0 \" in line, [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessag",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
         "assert (top, [b[\"situation\"] for b in by[0]], [b[\"situation\"] for b in by[1]], [b[\"situation\"] for b in by[2]]",
         0
       ]
@@ -447,6 +467,11 @@
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
         1
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert (_placement(card), \" rehung=0 \" in line, [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessag",
+        0
       ],
       [
         "tests/test_phase_anchoring.py",
@@ -643,6 +668,18 @@
         "tests/test_phase_anchoring.py",
         "assert [(pa.phase, pa.attitude) for pa in card.relationships[0].phase_attitudes] == [(3, \"常\")]",
         0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert (_placement(card), \" rehung=0 \" in line, [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessag",
+        0
+      ]
+    ],
+    "M49 超限展开含所标阶段也记作改挂（监测口径回退，D24 ③b）": [
+      [
+        "tests/test_phase_anchoring.py",
+        "assert (_placement(card), \" rehung=0 \" in line, [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessag",
+        0
       ]
     ],
     "M20 阶段上界整体挪一（含下一阶段首字）": [
@@ -739,6 +776,11 @@
         "tests/test_phase_anchoring.py",
         "assert _placement(card) == ([], [[], [_beh(\"口头禅\", quote=\"来都来了\")], [], [_beh(\"口头禅\", quote=\"来都来了\")]])",
         1
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert (_placement(card), \" rehung=0 \" in line, [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessag",
+        0
       ]
     ],
     "M23 分段查不到时当作位置 0（而不是 None）": [
@@ -1007,6 +1049,11 @@
       ],
       [
         "tests/test_phase_anchoring.py",
+        "assert (_placement(card), \" rehung=0 \" in line, [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessag",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
         "assert _ranges_for(_P2_HEAD + \"……\" + _P2_TAIL) == ([(0, 24), (24, 54)], \"\")",
         0
       ],
@@ -1080,6 +1127,11 @@
       [
         "tests/test_phase_anchoring.py",
         "assert \" rehung=1 \" in line",
+        0
+      ],
+      [
+        "tests/test_phase_anchoring.py",
+        "assert (_placement(card), \" rehung=0 \" in line, [r.getMessage() for r in caplog.records if \"改挂\" in r.getMessag",
         0
       ]
     ],

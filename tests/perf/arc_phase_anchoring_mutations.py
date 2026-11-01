@@ -129,6 +129,9 @@ MUTATIONS = [
     ('M48 超限摘录一律不作证据（frequent_counts 失效，D24 ③b）', TARGET, [("repl", ANCH, [
         ("                    if not frequent_counts:",
          "                    if True:")])], "RED"),
+    ('M49 超限展开含所标阶段也记作改挂（监测口径回退，D24 ③b）', TARGET, [("repl", ANCH, [
+        ("                    moved_off = moved_off or p not in landed   # 落点含 p 只是展开，不算改挂",
+         "                    moved_off = True")])], "RED"),
     ('M20 阶段上界整体挪一（含下一阶段首字）', TARGET, [("repl", ANCH, [
         ("    return [(lo, hi) for lo, hi in zip(positions, [*positions[1:], norm_len])], \"\"",
          "    return [(lo, hi) for lo, hi in zip(positions, [*(p + 1 for p in positions[1:]), norm_len])], \"\"")])], "RED"),
@@ -191,9 +194,9 @@ MUTATIONS = [
         ("            tags += len(valid)                   # 分母照常计（监测比例要用）\n", "")])], "RED"),
     # ── arc-phase-unlocated §3.1 / §3.7 新增 ──
     ('M37 删去「改挂」的 warning', TARGET, [("repl", ANCH, [
-        ("            elif targets[p] != [p]:\n", "            elif False:\n")])], "RED"),
+        ("            elif moved_off:\n", "            elif False:\n")])], "RED"),
     ('M38 rehung 按标注计（一条条目改挂两个标注记两次）', TARGET, [("repl", ANCH, [
-        ("        elif any(ts and ts != [p] for p, ts in targets.items()):\n            rehung += 1\n",
+        ("        elif item_moved:\n            rehung += 1\n",
          "        else:\n            rehung += sum(1 for p, ts in targets.items() if ts and ts != [p])\n")])], "RED"),
     ('M39 改挂过来的摘录压过所标阶段自己的摘录', TARGET, [("repl", ANCH, [
         ("        phase_quotes.append({t: own.get(t) or moved[t] for t in landed_all})",
