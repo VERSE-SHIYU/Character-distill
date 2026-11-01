@@ -71,7 +71,7 @@ from core.length_budget import (
     LONG_OUTPUT_MAX_TOKENS as _LONG_OUTPUT_MAX_TOKENS,
     fits_one_pass,
 )
-from core.schema import CharacterCard, FORMAT_GROUPS, PRESET_TAGS
+from core.schema import CharacterCard, FORMAT_GROUPS, GENRE_TAGS
 from core.tokens import count_tokens
 from core.utils import aggregate_usage, estimate_usage, try_record_usage
 from core import telemetry as T  # OTel 埋点
@@ -2168,7 +2168,7 @@ class Distiller:
 
         prompt = (
             f"根据以下角色卡信息，从预设标签中选择1-3个最匹配的标签，只返回JSON数组。\n"
-            f"预设标签：{PRESET_TAGS}\n"
+            f"预设标签：{GENRE_TAGS}\n"
             f"角色名：{name}\n"
             f"身份：{identity}\n"
             f"性格：{traits}\n"
@@ -2185,7 +2185,7 @@ class Distiller:
             if m:
                 tags = json.loads(m.group(0))
                 if isinstance(tags, list):
-                    return [t for t in tags if t in PRESET_TAGS][:3]
+                    return [t for t in tags if t in GENRE_TAGS][:3]
             return []
         except Exception as exc:
             logger.warning("Auto-tagging failed (silent): %s", exc, exc_info=True)

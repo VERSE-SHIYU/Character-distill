@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from core import roles
 from core.authz import fetch_for_actor
 from core.card_out import CARD_CONFLICT, card_revision
-from core.schema import PRESET_TAGS
+from core.schema import GENRE_TAGS, PRESET_TAGS
 from account_visibility import AccountView, identity, page_meta, view_of
 from card_visibility import page_meta as card_page_meta
 from cross_border_sync import forward_card_to_peer
@@ -513,9 +513,11 @@ async def publish_card(
     if not market_tags:
         try:
             cj = json.loads(card_json_str) if isinstance(card_json_str, str) else card_json_str
-            ai_tags = cj.get("tags", [])
-            if ai_tags:
-                market_tags = ",".join(ai_tags[:5])
+            # get 的默认值只兜「键缺失」；键在而值为 null 时拿到 None，遍历会崩。
+            ai_tags = cj.get("tags") or []
+            genre_tags = [t for t in ai_tags if t in GENRE_TAGS]
+            if genre_tags:
+                market_tags = ",".join(genre_tags[:5])
         except json.JSONDecodeError:
             # 自动补标签只是锦上添花，解不出来就留空（用户自己填）。窄到解析错误：
             # 让这段 try 真的只负责「JSON 坏了」这一件事。
