@@ -513,7 +513,8 @@ async def publish_card(
     if not market_tags:
         try:
             cj = json.loads(card_json_str) if isinstance(card_json_str, str) else card_json_str
-            ai_tags = cj.get("tags", [])
+            # get 的默认值只兜「键缺失」；键在而值为 null 时拿到 None，遍历会崩。
+            ai_tags = cj.get("tags") or []
             genre_tags = [t for t in ai_tags if t in GENRE_TAGS]
             if genre_tags:
                 market_tags = ",".join(genre_tags[:5])

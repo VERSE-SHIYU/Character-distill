@@ -5,13 +5,14 @@
 身份、性格和 200 字背景给模型看，模型猜不出来。它瞎猜出的「原创」随后被发布兜底
 抄进 ``market_tags``，已出版小说就进了「原创」分类。
 
-本文件锁五条行为（前三行是本次要改的，后两行是现在已成立、防止改坏的）：
+本文件锁六条行为（前三行是本次要改的，后三行是现在已成立、防止改坏的）：
 
   1. ``_auto_tag`` 丢掉模型返回的来源类标签；
   2. ``_auto_tag`` 的提示词里不出现来源类候选；
   3. 发布时用户没填 ``market_tags`` → 兜底只从卡的 tags 里取题材类，再取前 5 个；
-  4. 用户填了 ``market_tags`` → 原样写入；
-  5. ``GET /api/market/tags`` 仍是同样 15 个、同样顺序（市场分类按钮不变）。
+  4. 旧数据里 ``tags`` 为 ``null`` 时发布不崩（``get`` 的默认值只兜键缺失，不兜 null）；
+  5. 用户填了 ``market_tags`` → 原样写入；
+  6. ``GET /api/market/tags`` 仍是同样 15 个、同样顺序（市场分类按钮不变）。
 
 期望值全部是**字面量**，不从被测模块 import —— 从源码 import 就自证自明，变异杀不掉
 （同 ``test_identify_failure_channels`` 对文案的处理）。
@@ -19,7 +20,8 @@
 变异靶点：
   - 1/2：``_auto_tag`` 的候选与过滤改回 ``PRESET_TAGS``；
   - 3：发布兜底的题材过滤去掉，改回 ``ai_tags[:5]``；
-  - 5：``PRESET_TAGS`` 增删或换序。
+  - 4：兜底对 ``ai_tags`` 不再做 null 归一，直接遍历；
+  - 6：``PRESET_TAGS`` 增删或换序。
 """
 
 from __future__ import annotations
@@ -146,7 +148,16 @@ async def test_publish_fallback_keeps_only_genre_tags(store, owner, _review_pass
     assert await _publish_and_read_market_tags(store, owner, ["原创", "古风"], {}) == "古风"
 
 
-# ── 4. 用户填了 market_tags：原样写入 ────────────────────────────────────────
+# ── 4. 旧数据 tags 为 null：发布不崩 ────────────────────────────────────────
+
+
+@PG_ENV.skipif("市场发布兜底用例")
+async def test_publish_fallback_tolerates_null_tags(store, owner, _review_pass):
+    # get("tags", []) 只兜「键缺失」；键存在而值为 null 时返回 None，直接遍历会 TypeError。
+    assert await _publish_and_read_market_tags(store, owner, None, {}) == ""
+
+
+# ── 5. 用户填了 market_tags：原样写入 ────────────────────────────────────────
 
 
 @PG_ENV.skipif("市场发布兜底用例")
@@ -157,7 +168,7 @@ async def test_publish_keeps_user_market_tags(store, owner, _review_pass):
     assert got == "原创,古风"
 
 
-# ── 5. 市场分类按钮：15 个、原顺序 ──────────────────────────────────────────
+# ── 6. 市场分类按钮：15 个、原顺序 ──────────────────────────────────────────
 
 
 async def test_market_tags_endpoint_unchanged():
