@@ -24,9 +24,10 @@ from core.quotes import (has_ellipsis, locate_anchor, locate_in_normalized, norm
 
 logger = logging.getLogger(__name__)
 
-# 摘录最长一段在原文中的出现次数上限：超过它就不作位置证据（按该段「核对不上」处理）。
-# 样本实测（公版《孔乙己》两张卡 14 段摘录）出现次数全部为 1 或 2，3 取样本最大值之上一档；
-# 台词在全书反复出现时（如「我真傻，真的」）会超限 → 走兜底 D5。**全仓只此一处定义**。
+# 摘录最长一段在原文中的出现次数上限：超过它默认不作位置证据（按该段「核对不上」处理）。
+# 样本实测（公版《孔乙己》两张卡 14 段摘录）出现次数全部为 1 或 2，3 取样本最大值之上一档。
+# 口头禅一类恰恰出现得最多：做法、态度、非经历字段由 `verify(frequent_counts=True)` 仍作证据，
+# 记忆等经历类不传（挂早了会提前泄露剧情）。**全仓只此一处定义**。
 MAX_OCCURRENCES = 3
 
 
@@ -34,8 +35,8 @@ class Placement(Enum):
     """摘录没落进所标阶段时的落点策略（`verify` 的入参，**枚举只本模块用**）。
 
     `RELOCATE`：摘录落在哪个阶段就挂哪个（默认 —— 做法、记忆、字段）。`KEEP_TAGGED`：只要
-    摘录能查到（不超 `MAX_OCCURRENCES`）就算命中所标阶段，不改挂（态度专用；原因见
-    `card_draft._convert_relationships` 的注释）。
+    摘录能查到（不超 `MAX_OCCURRENCES`，或调用方传了 `frequent_counts=True`）就算命中所标
+    阶段，不改挂（态度专用；原因见 `card_draft._convert_relationships` 的注释）。
     """
     RELOCATE = "relocate"
     KEEP_TAGGED = "keep_tagged"
@@ -354,7 +355,8 @@ def log_phase_starts(phases, source_text: str, anchors: PhaseAnchors, name: str)
 
 def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
            kind: str = "做法", label=_situation_label, name: str = "",
-           placement: Placement = Placement.RELOCATE) -> Verification:
+           placement: Placement = Placement.RELOCATE,
+           frequent_counts: bool = False) -> Verification:
     """按原文位置定每条条目的阶段 —— **对任意带 `occurrences` 的条目列表**工作。
 
     规则（spec `arc-phase-unlocated.md` §3.1，取代 `arc-phase-anchoring.md` 的规则 3、4）：
@@ -370,6 +372,11 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
 
     `placement` 只管「摘录没落进所标阶段」这一处分支（`KEEP_TAGGED` 时查到即算命中，不改挂；
     态度专用）。其余规则对两种策略都相同。
+
+    `frequent_counts`：出现超过 `MAX_OCCURRENCES` 次的摘录是否仍作位置证据（默认 False，
+    与改前相同）。True 时（做法、态度、非经历字段）超限摘录照常定位 —— `KEEP_TAGGED` 查到即
+    算命中所标阶段；`RELOCATE` 挂到全部出现位置所在的阶段（有一处落在所标阶段也不只认它）。
+    不超限的摘录两种取值行为相同。见 spec `arc-phase-unlocated.md`「补充：超限摘录」。
 
     `valid_rows`：`card_from_draft` 先做规则 0（编号合法性过滤）后，每条条目剩下的合法阶段编号
     （升序、去重）。`anchors`：`card_from_draft` 开头 `build_anchors` 建一次的上下文。
@@ -413,9 +420,11 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
         own: dict[int, str] = {}                 # 落进所标阶段的摘录（优先作该阶段的 source_quote）
         moved: dict[int, str] = {}               # 改挂过来的摘录
         move_pos: dict[int, int] = {}            # 每个标注第一处落点的规范化位置（打章号用）
+        item_moved = False                       # 本条是否有标注真的被改挂（按条目计 rehung）
         for p in valid:                          # 计数单位是标注（条目, 阶段），不是摘录
             tags += 1
             hit: set[int] = set()
+            moved_off = False                    # 本标注是否真的被改挂（超限摘录展开含 p 不算）
             reasons: list[str] = []              # 本标注每段摘录核对不上的原因（写进去掉那行）
             for quote in by_phase.get(p, []):    # 每段摘录各是一份证据
                 loc = locate_in_normalized(source_norm, quote)
@@ -425,13 +434,16 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
                     continue
                 loc = [x for x in loc if _region_of(anchors.retro, x) is None]   # 回忆区里的出现不算位置
                 if len(loc) > MAX_OCCURRENCES:
-                    too_frequent += 1            # 出现太多（满篇都是，定不了位）→ 不作证据
-                    reasons.append(f"出现 {len(loc)} 次：{quote}")
-                    continue
+                    too_frequent += 1            # 出现太多：默认不作证据，frequent_counts 的类别仍作证据
+                    if not frequent_counts:
+                        reasons.append(f"出现 {len(loc)} 次：{quote}")
+                        continue
                 landed = sorted({phase_at(ranges, x) for x in loc})
+                # 超限摘录仍作证据时（frequent_counts）：RELOCATE 不再「只认所标阶段」，挂全部落点
+                spread = len(loc) > MAX_OCCURRENCES and placement is Placement.RELOCATE
                 # 只在回忆区里（`loc` 已空）：查得到、却没有位置证据 → 保留模型标注；
                 # KEEP_TAGGED：查到即算命中所标阶段（不改挂）；否则落进所标阶段才认（D1）
-                if not loc or placement is Placement.KEEP_TAGGED or p in landed:
+                if not loc or placement is Placement.KEEP_TAGGED or (p in landed and not spread):
                     if p not in own and len(loc) > 1:
                         ambiguous += 1           # D6：任意一次命中即通过，记「位置不唯一」
                     own.setdefault(p, quote)
@@ -441,12 +453,14 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
                         moved.setdefault(t, quote)
                     move_pos.setdefault(p, loc[0])
                     hit.update(landed)
+                    moved_off = moved_off or p not in landed   # 落点含 p 只是展开，不算改挂
             targets[p] = sorted(hit)
+            item_moved = item_moved or moved_off
             if not hit:                          # 去掉的标注各打一条 warning，写明每段摘录的原因
                 dropped += 1
                 logger.warning("去掉标注：%s %r 在阶段 %d 没有能定位的摘录（%s）",
                                kind, label(item), p, "；".join(reasons))
-            elif targets[p] != [p]:
+            elif moved_off:
                 # 章号换算一律放到循环外：一次 `raw_offsets` 换完所有改挂位置。
                 pending_rehang.append((kind, label(item), p, targets[p], move_pos[p]))
 
@@ -457,7 +471,7 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
         if not landed_all:                       # 没有任何位置证据 → 交调用方按类别处置
             unlocated.append(i)
             logger.warning("未定位：%s %r 的标注 %s 都没有能定位的摘录", kind, label(item), valid)
-        elif any(ts and ts != [p] for p, ts in targets.items()):
+        elif item_moved:
             rehung += 1
             rehung_items.append(i)
 
