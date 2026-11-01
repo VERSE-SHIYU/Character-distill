@@ -35,7 +35,7 @@ from httpx import ASGITransport, AsyncClient
 
 import deps
 import server
-from core.card_draft import CardDraft
+from core.card_draft import CardDraft, card_from_draft
 from core.distiller import DISTILL_PROMPT_BEFORE_NAME, DistillError, Distiller
 from core.schema import FORMAT_GROUPS, CharacterCard
 from core.text_manager import TextManager
@@ -626,6 +626,9 @@ class _SleepyDistiller:
 
     def distill_incremental_stream(self, content, name, aliases=None, **kw):
         yield json.dumps({"name": name}, ensure_ascii=False)
+
+    def draft_to_card(self, data, source_text, *, retro):
+        return card_from_draft(data, source_text, retro=retro)
 
     def finalize_card(self, card, content, name, aliases=(), roster=()):
         time.sleep(SLEEPY)
