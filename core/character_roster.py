@@ -109,10 +109,11 @@ async def resolve_characters(
     cached = await cached_characters(storage, text_id, user_id)
     if cached:
         return cached
-    chars = await asyncio.to_thread(distiller.identify_characters, content)
+    result = await asyncio.to_thread(distiller.identify_roster, content)
     await storage.save_characters(
-        text_id, chars, version=Distiller.IDENTIFY_VERSION)
-    return chars
+        text_id, result.roster, version=Distiller.IDENTIFY_VERSION,
+        trace=result.trace)
+    return result.roster
 
 
 def aliases_for(chars: list[dict[str, Any]], name: str) -> list[str]:

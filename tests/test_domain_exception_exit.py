@@ -31,7 +31,7 @@ from fastapi.testclient import TestClient
 import deps
 import server  # web/server.py 装配层（conftest 已把 web/ 加进 sys.path）
 from adapters.llm_adapter import IncompleteResponseError, llm_error_types, user_facing_error
-from core.distiller import DistillError
+from core.distiller import DistillError, IdentifyResult
 from deps import get_storage
 from routers.auth import get_current_user
 from routers.distill import router as distill_router
@@ -65,6 +65,9 @@ class _FakeDistiller:
     def identify_characters(self, content: str) -> list:
         return []
 
+    def identify_roster(self, content: str) -> IdentifyResult:
+        return IdentifyResult(self.identify_characters(content), trace=None)
+
     def distill_incremental_stream(self, content, name, aliases, text_type, retro=None):
         raise self._exc
         yield  # noqa: unreachable —— 只为把它变成 generator
@@ -92,7 +95,10 @@ class _Store:
     ) -> list | None:
         return None                      # 无缓存 → 调用方会跑识别
 
-    async def save_characters(self, text_id: str, characters: list, *, version: int) -> None:
+    async def save_characters(
+        self, text_id: str, characters: list, *, version: int,
+        trace: dict | None = None,
+    ) -> None:
         return None
 
     async def export_session(self, session_id: str, fmt: str) -> str:

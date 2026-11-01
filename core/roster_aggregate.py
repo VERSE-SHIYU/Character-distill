@@ -323,6 +323,33 @@ def merge_identify_groups(
     return _strip_ambiguous(merged)
 
 
+def roster_from(
+    groups: Sequence[dict[str, Any]], pairs: Sequence[Sequence[str]],
+    impersonal_names: Iterable[str] = (),
+) -> list[dict[str, Any]]:
+    """分组 → 对外名单的唯一组合：并组 → 判主次 / 取理由。
+
+    识别与留证重算共用这一处，两边各写一遍迟早漂成两份。
+    """
+    return finalize_identify_roster(merge_identify_groups(groups, pairs, impersonal_names))
+
+
+def replay_roster(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    """用留证重算名单 —— 与 `Distiller.identify_roster` 落库时同一套纯函数。
+
+    多分片（``judge`` 非 None）：逐片条目重新归组，判定票数结果是落库时算好的
+    （``judge["pairs"]`` / ``judge["impersonal"]``），不重跑模型。
+    单片（``judge`` 为 None）：`_identify_single_call` 直接返回解析结果，不经归组 /
+    并组 / finalize，故原样取 ``per_chunk[0]``。
+    """
+    if trace["judge"] is None:
+        return trace["per_chunk"][0]
+    return roster_from(
+        group_identify_entries(trace["per_chunk"]),
+        trace["judge"]["pairs"], trace["judge"]["impersonal"],
+    )
+
+
 def tally_judge_samples(
     samples: Sequence[dict[str, Any]], votes: int,
 ) -> tuple[list[tuple[str, str]], set[str]]:

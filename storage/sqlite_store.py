@@ -176,6 +176,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "108_text_retro_regions.sql",
     # 109：PG 044 新增列的孪生，同上。
     "109_distill_task_entry.sql",
+    # 110：PG 045 新增列的孪生，同上。
+    "110_text_characters_trace.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -996,17 +998,25 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] List texts failed: {exc}")
             raise
 
-    async def save_characters(self, text_id: str, characters: list, *, version: int) -> None:
+    async def save_characters(
+        self, text_id: str, characters: list, *, version: int, trace: dict | None = None,
+    ) -> None:
         """Cache identified characters for a text, tagged with the identify algorithm version.
 
-        `version` 由调用方给（`Distiller.IDENTIFY_VERSION`）—— 存储层不认识这个数，
-        只负责存。存储层自己填字面量的话，改识别口径时这里必漏改一处。
+        `version`、`trace` 都由调用方给（`Distiller.identify_roster`）—— 存储层不认识
+        它们的内容，只负责存。存储层自己填字面量的话，改识别口径时这里必漏改一处。
+        名单与留证同一条 UPDATE 写三列，`trace=None` 写 NULL。
         """
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE texts SET characters_json = ?, characters_version = ? WHERE id = ?",
-                    (json.dumps(characters, ensure_ascii=False), version, text_id),
+                    "UPDATE texts SET characters_json = ?, characters_version = ?, "
+                    "characters_trace = ? WHERE id = ?",
+                    (
+                        json.dumps(characters, ensure_ascii=False), version,
+                        None if trace is None else json.dumps(trace, ensure_ascii=False),
+                        text_id,
+                    ),
                 )
                 await conn.commit()
         except Exception as exc:

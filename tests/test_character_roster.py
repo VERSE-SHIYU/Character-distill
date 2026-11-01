@@ -28,7 +28,7 @@ from core.character_roster import (
     cached_characters,
     resolve_characters,
 )
-from core.distiller import DistillError, Distiller, _IDENTIFY_CACHE
+from core.distiller import DistillError, Distiller, IdentifyResult, _IDENTIFY_CACHE
 
 BAOYU = [{"name": "宝玉", "aliases": ["怡红公子"], "importance": "主要"}]
 DAIYU = [{"name": "黛玉", "aliases": [], "importance": "主要"}]
@@ -44,7 +44,7 @@ class _FakeStorage:
         self.reads.append((text_id, user_id, version))
         return self._cached
 
-    async def save_characters(self, text_id, characters, *, version):
+    async def save_characters(self, text_id, characters, *, version, trace=None):
         self.saved.append((text_id, characters, version))
         self._cached = characters      # 写回后缓存随之生效
 
@@ -57,6 +57,9 @@ class _FakeDistiller:
     def identify_characters(self, text):
         self.calls += 1
         return self._chars
+
+    def identify_roster(self, text):
+        return IdentifyResult(self.identify_characters(text), trace=None)
 
 
 def _identify_llm(*rosters) -> MagicMock:

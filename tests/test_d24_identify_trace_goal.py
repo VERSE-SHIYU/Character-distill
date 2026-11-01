@@ -131,7 +131,6 @@ def _distiller(llm: _IdentifyLLM) -> Distiller:
     return d
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ①b 未实现：texts 无 characters_trace、识别不产出留证")
 async def test_per_chunk_outputs_and_meta_are_persisted(store, uid):
     tid = await _seed_text(store, uid)
     await resolve_characters(store, _distiller(_IdentifyLLM()), tid, uid, CONTENT)
@@ -146,7 +145,6 @@ async def test_per_chunk_outputs_and_meta_are_persisted(store, uid):
     assert trace["identify_version"] == 4
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ①b 未实现：判定原始输出与票数结果未落库")
 async def test_judge_samples_and_tally_are_persisted(store, uid):
     tid = await _seed_text(store, uid)
     await resolve_characters(store, _distiller(_IdentifyLLM()), tid, uid, CONTENT)
@@ -156,11 +154,10 @@ async def test_judge_samples_and_tally_are_persisted(store, uid):
 
     assert trace["judge"]["raw"] == [MERGE_REPLY] * 5
     assert trace["judge"]["failed"] == []
-    assert trace["judge"]["pairs"] == [["甲", "乙"]]
+    assert trace["judge"]["pairs"] == [["乙", "甲"]], "tally 按名排序组对"
     assert trace["judge"]["impersonal"] == []
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ①b 未实现：replay_roster 尚不存在")
 async def test_replay_roster_matches_stored_roster(store, uid):
     from core.roster_aggregate import replay_roster
 
@@ -171,7 +168,6 @@ async def test_replay_roster_matches_stored_roster(store, uid):
     assert replay_roster(json.loads(trace_json)) == json.loads(roster_json)
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ①b 未实现：判定原文未保留、非法样本未计入留证")
 async def test_unparseable_judge_sample_keeps_raw_text(store, uid):
     tid = await _seed_text(store, uid)
     llm = _IdentifyLLM(judge_replies=[NOT_JSON] + [MERGE_REPLY] * 4)
@@ -182,7 +178,7 @@ async def test_unparseable_judge_sample_keeps_raw_text(store, uid):
 
     assert judge["raw"] == [NOT_JSON] + [MERGE_REPLY] * 4
     assert judge["failed"] == []
-    assert judge["pairs"] == [["甲", "乙"]], "4 份合法样本仍够 3 票"
+    assert judge["pairs"] == [["乙", "甲"]], "4 份合法样本仍够 3 票"
 
 
 async def test_chunk_failure_writes_neither_roster_nor_trace(store, uid):
@@ -210,7 +206,6 @@ async def test_existing_roster_is_returned_without_trace_rewrite(store, uid):
     assert trace_json is None, "命中缓存不许改动留证"
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ①b 未实现：单片路径不产出留证")
 async def test_single_chunk_trace_has_no_judge(store, uid):
     from core.roster_aggregate import replay_roster
 

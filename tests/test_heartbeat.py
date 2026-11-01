@@ -123,9 +123,11 @@ def test_module_imports():
 
             def visit_Attribute(self, node):
                 # 数**引用**而不是数调用：唯一入口里是
-                # `asyncio.to_thread(distiller.identify_characters, content)`——
+                # `asyncio.to_thread(distiller.identify_roster, content)`——
                 # 属性当实参传，不构成 Call.func，数 Call 会漏成 0。
-                if node.attr == "identify_characters":
+                # D24 ①b：落库入口改 identify_roster（名单 + 留证同一次），
+                # 不落库的调用方仍可用 identify_characters，两个名字都算。
+                if node.attr in ("identify_characters", "identify_roster"):
                     self.identify_calls += 1
                 self.generic_visit(node)
 
@@ -138,7 +140,7 @@ def test_module_imports():
 
         rv = HeartbeatVisitor()
         rv.visit(roster_tree)
-        print(f"[AST] identify_characters calls (roster): {rv.identify_calls}")
+        print(f"[AST] identify calls (roster): {rv.identify_calls}")
 
         # Main identify has try/except/finally for proper cleanup.
         assert v.try_except_finally_count >= 1, (
@@ -146,7 +148,7 @@ def test_module_imports():
             f"found {v.try_except_finally_count}"
         )
         assert rv.identify_calls >= 1, (
-            f"FAIL: expected >=1 identify_characters call in {roster_path}, "
+            f"FAIL: expected >=1 identify call in {roster_path}, "
             f"found {rv.identify_calls}"
         )
         print("[PASS] module AST structure is valid")

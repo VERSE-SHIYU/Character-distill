@@ -246,7 +246,8 @@ def test_g7_no_print_left_on_the_chain():
             # S2：`fill_relationships` 已删，关系分批进了共用格式化流程 —— 链上换成它俩。
             "_collect_stream", "_format_groups", "_format_groups_stream",
             "_chat_accounted", "_parse_json_with_retry",
-            "identify_characters", "_judge_groups", "distill_incremental_stream"],
+            "identify_characters", "identify_roster", "_judge_groups",
+            "distill_incremental_stream"],
         "core/text_manager.py": ["save_distilled_card"],
         "core/utils.py": ["try_record_usage"],
     }

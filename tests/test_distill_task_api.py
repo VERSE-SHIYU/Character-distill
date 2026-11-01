@@ -28,7 +28,7 @@ from httpx import ASGITransport, AsyncClient
 from core import concurrency as C  # 派生与上下文传播
 import deps
 from core.card_draft import card_from_draft
-from core.distiller import DistillError, Distiller, text_fingerprint
+from core.distiller import DistillError, Distiller, IdentifyResult, text_fingerprint
 from deps import get_storage
 from routers import distill as D
 from routers.auth import get_current_user
@@ -274,6 +274,9 @@ class _CardStubDistiller:
         # 甲把「乙」列成自己的别名：别名既不该混进对方名单，也不该顶掉本角色。
         return [{"name": "乙", "aliases": ["小乙"]},
                 {"name": "甲", "aliases": ["阿甲", "乙"]}]
+
+    def identify_roster(self, content):
+        return IdentifyResult(self.identify_characters(content), trace=None)
 
     def distill_incremental_stream(self, text, character_name, *, aliases=None,
                                    text_type="story", on_chunk_done=None,
@@ -740,6 +743,9 @@ class _ChunkEmittingDistiller:
 
     def identify_characters(self, content):
         return [{"name": "甲", "aliases": []}]
+
+    def identify_roster(self, content):
+        return IdentifyResult(self.identify_characters(content), trace=None)
 
     def distill_incremental_stream(self, text, character_name, *,
                                    aliases=None, text_type="story",
