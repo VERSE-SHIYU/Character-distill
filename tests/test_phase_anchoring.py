@@ -21,8 +21,11 @@ import re
 import uuid
 from pathlib import Path
 
+import pytest
+
 from core import phase_anchoring
 from core.card_draft import DraftBehavior, card_from_draft
+from core.card_layers import get_path
 from core.retro_regions import NOT_DETECTED
 from core.quotes import locate_in_normalized, normalize, verbatim_in_normalized
 from core.schema import SituationBehavior
@@ -363,6 +366,84 @@ def test_u27b_too_frequent_quote_warns_with_its_own_reason(caplog):
               src=_SRC4, n=2, anchors={2: "结尾丙丙丙"})
     assert [r.getMessage() for r in caplog.records if "去掉标注" in r.getMessage()] == [
         "去掉标注：做法 '太常见' 在阶段 1 没有能定位的摘录（出现 4 次：乙乙乙）"]
+
+
+# ── 4.1d 超限摘录（D24 ③b）：反复出现的摘录也作位置证据 ─────────────────
+# spec `arc-phase-unlocated.md`「补充：超限摘录」。做法 / 态度 / 非经历字段传
+# `frequent_counts=True`，记忆不传（挂早了会提前泄露剧情）。
+
+# 四段，各带独特锚点（规范化后 28 字）；「好吵」6 次：阶段 1/2 各一次，阶段 3/4 各两次。
+_SRC_FREQ4 = "好吵一。寒江。好吵二。孤舟。好吵三好吵四。晚钟。好吵五好吵六尾。"
+_A4 = {2: "寒江", 3: "孤舟", 4: "晚钟"}
+
+
+@pytest.mark.xfail(strict=True, reason="D24 ③b：做法超限摘录仍作位置证据")
+def test_u33_frequent_behavior_covering_all_phases_goes_top():
+    """摘录在四个阶段都出现（共 6 次）→ 每条证据都成立 → 顶层，不进未定位区。"""
+    card = _card([_row([_occ(1, "好吵")], "口头禅")], src=_SRC_FREQ4, n=4, anchors=_A4)
+    assert _placement(card) == ([_beh("口头禅", quote="好吵")], [[], [], [], []])
+
+
+# 同上四段；「来都来了」5 次只在阶段 2（2 次）与阶段 4（3 次）。
+_SRC_FREQ24 = "开头。寒江。来都来了。来都来了。孤舟。中段。晚钟。来都来了。来都来了。来都来了。"
+
+
+@pytest.mark.xfail(strict=True, reason="D24 ③b：超限摘录 RELOCATE 挂全部落点")
+def test_u34_frequent_behavior_hangs_every_landing_phase():
+    """标的是阶段 2，但超限摘录不作「只认所标阶段」处理 → 挂到全部落点（阶段 2 和 4）。"""
+    card = _card([_row([_occ(2, "来都来了")], "口头禅")], src=_SRC_FREQ24, n=4, anchors=_A4)
+    assert _placement(card) == ([], [[], [_beh("口头禅", quote="来都来了")], [],
+                                     [_beh("口头禅", quote="来都来了")]])
+
+
+# 三段；「常」5 次：阶段 2 两次、阶段 3 三次。
+_SRC_FREQ3 = "开头。寒江。常乙常丙。孤舟。常丁常戊常己。尾。"
+
+
+@pytest.mark.xfail(strict=True, reason="D24 ③b：态度超限摘录查到即算命中所标阶段")
+def test_u35_frequent_attitude_keeps_its_tagged_phase():
+    """态度（KEEP_TAGGED）出现 5 次 → 查到即命中阶段 3，不进未定位区。"""
+    draft = _draft([], n=3, anchors={2: "寒江", 3: "孤舟"})
+    draft["relationships"] = [{"target": "甲", "relation": "友", "attitudes": [
+        {"phase": 3, "attitude": "常", "quote": "常"}]}]
+    card = card_from_draft(draft, _SRC_FREQ3, retro=NOT_DETECTED)
+    assert [(pa.phase, pa.attitude) for pa in card.relationships[0].phase_attitudes] == [(3, "常")]
+
+
+_SRC_FREQ_MEM = "开头甲。寒江。常乙常丙。孤舟。常丁常戊常己。"
+
+
+def test_u36_frequent_memory_is_still_not_evidence():
+    """记忆（经历类）不传 `frequent_counts`：超限摘录仍不作证据 → 挂最后阶段（改前行为）。"""
+    draft = _draft([], n=3, anchors={2: "寒江", 3: "孤舟"})
+    draft["key_memories"] = [{"memory": "我饿了", "occurrences": [_occ(2, "常")]}]
+    card = card_from_draft(draft, _SRC_FREQ_MEM, retro=NOT_DETECTED)
+    assert ([get_path(p.overlay, "key_memories") for p in card.character_arc.phases],
+            card.key_memories) == ([None, None, ["我饿了"]], [])
+
+
+_SRC_RARE24 = "开头。寒江。来都来了。孤舟。中段。晚钟。来都来了。尾。"
+
+
+def test_u37_rare_behavior_still_relocates_to_every_landing_phase():
+    """出现 2 次（不超限）：与改前完全相同 —— 标在阶段 1、落点在 2 与 4 → 挂 2 和 4。"""
+    card = _card([_row([_occ(1, "来都来了")], "口头禅")], src=_SRC_RARE24, n=4, anchors=_A4)
+    assert _placement(card) == ([], [[], [_beh("口头禅", quote="来都来了")], [],
+                                     [_beh("口头禅", quote="来都来了")]])
+
+
+def test_u38_retro_occurrences_are_excluded_before_counting_frequency():
+    """5 次里有 2 次在回忆区 → 先剔回忆区、再数 3 次（≤ 上限），只按回忆区外的位置定位。
+
+    回忆区外的 3 次：1 次在阶段 1、2 次在阶段 2；标的是阶段 1 → 有一处落在所标阶段，
+    只认阶段 1（现有规则 b）。若把回忆区里的也算进次数（≥ 3 即超限），会多挂阶段 2。
+    """
+    src = "常甲。锚二。常乙常丙。回忆区常丁常戊。尾。"
+    anchors = phase_anchoring.build_anchors(
+        _phases(2, {2: "锚二"}), src, retro=[(8, 15, "回忆")])
+    item = DraftBehavior(situation="口头禅", behavior="做法", occurrences=[_occ(1, "常")])
+    result = phase_anchoring.verify([item], [[1]], anchors)
+    assert result.phases == [[1]]
 
 
 # ── 4.1b 省略号拼接档（**锚点专用**，P15）──────────────────────────────
