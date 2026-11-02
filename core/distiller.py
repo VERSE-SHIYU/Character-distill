@@ -911,6 +911,16 @@ class Distiller:
         # 窗口断言各写一份就会漂移。属性名保留：现有测试调小它走分片路径。
         self._longctx_threshold: int = LONGCTX_THRESHOLD_TOKENS
         self._map_concurrency: int = max(1, int(distill_cfg.get("map_concurrency", 30)))
+        # 真实适配器按**账号**共用一只闸：同一账号的多个蒸馏任务、同步与异步调用都在
+        # 同一只 AIMD 闸上排队（单任务自建闸时 3 个任务各探一遍、账号在途约 3 倍）。
+        # 鸭子类型替身没有账号身份（测试桩），不包 —— 包上只是多一层无意义转发。
+        if isinstance(llm, LLMAdapter):
+            self._llm = C.GatedLLM(llm, C.account_gate(llm.account_id, self._map_concurrency))
+
+    @property
+    def llm(self):
+        """面向蒸馏流程的模型实例：真实适配器时是带账号闸的代理。"""
+        return self._llm
 
     def _try_record_usage(self, action: str = "distill", usage: dict | None = None) -> None:
         try_record_usage(
@@ -2391,14 +2401,8 @@ class Distiller:
         failures —— 调用方据此决定该片要不要落 checkpoint（流式侧不落）。
         """
         # 闸按**在途请求数**自适应（WP14）：上游的并发上限按账号计、随余额变，固定的
-        # `map_concurrency` 总会超过一部分账号。闸自己踩 429 下探、连续成功上探，这里只
-        # 给它上限。名额在 `async_chat` 里按**每一次尝试**取放，不在这里按整片包 —— 否则
-        # 重试退避期间名额被占着，闸的上探永远慢半拍。
-        # 初值取上一轮学到的上限（A3）：第一轮从 `map_concurrency` 探起、末尾写回，之后
-        # 每轮冷启动直接落在该账号的真实上限附近，不必再逐轮把 429 撞一遍。`getattr`
-        # 是因为测试桩只鸭子类型地提供 `async_chat`，不必也长出这个字段。
-        gate = C.AdaptiveGate(self._map_concurrency,
-                              initial=getattr(self._llm, "learned_map_concurrency", None))
+        # `map_concurrency` 总会超过一部分账号。闸归账号所有（`Distiller.__init__` 建），
+        # 名额在 `async_chat` 里按**每一次尝试**取放 —— 重试退避期间不占名额，上探才跟得上。
         done_count = [0]
         lock = asyncio.Lock()
         failures: list[tuple[int, Exception]] = []
@@ -2410,7 +2414,7 @@ class Distiller:
             ok = True
             try:
                 result, usage = await self._llm.async_chat(
-                    system, [{"role": "user", "content": user}], client=client, gate=gate
+                    system, [{"role": "user", "content": user}], client=client
                 )
             except Exception as exc:
                 logger.warning("%s %s failed: %s", log_label, i, exc, exc_info=True)
@@ -2430,17 +2434,14 @@ class Distiller:
 
         tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(chunks)]
         results = await asyncio.gather(*tasks)
-        # 写回本轮的收敛上限（A3）：失败片也算数 —— 闸的估计来自每一次尝试的 429/成功，
-        # 与分片成败无关，整轮都挂了也该把「这个账号到不了 N 路」记下来。
-        self._llm.learned_map_concurrency = gate.ceiling
         # 上限被上游按账户压下来才记：这是「需求 > 该账户此刻的并发上限」的降级，warning
         # 语义正确；收敛到配置值（没被限流）不记 —— 验收据此读有没有被限流。不能用 info：
         # 本项目只把 WARNING+ 推到 stdout（core/stdout_logging.py 的文件头）。
-        if gate.ceiling < self._map_concurrency:
+        gate = self._llm._gate if isinstance(self._llm, C.GatedLLM) else None
+        if gate is not None and gate.ceiling < self._map_concurrency:
             logger.warning(
-                "Map gate settled at %s (< cap %s); learned_map_concurrency=%s; user=%s",
-                gate.ceiling, self._map_concurrency,
-                self._llm.learned_map_concurrency, current_user_id(),
+                "Map gate settled at %s (< cap %s); account gate; user=%s",
+                gate.ceiling, self._map_concurrency, current_user_id(),
             )
         # Map 是 MapReduce 里最烧 token 的一段：整阶段汇总一条 + 调用次数（不是分片数 ——
         # 续跑命中/重试会让二者不一致，chunk_count 数的是真的调了几次）。
