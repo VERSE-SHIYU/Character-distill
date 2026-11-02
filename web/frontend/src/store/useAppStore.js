@@ -820,6 +820,7 @@ const useAppStore = create((set, get) => {
       messages: [],
     })
     get().pushView('character')
+    get().loadRoster(textId)   // 上面清空了名单，与卡片同一处重新读回
     return get().loadCards(textId)
   },
 
@@ -837,6 +838,7 @@ const useAppStore = create((set, get) => {
       currentTextTitle: text?.title || text?.filename || '',
       identifiedChars: [],
     })
+    get().loadRoster(textId)   // 上面清空了名单，与卡片同一处重新读回
     get().loadCards(textId)
   },
 
@@ -848,6 +850,21 @@ const useAppStore = create((set, get) => {
       setScoped({ cards: data })
     } catch (err) {
       console.error('[store] loadCards failed:', err)
+      setScoped({ error: err.message })
+    }
+  }),
+
+  // 进角色页时读库里**已存的**名单（只读、不调模型，GET /roster）。看名单不花钱；
+  // 要重算只有「重新识别」（identifyCharacters force）。识别进行中不覆盖它的结果。
+  loadRoster: protect(async (setScoped, get, textId) => {
+    if (!textId) return
+    try {
+      const res = await fetchWithTimeout(`/api/distill/roster/${textId}`)
+      const data = await res.json()
+      if (get().identifying) return
+      setScoped({ identifiedChars: data.characters || [] })
+    } catch (err) {
+      console.error('[store] loadRoster failed:', err)
       setScoped({ error: err.message })
     }
   }),

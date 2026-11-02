@@ -791,6 +791,25 @@ async def identify_by_text_id(
     return {"characters": chars}
 
 
+@router.get("/roster/{text_id}")
+async def get_roster(
+    text_id: str,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """读这本书**已存的**识别名单，只读、不调模型：无缓存 / 版本不符返回空列表，非属主 404。
+
+    进角色页时前端拿它显示名单 —— 「看名单」不该花钱；要重算只走 `POST /identify`
+    （「重新识别」带 ``force``）。没有名单时也不在这里顺手识别，否则一次打开页面就是一笔费用。
+    属主校验在读缓存之前（`get_characters_owned` 的约定，同 `/identify`）。
+    """
+    user_id = user["id"]
+    if not await storage.get_text_owned(text_id, user_id):
+        raise HTTPException(404, "Text not found")
+    roster = await cached_characters(storage, text_id, user_id)
+    return {"characters": roster or []}
+
+
 @router.post("/run")
 async def distill_by_text_id(
     req: DistillByIdRequest,
