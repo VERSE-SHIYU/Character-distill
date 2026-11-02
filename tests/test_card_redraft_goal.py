@@ -121,7 +121,8 @@ def test_g1_redraft_uses_stored_draft_without_redistilling(monkeypatch, store):
 
     payload = _load_payload(store, card_id, uid)
     rebuilt, _ = dedupe_relationship_targets(
-        card_from_draft(payload["draft"], _SRC, retro=NOT_DETECTED))
+        card_from_draft(payload["draft"], _SRC, retro=NOT_DETECTED),
+        [{"name": _CARD_NAME, "aliases": []}])
     rebuilt, _ = retract_unverified(rebuilt, _SRC)
     a, b = rebuilt.model_dump(), stored_card.model_dump()
     for field in POST_FORMAT_FIELDS:

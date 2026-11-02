@@ -2291,7 +2291,7 @@ class Distiller:
 
         合成一个入口是因为三条产卡通道各接一次后置步骤 —— 分成三个方法就有六条调用线，
         其中一条漏掉一步从成品看不出来（卡上「没有引文 / 示例」与「本来就没有」同形）。
-        三条都由代码保证：关系按 target 去重（`dedupe_relationship_targets`）、引号里的
+        三条都由代码保证：关系按 target 去重、名单外对象记 WARNING（`dedupe_relationship_targets`）、引号里的
         必是原文（核对去掉查不到的引文的引号）、示例按编号从原文复制
         （`attach_dialogue_examples`）。
 
@@ -2303,7 +2303,7 @@ class Distiller:
         去重放在核对之前：先丢掉重复条目，引文撤回日志就只涉及留下来的那些条目，不会为一条
         随后被丢的重复关系报一次撤回。
         """
-        card, _ = dedupe_relationship_targets(card)
+        card, _ = dedupe_relationship_targets(card, roster)
         card, _ = retract_unverified(card, content)
         try:
             return self.attach_dialogue_examples(card, content, name, aliases, roster)
