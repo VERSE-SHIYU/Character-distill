@@ -80,6 +80,8 @@ class _DraftStub:
 
     def __init__(self, draft: dict):
         self.draft = draft
+        # 生产 Distiller 有 .llm（带账号闸的代理）；后台任务用 distiller.llm 生成苏醒台词。
+        self.llm = _LLM()
 
     def effective_chunk_size(self, text_type="story"):
         return 3000

@@ -523,7 +523,7 @@ class TextManager:
 
                 variation_prompt = build_variation_prompt(project_card(card, None)[0])
                 opening = await asyncio.to_thread(
-                    self._llm.chat,
+                    self._distiller.llm.chat,
                     f"你是{card.name}，保持角色风格。",
                     [{"role": "user", "content": variation_prompt}],
                 )

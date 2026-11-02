@@ -103,6 +103,7 @@ def ctx_submit(pool, fn: Callable, *args, **kwargs):
 __all__ = [
     "ContextCarrier", "register_context_carrier", "get_context_carriers",
     "set_context_carriers", "ctx_thread", "ctx_submit", "AdaptiveGate",
+    "AccountGate", "GatedLLM", "account_gate", "reset_account_gates",
 ]
 
 
@@ -201,3 +202,164 @@ class AdaptiveGate:
             self._generation += 1
             self._ceiling = max(1, int(self._ceiling * 0.75))
             self._ok = 0
+
+
+# ── 账号级共享闸 ─────────────────────────────────────────────────────────
+# `AdaptiveGate` 内部是 `asyncio.Condition`，只能在一个事件循环里用；而蒸馏里的
+# 同步调用（字段组 / 关系分批 / 合并 / 格式化）跑在各自的线程与各自的临时循环里。
+# 同一个账号的每一次尝试必须落在同一只闸上，故给闸一个进程级的家循环，所有线程
+# 都投递过去 —— 闸本身（AIMD 算法）不改。
+
+_HOME_LOOP: asyncio.AbstractEventLoop | None = None
+_HOME_THREAD: threading.Thread | None = None
+_HOME_LOCK = threading.Lock()
+
+
+def _gate_home_loop() -> asyncio.AbstractEventLoop:
+    """所有账号闸的家循环（daemon 线程，懒启动、只启一次）。"""
+    global _HOME_LOOP, _HOME_THREAD
+    if _HOME_LOOP is not None:
+        return _HOME_LOOP
+    with _HOME_LOCK:
+        if _HOME_LOOP is None:
+            loop = asyncio.new_event_loop()
+            thread = threading.Thread(
+                target=loop.run_forever, name="account-gate-home", daemon=True)
+            thread.start()
+            _HOME_THREAD = thread
+            _HOME_LOOP = loop
+        return _HOME_LOOP
+
+
+async def _make_gate(cap: int) -> AdaptiveGate:
+    # 类名在家循环执行时才解析：测试 monkeypatch `core.concurrency.AdaptiveGate`
+    # 必须先于 Distiller 构造生效，别名会在 import 时把旧类钉死。
+    return AdaptiveGate(cap)
+
+
+class AccountGate:
+    """同一账号共用的一只 `AdaptiveGate`，可被任意线程 / 任意事件循环使用。
+
+    异步接口与 `AdaptiveGate` 同形（`async with`、`generation`、`ceiling`、
+    `inflight`、`await on_success()`、`await on_rate_limited(gen)`），内部把每个操作
+    投递到进程级家循环；同步接口（`acquire` / `release` / `report_*`）直接阻塞取结果，
+    只允许在**非家循环**线程调用（否则 `run_coroutine_threadsafe(...).result()` 自锁）。
+    """
+
+    def __init__(self, cap: int) -> None:
+        self._loop = _gate_home_loop()
+        self._gate = self._call(lambda: _make_gate(cap))
+
+    def _call(self, make_coro):
+        if threading.current_thread() is _HOME_THREAD:
+            raise RuntimeError(
+                "AccountGate 的同步接口不能在闸的家循环线程里调用（会自锁）")
+        return asyncio.run_coroutine_threadsafe(make_coro(), self._loop).result()
+
+    @property
+    def ceiling(self) -> int:
+        return self._gate.ceiling
+
+    @property
+    def inflight(self) -> int:
+        return self._gate.inflight
+
+    @property
+    def generation(self) -> int:
+        return self._gate.generation
+
+    async def __aenter__(self) -> "AccountGate":
+        fut = asyncio.run_coroutine_threadsafe(self._gate.__aenter__(), self._loop)
+        try:
+            await asyncio.wrap_future(fut)
+        except asyncio.CancelledError:
+            # 目标 future 被取消 → CPython 会取消源任务；若源任务**已经拿到名额**
+            # （future 已完成），那次 cancel 是空操作，名额必须由调用方补还。
+            fut.add_done_callback(self._return_if_acquired)
+            raise
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        fut = asyncio.run_coroutine_threadsafe(
+            self._gate.__aexit__(*exc_info), self._loop)
+        # 释放名额不随调用方一起被取消：shield 让匿名 inner future 继续跑完。
+        await asyncio.shield(asyncio.wrap_future(fut))
+
+    async def on_success(self) -> None:
+        await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(
+            self._gate.on_success(), self._loop))
+
+    async def on_rate_limited(self, generation: int) -> None:
+        await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(
+            self._gate.on_rate_limited(generation), self._loop))
+
+    def acquire(self) -> None:
+        self._call(lambda: self._gate.__aenter__())
+
+    def release(self) -> None:
+        self._call(lambda: self._gate.__aexit__(None, None, None))
+
+    def report_success(self) -> None:
+        self._call(lambda: self._gate.on_success())
+
+    def report_rate_limited(self, generation: int) -> None:
+        self._call(lambda: self._gate.on_rate_limited(generation))
+
+    def _return_if_acquired(self, fut) -> None:
+        if fut.cancelled() or fut.exception() is not None:
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._gate.__aexit__(None, None, None), self._loop)
+
+
+_ACCOUNT_GATES: dict[str, AccountGate] = {}
+_ACCOUNT_GATES_LOCK = threading.Lock()
+
+
+def account_gate(account_id: str, cap: int) -> AccountGate:
+    """按账号（base_url + key 指纹）共享的闸；同一账号的并发上限只为它探一次。"""
+    with _ACCOUNT_GATES_LOCK:
+        gate = _ACCOUNT_GATES.get(account_id)
+        if gate is None:
+            gate = AccountGate(cap)
+            _ACCOUNT_GATES[account_id] = gate
+        return gate
+
+
+def reset_account_gates() -> None:
+    """测试隔离用：丢掉进程内所有共享闸。"""
+    with _ACCOUNT_GATES_LOCK:
+        _ACCOUNT_GATES.clear()
+
+
+class GatedLLM:
+    """模型实例 + 账号闸：蒸馏面向的每个模型方法都在这里显式定义并带上闸，其余属性原样转发。
+
+    只包请求方法：`chat` / `chat_stream_long` / `async_chat` / `select_by_schema` ——
+    聊天（`chat_stream`）、审核、记忆提炼不过账号闸（2026-11-02 定）。**新增蒸馏模型
+    调用必须同时在这里加转发**，否则走 `__getattr__` 静默不过闸（G13 形态守卫会红）。
+    """
+
+    def __init__(self, llm: Any, gate: AccountGate) -> None:
+        self._llm = llm
+        self._gate = gate
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._llm, name)
+
+    @property
+    def gate(self) -> AccountGate:
+        """账号闸 —— 给蒸馏器读上限做日志，不碰代理的私有字段。"""
+        return self._gate
+
+    def chat(self, *args, **kwargs):
+        return self._llm.chat(*args, gate=self._gate, **kwargs)
+
+    def chat_stream_long(self, *args, **kwargs):
+        return self._llm.chat_stream_long(*args, gate=self._gate, **kwargs)
+
+    def select_by_schema(self, *args, **kwargs):
+        return self._llm.select_by_schema(*args, gate=self._gate, **kwargs)
+
+    async def async_chat(self, *args, **kwargs):
+        return await self._llm.async_chat(*args, gate=self._gate, **kwargs)

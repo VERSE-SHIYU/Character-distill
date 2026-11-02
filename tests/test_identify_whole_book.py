@@ -96,9 +96,6 @@ def _make_llm(async_chat=None, chat=None) -> MagicMock:
     llm = MagicMock()
     llm.model = "test-model"
     llm.last_usage = None
-    # 自适应并发闸的初值取「该账户已学到的上限」：新账号是 None（从 map_concurrency
-    # 起）。MagicMock 的 `int()` 默认是 1，不显式置 None 会让闸一开始就收敛到 1 路。
-    llm.learned_map_concurrency = None
     llm._make_async_client = MagicMock(return_value=_client_stub())
     llm.async_chat = AsyncMock(side_effect=async_chat)
     llm.chat = MagicMock(side_effect=chat)
