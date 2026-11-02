@@ -909,15 +909,27 @@ const useAppStore = create((set, get) => {
       set({ error: '蒸馏启动失败' }); return false
     } catch (err) { set({ error: err.message }); return false }
   },
+  // 一次提交多个角色：名额与逐条成败都由后端判定，前端只登记返回的任务、照抄错误文案。
+  distillBatch: async (textId, names) => {
+    set({ error: null })
+    try {
+      const data = await postJSON('/api/distill/batch', { text_id: textId, names, entry: DISTILL_ENTRY.characterPage })
+      const tasks = data.tasks || []
+      for (const t of tasks) get().addDistillTask(t.task_id, textId, t.name, 'queued')
+      const errors = data.errors || []
+      if (errors.length) set({ error: errors.map((e) => `${e.name}：${e.detail}`).join('；') })
+      return tasks.length
+    } catch (err) { set({ error: err.message }); return 0 }
+  },
   confirmRedistill: () => { const p = get().redistillPrompt; set({ redistillPrompt: null }); p?.resolve(true) },
   cancelRedistill: () => { const p = get().redistillPrompt; set({ redistillPrompt: null }); p?.resolve(false) },
 
-  addDistillTask: (taskId, textId, characterName) => {
+  addDistillTask: (taskId, textId, characterName, status = 'running') => {
     // 本地乐观种子：形状对齐契约（过 normalizeTask 门），actions 与「刚启动的 running
     // 任务」一致，让首响应到达前也有可取消按钮；下一拍即被服务端真值覆盖。
     const task = normalizeTask({
       task_id: taskId, id: taskId, textId, character: characterName,
-      status: 'running', progress_pct: 0, actions: ['cancel'],
+      status, progress_pct: 0, actions: ['cancel'],
     })
     set((s) => ({ distillTasks: [...s.distillTasks, task], distilling: true }))
     get()._persistTasks()

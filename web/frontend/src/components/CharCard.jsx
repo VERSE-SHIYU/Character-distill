@@ -23,6 +23,7 @@ import EditCardModal from './EditCardModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
 import DistillWorkbenchButton from './common/DistillWorkbenchButton'
+import { taskLabel } from './distillStatus'
 
 function IdentifyProgress({ active }) {
   const pct = useSmoothProgress(active ? 90 : 100, !active)
@@ -162,6 +163,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const distillTasks = useAppStore((s) => s.distillTasks) ?? []
   const identifyCharacters = useAppStore((s) => s.identifyCharacters)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
+  const distillBatch = useAppStore((s) => s.distillBatch)
   const cardAvatars = useAppStore((s) => s.cardAvatars)
   const setCardAvatar = useAppStore((s) => s.setCardAvatar)
   const standaloneCards = useAppStore((s) => s.standaloneCards)
@@ -172,6 +174,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const loadCards = useAppStore((s) => s.loadCards)
 
   const [starting, setStarting] = useState(() => new Set())
+  const [selected, setSelected] = useState(() => new Set())
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [trashMode, setTrashMode] = useState(false)
   const [deletedCards, setDeletedCards] = useState([])
@@ -281,6 +284,35 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 
   const runningTask = (name) =>
     distillTasks.find((t) => t.textId === textId && t.character === name && !isTerminal(t))
+
+  const alreadyDistilled = (name) =>
+    cards.some((c) => {
+      const d = parseCardJson(c)
+      return (d.name || c.name) === name
+    })
+
+  // 勾选只对「还没蒸过、也没在跑」的角色开放；勾选集合本身不清理，渲染/提交时各自过滤
+  const canSelect = (name, already) => !already && !runningTask(name) && !starting.has(name)
+
+  const batchNames = identifiedChars
+    .map((ch, i) => ch.name || `Character ${i + 1}`)
+    .filter((name) => selected.has(name) && canSelect(name, alreadyDistilled(name)))
+
+  const handleBatchDistill = async () => {
+    const names = batchNames
+    if (!names.length) return
+    setStarting((prev) => new Set([...prev, ...names]))
+    try {
+      await distillBatch(textId, names)
+    } finally {
+      setStarting((prev) => {
+        const next = new Set(prev)
+        names.forEach((n) => next.delete(n))
+        return next
+      })
+      setSelected(new Set())
+    }
+  }
 
   const handleDistill = async (name, force = false) => {
     setStarting((prev) => new Set(prev).add(name))
@@ -474,14 +506,25 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
           <ul className="char-identified-list">
             {identifiedChars.map((ch, i) => {
               const name = ch.name || `Character ${i + 1}`
-              const already = cards.some((c) => {
-                const d = parseCardJson(c)
-                return (d.name || c.name) === name
-              })
+              const already = alreadyDistilled(name)
               const task = runningTask(name)
               return (
                 <li key={name} className="char-identified-item">
                   <div className="char-identified-info">
+                    {canWrite && (
+                      <input
+                        type="checkbox"
+                        aria-label={`选择 ${name}`}
+                        checked={selected.has(name) && canSelect(name, already)}
+                        disabled={!canSelect(name, already)}
+                        onChange={(e) => setSelected((prev) => {
+                          const next = new Set(prev)
+                          if (e.target.checked) next.add(name)
+                          else next.delete(name)
+                          return next
+                        })}
+                      />
+                    )}
                     <span className="char-identified-name">{name}</span>
                     {ch.importance && (
                       <span className="char-identified-badge">
@@ -499,17 +542,24 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                       disabled={!!task || starting.has(name)}
                       onClick={() => handleDistill(name, already)}
                     >
-                      {task
-                        ? (task.progress_pct > 0 ? `蒸馏中 ${task.progress_pct}%` : '蒸馏中…')
-                        : already
-                          ? '重新蒸馏'
-                          : '蒸馏角色'}
+                      {task ? taskLabel(task) : (already ? '重新蒸馏' : '蒸馏角色')}
                     </button>
                   )}
                 </li>
               )
             })}
           </ul>
+          {canWrite && (
+            <button
+              type="button"
+              className="btn-primary char-identified-btn"
+              style={{ marginTop: 8 }}
+              disabled={batchNames.length === 0}
+              onClick={handleBatchDistill}
+            >
+              蒸馏所选（{batchNames.length}）
+            </button>
+          )}
         </div>
       )}
 
