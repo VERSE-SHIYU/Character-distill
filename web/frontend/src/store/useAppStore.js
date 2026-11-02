@@ -862,16 +862,18 @@ const useAppStore = create((set, get) => {
     }
   },
 
-  identifyCharacters: protect(async (setScoped, get, textId) => {
+  identifyCharacters: protect(async (setScoped, get, textId, { force = false } = {}) => {
+    const previous = get().identifiedChars
     setScoped({ identifying: true, identifiedChars: [], error: null })
     try {
-      const data = await postJSON('/api/distill/identify', { text_id: textId })
+      const data = await postJSON('/api/distill/identify', { text_id: textId, force })
       const chars = data.characters || []
       setScoped({ identifiedChars: chars, identifying: false })
       return chars
     } catch (err) {
       console.error('[store] identifyCharacters failed:', err)
-      setScoped({ error: err.message, identifying: false })
+      // 重新识别失败时库里的旧名单还在，页面上不能因为一次失败就清空。
+      setScoped({ error: err.message, identifying: false, identifiedChars: previous })
       throw err
     }
   }),

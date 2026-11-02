@@ -53,6 +53,7 @@ legacy_router = APIRouter(tags=["legacy-distill"])
 class IdentifyByIdRequest(BaseModel):
     """New: identify from a stored text by text_id."""
     text_id: str
+    force: bool = False
 
 
 class DistillByIdRequest(BaseModel):
@@ -747,7 +748,8 @@ async def identify_by_text_id(
     if not text_rec:
         raise HTTPException(404, "Text not found")
     chars = await resolve_characters(
-        storage, distiller, req.text_id, user_id, text_rec["content"])
+        storage, distiller, req.text_id, user_id, text_rec["content"],
+        force=req.force)
     return {"characters": chars}
 
 

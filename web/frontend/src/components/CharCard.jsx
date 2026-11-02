@@ -178,6 +178,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const [trashLoading, setTrashLoading] = useState(false)
   const [purgeConfirmTarget, setPurgeConfirmTarget] = useState(null)
   const [purgeAllConfirm, setPurgeAllConfirm] = useState(false)
+  const [reidentifyConfirm, setReidentifyConfirm] = useState(false)
   const [localError, setLocalError] = useState(null)
 
   // Deduplicate by character name — no duplicate names in the list
@@ -269,6 +270,12 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const handleIdentify = async () => {
     try {
       await identifyCharacters(textId)
+    } catch { /* store already sets error */ }
+  }
+
+  const handleReidentify = async () => {
+    try {
+      await identifyCharacters(textId, { force: true })
     } catch { /* store already sets error */ }
   }
 
@@ -523,7 +530,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
             <button
               type="button"
               className="char-reidentify-btn"
-              onClick={handleIdentify}
+              onClick={() => setReidentifyConfirm(true)}
               disabled={identifying}
             >
               重新识别
@@ -609,6 +616,15 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
           }
         }}
         onCancel={() => setPurgeAllConfirm(false)}
+        danger
+      />
+      <ConfirmModal
+        isOpen={reidentifyConfirm}
+        title="重新识别人物？"
+        message="会重新调用模型识别全书，用新名单替换现有名单，并产生费用；已经蒸好的角色卡不会改动。"
+        confirmText="重新识别"
+        onConfirm={() => { setReidentifyConfirm(false); handleReidentify() }}
+        onCancel={() => setReidentifyConfirm(false)}
         danger
       />
       </>
