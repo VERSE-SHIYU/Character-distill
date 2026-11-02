@@ -472,7 +472,6 @@ def test_g10_same_account_reuses_the_learned_gate(tmp_path):
 
 # ── G11：按**账号身份**包闸，不按对象类型（__getattr__ 转发包装器） ─────────────
 
-@pytest.mark.xfail(strict=True, reason="现在按 isinstance(llm, LLMAdapter) 判，包装器漏过闸")
 def test_g11_wrapping_is_by_account_identity_not_type(tmp_path):
     """照 `scripts/replay_distill.py` 的 `_RecordingLLM`：真适配器外面套一层转发包装。"""
     C.reset_account_gates()
@@ -540,7 +539,6 @@ class _ToolClient:
             self._up.leave()
 
 
-@pytest.mark.xfail(strict=True, reason="select_by_schema 没有 gate 参数，仍走 __getattr__ 透传")
 def test_g12_select_by_schema_waits_on_the_gate_and_429_downscales(monkeypatch):
     C.reset_account_gates()
 
@@ -589,22 +587,33 @@ def _gated_method_names() -> set[str]:
 
 
 def _llm_method_calls(rel: str) -> list[tuple[str, int]]:
-    """文件里所有「接收者是 llm / *_llm」的方法调用 → [(方法名, 行号)]。"""
+    """文件里所有「接收者是 llm / *_llm」的方法调用 → [(方法名, 行号)]。
+
+    `asyncio.to_thread(llm.chat, …)` 这类把方法**当值**交出去的写法同样算 —— 进了线程池
+    照样发请求、照样要过闸，只扫 `func` 位置的调用会把它漏掉。
+    """
     root = Path(__file__).resolve().parents[1]
     tree = ast.parse((root / rel).read_text(encoding="utf-8"), filename=rel)
-    out: list[tuple[str, int]] = []
+    out: set[tuple[str, int]] = set()
     for n in ast.walk(tree):
-        if not isinstance(n, ast.Call) or not isinstance(n.func, ast.Attribute):
+        if not isinstance(n, ast.Call):
             continue
-        recv = n.func.value
-        name = (recv.attr if isinstance(recv, ast.Attribute)
-                else recv.id if isinstance(recv, ast.Name) else None)
-        if name is not None and (name == "llm" or name.endswith("_llm")):
-            out.append((n.func.attr, n.lineno))
-    return out
+        values = [n.func, *n.args, *(kw.value for kw in n.keywords)]
+        for v in values:
+            if not isinstance(v, ast.Attribute):
+                continue
+            recv = v.value
+            name = (recv.attr if isinstance(recv, ast.Attribute)
+                    else recv.id if isinstance(recv, ast.Name) else None)
+            if name is None or not (name == "llm" or name.endswith("_llm")):
+                continue
+            if v is not n.func and not callable(
+                    inspect.getattr_static(M.LLMAdapter, v.attr, None)):
+                continue  # 参数位上的属性读（如 `llm.model`）不是方法，不算调用
+            out.add((v.attr, v.lineno))
+    return sorted(out, key=lambda item: item[1])
 
 
-@pytest.mark.xfail(strict=True, reason="select_by_schema 还在代理之外（走 __getattr__ 透传）")
 def test_g13_every_model_method_used_by_distill_is_gated():
     gated = _gated_method_names()
     assert gated, "GatedLLM 上没有显式方法 —— 守卫推导坏了，在假绿"

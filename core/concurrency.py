@@ -333,10 +333,11 @@ def reset_account_gates() -> None:
 
 
 class GatedLLM:
-    """模型实例 + 账号闸：蒸馏面向的三个入口自动带闸，其余属性原样转发。
+    """模型实例 + 账号闸：蒸馏面向的每个模型方法都在这里显式定义并带上闸，其余属性原样转发。
 
-    只包 `chat` / `chat_stream_long` / `async_chat` —— 聊天（`chat_stream`）、审核、
-    记忆提炼不过账号闸（2026-11-02 定）。
+    只包请求方法：`chat` / `chat_stream_long` / `async_chat` / `select_by_schema` ——
+    聊天（`chat_stream`）、审核、记忆提炼不过账号闸（2026-11-02 定）。**新增蒸馏模型
+    调用必须同时在这里加转发**，否则走 `__getattr__` 静默不过闸（G13 形态守卫会红）。
     """
 
     def __init__(self, llm: Any, gate: AccountGate) -> None:
@@ -346,11 +347,19 @@ class GatedLLM:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._llm, name)
 
+    @property
+    def gate(self) -> AccountGate:
+        """账号闸 —— 给蒸馏器读上限做日志，不碰代理的私有字段。"""
+        return self._gate
+
     def chat(self, *args, **kwargs):
         return self._llm.chat(*args, gate=self._gate, **kwargs)
 
     def chat_stream_long(self, *args, **kwargs):
         return self._llm.chat_stream_long(*args, gate=self._gate, **kwargs)
+
+    def select_by_schema(self, *args, **kwargs):
+        return self._llm.select_by_schema(*args, gate=self._gate, **kwargs)
 
     async def async_chat(self, *args, **kwargs):
         return await self._llm.async_chat(*args, gate=self._gate, **kwargs)

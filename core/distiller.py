@@ -913,9 +913,12 @@ class Distiller:
         self._map_concurrency: int = max(1, int(distill_cfg.get("map_concurrency", 30)))
         # 真实适配器按**账号**共用一只闸：同一账号的多个蒸馏任务、同步与异步调用都在
         # 同一只 AIMD 闸上排队（单任务自建闸时 3 个任务各探一遍、账号在途约 3 倍）。
+        # 判据是**账号身份**而不是类型：`replay_distill.py` 在真实适配器外卖包一层
+        # `__getattr__` 转发的记录器，按类型判会让整条重放不过闸（真花钱的那条路）。
         # 鸭子类型替身没有账号身份（测试桩），不包 —— 包上只是多一层无意义转发。
-        if isinstance(llm, LLMAdapter):
-            self._llm = C.GatedLLM(llm, C.account_gate(llm.account_id, self._map_concurrency))
+        account_id = getattr(llm, "account_id", None)
+        if isinstance(account_id, str):
+            self._llm = C.GatedLLM(llm, C.account_gate(account_id, self._map_concurrency))
 
     @property
     def llm(self):
@@ -2437,7 +2440,7 @@ class Distiller:
         # 上限被上游按账户压下来才记：这是「需求 > 该账户此刻的并发上限」的降级，warning
         # 语义正确；收敛到配置值（没被限流）不记 —— 验收据此读有没有被限流。不能用 info：
         # 本项目只把 WARNING+ 推到 stdout（core/stdout_logging.py 的文件头）。
-        gate = self._llm._gate if isinstance(self._llm, C.GatedLLM) else None
+        gate = self._llm.gate if isinstance(self._llm, C.GatedLLM) else None
         if gate is not None and gate.ceiling < self._map_concurrency:
             logger.warning(
                 "Map gate settled at %s (< cap %s); account gate; user=%s",

@@ -160,6 +160,15 @@ _GEN_BATCH_DEADLINE_S = (
 )
 
 
+class _AttemptWindowExhausted(RuntimeError):
+    """预算已撑不起一次有效 attempt —— **本地判定**，不是上游故障。
+
+    单独成类是为了让调用方的重试循环能把它与上游失败分开：它必须直接上抛，不能被
+    `on_failure` 重包装成 `UpstreamFailure`（那会把「没时间了」当成一次网络失败再等一轮）。
+    仍是 `RuntimeError` 子类 —— 既有调用方与测试按 RuntimeError 捕获的行为不变。
+    """
+
+
 class _RetryBudget:
     """单次调用的重试预算：非429次数 × 429次数 × 单次超时(ceiling×剩余窗) × 总墙钟，先到先弃（单一裁决点）。
 
@@ -220,7 +229,7 @@ class _RetryBudget:
             return self._last_to
         window = self._deadline - _ATTEMPT_TIMEOUT_MARGIN_S - time.monotonic()
         if window < _ATTEMPT_MIN_S:
-            raise RuntimeError(
+            raise _AttemptWindowExhausted(
                 f"{self._err} no time for an attempt: window {window:.2f}s < min "
                 f"{_ATTEMPT_MIN_S:.2f}s (need margin+min {_ATTEMPT_WINDOW_S:.2f}s)")
         self._last_to = min(self._ceiling, window)
@@ -969,6 +978,30 @@ class LLMAdapter:
         self.last_usage = usage
         return result
 
+    @contextlib.contextmanager
+    def _gated_attempt(self, gate: "AdaptiveGate | None", budget: _RetryBudget):
+        """把**一次** attempt 包进账号闸，产出本次的代数（无闸时产出 None）。
+
+        `chat` 与 `_tool_call` 共用这一处 —— 两份写法必然漂移出「一边报 429、一边不报」。
+        等名额的时长顺延回总时限（排队不是本调用消耗的时间）；下调要在**还名额之前**
+        落账（`release` 会唤醒等在闸外的调用，它们会读到新上限）；退避睡眠留在 `with` 之外。
+        """
+        if gate is None:
+            yield None
+            return
+        queue_t0 = time.monotonic()
+        gate.acquire()
+        budget.extend_deadline(time.monotonic() - queue_t0)
+        gen = gate.generation
+        try:
+            yield gen
+        except Exception as exc:
+            if _classify_retry(exc)[0]:
+                gate.report_rate_limited(gen)
+            raise
+        finally:
+            gate.release()
+
     @T.spanned("llm.chat", op="chat", finalize=_infer_finalize)
     def chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None,
              *, response_format: dict[str, Any] | None = None,
@@ -989,16 +1022,10 @@ class LLMAdapter:
                                   err_prefix="LLM API")
         self.last_usage = None  # 切断上一轮污染：本轮无 usage 时不能冒充真实值
         while True:
-            if gate is not None:
-                # 排队等名额不是本调用的时间；单次超时也在**进闸之后**才算。
-                queue_t0 = time.monotonic()
-                gate.acquire()
-                budget.extend_deadline(time.monotonic() - queue_t0)
             try:
-                # 预算耗尽是本地判定：attempt_timeout 直抛，不经 on_failure 重包装成上游故障。
-                timeout = budget.attempt_timeout()
-                gen = gate.generation if gate is not None else None
-                try:
+                with self._gated_attempt(gate, budget):
+                    # 预算耗尽是本地判定：attempt_timeout 直抛，不经 on_failure 重包装成上游故障。
+                    timeout = budget.attempt_timeout()
                     completion = self._client.chat.completions.create(
                         model=self._model,
                         messages=payload,
@@ -1021,16 +1048,10 @@ class LLMAdapter:
                     if completion.usage:
                         self.last_usage = _usage_from(completion.usage)
                     return content
-                except IncompleteResponseError:
-                    raise  # 截断是确定性失败：不烧重试预算（同 ToolsNotSupportedError 形状）
-                except Exception as exc:
-                    # 下调要在还名额之前落账（同 async_chat）：出闸会唤醒等在闸外的调用。
-                    if gate is not None and _classify_retry(exc)[0]:
-                        gate.report_rate_limited(gen)
-                    failure = exc
-            finally:
-                if gate is not None:
-                    gate.release()
+            except (IncompleteResponseError, _AttemptWindowExhausted):
+                raise  # 确定性失败 / 本地预算耗尽：不烧退避，直接上抛
+            except Exception as exc:
+                failure = exc
             time.sleep(budget.on_failure(failure))
 
     @T.async_spanned("llm.chat", op="chat", finalize=_async_infer_finalize)
@@ -1271,6 +1292,7 @@ class LLMAdapter:
         client: Any,
         where: str,
         extract: Callable[[Any], Any] | None = None,
+        gate: "AdaptiveGate | None" = None,
     ) -> Any:
         """发一次带 tools 的请求（重试由 `budget` 裁决），返回 `extract(message)`。
 
@@ -1281,35 +1303,41 @@ class LLMAdapter:
         `extract=None` = 直接返回 message（旧 chat_with_tools 口径）；给了 `extract` 就在
         循环**内**调用它，解析失败同样进重试 —— 非 strict 的供应商会给出不合法 JSON，
         那和一次失败的请求一样值得重发一次，而不是整步作废。
+
+        `gate` 与 `chat` 同义：每次尝试进出闸、退避落在闸外；不传则行为不变
+        （`chat_with_tools` 走的是聊天 agent，不过账号闸）。
         """
         self.last_usage = None  # 切断上一轮污染：本轮无 usage 时不能冒充真实值
         while True:
-            timeout = budget.attempt_timeout()
             try:
-                kwargs: dict[str, Any] = dict(
-                    model=self._model,
-                    messages=payload,
-                    tools=tools,
-                    temperature=self._temperature,
-                    max_tokens=max_tokens,
-                    presence_penalty=self._presence_penalty,
-                    timeout=timeout,
-                    extra_body=self._request_options(),
-                    **({} if self._top_p is None else {"top_p": self._top_p}),
-                )
-                # 不传 None：`tool_choice=None` 在部分供应商那边是「显式空值」而非「不指定」。
-                if tool_choice is not None:
-                    kwargs["tool_choice"] = tool_choice
-                completion = client.chat.completions.create(**kwargs)
-                choices = completion.choices
-                if not choices:
-                    raise RuntimeError("API returned empty choices")
-                msg = _checked_message(choices[0], where=where)
-                if completion.usage:
-                    self.last_usage = _usage_from(completion.usage)
-                return msg if extract is None else extract(msg)
-            except IncompleteResponseError:
-                raise  # 截断：确定性失败，不烧重试预算（同 ToolsNotSupportedError 形状）
+                with self._gated_attempt(gate, budget):
+                    timeout = budget.attempt_timeout()
+                    kwargs: dict[str, Any] = dict(
+                        model=self._model,
+                        messages=payload,
+                        tools=tools,
+                        temperature=self._temperature,
+                        max_tokens=max_tokens,
+                        presence_penalty=self._presence_penalty,
+                        timeout=timeout,
+                        extra_body=self._request_options(),
+                        **({} if self._top_p is None else {"top_p": self._top_p}),
+                    )
+                    # 不传 None：`tool_choice=None` 在部分供应商那边是「显式空值」而非「不指定」。
+                    if tool_choice is not None:
+                        kwargs["tool_choice"] = tool_choice
+                    completion = client.chat.completions.create(**kwargs)
+                    if gate is not None:
+                        gate.report_success()  # 与 chat 同序：请求成功即报，再读内容
+                    choices = completion.choices
+                    if not choices:
+                        raise RuntimeError("API returned empty choices")
+                    msg = _checked_message(choices[0], where=where)
+                    if completion.usage:
+                        self.last_usage = _usage_from(completion.usage)
+                    return msg if extract is None else extract(msg)
+            except (IncompleteResponseError, _AttemptWindowExhausted):
+                raise  # 截断：确定性失败；预算耗尽：本地判定 —— 都不烧退避
             except Exception as exc:
                 # 400 不再单独一条 except：`on_failure` 的确定性失败判定（B1）已覆盖它 ——
                 # 立即判耗尽、不 sleep、抛 `UpstreamFailure`（旧代码此处对非 tool 的 400 是
@@ -1377,6 +1405,8 @@ class LLMAdapter:
         messages: list[dict[str, Any]],
         function: dict[str, Any],
         max_tokens: int | None = None,
+        *,
+        gate: "AdaptiveGate | None" = None,
     ) -> dict[str, Any]:
         """强制模型调用 `function` 并返回它的参数（已解析）。
 
@@ -1388,6 +1418,9 @@ class LLMAdapter:
         本方法按方言补，调用方不拼 —— 否则「只有 DeepSeek 用 strict」这条约束会散到每个
         调用点。关闭思考的参数照旧由 `_request_options()` 注入，`/beta` 客户端同样要带：
         思考模式下带 tools 的请求必须回传 `reasoning_content`，否则 400。
+
+        *gate* 同 `chat`：每次尝试进出账号闸；蒸馏的挑示例走这里，不过闸就会绕开
+        账号级并发上限。
         """
         self._before_call()
         fn = dict(function)
@@ -1406,4 +1439,5 @@ class LLMAdapter:
             client=client,
             where="select_by_schema",
             extract=lambda msg: _tool_arguments(msg, where="select_by_schema"),
+            gate=gate,
         )
