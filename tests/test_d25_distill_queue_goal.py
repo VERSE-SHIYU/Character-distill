@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """D25 第 3 步之一目标检查：全局排队落库 + 批量入口。
 
-Q1–Q11 先以 ``xfail(strict=True)`` 落红，实现后摘标记转绿；Q12–Q13 是对照（现状即绿）。
+Q1–Q11 先以 ``xfail(strict=True)`` 落红，实现后摘标记转绿；Q12–Q13 是对照。
 API 夹具照 ``test_distill_task_api._install_bg``；线程池打桩为一个 worker，用 Event 卡住
 第一个任务，第二个任务因此排在池里 —— 这就是「排队」这件事本身。
 """
@@ -30,8 +30,6 @@ from routers import distill as D
 from routers.auth import get_current_user
 
 pytestmark = pytest.mark.usefixtures("embedding_key_configured")
-
-xfail = pytest.mark.xfail(strict=True, reason="D25 queue/batch 尚未实现")
 
 _POOLS: list[ThreadPoolExecutor] = []
 
@@ -197,7 +195,6 @@ def _start(client, tid, name, **extra):
 # ── Q1–Q5：全局排队 ────────────────────────────────────────────────────────
 
 
-@xfail
 def test_q1_second_user_waits_as_queued(store, user_id, monkeypatch):
     uid_a = f"usr_{uuid.uuid4().hex[:8]}"
     tid_a, tid_b = _text(store, uid_a), _text(store, user_id)
@@ -219,7 +216,6 @@ def test_q1_second_user_waits_as_queued(store, user_id, monkeypatch):
         distiller.release_all()
 
 
-@xfail
 def test_q2_queued_task_runs_after_slot_frees(store, user_id, monkeypatch):
     uid_a = f"usr_{uuid.uuid4().hex[:8]}"
     tid_a, tid_b = _text(store, uid_a), _text(store, user_id)
@@ -245,7 +241,6 @@ def test_q2_queued_task_runs_after_slot_frees(store, user_id, monkeypatch):
         distiller.release_all()
 
 
-@xfail
 def test_q3_cancel_while_queued_never_runs_and_frees_slot(store, user_id, monkeypatch):
     uid_a = f"usr_{uuid.uuid4().hex[:8]}"
     tid_a, tid_b = _text(store, uid_a), _text(store, user_id)
@@ -271,7 +266,6 @@ def test_q3_cancel_while_queued_never_runs_and_frees_slot(store, user_id, monkey
         distiller.release_all()
 
 
-@xfail
 def test_q4_text_deleted_while_queued_never_runs(store, user_id, monkeypatch):
     uid_a = f"usr_{uuid.uuid4().hex[:8]}"
     tid_a, tid_b = _text(store, uid_a), _text(store, user_id)
@@ -294,7 +288,6 @@ def test_q4_text_deleted_while_queued_never_runs(store, user_id, monkeypatch):
         distiller.release_all()
 
 
-@xfail
 def test_q5_queued_task_keeps_submit_time_identity(store, user_id, monkeypatch):
     uid_a = f"usr_{uuid.uuid4().hex[:8]}"
     tid_a, tid_b = _text(store, uid_a), _text(store, user_id)
@@ -321,13 +314,11 @@ def test_q5_queued_task_keeps_submit_time_identity(store, user_id, monkeypatch):
 # ── Q6–Q7：契约 ────────────────────────────────────────────────────────────
 
 
-@xfail
 def test_q6_no_busy_timeout_message_left():
     source = Path(D.__file__).read_text(encoding="utf-8")
     assert "服务器繁忙" not in source
 
 
-@xfail
 def test_q7_queued_affordances():
     assert D._task_affordances("queued") == (False, ["cancel"], 3000)
 
@@ -335,7 +326,6 @@ def test_q7_queued_affordances():
 # ── Q9–Q11：批量入口 ───────────────────────────────────────────────────────
 
 
-@xfail
 def test_q9_batch_starts_each_name(store, user_id, monkeypatch):
     tid = _text(store, user_id)
     _seed_roster(store, tid, user_id)
@@ -350,11 +340,11 @@ def test_q9_batch_starts_each_name(store, user_id, monkeypatch):
     assert [t["name"] for t in body["tasks"]] == ["甲", "乙"]
     assert len({t["task_id"] for t in body["tasks"]}) == 2
     assert body["errors"] == []
+    distiller.release_all()
     for fut in futures:
         fut.result(timeout=30)
 
 
-@xfail
 def test_q10_batch_capacity_rejection_starts_nothing(store, user_id, monkeypatch):
     tid = _text(store, user_id)
     _seed_roster(store, tid, user_id)
@@ -374,7 +364,6 @@ def test_q10_batch_capacity_rejection_starts_nothing(store, user_id, monkeypatch
         assert (tid, "丙") not in slots and (tid, "丁") not in slots
 
 
-@xfail
 def test_q11_batch_rejects_name_outside_roster(store, user_id, monkeypatch):
     tid = _text(store, user_id)
     _seed_roster(store, tid, user_id)

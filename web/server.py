@@ -47,6 +47,7 @@ from security import SecurityHeadersMiddleware
 from routers.text import router as text_router
 from routers.distill import legacy_router as distill_legacy
 from routers.distill import router as distill_router
+from routers.distill import _DISTILL_POOL
 from routers.chat import legacy_router as chat_legacy
 from routers.chat import router as chat_router
 from routers.history import router as history_router
@@ -142,6 +143,9 @@ async def _lifespan(app: FastAPI):
         cleanup_task = asyncio.create_task(_session_cleanup_loop())
         resync_task = asyncio.create_task(_cross_border_resync_loop())
         yield
+        # 蒸馏池的工作线程不是 daemon：不关的话进程退出会一直等正在跑的蒸馏结束。
+        # 排队中的直接丢弃，下次启动清扫把它们置 interrupted。
+        _DISTILL_POOL.shutdown(wait=False, cancel_futures=True)
         # 顺序：先停清理循环并**等它退出**，再补写队列。反过来的话两边会同时 flush 同一把
         # 队列 —— 清理循环可能正把会话出队，而这里正拿着它补写；也会让「谁在写」这件事
         # 在关停期间变得说不清。
@@ -190,7 +194,7 @@ async def _preload_embedding():
 
 
 async def _reconcile_distill_tasks():
-    """开机仲裁：把所有 status='running' 的蒸馏任务置 interrupted。
+    """开机仲裁：把所有 queued/running 的蒸馏任务置 interrupted。
 
     前提是「单 region 单进程模型」—— 进程刚起、内存 worker 集为空，running 行只能
     来自已死的上一个进程。若将来多开进程/加 worker，新启动进程会把另一个进程正在跑
@@ -200,7 +204,7 @@ async def _reconcile_distill_tasks():
     try:
         n = await get_storage().mark_interrupted_distills()
         if n:
-            print(f"[distill] Boot reconcile: {n} orphan running task(s) → interrupted")
+            print(f"[distill] Boot reconcile: {n} orphan distill task(s) → interrupted")
     except Exception as exc:
         # 启动期 DB 未就绪等不可致命：任务以 running 留存，下次启动再仲裁
         logger.warning("Boot reconcile failed (non-fatal): %s", exc, exc_info=True)

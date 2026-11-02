@@ -520,18 +520,20 @@ def test_start_route_lands_usage_rows(monkeypatch):
 
     from core.distiller import _IDENTIFY_CACHE
 
-    # 抓住 `/start` 起的那个后台线程，跑完 join 它 —— 不等它，用例退出时它还在收尾，
+    # 抓住 `/start` 入池的那个 future，跑完等它 —— 不等它，用例退出时它还在收尾，
     # 解释器一关就变成 "cannot schedule new futures after interpreter shutdown" 之类
     # 的告警噪声。`D.C` 就是 `core.concurrency` 模块本身，打一处即可。
-    threads: list[threading.Thread] = []
-    real_ctx_thread = C.ctx_thread
+    pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="test-distill")
+    monkeypatch.setattr(D, "_DISTILL_POOL", pool, raising=False)
+    futures: list = []
+    real_ctx_submit = C.ctx_submit
 
-    def _spy_ctx_thread(target, args=(), **kw):
-        t = real_ctx_thread(target, args=args, **kw)
-        threads.append(t)
-        return t
+    def _spy_ctx_submit(p, fn, *args, **kwargs):
+        fut = real_ctx_submit(p, fn, *args, **kwargs)
+        futures.append(fut)
+        return fut
 
-    monkeypatch.setattr(C, "ctx_thread", _spy_ctx_thread)
+    monkeypatch.setattr(C, "ctx_submit", _spy_ctx_submit)
 
     _IDENTIFY_CACHE.clear()
     try:
@@ -549,8 +551,8 @@ def test_start_route_lands_usage_rows(monkeypatch):
                 headers={"Authorization": f"Bearer {_token(uid)}"},
             )
             assert r.status_code == 200, f"/start 没跑起来：{r.status_code} {r.text[:200]}"
-            for t in threads:
-                t.join(timeout=120)
+            for fut in futures:
+                fut.result(timeout=120)
             # 格式化的**笔数** = 字段组数（每组一笔，WP7 起并行）。组数从 `FORMAT_GROUPS`
             # 读，不写死 —— 关系拆到 G5 时这里不该跟着改。`_wait_for_rows` 的 expected
             # 必须给足，给少了会在跑到一半时快照返回，下面那条 == 断言就成了竞态。
@@ -559,7 +561,7 @@ def test_start_route_lands_usage_rows(monkeypatch):
             n_rows = 8 + len(FORMAT_GROUPS)
             rows = _wait_for_rows(str(db), expected=n_rows)
     finally:
-        C.ctx_thread = real_ctx_thread
+        pool.shutdown(wait=False, cancel_futures=True)
         _IDENTIFY_CACHE.clear()
         try:                        # 同上：SQLiteStore 还攥着句柄，Windows 上删不掉
             db.unlink()

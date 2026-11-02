@@ -3748,11 +3748,11 @@ class PostgresStore(StorageBase):
             raise
 
     async def mark_interrupted_distills(self, message: str = "服务重启，任务已中断，等待自动恢复") -> int:
-        """Boot-time reconcile: flip every status='running' row to 'interrupted'."""
+        """Boot-time reconcile: flip every queued/running row to 'interrupted'."""
         try:
             async with await self._connect() as conn:
                 tag = await conn.execute(
-                    "UPDATE distill_tasks SET status = 'interrupted', message = $1, updated_at = CURRENT_TIMESTAMP WHERE status = 'running'",
+                    "UPDATE distill_tasks SET status = 'interrupted', message = $1, updated_at = CURRENT_TIMESTAMP WHERE status IN ('running', 'queued')",
                     message,
                 )
             return self._parse_rowcount(tag)

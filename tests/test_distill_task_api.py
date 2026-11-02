@@ -19,6 +19,7 @@ import json
 import logging
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi import FastAPI
@@ -133,7 +134,7 @@ class TestASetTaskAccounting:
         assert len(store.calls) == 1                # 只有成功后入账
         assert store.calls[0]["progress_pct"] == 8
         with D._task_lock:
-            assert D._tasks["tA"]["_db"] == ("running", 8)   # 落库成功才记账
+            assert D._tasks["tA"]["_db"] == ("queued", 8)   # 落库成功才记账
             assert "tA" in D._tasks                          # running 不 pop
 
 
@@ -192,62 +193,49 @@ class TestA2TerminalConfirm:
 
 
 class TestA2Wiring:
-    """P0 兜底接线：_run_distill_task 里两处 _confirm_terminal_persist 真的被调到。
+    """P0 兜底接线：_run_distill_task 里两处收口真的被调到。
 
     TestA2TerminalConfirm 是直接调 D._confirm_terminal_persist()，没覆盖过生产调用点；
-    变异验证（注释掉这两行之一，本类对应用例应变红）：
-    - acquire 失败分支那行（return 前）→ test_acquire_timeout_calls_confirm 红
+    变异验证（删掉对应那行，本类对应用例应变红）：
+    - 入口的排队期取消收口 → test_cancelled_while_queued_confirms_and_releases 红
     - finally 里那行 → test_finally_confirms_before_release 红
-    任务不 seed 进内存：_set_task 对不存在的条目 no-op，事件序只反映接线。
     """
 
-    def _test_events(self, monkeypatch, acquired, distiller_boom):
-        """搭好假信号量 + confirm spy + 可选 get_distiller 抛错，跑完整 _run_distill_task。
-
-        distiller_boom=True 时需 _install 假 store —— except 分支的 cleanup 协程
-        会打到真 get_storage 否则碰真库。返回事件序。
-        """
+    def _test_events(self, monkeypatch):
+        """搭好 confirm spy + get_distiller 记录并抛错，跑完整 _run_distill_task。"""
         events: list[str] = []
-
-        class _FakeSem:
-            def acquire(self, timeout=0):
-                events.append("acquire")
-                return acquired
-
-            def release(self):
-                events.append("release")
-
-        monkeypatch.setattr(D, "_DISTILL_SEMAPHORE", _FakeSem())
+        _install(monkeypatch, _FakeStore())
         monkeypatch.setattr(
             D, "_confirm_terminal_persist",
             lambda tid: events.append(f"confirm:{tid}"),
         )
-        if distiller_boom:
-            _install(monkeypatch, _FakeStore())
-            monkeypatch.setattr(
-                "deps.get_distiller", lambda llm=None: (_ for _ in ()).throw(RuntimeError("boom")),
-            )
+        monkeypatch.setattr(
+            "deps.get_distiller",
+            lambda llm=None: (events.append("distiller"),
+                              (_ for _ in ()).throw(RuntimeError("boom")))[1],
+        )
         return events
 
     #: `llm` 只用于过 `_run_distill_task` 的入口断言（§2.10）：本类两条用例在用到它
     #: 之前就 return / 在 `get_distiller` 处抛错，故不需要真适配器。
     _LLM = object()
 
-    def test_acquire_timeout_calls_confirm(self, monkeypatch):
-        """acquire(timeout=300) 超时拿不到 → confirm 兜底终态后 return，不放行、不 release。"""
-        events = self._test_events(monkeypatch, acquired=False, distiller_boom=False)
+    def test_cancelled_while_queued_confirms_and_releases(self, monkeypatch):
+        """排队期已置 error → 入口不收口就开跑；收口后 confirm 兜底并释放用户槽。"""
+        events = self._test_events(monkeypatch)
         assert D._reserve_user_slot("usr_x", ("txt_x", "甲")) is None
+        _seed_task("tW1", "error", 0, ("queued", 0))
         D._run_distill_task("tW1", "txt_x", "甲", False, "usr_x", "正文", "story", self._LLM)
-        assert events == ["acquire", "confirm:tW1"]   # 无 release
-        # 超时分支放回的必须是本任务的（书,角色）——放错目标该角色会永久 429
+        assert events == ["confirm:tW1"], "取消的排队任务不该走到蒸馏器"
+        # 放回的必须是本任务的（书,角色）——放错目标该角色会永久 429
         assert "usr_x" not in D._user_slots
 
     def test_finally_confirms_before_release(self, monkeypatch):
         """异常路径进 finally：confirm 必须发生在 release 之前。"""
-        events = self._test_events(monkeypatch, acquired=True, distiller_boom=True)
+        events = self._test_events(monkeypatch)
         assert D._reserve_user_slot("usr_x", ("txt_x", "甲")) is None
         D._run_distill_task("tW2", "txt_x", "甲", False, "usr_x", "正文", "story", self._LLM)
-        assert events == ["acquire", "confirm:tW2", "release"]
+        assert events == ["distiller", "confirm:tW2"]
         # finally 放回的必须是本任务的（书,角色）
         assert "usr_x" not in D._user_slots
 
@@ -326,7 +314,6 @@ def _run_to_card(monkeypatch, store, distiller, *, task_id="tCard", user_id="usr
     _install(monkeypatch, store)
     monkeypatch.setattr("deps.get_distiller", lambda llm=None: distiller)
     monkeypatch.setattr("deps.get_text_manager", lambda llm=None: _TM())
-    monkeypatch.setattr(D, "_DISTILL_SEMAPHORE", threading.Semaphore(1))
     real_set_task = D._set_task
     monkeypatch.setattr(D, "_set_task", lambda tid, upd: (
         snapshots.append(dict(upd)), real_set_task(tid, upd))[1])
@@ -586,8 +573,8 @@ class TestCStartRefusesOnDBFailure:
         _assert_premise_resolves(failing, _install_user_llm(monkeypatch))
         monkeypatch.setattr("deps.get_distiller", lambda llm=None: _StubDistiller())
         started = []
-        monkeypatch.setattr("core.concurrency.ctx_thread",
-                            lambda *a, **k: started.append(a) or threading.Thread())
+        monkeypatch.setattr("core.concurrency.ctx_submit",
+                            lambda pool, fn, *a, **k: started.append(a))
 
         with caplog.at_level(logging.ERROR):
             resp = client.post("/api/distill/start",
@@ -635,14 +622,14 @@ def _capture_start(monkeypatch, store, user_id, tid, *, character="甲", force=F
                    chunk_size=3000):
     """POST /start，返回 (resp, 交给后台线程的 resume_candidates)。
 
-    ctx_thread 打桩：不真起线程，只捕获 args 元组（末位即 resume_candidates）。
+    ctx_submit 打桩：不真入池，只捕获位置参数元组（末位即 resume_candidates）。
     """
     _assert_premise_resolves(store, _install_user_llm(monkeypatch))
     monkeypatch.setattr("deps.get_distiller",
                         lambda llm=None: _ResumeDistillerStub(chunk_size))
     captured: list[tuple] = []
-    monkeypatch.setattr("core.concurrency.ctx_thread",
-                        lambda *a, **k: captured.append(k["args"]) or threading.Thread())
+    monkeypatch.setattr("core.concurrency.ctx_submit",
+                        lambda pool, fn, *a, **k: captured.append(a))
 
     client = _build_client(store, user_id)
     resp = client.post("/api/distill/start",
@@ -729,7 +716,7 @@ class TestEResumeGate:
 
 # ── 路由测试（F）：按用户并发闸（步骤 4）────────────────────────────────────
 # 两道门：同步预留位（进程内，挡并发 TOCTOU）+ DB 复核（带时效窗，挡跨重启残留）。
-# 全局闸 _DISTILL_SEMAPHORE 语义不变，仍由 bg 线程 acquire(timeout=300)。
+# 全局闸是 _DISTILL_POOL 的容量：超出容量的任务按提交顺序排队。
 
 
 class _ChunkEmittingDistiller:
@@ -763,37 +750,36 @@ class _ChunkEmittingDistiller:
             yield {"status": "analyzing", "current": i + 1, "total": self.N}
 
 
-class _Futures(list):
-    """ThreadPoolExecutor 的 future 列表；保留旧用例 `t.join(timeout)` 的调用形状。"""
+class _FutureRef:
+    """把 Future 包成带 `join(timeout)` 的句柄 —— 旧用例按线程的 `t.join(...)` 写。"""
+
+    def __init__(self, fut):
+        self.fut = fut
 
     def join(self, timeout=None):
-        for fut in self:
-            fut.result(timeout=timeout)
+        self.fut.result(timeout=timeout)
+
+    def result(self, timeout=None):
+        return self.fut.result(timeout=timeout)
 
 
-class _CapOnlySemaphore:
-    """只数 acquire 次数、release 是 no-op —— 让第 cap+1 次 acquire 必然落空。
+class _Futures(list):
+    """后台投递句柄表；保留旧用例逐项 `t.join(timeout)` 与整表 `join()` 的形状。"""
 
-    这样「第 4 个用户撞上全局闸」可确定复现，不必真等 acquire(timeout=300) 的 5 分钟。
-    """
+    def append(self, fut):
+        super().append(_FutureRef(fut))
 
-    def __init__(self, cap):
-        self.cap = cap
-        self.acquires = 0
-
-    def acquire(self, timeout=0):
-        self.acquires += 1
-        return self.acquires <= self.cap
-
-    def release(self):
-        pass
+    def join(self, timeout=None):
+        for ref in self:
+            ref.join(timeout=timeout)
 
 
 def _install_bg(monkeypatch, store, cap=3, distiller=None):
     """把 /start 的真后台线程装进测试：stub 掉 store/LLM 边界。
 
-    返回 (蒸馏器, 信号量, 线程表, 解析出的 llm)。submit_to_main_loop 换成同步
-    asyncio.run —— bg 线程里没有事件循环，落库路径照跑。
+    返回 (蒸馏器, 线程池, future 表, 解析出的 llm)。submit_to_main_loop 换成同步
+    asyncio.run —— bg 线程里没有事件循环，落库路径照跑。`cap` 即池容量：设为 1 可
+    让后续任务确定地排在池里。future 表保留 `t.join(timeout)` 的旧调用形状。
 
     第 4 位交回解析实例是给**前提断言**用的：调用方各自按自己的语境驱动那个出口
     （sync 用例 `_assert_premise_resolves`，async 用例就地 `await`），本函数在
@@ -808,19 +794,19 @@ def _install_bg(monkeypatch, store, cap=3, distiller=None):
     monkeypatch.setattr("deps.get_text_manager", lambda llm=None: object())
     monkeypatch.setattr(D, "get_storage", lambda: store)
     monkeypatch.setattr(D, "submit_to_main_loop", lambda coro, timeout=10: asyncio.run(coro))
-    sem = _CapOnlySemaphore(cap)
-    monkeypatch.setattr(D, "_DISTILL_SEMAPHORE", sem)
+    pool = ThreadPoolExecutor(max_workers=cap, thread_name_prefix="test-distill")
+    monkeypatch.setattr(D, "_DISTILL_POOL", pool, raising=False)
 
-    threads = []
-    real_ctx_thread = C.ctx_thread
+    futures = _Futures()
+    real_submit = C.ctx_submit
 
-    def _spy(target, args=(), **kw):
-        t = real_ctx_thread(target, args=args, **kw)
-        threads.append(t)
-        return t
+    def _spy_submit(p, fn, *args, **kwargs):
+        fut = real_submit(p, fn, *args, **kwargs)
+        futures.append(fut)
+        return fut
 
-    monkeypatch.setattr("core.concurrency.ctx_thread", _spy)
-    return distiller, sem, threads, llm
+    monkeypatch.setattr("core.concurrency.ctx_submit", _spy_submit)
+    return distiller, pool, futures, llm
 
 
 # ── WP8：失败（error）任务续跑（真后台线程端到端）────────────────────────────
@@ -1030,17 +1016,17 @@ class TestFPerUserGate:
         chunks = await store.get_distill_chunks(winner.json()["task_id"])
         assert len(chunks) == _ChunkEmittingDistiller.N, "分片只该落一份"
 
-    def test_global_gate_still_caps_at_max_concurrent(self, store, monkeypatch):
-        """全局闸仍生效：3 个不同用户各 1 个 → 第 4 个撞上全局闸（acquire 落空）。
+    def test_global_gate_queues_instead_of_failing(self, store, monkeypatch):
+        """全局闸仍是池容量：超出容量的任务排队跑到终态，而不是在闸前被拒。
 
-        注：这里用假信号量断言「第 4 个确实 acquire 不到」，**没有真等** timeout=300 的
-        5 分钟排队 —— 排队本身未被本用例验证。
+        替身故意吐非法格式，两条都以 error 收口；重点是**两条都真跑到了终态**
+        （分片计数 2N），第二条没有撞「服务器繁忙」。
         """
-        _distiller, sem, threads, llm = _install_bg(monkeypatch, store, cap=3)
+        distiller, _pool, futures, llm = _install_bg(monkeypatch, store, cap=1)
         _assert_premise_resolves(store, llm)
 
-        rows = []
-        for i in range(4):
+        task_ids = []
+        for i in range(2):
             uid = f"usr_global_{i}"
             tid = self._text(store, uid)
             resp = _build_client(store, uid).post(
@@ -1048,13 +1034,13 @@ class TestFPerUserGate:
                 json={"text_id": tid, "character_name": "甲", "force": False},
             )
             assert resp.status_code == 200, resp.text
-            threads[-1].join(timeout=30)
-            rows.append(_run_async(store.get_distill_task_unscoped(resp.json()["task_id"])))
+            task_ids.append(resp.json()["task_id"])
 
-        assert sem.acquires == 4
-        for i in range(3):
-            assert "服务器繁忙" not in (rows[i]["message"] or ""), f"第 {i + 1} 个不该撞闸"
-        assert "服务器繁忙" in (rows[3]["message"] or ""), "第 4 个该撞全局闸"
+        futures.join(timeout=60)
+        for task_id in task_ids:
+            row = _run_async(store.get_distill_task_unscoped(task_id))
+            assert row["status"] == "error", row
+        assert distiller.map_calls == 2 * _ChunkEmittingDistiller.N, "第二条没有真跑到终态"
 
 
 class TestS5RosterIsTheOnlyEntryOnStart:
@@ -1275,23 +1261,24 @@ class TestHStatusAffordances:
     """
 
     @pytest.mark.parametrize("status,expected", [
+        ("queued", (False, ["cancel"], 3000)),
         ("running", (False, ["cancel"], 3000)),
         ("done", (True, [], 0)),
         ("error", (True, ["retry"], 0)),
         ("interrupted", (True, ["resume"], 0)),
     ])
     def test_affordances_exact_triple(self, status, expected):
-        """四态各一条：三元组精确相等（不是"包含"）。"""
+        """五态各一条：三元组精确相等（不是"包含"）。"""
         assert D._task_affordances(status) == expected
 
-    @pytest.mark.parametrize("status", ["queued", "parsing", "", "unknown"])
+    @pytest.mark.parametrize("status", ["parsing", "", "unknown"])
     def test_affordances_unknown_status_is_non_terminal(self, status):
         """未知 status → 非终态、无动作、默认间隔：宁可多轮询，不可误判任务已终结。"""
         assert D._task_affordances(status) == (False, [], 3000)
 
-    @pytest.mark.parametrize("status", ["running", "done", "error", "interrupted"])
+    @pytest.mark.parametrize("status", ["queued", "running", "done", "error", "interrupted"])
     def test_status_endpoint_matches_affordances(self, store, user_id, status):
-        """四态各查一次：响应的 done/actions/poll_after_ms 与 _task_affordances 一致，
+        """五态各查一次：响应的 done/actions/poll_after_ms 与 _task_affordances 一致，
         即端点是序列化器出口、没有第二处计算。"""
         task_id = f"dt_{uuid.uuid4().hex}"
         _seed_distill_row(store, task_id, user_id, status=status, pct=42, message="msg")
@@ -1323,7 +1310,7 @@ class TestHStatusAffordances:
 
     def test_done_is_sole_terminal_predicate(self, store, user_id):
         """done 与 status 的四态一一对应：interrupted/error 是终态（本次要修的主症状）。"""
-        for status, expect_done in [("running", False), ("done", True),
+        for status, expect_done in [("queued", False), ("running", False), ("done", True),
                                     ("error", True), ("interrupted", True)]:
             task_id = f"dt_{uuid.uuid4().hex}"
             _seed_distill_row(store, task_id, user_id, status=status)

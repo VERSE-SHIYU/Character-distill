@@ -1036,7 +1036,6 @@ class TestDistillTaskPersistence:
         got = await store.get_distill_task_unscoped(task_id)
         assert got["card_id"] == "cardX" and got["awakening"] == "你醒了？"
 
-    @pytest.mark.xfail(strict=True, reason="queued 行尚未纳入启动清扫")
     async def test_mark_interrupted_flips_running_and_queued(self, store, text_id, user_id):
         a, q, b, c = (f"dt_{uuid.uuid4().hex}" for _ in range(4))
         await store.create_distill_task(a, user_id, text_id, status="running")
