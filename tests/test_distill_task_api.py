@@ -236,14 +236,20 @@ class TestA2Wiring:
     def test_acquire_timeout_calls_confirm(self, monkeypatch):
         """acquire(timeout=300) 超时拿不到 → confirm 兜底终态后 return，不放行、不 release。"""
         events = self._test_events(monkeypatch, acquired=False, distiller_boom=False)
+        assert D._reserve_user_slot("usr_x", ("txt_x", "甲")) is None
         D._run_distill_task("tW1", "txt_x", "甲", False, "usr_x", "正文", "story", self._LLM)
         assert events == ["acquire", "confirm:tW1"]   # 无 release
+        # 超时分支放回的必须是本任务的（书,角色）——放错目标该角色会永久 429
+        assert "usr_x" not in D._user_slots
 
     def test_finally_confirms_before_release(self, monkeypatch):
         """异常路径进 finally：confirm 必须发生在 release 之前。"""
         events = self._test_events(monkeypatch, acquired=True, distiller_boom=True)
+        assert D._reserve_user_slot("usr_x", ("txt_x", "甲")) is None
         D._run_distill_task("tW2", "txt_x", "甲", False, "usr_x", "正文", "story", self._LLM)
         assert events == ["acquire", "confirm:tW2", "release"]
+        # finally 放回的必须是本任务的（书,角色）
+        assert "usr_x" not in D._user_slots
 
 
 # ── 后置步骤「挑选对话示例」（WP17 步骤 4）──────────────────────────────────

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import CharCard from '../CharCard'
 
 if (typeof window !== 'undefined') {
@@ -82,5 +82,20 @@ describe('D25 第 1 步：只按本任务的（书,角色）禁按钮', () => {
     mockState.distillTasks = [{ ...RUNNING('祈灼'), status: 'done', done: true, progress_pct: 100 }]
     render(<CharCard />)
     expect(btn('重新蒸馏').disabled).toBe(false)
+  })
+
+  // 启动中按钮先灰；启动失败（store 对 429 / 网络错一律返回 false）后必须复原，否则该角色再也点不了
+  const startThenSettle = async (settle) => {
+    let finish
+    mockState.distillCharacter = vi.fn(() => new Promise((res) => { finish = res }))
+    render(<CharCard />)
+    fireEvent.click(btn('蒸馏角色'))
+    expect(btn('蒸馏角色').disabled).toBe(true)
+    await act(async () => { settle(finish) })
+    expect(btn('蒸馏角色').disabled).toBe(false)
+  }
+
+  it('F5 启动失败（返回 false）：按钮复原可点', async () => {
+    await startThenSettle((res) => res(false))
   })
 })
