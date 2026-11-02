@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""`core.card_relationships.dedupe_relationship_targets`：关系对象按名单归一后，同一 target 只留第一条。
+"""`core.card_relationships.dedupe_relationship_targets`：同一 target 的关系条目只留第一条；对不上名单主名的记 WARNING、不改名。
 
 刘姥姥验收实测：一张卡里「贾母」出现两条（`relation` 分别是「老亲家、贾府老祖宗」与
 「老亲家」）—— 同一个人被拆成两条，注入时同一段关系被说两遍。§10 C4 的关系判据就是
@@ -17,7 +17,6 @@ import logging
 
 from core.card_relationships import dedupe_relationship_targets
 from core.schema import CharacterCard
-from core.unlocated import move_unlocated
 
 CARD = {
     "name": "刘姥姥",
@@ -78,25 +77,17 @@ def test_each_dropped_entry_logs_one_warning_line(caplog):
     assert "第三条" in msgs[1]
 
 
-# ── 目标检查：关系对象按识别名单归一（D24 ①a） ─────────────────────────
+# ── D24 ①a：名单只用于观测，不按别名换名 ─────────────────────────────
 
 ROSTER = [
     {"name": "云绮", "aliases": ["绮绮"]},
     {"name": "柳若芙", "aliases": ["慕容昭瑜"]},
-    {"name": "甲", "aliases": ["阿三"]},
-    {"name": "乙", "aliases": ["阿三"]},
+    {"name": "祈灼", "aliases": ["公子"]},
 ]
 
 
-def _card(relationships, attitudes=()):
-    return CharacterCard.model_validate({
-        "name": "云绮",
-        "relationships": list(relationships),
-        "character_arc": {
-            "phases": [{"state": "s1"}, {"state": "s2"}],
-            "unlocated": {"attitudes": list(attitudes)},
-        },
-    })
+def _card(relationships):
+    return CharacterCard.model_validate({"name": "云绮", "relationships": list(relationships)})
 
 
 def _warnings(caplog):
@@ -104,8 +95,8 @@ def _warnings(caplog):
             if r.name == "core.card_relationships"]
 
 
-def test_alias_and_primary_collapse_to_one_relationship(caplog):
-    """同一人的两个写法（主名 + 名单里的别名）按名单归一 → 只留第一条；丢弃日志带原写法。"""
+def test_alias_target_is_kept_as_written_and_warned(caplog):
+    """别名写法不换成主名（别名表离开原文不能认人），两条都留；别名那条记 WARNING。"""
     card = _card([
         {"target": "柳若芙", "relation": "A"},
         {"target": "慕容昭瑜", "relation": "B"},
@@ -114,25 +105,32 @@ def test_alias_and_primary_collapse_to_one_relationship(caplog):
     with caplog.at_level(logging.WARNING, logger="core.card_relationships"):
         new, dropped = dedupe_relationship_targets(card, ROSTER)
 
-    assert [(r.target, r.relation) for r in new.relationships] == [("柳若芙", "A")]
-    assert len(dropped) == 1
-    assert dropped[0]["original_target"] == "慕容昭瑜"
-    drop_logs = [m for m in _warnings(caplog) if "丢弃" in m]
-    assert len(drop_logs) == 1 and "慕容昭瑜" in drop_logs[0], drop_logs
+    assert [(r.target, r.relation) for r in new.relationships] == [
+        ("柳若芙", "A"), ("慕容昭瑜", "B")]
+    assert dropped == []
+    warnings = _warnings(caplog)
+    assert len(warnings) == 1 and "慕容昭瑜" in warnings[0], warnings
 
 
-def test_alias_target_is_rewritten_to_primary_name():
-    """只有别名写法的一条：target 换成名单里的主名，relation 不变。"""
-    card = _card([{"target": "慕容昭瑜", "relation": "B"}])
+def test_title_alias_is_not_mapped_to_its_roster_owner(caplog):
+    """「公子」挂在祈灼名下，也不能把写「公子」的关系改成祈灼、更不能因此丢掉真的祈灼那条。"""
+    card = _card([
+        {"target": "公子", "relation": "X"},
+        {"target": "祈灼", "relation": "Y"},
+    ])
 
-    new, dropped = dedupe_relationship_targets(card, ROSTER)
+    with caplog.at_level(logging.WARNING, logger="core.card_relationships"):
+        new, dropped = dedupe_relationship_targets(card, ROSTER)
 
-    assert ([(r.target, r.relation) for r in new.relationships], dropped) == (
-        [("柳若芙", "B")], [])
+    assert [(r.target, r.relation) for r in new.relationships] == [
+        ("公子", "X"), ("祈灼", "Y")]
+    assert dropped == []
+    warnings = _warnings(caplog)
+    assert len(warnings) == 1 and "公子" in warnings[0], warnings
 
 
 def test_target_outside_roster_is_kept_and_warned(caplog):
-    """名单里没有的对象原样保留，并记一行「不在名单」的 WARNING。"""
+    """名单里没有的对象原样保留，并记一行 WARNING。"""
     card = _card([{"target": "某人", "relation": "C"}])
 
     with caplog.at_level(logging.WARNING, logger="core.card_relationships"):
@@ -144,28 +142,27 @@ def test_target_outside_roster_is_kept_and_warned(caplog):
     assert len(warnings) == 1 and "某人" in warnings[0]
 
 
-def test_unlocated_attitude_follows_the_merged_target():
-    """未定位态度与关系用同一套映射换名，挪回时能按主名找到留下的关系。"""
-    card = _card([
-        {"target": "柳若芙", "relation": "A"},
-        {"target": "慕容昭瑜", "relation": "B"},
-    ], attitudes=[{"target": "慕容昭瑜", "attitude": "X"}])
-
-    new, _ = dedupe_relationship_targets(card, ROSTER)
-    assert [a.target for a in new.character_arc.unlocated.attitudes] == ["柳若芙"]
-
-    moved = move_unlocated(new, section="attitudes", index=0, phase=1)
-    assert [pa.attitude for pa in moved.relationships[0].phase_attitudes] == ["X"]
-
-
-def test_alias_shared_by_two_people_is_not_canonicalized(caplog):
-    """「阿三」同时是甲和乙的别名 → 不能判定归属，原样保留并记 WARNING。"""
-    card = _card([{"target": "阿三", "relation": "F"}])
+def test_primary_names_log_nothing(caplog):
+    """对象都是名单主名：卡不变、不记任何 WARNING。"""
+    card = _card([{"target": "柳若芙", "relation": "A"}, {"target": "祈灼", "relation": "Y"}])
 
     with caplog.at_level(logging.WARNING, logger="core.card_relationships"):
         new, dropped = dedupe_relationship_targets(card, ROSTER)
 
-    assert [(r.target, r.relation) for r in new.relationships] == [("阿三", "F")]
-    assert dropped == []
-    warnings = _warnings(caplog)
-    assert len(warnings) == 1 and "阿三" in warnings[0]
+    assert new == card and dropped == []
+    assert _warnings(caplog) == []
+
+
+def test_finalize_card_hands_the_roster_to_dedupe(caplog):
+    """产卡收尾（三条通道共用的 `finalize_card`）把名单交给去重：名单外的对象在日志里看得到。"""
+    from core.distiller import Distiller
+
+    card = CharacterCard.model_validate(
+        {"name": "云绮", "relationships": [{"target": "某人", "relation": "C"}]})
+
+    with caplog.at_level(logging.WARNING, logger="core.card_relationships"):
+        out = Distiller(llm=None, config_path=None).finalize_card(
+            card, "正文", "云绮", [], [{"name": "云绮", "aliases": []}])
+
+    assert [r.target for r in out.relationships] == ["某人"]
+    assert any("某人" in m for m in _warnings(caplog)), _warnings(caplog)
