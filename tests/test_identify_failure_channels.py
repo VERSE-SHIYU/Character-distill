@@ -94,14 +94,6 @@ class _EmptyRosterDistiller:
         return IdentifyResult(self.identify_characters(content), trace=None)
 
 
-class _OpenSemaphore:
-    def acquire(self, timeout=0):
-        return True
-
-    def release(self):
-        pass
-
-
 class _TM:
     """只保证 `/run` 与 `/run_stream` 的 503 门过得去；本文件不考蒸馏结果。"""
 
@@ -196,7 +188,6 @@ def _run_bg(store, user_id, text_id, distiller, monkeypatch, body=_BODY):
 
     monkeypatch.setattr(D, "get_storage", lambda: store)
     monkeypatch.setattr(D, "submit_to_main_loop", lambda coro, timeout=10: asyncio.run(coro))
-    monkeypatch.setattr(D, "_DISTILL_SEMAPHORE", _OpenSemaphore())
     monkeypatch.setattr("deps.get_distiller", lambda llm=None: distiller)
 
     D._run_distill_task(

@@ -10,8 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -27,6 +27,7 @@ from core.text_manager import TextManager
 from routers import distill as D
 from storage.sqlite_store import SQLiteStore
 from test_distill_task_api import (
+    _Futures,
     _assert_premise_resolves,
     _build_client,
     _install_user_llm,
@@ -80,6 +81,8 @@ class _DraftStub:
 
     def __init__(self, draft: dict):
         self.draft = draft
+        # 生产 Distiller 有 .llm（带账号闸的代理）；后台任务用 distiller.llm 生成苏醒台词。
+        self.llm = _LLM()
 
     def effective_chunk_size(self, text_type="story"):
         return 3000
@@ -157,24 +160,25 @@ def _seed_text(store: SQLiteStore, uid: str) -> str:
 
 
 def _install(monkeypatch, store: SQLiteStore, distiller: _DraftStub):
-    """/start 与 /run_stream 都要的那几处替身：出网边界 + 后台投递 + 信号量 + 线程捕获。"""
+    """/start 与 /run_stream 都要的那几处替身：出网边界 + 后台投递 + 线程池 + future 捕获。"""
     llm = _install_user_llm(monkeypatch)
     monkeypatch.setattr("deps.get_distiller", lambda llm=None: distiller)
     monkeypatch.setattr("deps.get_text_manager", lambda llm=None: _real_tm(store))
     monkeypatch.setattr(D, "get_storage", lambda: store)
     monkeypatch.setattr(D, "submit_to_main_loop",
                         lambda coro, timeout=10: asyncio.run(coro))
-    monkeypatch.setattr(D, "_DISTILL_SEMAPHORE", threading.Semaphore(1))
-    threads: list[threading.Thread] = []
-    real_ctx = C.ctx_thread
+    pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="test-distill")
+    monkeypatch.setattr(D, "_DISTILL_POOL", pool, raising=False)
+    futures = _Futures()
+    real_submit = C.ctx_submit
 
-    def _spy(target, args=(), **kw):
-        t = real_ctx(target, args=args, **kw)
-        threads.append(t)
-        return t
+    def _spy(p, fn, *args, **kwargs):
+        fut = real_submit(p, fn, *args, **kwargs)
+        futures.append(fut)
+        return fut
 
-    monkeypatch.setattr("core.concurrency.ctx_thread", _spy)
-    return llm, threads
+    monkeypatch.setattr("core.concurrency.ctx_submit", _spy)
+    return llm, futures
 
 
 def _run_start(monkeypatch, store, uid, tid, *, character=_DISTILL_NAME, force=False):

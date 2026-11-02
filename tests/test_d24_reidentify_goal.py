@@ -54,7 +54,6 @@ class _IdentifyLLM:
     def __init__(self, *, fail_chunk=None):
         self.model = "test-model"
         self.last_usage = None
-        self.learned_map_concurrency = 4
         self.fail_chunk = fail_chunk
         self.chunk_calls = 0
         self.judge_calls = 0

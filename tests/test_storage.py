@@ -1674,15 +1674,17 @@ class TestDistillTaskPersistence:
         got = await store.get_distill_task_unscoped("dt6")
         assert got["card_id"] == "cardX" and got["awakening"] == "你醒了？"
 
-    async def test_mark_interrupted_flips_running(self, store, text_id):
-        # 开机 reconcile：只动 running（孤儿），done/interrupted 不动；返回翻转数。
+    async def test_mark_interrupted_flips_running_and_queued(self, store, text_id):
+        # 开机 reconcile：running 与排队中的 queued 都是「上个进程留下的活」；done/interrupted 不动。
         await store.create_distill_task("dtA", "u1", text_id, status="running")
+        await store.create_distill_task("dtQ", "u1", text_id, status="queued")
         await store.create_distill_task("dtB", "u1", text_id, status="done")
         await store.create_distill_task("dtC", "u1", text_id, status="interrupted")
-        assert await store.mark_interrupted_distills() == 1
+        assert await store.mark_interrupted_distills() == 2
         got = await store.get_distill_task_unscoped("dtA")
         assert got["status"] == "interrupted"
         assert "重启" in got["message"]
+        assert (await store.get_distill_task_unscoped("dtQ"))["status"] == "interrupted"
         # interrupted 不占 running 槽；是步骤 3 挑选恢复对象的直接依据
         assert await store.count_running_distills("u1") == 0
 

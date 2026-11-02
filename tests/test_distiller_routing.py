@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import adapters.llm_adapter as M
 from adapters.llm_adapter import IncompleteResponseError, UpstreamFailure
-from core.concurrency import AdaptiveGate
+from core.concurrency import AdaptiveGate, account_gate, reset_account_gates
 from core.distiller import IDENTIFY_JUDGE_PROMPT, DistillError, Distiller, _map_failure_message
 from core.request_context import LLM_CALLER, Caller, current_user_id
 from core.schema import FORMAT_GROUPS
@@ -195,9 +195,9 @@ class TestAnyBatchFailureFailsTheWholeReduce:
         real_long = llm.chat_stream_long
         calls = []
 
-        def spy_long(system, messages, max_tokens=None):
+        def spy_long(system, messages, max_tokens=None, *, gate=None):
             calls.append({"system": system, "max_tokens": max_tokens})
-            return (yield from real_long(system, messages, max_tokens))
+            return (yield from real_long(system, messages, max_tokens, gate=gate))
 
         llm.chat_stream_long = spy_long
 
@@ -1207,6 +1207,13 @@ class _InflightUpstream:
         self._srv.server_close()
 
 
+def _distill_config(tmp_path, cap: int) -> str:
+    """账号闸在构造 Distiller 时按 `map_concurrency` 建，故上限必须走配置文件。"""
+    path = tmp_path / "config.yaml"
+    path.write_text(f"distill:\n  map_concurrency: {cap}\n  chunk_size: 3000\n", encoding="utf-8")
+    return str(path)
+
+
 class TestMapConcurrencyAdaptsToTheAccount:
     """WP14 A2：上游「超过 N 路即 429」时 Map 零失败，且闸放行时在途从不超过它当时的自身上限。
 
@@ -1222,7 +1229,7 @@ class TestMapConcurrencyAdaptsToTheAccount:
     LIMIT = 5
     CAP = 20
 
-    async def test_map_finishes_with_zero_failures(self, monkeypatch):
+    async def test_map_finishes_with_zero_failures(self, monkeypatch, tmp_path):
         """上游限流时 Map 零失败；**闸自己的不变量** = 每次放行时在途 ≤ 当时上限。
 
         两层判据：
@@ -1257,14 +1264,16 @@ class TestMapConcurrencyAdaptsToTheAccount:
                 admissions.append((self.ceiling, self.inflight))
                 return gate
 
-        # 全仓只 `core/distiller.py` 一处构造闸（`C.AdaptiveGate`），替换模块属性即覆盖。
+        # 闸由 `core.concurrency.account_gate` 在构造 Distiller 时建，`_make_gate` 在家的
+        # 循环里按模块全局名取类，故替换模块属性即覆盖。先清登记：否则同一账号会拿回
+        # 上一条用例留下的实例，替换不生效。
+        reset_account_gates()
         monkeypatch.setattr("core.concurrency.AdaptiveGate", _RecordingGate)
 
         upstream = _InflightUpstream(self.LIMIT)
         llm = upstream.adapter()
         try:
-            d = Distiller(llm=llm, config_path=None)
-            d._map_concurrency = self.CAP
+            d = Distiller(llm=llm, config_path=_distill_config(tmp_path, self.CAP))
             client = llm._make_async_client()
             try:
                 results, failures = await d._run_map_concurrent(
@@ -1317,20 +1326,20 @@ class TestMapConcurrencyAdaptsToTheAccount:
 
 
 class TestMapConcurrencyRemembersTheAccount:
-    """WP14 A3：同一个 adapter 连跑两轮，第二轮从第一轮学到的上限起步。
+    """WP14 A3 / D25：同一个账号连跑两轮，第二轮从第一轮学到的上限起步。
 
-    判据是**行为**：第二轮只在冷启动那一波露初值，故第二轮只跑 `COLD` 片 —— 冷启动那
-    一波就是初值本身。等长两轮的「429 明显更少」实测比值在 1.6–3.1x 之间乱摆（第二轮
-    自己也在探针上撞），那种计数比会 flaky，不拿来当判据。只读
-    `llm.learned_map_concurrency` 非空也不足以证明第二轮**用了**它 —— 初值没接上时那个
-    属性照样有值，退回的是 cap。
+    闸归**账号**所有（`core.concurrency.account_gate`）：第一轮的收敛值就在同一只闸里，
+    第二轮自然从那儿起步（写回 adapter 的字段已删除）。判据是**行为**：第二轮只在冷启动
+    那一波露初值，故第二轮只跑 `COLD` 片 —— 冷启动那一波就是初值本身。等长两轮的
+    「429 明显更少」实测比值在 1.6–3.1x 之间乱摆（第二轮自己也在探针上撞），那种计数比
+    会 flaky，不拿来当判据。
 
     峰值界取 `max(learned, LIMIT) + 1` 而不是 `learned + 1`：第一轮学到的值可能**低于**
     上游真实上限（负载下多撞几下就偏低），第二轮从那儿合法地继续上探到 `LIMIT` 再撞一次
     探针 —— 那是 AIMD 在工作，不是缺陷。`+1` 仍是「必须探到上限之上才学得到上限」。
 
-    三条变异各打红一处：不写回 → 属性为 None；写了但不作初值 → 冷启动峰值从 `learned`
-    变成 `COLD`（20 片在 cap=20 下全放）；写回的是配置值而非收敛值 → `learned` 顶到 cap。
+    变异：Map 仍每轮新建闸（或登记处每次新建）→ 第二轮从 cap 重新探起，冷启动峰值变成
+    `COLD`（20 片在 cap=20 下全放），本条变红。
     """
 
     LEARN_CHUNKS = 120
@@ -1349,15 +1358,15 @@ class TestMapConcurrencyRemembersTheAccount:
         finally:
             await client.close()
 
-    async def test_the_second_round_starts_from_the_learned_ceiling(self):
+    async def test_the_second_round_starts_from_the_learned_ceiling(self, tmp_path):
+        reset_account_gates()
         upstream = _InflightUpstream(self.LIMIT)
         llm = upstream.adapter()
         try:
-            d = Distiller(llm=llm, config_path=None)
-            d._map_concurrency = self.CAP
+            d = Distiller(llm=llm, config_path=_distill_config(tmp_path, self.CAP))
 
             await self._round(d, llm, "一", self.LEARN_CHUNKS)
-            learned = llm.learned_map_concurrency
+            learned = account_gate(llm.account_id, self.CAP).ceiling
             first_429 = upstream.statuses.count(429)
             upstream.peak = 0
             upstream.tail_peak = 0
@@ -1368,7 +1377,6 @@ class TestMapConcurrencyRemembersTheAccount:
         finally:
             upstream.close()
 
-        assert learned is not None, "第一轮没把学到的上限写回 adapter"
         assert failures == []
         # 界不是拍的：146 次采样（60 / 120 片各半）实测落在 4–7，只在机器负载高时见过
         # 一次 9（尾部排水期变长，闸把「没撞 429」读成余量、继续加性上探）。取「真实上限

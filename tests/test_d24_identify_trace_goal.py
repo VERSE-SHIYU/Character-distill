@@ -48,7 +48,6 @@ class _IdentifyLLM:
     def __init__(self, *, judge_replies=None, fail_chunk=None, single_reply=None):
         self.model = "test-model"
         self.last_usage = None
-        self.learned_map_concurrency = 4
         self.judge_replies = judge_replies or [MERGE_REPLY] * 5
         self.fail_chunk = fail_chunk
         self.single_reply = single_reply

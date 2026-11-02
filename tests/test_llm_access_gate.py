@@ -279,17 +279,16 @@ def _capture_thread(monkeypatch) -> list[tuple]:
     """把派生原语换成「只记参数、不起线程」—— `/start` 的入参由此取得。
 
     C2b 起只有一个模块 `core.concurrency` 定义派生原语（telemetry 那份已删，不是转发）。
-    **要求调用点用属性形式**（`C.ctx_thread(...)` 而非 `from ... import ctx_thread`），
-    否则函数内绑定在 import 期就固化了，这里拦不到 —— 那处绑定同时是「迁移漏了调用点」
-    的探子：谁还留着 `from core.telemetry import ctx_thread`，这里就拦不到它、用例红。
+    `/start` 现在走 `C.ctx_submit(池, fn, *args, **kwargs)`；**要求调用点用属性形式**，
+    否则函数内绑定在 import 期就固化了，这里拦不到（迁移漏了调用点，用例红）。
     """
     captured: list[tuple] = []
 
-    def _fake_ctx_thread(target, args=(), kwargs=None, **kw):
-        captured.append((target, args, kwargs or {}))
-        return threading.Thread()
+    def _fake_ctx_submit(pool, target, *args, **kwargs):
+        captured.append((target, args, kwargs))
+        return None
 
-    monkeypatch.setattr(_mod("core.concurrency"), "ctx_thread", _fake_ctx_thread)
+    monkeypatch.setattr(_mod("core.concurrency"), "ctx_submit", _fake_ctx_submit)
     return captured
 
 
