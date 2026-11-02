@@ -100,8 +100,9 @@ def dedupe_relationship_targets(
             changed = True
 
     for d in dropped:
-        logger.warning("[card_relationships] 丢弃重复 target 的关系条目 %s：target=%s，"
-                       "被丢的 relation=%s", d["field"], d["target"], d["relation"])
+        origin = f"（原写法={d['original_target']}）" if "original_target" in d else ""
+        logger.warning("[card_relationships] 丢弃重复 target 的关系条目 %s：target=%s%s，"
+                       "被丢的 relation=%s", d["field"], d["target"], origin, d["relation"])
     if not dropped and not changed:
         return card, dropped
     dump["relationships"] = kept

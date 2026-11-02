@@ -104,18 +104,21 @@ def _warnings(caplog):
             if r.name == "core.card_relationships"]
 
 
-def test_alias_and_primary_collapse_to_one_relationship():
-    """同一人的两个写法（主名 + 名单里的别名）按名单归一 → 只留第一条。"""
+def test_alias_and_primary_collapse_to_one_relationship(caplog):
+    """同一人的两个写法（主名 + 名单里的别名）按名单归一 → 只留第一条；丢弃日志带原写法。"""
     card = _card([
         {"target": "柳若芙", "relation": "A"},
         {"target": "慕容昭瑜", "relation": "B"},
     ])
 
-    new, dropped = dedupe_relationship_targets(card, ROSTER)
+    with caplog.at_level(logging.WARNING, logger="core.card_relationships"):
+        new, dropped = dedupe_relationship_targets(card, ROSTER)
 
     assert [(r.target, r.relation) for r in new.relationships] == [("柳若芙", "A")]
     assert len(dropped) == 1
     assert dropped[0]["original_target"] == "慕容昭瑜"
+    drop_logs = [m for m in _warnings(caplog) if "丢弃" in m]
+    assert len(drop_logs) == 1 and "慕容昭瑜" in drop_logs[0], drop_logs
 
 
 def test_alias_target_is_rewritten_to_primary_name():
