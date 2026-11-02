@@ -58,14 +58,14 @@ beforeEach(() => {
 })
 
 describe('D25 第 3 步：勾选一键蒸', () => {
-  it.fails('U1 乙已蒸过：甲、丙可勾，乙禁用', () => {
+  it('U1 乙已蒸过：甲、丙可勾，乙禁用', () => {
     render(<CharCard />)
     expect(cb('甲').disabled).toBe(false)
     expect(cb('丙').disabled).toBe(false)
     expect(cb('乙').disabled).toBe(true)
   })
 
-  it.fails('U2 勾甲、丙后点「蒸馏所选（2）」调 distillBatch', async () => {
+  it('U2 勾甲、丙后点「蒸馏所选（2）」调 distillBatch', async () => {
     render(<CharCard />)
     fireEvent.click(cb('甲'))
     fireEvent.click(cb('丙'))
@@ -73,13 +73,13 @@ describe('D25 第 3 步：勾选一键蒸', () => {
     await waitFor(() => expect(mockState.distillBatch).toHaveBeenCalledWith('t1', ['甲', '丙']))
   })
 
-  it.fails('U3 甲有 running 任务：甲的勾选框禁用', () => {
+  it('U3 甲有 running 任务：甲的勾选框禁用', () => {
     mockState.distillTasks = [RUNNING('甲')]
     render(<CharCard />)
     expect(cb('甲').disabled).toBe(true)
   })
 
-  it.fails('U4 勾甲后甲进入 running：显示未勾，N 为 0 且禁用', () => {
+  it('U4 勾甲后甲进入 running：显示未勾，N 为 0 且禁用', () => {
     const { rerender } = render(<CharCard />)
     fireEvent.click(cb('甲'))
     expect(cb('甲').checked).toBe(true)
@@ -89,7 +89,7 @@ describe('D25 第 3 步：勾选一键蒸', () => {
     expect(btn('蒸馏所选（0）').disabled).toBe(true)
   })
 
-  it.fails('U5 queued 任务：单个按钮文字「排队中」', () => {
+  it('U5 queued 任务：单个按钮文字「排队中」', () => {
     mockState.distillTasks = [{ ...RUNNING('甲'), status: 'queued', done: false }]
     render(<CharCard />)
     expect(btn('排队中').disabled).toBe(true)

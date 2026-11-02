@@ -17,7 +17,7 @@ beforeEach(() => {
 })
 
 describe('distillBatch', () => {
-  it.fails('T1 请求体正确，返回的任务全部登记为 queued', async () => {
+  it('T1 请求体正确，返回的任务全部登记为 queued', async () => {
     postJSON.mockResolvedValue({
       tasks: [{ name: '甲', task_id: 'k1' }, { name: '丙', task_id: 'k2' }],
       errors: [],
@@ -31,7 +31,7 @@ describe('distillBatch', () => {
     expect(started).toBe(2)
   })
 
-  it.fails('T2 部分失败：错误文案进 error，成功的仍登记', async () => {
+  it('T2 部分失败：错误文案进 error，成功的仍登记', async () => {
     postJSON.mockResolvedValue({
       tasks: [{ name: '甲', task_id: 'k1' }],
       errors: [{ name: '丙', detail: 'x' }],
@@ -41,7 +41,7 @@ describe('distillBatch', () => {
     expect(useAppStore.getState().distillTasks).toHaveLength(1)
   })
 
-  it.fails('T3 整批 429：后端文案原样进 error，没有新任务', async () => {
+  it('T3 整批 429：后端文案原样进 error，没有新任务', async () => {
     const msg = '你已有蒸馏任务在运行（每用户同时最多 3 个），请等它完成或停止后再试'
     postJSON.mockRejectedValue(new Error(msg))
     await useAppStore.getState().distillBatch('t1', ['甲', '丙'])
@@ -54,7 +54,7 @@ describe('distillBatch', () => {
     expect(useAppStore.getState().distillTasks[0].status).toBe('running')
   })
 
-  it.fails('T5 taskLabel 对内存细化状态取表里的字', async () => {
+  it('T5 taskLabel 对内存细化状态取表里的字', async () => {
     const { taskLabel } = await import('../components/distillStatus')
     expect(taskLabel({ status: 'analyzing', progress_pct: 0 })).toBe('生成人设')
   })

@@ -10,23 +10,11 @@ import Avatar from './common/Avatar'
 import ErrorBox from './common/ErrorBox'
 import StartChatButton from './StartChatButton'
 import { AlertTriangle, Check, Clock, CornerUpLeft, Download, Play, RefreshCw, Sparkles } from './common/Icon'
+import { STATUS_TEXT } from './distillStatus'
 
 // 5 步视觉状态机：非终态阶段由服务端 stage（内存细化）驱动，回落 status
 const STEPS = ['采集语料', '提取人格', '生成人设', '校准语气', '验收上线']
 const STATUS_STEP = { queued: 1, identifying: 2, analyzing: 3, merging: 4, formatting: 5, saving: 5 }
-
-const STATUS_TEXT = {
-  queued: '排队中',
-  running: '蒸馏中',
-  identifying: '识别角色',
-  analyzing: '生成人设',
-  merging: '校准语气',
-  formatting: '验收上线',
-  saving: '保存卡片',
-  done: '已完成',
-  error: '失败',
-  interrupted: '已中断',
-}
 
 const LOG_TEXT = {
   queued: '任务已排队，等待开始',

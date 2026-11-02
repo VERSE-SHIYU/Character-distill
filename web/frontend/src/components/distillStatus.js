@@ -11,3 +11,10 @@ export const STATUS_TEXT = {
   error: '失败',
   interrupted: '已中断',
 }
+
+export const taskLabel = (task) => {
+  if (task.progress_pct > 0 && task.status !== 'queued') return `${STATUS_TEXT.running} ${task.progress_pct}%`
+  // 无进度的 running 收尾省略号，与改动前的按钮文案一致
+  if (task.status === 'running') return `${STATUS_TEXT.running}…`
+  return STATUS_TEXT[task.status] || STATUS_TEXT.running
+}
