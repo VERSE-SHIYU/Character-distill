@@ -56,7 +56,7 @@ beforeEach(() => {
 })
 
 describe('D25 第 1 步：只按本任务的（书,角色）禁按钮', () => {
-  it.fails('F1 本书祈灼在跑：祈灼灰、江澄可点', () => {
+  it('F1 本书祈灼在跑：祈灼灰、江澄可点', () => {
     mockState.distillTasks = [RUNNING('祈灼')]
     mockState.distilling = true
     render(<CharCard />)
@@ -64,14 +64,14 @@ describe('D25 第 1 步：只按本任务的（书,角色）禁按钮', () => {
     expect(btn('蒸馏角色').disabled).toBe(false)
   })
 
-  it.fails('F2 进度大于 0 时写进按钮文字', () => {
+  it('F2 进度大于 0 时写进按钮文字', () => {
     mockState.distillTasks = [RUNNING('祈灼', 't1', 40)]
     mockState.distilling = true
     render(<CharCard />)
     expect(btn('蒸馏中 40%')).toBeTruthy()
   })
 
-  it.fails('F3 别的书的任务不挡本页按钮', () => {
+  it('F3 别的书的任务不挡本页按钮', () => {
     mockState.distillTasks = [RUNNING('祈灼', 't2')]
     mockState.distilling = true
     render(<CharCard />)

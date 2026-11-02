@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import useAppStore, { DISTILL_ENTRY } from '../store/useAppStore'
+import useAppStore, { DISTILL_ENTRY, isTerminal } from '../store/useAppStore'
 import { getAuthHeaders, fetchWithTimeout, exportCard } from '../api/client'
 import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
@@ -159,9 +159,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const canWrite = useCanWrite()
   const identifiedChars = useAppStore((s) => s.identifiedChars)
   const identifying = useAppStore((s) => s.identifying)
-  const distilling = useAppStore((s) => s.distilling)
-  const distillTokenCount = useAppStore((s) => s.distillTokenCount)
-  const distillStatus = useAppStore((s) => s.distillStatus)
+  const distillTasks = useAppStore((s) => s.distillTasks) ?? []
   const identifyCharacters = useAppStore((s) => s.identifyCharacters)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
   const cardAvatars = useAppStore((s) => s.cardAvatars)
@@ -173,7 +171,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const viewCard = useAppStore((s) => s.viewCard)
   const loadCards = useAppStore((s) => s.loadCards)
 
-  const [distillingName, setDistillingName] = useState(null)
+  const [starting, setStarting] = useState(() => new Set())
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [trashMode, setTrashMode] = useState(false)
   const [deletedCards, setDeletedCards] = useState([])
@@ -233,10 +231,6 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   }, [cards])
 
   useEffect(() => {
-    if (!distilling) setDistillingName(null)
-  }, [distilling])
-
-  useEffect(() => {
     loadStandaloneCards()
   }, [loadStandaloneCards])
 
@@ -278,9 +272,20 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     } catch { /* store already sets error */ }
   }
 
+  const runningTask = (name) =>
+    distillTasks.find((t) => t.textId === textId && t.character === name && !isTerminal(t))
+
   const handleDistill = async (name, force = false) => {
-    setDistillingName(name)
-    if (!(await distillCharacter(textId, name, force, DISTILL_ENTRY.characterPage))) setDistillingName(null)
+    setStarting((prev) => new Set(prev).add(name))
+    try {
+      await distillCharacter(textId, name, force, DISTILL_ENTRY.characterPage)
+    } finally {
+      setStarting((prev) => {
+        const next = new Set(prev)
+        next.delete(name)
+        return next
+      })
+    }
   }
 
   const texts = useAppStore((s) => s.texts)
@@ -466,6 +471,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                 const d = parseCardJson(c)
                 return (d.name || c.name) === name
               })
+              const task = runningTask(name)
               return (
                 <li key={name} className="char-identified-item">
                   <div className="char-identified-info">
@@ -483,14 +489,11 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                     <button
                       type="button"
                       className={`btn-primary char-identified-btn${already ? ' char-btn-redist' : ''}`}
-                      disabled={distilling}
+                      disabled={!!task || starting.has(name)}
                       onClick={() => handleDistill(name, already)}
                     >
-                      {distillingName === name
-                        ? [
-                            distillTokenCount > 0 ? `${(distillTokenCount / 1000).toFixed(1)}k字符` : '',
-                            distillStatus && distillStatus !== '正在蒸馏…' ? distillStatus : '',
-                          ].filter(Boolean).join(' | ') || '蒸馏中…'
+                      {task
+                        ? (task.progress_pct > 0 ? `蒸馏中 ${task.progress_pct}%` : '蒸馏中…')
                         : already
                           ? '重新蒸馏'
                           : '蒸馏角色'}
@@ -516,13 +519,6 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
             </button>
           )}
           {identifying && <IdentifyProgress active={identifying} />}
-          {distilling && distillingName && (
-            <Loading text={[
-              `正在蒸馏 ${distillingName}…`,
-              distillTokenCount > 0 ? `${(distillTokenCount / 1000).toFixed(1)}k字符` : '',
-              distillStatus && distillStatus !== '正在蒸馏…' ? distillStatus : '',
-            ].filter(Boolean).join(' | ')} />
-          )}
           {(hasCards || hasIdentified) && !identifying && (
             <button
               type="button"

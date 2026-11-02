@@ -952,7 +952,7 @@ class TestFPerUserGate:
 
         second, _ = _capture_start(monkeypatch, store, user_id, tid)
         assert second.status_code == 429
-        assert "已有蒸馏任务在运行" in second.json()["detail"]
+        assert "这个角色正在蒸馏中" in second.json()["detail"]
 
     def test_different_users_do_not_interfere(self, store, monkeypatch):
         """不同用户各开 1 个 → 都 200（按用户闸不串台）。"""
@@ -973,14 +973,17 @@ class TestFPerUserGate:
     def test_db_gate_blocks_live_row_but_not_ghost(self, store, user_id, monkeypatch):
         """第二道门：新鲜 running 行挡；推老到时效窗外的幽灵行不挡。"""
         tid = self._text(store, user_id)
-        _seed_distill_row(store, "dtLive", user_id, status="running", text_id=tid)
+        for idx, name in enumerate(("甲", "乙", "丙")):
+            _seed_distill_row(store, f"dtLive{idx}", user_id, status="running",
+                              text_id=tid, character=name)
 
-        blocked, _ = _capture_start(monkeypatch, store, user_id, tid)
+        blocked, _ = _capture_start(monkeypatch, store, user_id, tid, character="丁")
         assert blocked.status_code == 429
         assert "已有蒸馏任务在运行" in blocked.json()["detail"]
 
-        _age_row(store, "dtLive", D.DISTILL_GHOST_IDLE_MIN + 90)
-        allowed, _ = _capture_start(monkeypatch, store, user_id, tid)
+        for idx in range(3):
+            _age_row(store, f"dtLive{idx}", D.DISTILL_GHOST_IDLE_MIN + 90)
+        allowed, _ = _capture_start(monkeypatch, store, user_id, tid, character="丁")
         assert allowed.status_code == 200, allowed.text
 
     async def test_concurrent_double_start_same_target(self, store, user_id, monkeypatch):

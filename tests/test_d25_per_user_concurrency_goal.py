@@ -1,6 +1,6 @@
 """D25 第 1 步目标检查：同一用户可同时蒸多个角色，同一（书,角色）只允许一个。
 
-B1–B4、B7 是实现前 ``xfail(strict=True)`` 的目标行；B5、B6 是对照（现状即绿）。
+B1–B4、B7 先以 ``xfail(strict=True)`` 落红，实现后摘标记转绿；B5、B6 是对照（现状即绿）。
 夹具与替身全部复用 ``test_distill_task_api``。
 """
 from __future__ import annotations
@@ -25,7 +25,6 @@ def _text(store, uid, body="角色说的话"):
     return tid
 
 
-@pytest.mark.xfail(strict=True, reason="D25 第 1 步：每用户上限改 3，三条串行都该 200")
 def test_b1_three_serial_starts_same_user_all_200(store, user_id, monkeypatch):
     tid = _text(store, user_id)
     for name in ("甲", "乙", "丙"):
@@ -33,7 +32,6 @@ def test_b1_three_serial_starts_same_user_all_200(store, user_id, monkeypatch):
         assert resp.status_code == 200, resp.text
 
 
-@pytest.mark.xfail(strict=True, reason="D25 第 1 步：第 4 个任务撞每用户上限 3")
 def test_b2_fourth_start_rejected_with_limit_message(store, user_id, monkeypatch):
     tid = _text(store, user_id)
     for name in ("甲", "乙", "丙"):
@@ -45,7 +43,6 @@ def test_b2_fourth_start_rejected_with_limit_message(store, user_id, monkeypatch
     assert "最多 3 个" in fourth.json()["detail"]
 
 
-@pytest.mark.xfail(strict=True, reason="D25 第 1 步：同一（书,角色）第二次起要按目标拦")
 def test_b3_same_target_second_start_rejected(store, user_id, monkeypatch):
     tid = _text(store, user_id)
     first, _ = A._capture_start(monkeypatch, store, user_id, tid, character="甲")
@@ -56,7 +53,6 @@ def test_b3_same_target_second_start_rejected(store, user_id, monkeypatch):
     assert "这个角色正在蒸馏中" in second.json()["detail"]
 
 
-@pytest.mark.xfail(strict=True, reason="D25 第 1 步：并发起不同角色都该放行")
 async def test_b4_concurrent_different_targets_both_start(store, user_id, monkeypatch):
     tid = f"txt_{uuid.uuid4().hex}"
     await store.save_text(tid, "src.txt", "角色说的话" * 20, user_id=user_id)
@@ -117,7 +113,6 @@ def test_b6_different_users_same_target_both_start(store, monkeypatch):
     assert rb.status_code == 200, rb.text
 
 
-@pytest.mark.xfail(strict=True, reason="D25 第 1 步：释放带目标后同一目标可再次预留")
 def test_b7_release_target_allows_reserve_again():
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     assert D._reserve_user_slot(uid, ("t", "甲")) is None
