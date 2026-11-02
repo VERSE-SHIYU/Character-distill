@@ -47,7 +47,7 @@ from security import SecurityHeadersMiddleware
 from routers.text import router as text_router
 from routers.distill import legacy_router as distill_legacy
 from routers.distill import router as distill_router
-from routers.distill import _DISTILL_POOL
+from routers.distill import _restart_distill_pool
 from routers.chat import legacy_router as chat_legacy
 from routers.chat import router as chat_router
 from routers.history import router as history_router
@@ -145,7 +145,7 @@ async def _lifespan(app: FastAPI):
         yield
         # 蒸馏池的工作线程不是 daemon：不关的话进程退出会一直等正在跑的蒸馏结束。
         # 排队中的直接丢弃，下次启动清扫把它们置 interrupted。
-        _DISTILL_POOL.shutdown(wait=False, cancel_futures=True)
+        _restart_distill_pool()
         # 顺序：先停清理循环并**等它退出**，再补写队列。反过来的话两边会同时 flush 同一把
         # 队列 —— 清理循环可能正把会话出队，而这里正拿着它补写；也会让「谁在写」这件事
         # 在关停期间变得说不清。

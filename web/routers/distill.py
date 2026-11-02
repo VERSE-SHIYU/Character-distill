@@ -94,6 +94,14 @@ DISTILL_MAX_CONCURRENT = 3
 _DISTILL_POOL = ThreadPoolExecutor(
     max_workers=DISTILL_MAX_CONCURRENT, thread_name_prefix="distill")
 
+
+def _restart_distill_pool() -> None:
+    """关停旧池再补一个空的：进程级全局在 lifespan 关停后仍可用（同进程可再起 app）。"""
+    global _DISTILL_POOL
+    _DISTILL_POOL.shutdown(wait=False, cancel_futures=True)
+    _DISTILL_POOL = ThreadPoolExecutor(
+        max_workers=DISTILL_MAX_CONCURRENT, thread_name_prefix="distill")
+
 # ── 按用户并发闸 ──────────────────────────────────────────────────────────
 # 每用户同时允许 DISTILL_MAX_PER_USER 个蒸馏（与全局上限相同）；同一（书, 角色）
 # 同时只允许一个 —— 后者才是防「同一批分片烧两遍额度」的那道门。两道门各司其职：
