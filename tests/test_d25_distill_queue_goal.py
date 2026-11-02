@@ -400,3 +400,61 @@ def test_q13_same_target_second_start_still_rejected(store, user_id, monkeypatch
     second, _ = A._capture_start(monkeypatch, store, user_id, tid, character="甲")
     assert second.status_code == 429, second.text
     assert "这个角色正在蒸馏中" in second.json()["detail"]
+
+
+# ── 补测：生产池容量 与 批量占槽按本批个数计 ────────────────────────────
+
+
+def test_production_pool_runs_at_most_max_concurrent():
+    """生产池「最多 3 个在跑」由池本身守着 —— 这里不打桩，直接提交 MAX+1 个。
+
+    每个任务进入时计数 +1 再等同一条 Event；前 MAX 个都进入后，第 MAX+1 个必须
+    还卡在池外（计数不变）。给 0.5s 宽限再查一次，避免变异下靠调度竞态漏判。
+    """
+    entered = threading.Semaphore(0)
+    release = threading.Event()
+    lock = threading.Lock()
+    count = 0
+
+    def _work():
+        nonlocal count
+        with lock:
+            count += 1
+        entered.release()
+        release.wait(timeout=10)
+
+    futures = [D._DISTILL_POOL.submit(_work)
+               for _ in range(D.DISTILL_MAX_CONCURRENT + 1)]
+    try:
+        for _ in range(D.DISTILL_MAX_CONCURRENT):
+            assert entered.acquire(timeout=10), "前 3 个任务没有都进入"
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            with lock:
+                if count > D.DISTILL_MAX_CONCURRENT:
+                    break
+            time.sleep(0.01)
+        with lock:
+            assert count == D.DISTILL_MAX_CONCURRENT, (
+                f"池里同时进入了 {count} 个，超过上限 {D.DISTILL_MAX_CONCURRENT}")
+    finally:
+        release.set()
+    for fut in futures:
+        fut.result(timeout=10)
+    with lock:
+        assert count == D.DISTILL_MAX_CONCURRENT + 1, "放开后第 4 个应当进入"
+
+
+def test_batch_reservation_counts_batch_size():
+    """预留位按「已在跑 + 本批个数」判 —— 纯内存，不经过 DB 复核。"""
+    with D._task_lock:
+        D._user_slots.clear()
+    try:
+        assert D._reserve_user_slots("u", [("t", "甲"), ("t", "乙")]) is None
+        msg = D._reserve_user_slots("u", [("t", "丙"), ("t", "丁")])
+        assert msg is not None and "最多 3 个" in msg, msg
+        with D._task_lock:
+            assert D._user_slots["u"] == {("t", "甲"), ("t", "乙")}
+    finally:
+        with D._task_lock:
+            D._user_slots.clear()
