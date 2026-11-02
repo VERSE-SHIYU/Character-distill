@@ -763,6 +763,14 @@ class _ChunkEmittingDistiller:
             yield {"status": "analyzing", "current": i + 1, "total": self.N}
 
 
+class _Futures(list):
+    """ThreadPoolExecutor 的 future 列表；保留旧用例 `t.join(timeout)` 的调用形状。"""
+
+    def join(self, timeout=None):
+        for fut in self:
+            fut.result(timeout=timeout)
+
+
 class _CapOnlySemaphore:
     """只数 acquire 次数、release 是 no-op —— 让第 cap+1 次 acquire 必然落空。
 
