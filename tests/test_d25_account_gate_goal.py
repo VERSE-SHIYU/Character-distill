@@ -173,14 +173,27 @@ def test_g2_three_distills_share_the_account_gate(tmp_path, monkeypatch):
 
     def worker(d: Distiller) -> None:
         try:
-            client = _FakeAsyncClient(upstream)
-            asyncio.run(d._run_map_concurrent(
-                [f"第{i}片正文" for i in range(8)],
-                lambda chunk: ("你是角色分析专家", f"分析：{chunk}"),
-                "distill_map", client=client,
-            ))
-            for _ in range(2):
-                d.llm.chat("sys", [{"role": "user", "content": "同步调用"}])
+            # Map 与同步调用**并发**发出：否则同步调用总落在别人 Map 收尾之后，
+            # 「同步不过闸」这个缺陷就露不出来（峰值永远差在闸内那几路之下）。
+            def run_map() -> None:
+                try:
+                    client = _FakeAsyncClient(upstream)
+                    asyncio.run(d._run_map_concurrent(
+                        [f"第{i}片正文" for i in range(8)],
+                        lambda chunk: ("你是角色分析专家", f"分析：{chunk}"),
+                        "distill_map", client=client,
+                    ))
+                except BaseException as exc:
+                    with lock:
+                        failures.append(exc)
+
+            t = threading.Thread(target=run_map)
+            t.start()
+            try:
+                for _ in range(2):
+                    d.llm.chat("sys", [{"role": "user", "content": "同步调用"}])
+            finally:
+                t.join(30)
         except BaseException as exc:
             with lock:
                 failures.append(exc)
