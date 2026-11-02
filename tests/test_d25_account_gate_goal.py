@@ -1,17 +1,22 @@
 """D25 第 2 步目标检查：同一账号的每次蒸馏尝试共用一只 AIMD 闸。
 
-G1–G6、G8–G10 先以 ``xfail(strict=True)`` 落红，实现后摘标记转绿；
-G7 是对照（原实例的聊天入口不加闸，现状即绿）。
+G1–G6、G8–G13 先以 ``xfail(strict=True)`` 落红，实现后摘标记转绿；
+G7、G14 是对照（原实例聊天不过闸 / 没有账号身份的对象不包闸，现状即绿）。
 
 判据全部是**行为**：闸的自报在途数、假上游的在途峰值、调用是否被排队。
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import inspect
+import json
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 import adapters.llm_adapter as M
 import core.concurrency as C
@@ -463,3 +468,173 @@ def test_g10_same_account_reuses_the_learned_gate(tmp_path):
     d2 = Distiller(llm2, config_path=cfg)
     assert d2.llm._gate is gate, "同一账号两次构造各建了一只闸"
     assert d2.llm._gate.ceiling == learned, "第二轮没有从第一轮学到的上限起步"
+
+
+# ── G11：按**账号身份**包闸，不按对象类型（__getattr__ 转发包装器） ─────────────
+
+@pytest.mark.xfail(strict=True, reason="现在按 isinstance(llm, LLMAdapter) 判，包装器漏过闸")
+def test_g11_wrapping_is_by_account_identity_not_type(tmp_path):
+    """照 `scripts/replay_distill.py` 的 `_RecordingLLM`：真适配器外面套一层转发包装。"""
+    C.reset_account_gates()
+    llm = _adapter("http://acct-g11.invalid/v1")
+
+    class _Forwarding:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    wrapped = _Forwarding(llm)
+    assert not isinstance(wrapped, M.LLMAdapter)
+
+    cfg = _config(tmp_path, 4)
+    d_wrapped = Distiller(wrapped, config_path=cfg)
+    d_direct = Distiller(llm, config_path=cfg)
+
+    assert isinstance(d_wrapped.llm, C.GatedLLM), "类型不是 LLMAdapter 的转发包装器漏过了闸"
+    assert isinstance(d_direct.llm, C.GatedLLM)
+    assert d_wrapped.llm.gate is d_direct.llm.gate, "包装器与直接适配器拿到的不是同一只账号闸"
+
+
+# ── G12：select_by_schema 也过闸（闸满排队 + 429 下调） ─────────────────────
+
+_TOOL = {
+    "name": "pick_dialogue_examples",
+    "description": "挑示例",
+    "parameters": {"type": "object",
+                   "properties": {"slot_1": {"type": "integer"}},
+                   "required": ["slot_1"]},
+}
+
+
+def _tool_completion(args: dict):
+    return SimpleNamespace(
+        choices=[SimpleNamespace(
+            message=SimpleNamespace(
+                content=None,
+                tool_calls=[SimpleNamespace(
+                    function=SimpleNamespace(arguments=json.dumps(args)))],
+            ),
+            finish_reason="stop",
+        )],
+        usage=None,
+    )
+
+
+class _ToolClient:
+    """同步假客户端：在途超上限 → DeepSeek 形态 429；否则回一个工具调用。"""
+
+    def __init__(self, upstream: _Upstream, args: dict | None = None) -> None:
+        self._up = upstream
+        self._args = args if args is not None else {}
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    def _create(self, **kwargs):
+        throttled = self._up.enter()
+        try:
+            if throttled:
+                raise _RateLimited("concurrency limit exceeded")
+            return _tool_completion(self._args)
+        finally:
+            self._up.leave()
+
+
+@pytest.mark.xfail(strict=True, reason="select_by_schema 没有 gate 参数，仍走 __getattr__ 透传")
+def test_g12_select_by_schema_waits_on_the_gate_and_429_downscales(monkeypatch):
+    C.reset_account_gates()
+
+    llm = _adapter("http://acct-g12.invalid/v1")
+    upstream = _Upstream(limit=99, hold_s=0.0)
+    llm._client = _ToolClient(upstream, args={"slot_1": 3})
+    gate = C.account_gate(llm.account_id, 1)
+
+    gate.acquire()
+    outcome: dict = {}
+
+    def worker() -> None:
+        outcome["value"] = llm.select_by_schema(
+            "sys", [{"role": "user", "content": "挑"}], _TOOL, gate=gate)
+
+    t = threading.Thread(target=worker)
+    t.start()
+    time.sleep(0.25)
+    assert upstream.calls == 0, "闸满时 select_by_schema 没有排队"
+    gate.release()
+    t.join(5)
+    assert outcome["value"] == {"slot_1": 3}
+
+    # 429：闸乘性下调（把 429 次数上限压到 1，首撞即耗尽，不必真睡退避）
+    monkeypatch.setattr(M, "_RATE_LIMIT_ATTEMPTS", 1)
+    throttled = _adapter("http://acct-g12b.invalid/v1")
+    throttled._client = _ToolClient(_Upstream(limit=0))
+    gate2 = C.account_gate(throttled.account_id, 10)
+    with pytest.raises(M.UpstreamFailure):
+        throttled.select_by_schema(
+            "sys", [{"role": "user", "content": "挑"}], _TOOL, gate=gate2)
+    assert gate2.ceiling < 10, f"429 没把闸压下来：{gate2.ceiling}"
+
+
+# ── G13：形态守卫 —— 蒸馏流用到的每个模型方法都必须在带闸代理上显式定义 ───────
+
+# 非请求方法：建客户端不算「一次模型调用」，没有可排队的东西。
+_NOT_LLM_REQUESTS = {"_make_async_client"}
+
+
+def _gated_method_names() -> set[str]:
+    """`GatedLLM` 类体内显式定义的方法名 —— 代理上定义的每个方法都带闸。"""
+    tree = ast.parse(inspect.getsource(C.GatedLLM))
+    cls = tree.body[0]
+    return {n.name for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+
+def _llm_method_calls(rel: str) -> list[tuple[str, int]]:
+    """文件里所有「接收者是 llm / *_llm」的方法调用 → [(方法名, 行号)]。"""
+    root = Path(__file__).resolve().parents[1]
+    tree = ast.parse((root / rel).read_text(encoding="utf-8"), filename=rel)
+    out: list[tuple[str, int]] = []
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call) or not isinstance(n.func, ast.Attribute):
+            continue
+        recv = n.func.value
+        name = (recv.attr if isinstance(recv, ast.Attribute)
+                else recv.id if isinstance(recv, ast.Name) else None)
+        if name is not None and (name == "llm" or name.endswith("_llm")):
+            out.append((n.func.attr, n.lineno))
+    return out
+
+
+@pytest.mark.xfail(strict=True, reason="select_by_schema 还在代理之外（走 __getattr__ 透传）")
+def test_g13_every_model_method_used_by_distill_is_gated():
+    gated = _gated_method_names()
+    assert gated, "GatedLLM 上没有显式方法 —— 守卫推导坏了，在假绿"
+    allowed = gated | _NOT_LLM_REQUESTS
+
+    offences: list[tuple[str, str, int]] = []
+    for rel in ("core/distiller.py", "web/routers/distill.py", "core/text_manager.py"):
+        calls = _llm_method_calls(rel)
+        if rel != "web/routers/distill.py":
+            assert calls, f"{rel} 里没扫到任何 llm 方法调用 —— 接收者识别可能扫错了"
+        offences += [(rel, name, ln) for name, ln in calls if name not in allowed]
+
+    assert not offences, (
+        "蒸馏流里有模型方法没经过带闸代理（新增调用必须同时加进 GatedLLM 并带 gate=）："
+        + ", ".join(f"{rel}:{ln} .{name}()" for rel, name, ln in offences))
+
+
+# ── G14：没有账号身份的对象不包闸（MagicMock / 鸭子替身） ────────────────────
+
+def test_g14_objects_without_account_identity_are_not_wrapped(tmp_path):
+    from unittest.mock import MagicMock
+
+    C.reset_account_gates()
+    cfg = _config(tmp_path, 3)
+    assert not isinstance(Distiller(MagicMock(), config_path=cfg).llm, C.GatedLLM), \
+        "MagicMock 的 account_id 不是 str，不该包闸"
+
+    class _Duck:
+        def chat(self, *_a, **_kw):
+            return "ok"
+
+    assert not isinstance(Distiller(_Duck(), config_path=cfg).llm, C.GatedLLM), \
+        "鸭子替身没有账号身份，不该包闸"
