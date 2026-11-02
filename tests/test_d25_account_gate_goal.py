@@ -13,8 +13,6 @@ import threading
 import time
 from types import SimpleNamespace
 
-import pytest
-
 import adapters.llm_adapter as M
 import core.concurrency as C
 from core.distiller import Distiller
@@ -118,7 +116,6 @@ def _config(tmp_path, cap: int) -> str:
 
 # ── G1：线程各自 asyncio.run + 同步线程，共用一只闸 ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="账号闸尚未实现")
 def test_g1_sync_and_async_share_one_gate():
     C.reset_account_gates()
     gate = C.account_gate("acct-g1", 3)
@@ -161,7 +158,6 @@ def test_g1_sync_and_async_share_one_gate():
 
 # ── G2：同账号 3 个蒸馏任务（Map + 同步调用混合） ───────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="账号闸尚未实现")
 def test_g2_three_distills_share_the_account_gate(tmp_path, monkeypatch):
     C.reset_account_gates()
     monkeypatch.setattr(M, "_GEN_BACKOFF_S", 0.0)
@@ -202,7 +198,6 @@ def test_g2_three_distills_share_the_account_gate(tmp_path, monkeypatch):
 
 # ── G3：取消不泄漏名额（含「取消时恰好已拿到名额」） ────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="账号闸尚未实现")
 def test_g3_cancelled_waiters_leave_no_permits():
     C.reset_account_gates()
     gate = C.account_gate("acct-g3", 2)
@@ -235,7 +230,6 @@ def test_g3_cancelled_waiters_leave_no_permits():
     assert done.wait(3), "取消后的等待者泄漏了名额：闸再也放不进人"
 
 
-@pytest.mark.xfail(strict=True, reason="账号闸尚未实现")
 def test_g3b_cancel_after_acquire_returns_the_permit():
     """「源任务已完成、调用方却被取消」的竞争：名额必须补还。
 
@@ -258,7 +252,6 @@ def test_g3b_cancel_after_acquire_returns_the_permit():
 
 # ── G4：不同账号的闸互不影响 ──────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="账号闸尚未实现")
 def test_g4_two_accounts_have_independent_ceilings():
     C.reset_account_gates()
     a = C.account_gate("acct-a", 10)
@@ -272,7 +265,6 @@ def test_g4_two_accounts_have_independent_ceilings():
 
 # ── G5：同步 chat 等闸时长顺延总时限 ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="账号闸尚未实现")
 def test_g5_sync_chat_extends_deadline_for_queueing(monkeypatch):
     C.reset_account_gates()
     monkeypatch.setattr(M, "_GEN_DEADLINE_S", 1.5)
@@ -302,7 +294,6 @@ def test_g5_sync_chat_extends_deadline_for_queueing(monkeypatch):
 
 # ── G6：流式名额占到流读完 / 生成器关闭 ───────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="账号闸尚未实现")
 def test_g6_stream_holds_the_permit_until_consumed():
     C.reset_account_gates()
     upstream = _Upstream(limit=99, hold_s=0.0)
@@ -343,7 +334,6 @@ def test_g7_original_instance_chat_paths_are_not_gated():
 
 # ── G8：在家循环线程里调同步接口 → RuntimeError ───────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="账号闸尚未实现")
 def test_g8_sync_api_on_home_loop_thread_raises():
     C.reset_account_gates()
     gate = C.AccountGate(1)
@@ -367,7 +357,6 @@ def test_g8_sync_api_on_home_loop_thread_raises():
 
 # ── G9：苏醒台词、开场白变体两处调用经过账号闸 ────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="账号闸尚未实现")
 def test_g9a_awakening_waits_on_the_account_gate(tmp_path):
     C.reset_account_gates()
     upstream = _Upstream(limit=99, hold_s=0.0)
@@ -394,7 +383,6 @@ def test_g9a_awakening_waits_on_the_account_gate(tmp_path):
     assert upstream.calls == 1
 
 
-@pytest.mark.xfail(strict=True, reason="账号闸尚未实现")
 def test_g9b_opening_variation_waits_on_the_account_gate(tmp_path):
     C.reset_account_gates()
     upstream = _Upstream(limit=99, hold_s=0.0)
@@ -444,7 +432,6 @@ def test_g9b_opening_variation_waits_on_the_account_gate(tmp_path):
 
 # ── G10：同一账号两次构造 Distiller 拿到同一个闸 ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="账号闸尚未实现")
 def test_g10_same_account_reuses_the_learned_gate(tmp_path):
     C.reset_account_gates()
     cfg = _config(tmp_path, 10)
