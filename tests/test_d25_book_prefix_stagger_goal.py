@@ -138,6 +138,7 @@ class _PrefixLLM:
             "group": group,
             "start": time.monotonic(),
             "first": None,
+            "end": None,
             "book_prefix": system.startswith(BOOK_PREFIX),
         }
         with self._lock:
@@ -158,6 +159,8 @@ class _PrefixLLM:
             time.sleep(WARM_DELAY)
             record["first"] = time.monotonic()
             yield R._group_reply(group)
+            time.sleep(WARM_DELAY)
+            record["end"] = time.monotonic()
             return {"prompt_tokens": 1, "completion_tokens": 1}
 
         return _gen()
@@ -209,6 +212,7 @@ def test_s4_late_warm_group_starts_after_leaders_first_piece():
     earlier, later = warm
     assert earlier["first"] is not None
     assert later["start"] >= earlier["first"], "后开始的预热组在领头首段之前就发了"
+    assert later["start"] < earlier["end"], "跟随者等到领头整组结束才发，没有在首段时放行"
 
     arc = [c for c in llm.calls if c["group"] == ARC]
     assert len(arc) == 2
