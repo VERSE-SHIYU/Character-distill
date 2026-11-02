@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI, BadRequestError, OpenAI, Timeout
 
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
+from core.fingerprint import key_fingerprint
 from core.utils import (  # 估算兜底出口 + 缓存字段名单（唯一来源）
     CACHE_HIT_FIELD, CACHE_MISS_FIELD, CACHE_USAGE_FIELDS, estimate_usage,
 )
@@ -840,11 +841,6 @@ class LLMAdapter:
         self._is_user_key = is_user_key
         self._dialect = _detect_dialect(self._base_url, self._model)
         self.last_usage: dict | None = None
-        # 该账号上一轮学到的并发上限（WP14 A3）。放在 adapter 上而不是 map_concurrency
-        # 里：它是**账号**的属性（按余额变），adapter 又是按 user_id 缓存的
-        # （web/deps.py），一轮 Map 结束写回、下一轮从它起步，冷启动那波不必再撞一遍。
-        # `None` = 还没学过，闸从配的 `map_concurrency` 起。
-        self.learned_map_concurrency: int | None = None
         # 严格模式工具调用的客户端（只有 DeepSeek 方言会用到），按需创建后缓存：
         # 一个实例一个客户端是既有约定（同 `_client`），每次调用都新建会把连接池丢掉。
         self._beta_client: Any | None = None
@@ -895,6 +891,11 @@ class LLMAdapter:
         """凭据 + 地址 + 模型的指纹（不可逆，可进缓存键与日志）—— 换了其中任一项就变。"""
         raw = f"{self._api_key}|{self._base_url}|{self._model}".encode("utf-8")
         return hashlib.sha256(raw).hexdigest()[:16]
+
+    @property
+    def account_id(self) -> str:
+        """账号身份 = 地址 + key 指纹，**不含模型**：限流按账号计，换模型仍是同一只闸。"""
+        return f"{self._base_url}|{key_fingerprint(self._api_key)}"
 
     def derive(
         self,
@@ -970,11 +971,15 @@ class LLMAdapter:
 
     @T.spanned("llm.chat", op="chat", finalize=_infer_finalize)
     def chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None,
-             *, response_format: dict[str, Any] | None = None) -> str:
+             *, response_format: dict[str, Any] | None = None,
+             gate: "AdaptiveGate | None" = None) -> str:
         """非流式对话，返回完整文本回复。重试预算=生成轮（3 次非429 / 总墙钟 60s，_RetryBudget）。
 
         *response_format* 原样透传给 API（mem0 的提炼要 `{"type": "json_object"}`）。
         **不给这个参数时请求体逐字与从前一致** —— 它是可选项，不是新默认值。
+        *gate* 给了就把**每一次**尝试包在闸内（成功报 `on_success`、429 报
+        `on_rate_limited`），退避睡眠落在闸**外**；等闸时长顺延回总时限（同 async_chat）。
+        不传则请求与行为逐字不变。
         """
         self._before_call()
         payload = self._build_messages(system_prompt, messages)
@@ -984,31 +989,49 @@ class LLMAdapter:
                                   err_prefix="LLM API")
         self.last_usage = None  # 切断上一轮污染：本轮无 usage 时不能冒充真实值
         while True:
-            timeout = budget.attempt_timeout()
+            if gate is not None:
+                # 排队等名额不是本调用的时间；单次超时也在**进闸之后**才算。
+                queue_t0 = time.monotonic()
+                gate.acquire()
+                budget.extend_deadline(time.monotonic() - queue_t0)
             try:
-                completion = self._client.chat.completions.create(
-                    model=self._model,
-                    messages=payload,
-                    temperature=self._temperature,
-                    max_tokens=_mt,
-                    presence_penalty=self._presence_penalty,
-                    timeout=timeout,
-                    extra_body=self._request_options(),
-                    # 下面两个都是「没给就不发这个字段」—— 展开为空，请求体与不传时逐字一致。
-                    **({} if self._top_p is None else {"top_p": self._top_p}),
-                    **({} if response_format is None else {"response_format": response_format}),
-                )
-                choices = completion.choices
-                if not choices:
-                    raise RuntimeError("API returned empty choices")
-                content = _extract_content(choices[0], where="chat")
-                if completion.usage:
-                    self.last_usage = _usage_from(completion.usage)
-                return content
-            except IncompleteResponseError:
-                raise  # 截断是确定性失败：不烧重试预算（同 ToolsNotSupportedError 形状）
-            except Exception as exc:
-                time.sleep(budget.on_failure(exc))
+                # 预算耗尽是本地判定：attempt_timeout 直抛，不经 on_failure 重包装成上游故障。
+                timeout = budget.attempt_timeout()
+                gen = gate.generation if gate is not None else None
+                try:
+                    completion = self._client.chat.completions.create(
+                        model=self._model,
+                        messages=payload,
+                        temperature=self._temperature,
+                        max_tokens=_mt,
+                        presence_penalty=self._presence_penalty,
+                        timeout=timeout,
+                        extra_body=self._request_options(),
+                        # 下面两个都是「没给就不发这个字段」—— 展开为空，请求体与不传时逐字一致。
+                        **({} if self._top_p is None else {"top_p": self._top_p}),
+                        **({} if response_format is None else {"response_format": response_format}),
+                    )
+                    # 与 async_chat 同序：请求成功即报成功，再读内容。
+                    if gate is not None:
+                        gate.report_success()
+                    choices = completion.choices
+                    if not choices:
+                        raise RuntimeError("API returned empty choices")
+                    content = _extract_content(choices[0], where="chat")
+                    if completion.usage:
+                        self.last_usage = _usage_from(completion.usage)
+                    return content
+                except IncompleteResponseError:
+                    raise  # 截断是确定性失败：不烧重试预算（同 ToolsNotSupportedError 形状）
+                except Exception as exc:
+                    # 下调要在还名额之前落账（同 async_chat）：出闸会唤醒等在闸外的调用。
+                    if gate is not None and _classify_retry(exc)[0]:
+                        gate.report_rate_limited(gen)
+                    failure = exc
+            finally:
+                if gate is not None:
+                    gate.release()
+            time.sleep(budget.on_failure(failure))
 
     @T.async_spanned("llm.chat", op="chat", finalize=_async_infer_finalize)
     async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None, client: AsyncOpenAI | None = None, *, deadline_s: float = _GEN_BATCH_DEADLINE_S, gate: "AdaptiveGate | None" = None) -> tuple[str, dict | None]:
@@ -1090,7 +1113,8 @@ class LLMAdapter:
 
     def _stream(self, system_prompt: str, messages: list[dict[str, Any]],
                 max_tokens: int | None = None, *,
-                read_s: float | None = None) -> Generator[str, None, dict | None]:
+                read_s: float | None = None,
+                gate: "AdaptiveGate | None" = None) -> Generator[str, None, dict | None]:
         """流式的唯一实现，两个公开入口共用（``chat_stream`` / ``chat_stream_long``）。
 
         ``read_s`` 是**读**阶段的超时上限：``None`` = 取本次 attempt 的 ceiling，即以标量
@@ -1120,26 +1144,44 @@ class LLMAdapter:
                                   ceiling_s=_STREAM_ATTEMPT_S, backoff_mult_s=_STREAM_BACKOFF_S,
                                   log_prefix="LLMAdapter chat_stream")
         while True:
-            timeout: float | Timeout = budget.attempt_timeout()
-            if read_s is not None:
-                # 分项超时：标量会被 httpx 铺到每个阶段（含 read），长 prefill 必超时。
-                timeout = Timeout(timeout, read=read_s)
+            if gate is not None:
+                # 同 chat：排队顺延总时限，退避睡眠前先把名额还掉。
+                queue_t0 = time.monotonic()
+                gate.acquire()
+                budget.extend_deadline(time.monotonic() - queue_t0)
+            hold = False  # 建流成功 → 名额留到读流结束；失败/预算尽 → finally 里还
             try:
-                stream = self._client.chat.completions.create(
-                    model=self._model,
-                    messages=payload,
-                    temperature=self._temperature,
-                    max_tokens=_mt,
-                    presence_penalty=self._presence_penalty,
-                    timeout=timeout,
-                    stream=True,
-                    stream_options={"include_usage": True},
-                    extra_body=self._request_options(),
-                    **({} if self._top_p is None else {"top_p": self._top_p}),
-                )
-                break
-            except Exception as exc:
-                time.sleep(budget.on_failure(exc))
+                timeout: float | Timeout = budget.attempt_timeout()
+                if read_s is not None:
+                    # 分项超时：标量会被 httpx 铺到每个阶段（含 read），长 prefill 必超时。
+                    timeout = Timeout(timeout, read=read_s)
+                gen = gate.generation if gate is not None else None
+                try:
+                    stream = self._client.chat.completions.create(
+                        model=self._model,
+                        messages=payload,
+                        temperature=self._temperature,
+                        max_tokens=_mt,
+                        presence_penalty=self._presence_penalty,
+                        timeout=timeout,
+                        stream=True,
+                        stream_options={"include_usage": True},
+                        extra_body=self._request_options(),
+                        **({} if self._top_p is None else {"top_p": self._top_p}),
+                    )
+                except Exception as exc:
+                    if gate is not None and _classify_retry(exc)[0]:
+                        gate.report_rate_limited(gen)
+                    failure = exc
+                else:
+                    if gate is not None:
+                        gate.report_success()
+                    hold = True
+                    break
+            finally:
+                if gate is not None and not hold:
+                    gate.release()
+            time.sleep(budget.on_failure(failure))
         completion_parts: list[str] = []
         saw_finish_reason = False  # 流式终态只在最后一个 chunk 上出现
         try:
@@ -1191,24 +1233,32 @@ class LLMAdapter:
         except Exception as exc:
             print(f"读取流式响应失败：{exc}")
             raise
+        finally:
+            # 名额占到流读完或生成器关闭（DeepSeek 的并发按「发出到响应完成」计）；
+            # 生成器 close() 走 GeneratorExit，同样经过这里。
+            if gate is not None:
+                gate.release()
 
     @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
     def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]],
                     max_tokens: int | None = None) -> Generator[str, None, dict | None]:
-        """交互/小输出用：读超时取本次 attempt 的 ceiling（聊天是 7 s）。"""
+        """交互/小输出用：读超时取本次 attempt 的 ceiling（聊天是 7 s）。**不过账号闸**。"""
         return (yield from self._stream(system_prompt, messages, max_tokens))
 
     @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
     def chat_stream_long(self, system_prompt: str, messages: list[dict[str, Any]],
-                         max_tokens: int | None = None) -> Generator[str, None, dict | None]:
+                         max_tokens: int | None = None, *,
+                         gate: "AdaptiveGate | None" = None) -> Generator[str, None, dict | None]:
         """长输出流式的**唯一入口**：角色卡 / 合并 / 格式化走这里。
 
         存在的理由是「守汇合点」——读超时放宽只在这一个函数里发生，调用点不需要
         （也不该）知道有这回事：那种「5 处各写一遍参数」的写法，漏一处就是一条会在
         生产上静默读超时的路，而漏掉的那处从调用点看不出来。
+
+        ``gate`` 给了则名额从建流占到流读完（或生成器关闭）；不传行为不变。
         """
         return (yield from self._stream(system_prompt, messages, max_tokens,
-                                        read_s=_BATCH_STREAM_READ_S))
+                                        read_s=_BATCH_STREAM_READ_S, gate=gate))
 
     def _tool_call(
         self,
