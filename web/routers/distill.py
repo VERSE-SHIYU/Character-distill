@@ -650,7 +650,8 @@ def _run_distill_task(
 
         # Generate awakening line (non-fatal, outside lock)
         with task_log.step("苏醒台词"):
-            awakening = _generate_awakening(llm, card, storage=get_storage())
+            # 走蒸馏器的实例（真实适配器时是带账号闸的代理）—— 原实例不过闸。
+            awakening = _generate_awakening(distiller.llm, card, storage=get_storage())
 
         # Persist awakening_message to card (non-fatal)
         if awakening:
