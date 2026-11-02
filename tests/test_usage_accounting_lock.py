@@ -17,6 +17,12 @@
   - 方法被当值搬走 `asyncio.to_thread(llm.chat, ...)` —— AST 上没有 Call 节点，
     只查 Call 形态会整类漏掉（普查第一版就漏了 3 处生产代码，故这里两条都查）
 
+**透明代理不算调用点**：`GatedLLM` 这类装饰器把同名入口的返回值原样交回调用方
+（函数体只有一条 `return self._llm.chat(...)`），自己不消费响应 —— 记账责任仍在
+调用方，而调用方（接收者名为 `llm` / `_llm`）照旧被扫。判据窄到「同名 + 单条
+return」：多一句、改个名、不返回，这处照旧受主判据约束（见本文件末尾的变异）。
+
+
 不变量的自检（防「锁在假绿」）：
   - 入口方法集非空，且逐个是 LLMAdapter 的真实属性（AST 推导与运行对象对上）
   - 记账出口的定义**恰好一处**且落在 core/utils.py —— 出口分散即红（缺陷 16 的形态）。
@@ -360,6 +366,27 @@ def _llm_entry_methods(index: _Index) -> set[str]:
     return direct
 
 
+def _is_transparent_forwarder(fn: ast.AST, attr: ast.Attribute) -> bool:
+    """fn 是否把**同名**入口的返回值原样交回调用方（装饰器形态，如 GatedLLM）。
+
+    函数体（去掉 docstring）只有一条 `return <obj>.<同名>(...)` / `return await ...`，
+    且被返回的那个调用正是 *attr*。这种函数不消费响应：拿到什么交回什么，记账责任
+    在调用方 —— 调用方照旧被扫。任何其他形状（多一句、改名、丢掉返回值）都不算，
+    该调用点仍受主判据约束。
+    """
+    if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or fn.name != attr.attr:
+        return False
+    body = [s for s in fn.body
+            if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant)
+                    and isinstance(s.value.value, str))]
+    if len(body) != 1 or not isinstance(body[0], ast.Return):
+        return False
+    call = body[0].value
+    if isinstance(call, ast.Await):
+        call = call.value
+    return isinstance(call, ast.Call) and call.func is attr
+
+
 def _llm_sites(index: _Index, entries: set[str]) -> list[tuple[str, int, str, str, str, ast.AST]]:
     """[(rel, lineno, 所在函数, 方法名, 形态, 调用节点)]，形态 ∈ {call, value}。"""
     sites = []
@@ -372,6 +399,8 @@ def _llm_sites(index: _Index, entries: set[str]) -> list[tuple[str, int, str, st
             if not _receiver_is_llm(n.value):
                 continue
             chain = index.lexical_chain(rel, n.lineno)
+            if chain and _is_transparent_forwarder(chain[-1], n):
+                continue
             sites.append((rel, n.lineno, chain[-1].name if chain else "<module>",
                           n.attr, "call" if id(n) in called else "value", n))
     return sites
@@ -543,3 +572,20 @@ def test_mutation_dropping_a_value_form_record_call_goes_red():
     hit = [d for d in dropped if d[0] == rel and d[2] == "at_reply" and d[3] == "chat"
            and d[4] == "value"]
     assert hit, f"拿掉落账后没点名 at_reply 的 value 形态 .chat，实际红了：{dropped}"
+
+
+def test_mutation_forwarder_that_drops_the_response_goes_red():
+    """变异自测（透明代理形态）：代理不再原样交回响应 → 锁红并点名 GatedLLM.chat。
+
+    装饰器豁免只认「同名 + 单条 return」；调用结果一旦被吞（不返回），它就是一处
+    拿到响应却不落账的调用点，主判据必须接住。
+    """
+    rel = "core/concurrency.py"
+    anchor = '        return self._llm.chat(*args, gate=self._gate, **kwargs)\n'
+    mutated = _mutate(rel, anchor,
+                      '        self._llm.chat(*args, gate=self._gate, **kwargs)\n'
+                      '        return None\n')
+
+    _, _, dropped, _ = _audit({rel: mutated})
+    hit = [d for d in dropped if d[0] == rel and d[2] == "chat" and d[3] == "chat"]
+    assert hit, f"代理吞掉响应后锁没点名 GatedLLM.chat，实际红了：{dropped}"
