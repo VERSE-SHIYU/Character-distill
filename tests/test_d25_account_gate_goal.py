@@ -649,3 +649,127 @@ def test_g14_objects_without_account_identity_are_not_wrapped(tmp_path):
 
     assert not isinstance(Distiller(_Duck(), config_path=cfg).llm, C.GatedLLM), \
         "鸭子替身没有账号身份，不该包闸"
+
+
+# ── G15–G17：失败路径也要把名额还回来（否则每次 429 / 上游错永久吞掉一个名额） ──
+# 审计补测（PR #239 第二轮）：生产代码在 finally 里还名额，这里锁住它。变异
+# 「`_gated_attempt` 异常时不 release」「`_stream` 建流失败不 release」在 G1–G14 下全部存活。
+
+class _ServerError(Exception):
+    """非 429 的上游错：按普通可重试失败计数。"""
+    status_code = 500
+
+
+class _ScriptedClient:
+    """同步假客户端：按脚本逐次给结果——429 / 500 抛错，"ok" 正常返回（普通 / 流式 / 工具三形）。"""
+
+    def __init__(self, script: list) -> None:
+        self._script = list(script)
+        self.calls = 0
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    def _create(self, **kwargs):
+        self.calls += 1
+        step = self._script.pop(0) if self._script else "ok"
+        if step == 429:
+            raise _RateLimited("concurrency limit exceeded")
+        if step == 500:
+            raise _ServerError("upstream 500")
+        if kwargs.get("stream"):
+            return iter([_stream_chunk("ok"), _stream_chunk(None, "stop")])
+        if kwargs.get("tools"):
+            return _tool_completion({"slot_1": 3})
+        return _completion("ok")
+
+
+def _no_backoff(monkeypatch) -> None:
+    """退避照常记账（计数器 / 上限判定不变），只是不真睡。"""
+    original = M._RetryBudget.on_failure
+
+    def _record_only(self, exc):
+        original(self, exc)
+        return 0.0
+
+    monkeypatch.setattr(M._RetryBudget, "on_failure", _record_only)
+
+
+def _run_within(fn, seconds: float = 5.0) -> dict:
+    """在线程里跑 fn 并限时：名额漏了时，同一调用里的重试或下一次调用会在进闸处永远挂起。
+
+    返回 ``{"done": bool, "value": ..., "error": ...}``；挂起即 ``done=False``（线程是 daemon，不拖住进程）。
+    """
+    out: dict = {"done": False}
+
+    def run() -> None:
+        try:
+            out["value"] = fn()
+        except BaseException as exc:  # 交回主线程断言
+            out["error"] = exc
+        out["done"] = True
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(seconds)
+    return out
+
+
+@pytest.mark.parametrize("first_failure", [429, 500])
+def test_g15_sync_chat_returns_the_permit_after_a_failed_attempt(monkeypatch, first_failure):
+    C.reset_account_gates()
+    _no_backoff(monkeypatch)
+    llm = _adapter(f"http://acct-g15-{first_failure}.invalid/v1")
+    llm._client = _ScriptedClient([first_failure, "ok", "ok"])
+    gate = C.account_gate(f"acct-g15-{first_failure}", 1)
+
+    first = _run_within(lambda: llm.chat("sys", [{"role": "user", "content": "一"}], gate=gate))
+    assert first["done"], f"{first_failure} 那次尝试吞掉了名额，重试在进闸处挂起"
+    assert first.get("value") == "ok", first.get("error")
+    assert gate.inflight == 0, f"{first_failure} 那次尝试的名额没还"
+    second = _run_within(lambda: llm.chat("sys", [{"role": "user", "content": "二"}], gate=gate))
+    assert second["done"], "上限 1 的闸被失败尝试吞掉名额，下一次调用挂起"
+
+
+def test_g16_stream_returns_the_permit_when_create_fails(monkeypatch):
+    C.reset_account_gates()
+    _no_backoff(monkeypatch)
+    llm = _adapter("http://acct-g16.invalid/v1")
+    llm._client = _ScriptedClient([429, "ok", "ok"])
+    gate = C.account_gate("acct-g16", 1)
+
+    first = _run_within(
+        lambda: list(llm.chat_stream_long("sys", [{"role": "user", "content": "流"}], gate=gate)))
+    assert first["done"], "建流 429 吞掉了名额，重试在进闸处挂起"
+    assert first.get("value") == ["ok"], first.get("error")
+    assert gate.inflight == 0, "建流 429 那次的名额没还"
+    second = _run_within(
+        lambda: list(llm.chat_stream_long("sys", [{"role": "user", "content": "流"}], gate=gate)))
+    assert second["done"], "下一次流式调用挂起"
+
+    # 每次都 429 直到预算耗尽：抛错，且名额一个不少地还回来
+    monkeypatch.setattr(M, "_RATE_LIMIT_ATTEMPTS", 2)
+    dead = _adapter("http://acct-g16b.invalid/v1")
+    dead._client = _ScriptedClient([429] * 10)
+    gate_b = C.account_gate("acct-g16b", 1)
+    dead_run = _run_within(
+        lambda: list(dead.chat_stream_long("sys", [{"role": "user", "content": "流"}], gate=gate_b)))
+    assert dead_run["done"], "每次都 429 时第二次尝试在进闸处挂起（第一次的名额没还）"
+    assert "error" in dead_run, "预算耗尽应抛错"
+    assert dead._client.calls >= 2
+    assert gate_b.inflight == 0, "预算耗尽抛错后名额没还"
+
+
+def test_g17_select_by_schema_returns_the_permit_after_429(monkeypatch, tmp_path):
+    C.reset_account_gates()
+    _no_backoff(monkeypatch)
+    llm = _adapter("http://acct-g17.invalid/v1")
+    llm._client = _ScriptedClient([429, "ok", "ok"])
+    proxy = Distiller(llm, config_path=_config(tmp_path, 1)).llm
+
+    first = _run_within(
+        lambda: proxy.select_by_schema("sys", [{"role": "user", "content": "挑"}], _TOOL))
+    assert first["done"], "select_by_schema 429 吞掉了名额，重试在进闸处挂起"
+    assert first.get("value") == {"slot_1": 3}, first.get("error")
+    assert proxy.gate.inflight == 0, "select_by_schema 429 那次的名额没还"
+    second = _run_within(
+        lambda: proxy.select_by_schema("sys", [{"role": "user", "content": "挑"}], _TOOL))
+    assert second["done"], "下一次 select_by_schema 挂起"
