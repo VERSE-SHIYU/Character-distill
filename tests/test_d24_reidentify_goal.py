@@ -161,6 +161,25 @@ async def test_default_hits_db_cache_without_llm(store, uid):
     assert llm.chunk_calls == 0 and llm.judge_calls == 0
 
 
+@pytest.mark.xfail(strict=True, reason="IDENTIFY_VERSION 仍为 4：#234 改了并组口径却没升版本")
+async def test_roster_from_before_co_main_veto_is_not_reused(store, uid):
+    """#234 之前（版本 4）落库的名单可能含错并，默认路径不得原样返回，须重新识别并落库。
+
+    4 是字面量、不从被测模块取：线上存着的就是版本 4 的名单，它们必须失效。
+    """
+    tid = await _seed_text(store, uid)
+    await store.save_characters(tid, OLD_ROSTER, version=4)
+
+    stub = _StubDistiller()
+    got = await resolve_characters(store, stub, tid, uid, CONTENT)
+
+    assert stub.calls == [False], "版本 4 的旧名单被当成缓存命中，没有重新识别"
+    assert got == NEW_ROSTER
+    stored = await store.get_characters_owned(
+        tid, uid, version=Distiller.IDENTIFY_VERSION)
+    assert stored == NEW_ROSTER
+
+
 async def test_force_reidentifies_and_persists_new_roster(store, uid):
     tid = await _seed_text(store, uid)
     await _seed_roster(store, tid)
