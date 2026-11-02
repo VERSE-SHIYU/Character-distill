@@ -145,7 +145,7 @@ async def test_per_chunk_outputs_and_meta_are_persisted(store, uid):
     assert trace["per_chunk"] == CHUNKS
     assert trace["chunk_size"] == CHUNK_SIZE
     assert trace["chunk_count"] == 3
-    assert trace["identify_version"] == 4
+    assert trace["identify_version"] == Distiller.IDENTIFY_VERSION
 
 
 async def test_judge_samples_and_tally_are_persisted(store, uid):

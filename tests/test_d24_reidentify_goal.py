@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """D24 ①b 第 3 步目标检查：「重新识别」真的重新识别。
 
-名单按（文本、``IDENTIFY_VERSION``）缓存，而 #234 的同片主名否决没有升版本号。
-名单页的「重新识别」与首次「开始蒸馏」走同一个入口，请求体只有 text_id，于是
-库里命中的旧名单被原样返回 —— 按钮点了等于没点。本文件锁的是 ``force`` 链路：
+名单按（文本、``IDENTIFY_VERSION``）缓存。名单页的「重新识别」与首次「开始蒸馏」
+走同一个入口，请求体只有 text_id，于是同一版本内库里命中的旧名单被原样返回 ——
+按钮点了等于没点。本文件锁的是 ``force`` 链路（另有一条锁 #234 之后升版本：
+版本 4 的旧名单不得被默认路径复用）：
 
   1. 默认（force=False）命中库缓存 → 原样返回，不调 LLM（对照，改前已成立）；
   2. force=True 跳过库缓存 → 调 LLM，返回并落库新名单 + 留证；
@@ -161,7 +162,6 @@ async def test_default_hits_db_cache_without_llm(store, uid):
     assert llm.chunk_calls == 0 and llm.judge_calls == 0
 
 
-@pytest.mark.xfail(strict=True, reason="IDENTIFY_VERSION 仍为 4：#234 改了并组口径却没升版本")
 async def test_roster_from_before_co_main_veto_is_not_reused(store, uid):
     """#234 之前（版本 4）落库的名单可能含错并，默认路径不得原样返回，须重新识别并落库。
 

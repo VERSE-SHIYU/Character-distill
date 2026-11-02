@@ -855,7 +855,9 @@ class Distiller:
     #: 4（同版修订，未合入 main）：逐片提示词加 `spoke`，主次改由「本人说话的不同
     #: 分片数 ≥ MIN_SPEAK_CHUNKS 且非泛称」判定；全书判定输出改 `merge` / `impersonal`
     #: 两键、取 5 次独立采样的多数票。
-    IDENTIFY_VERSION = 4
+    #: 5：两步并组加同片主名否决（`roster_aggregate.CO_MAIN_VETO_CHUNKS`，#234）—— 合并
+    #: 规则变了，版本 4 的名单可能含错并（一本书把四个人并进主角），必须失效重识别。
+    IDENTIFY_VERSION = 5
     # 回忆区回复只是几行章号范围 + 理由（实测 331–748 token），给足余量。
     RETRO_MAX_TOKENS = 1024
 
