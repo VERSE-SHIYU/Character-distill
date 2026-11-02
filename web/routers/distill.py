@@ -90,7 +90,8 @@ DISTILL_MAX_CONCURRENT = 3
 _DISTILL_SEMAPHORE = threading.Semaphore(DISTILL_MAX_CONCURRENT)  # 最多同时3个蒸馏任务
 
 # ── 按用户并发闸 ──────────────────────────────────────────────────────────
-# 每用户同时只允许 DISTILL_MAX_PER_USER 个蒸馏。两道门各司其职：
+# 每用户同时允许 DISTILL_MAX_PER_USER 个蒸馏（与全局上限相同）；同一（书, 角色）
+# 同时只允许一个 —— 后者才是防「同一批分片烧两遍额度」的那道门。两道门各司其职：
 #   1. 预留位 _user_slots（同步、进程内）—— 挡并发双 /start 的 TOCTOU。count 与
 #      insert 都隔着 await，同一 event loop 上两个请求会交错读到「该用户没在跑」
 #      再各插一行、各起一条线程，同一批分片烧两遍额度。同步占坑是唯一裁决点。
@@ -99,7 +100,7 @@ _DISTILL_SEMAPHORE = threading.Semaphore(DISTILL_MAX_CONCURRENT)  # 最多同时
 # → uvicorn.run 未传 workers=），所以它就是权威。一旦上多 worker / 多副本，必须升级
 # 为 distill_tasks 上的部分唯一索引 (user_id) WHERE status IN ('queued','running')
 # —— 只有 DB 约束才是跨进程真原子。
-DISTILL_MAX_PER_USER = 1
+DISTILL_MAX_PER_USER = 3
 # 幽灵行时效窗：活任务的进度写会持续刷新 updated_at，running 行超这么久没刷新即视为
 # 「线程已死、终态没落库」，不再计入占用 —— 否则该用户被一行死任务永久挡住且无法自救。
 DISTILL_GHOST_IDLE_MIN = int(os.getenv("DISTILL_GHOST_IDLE_MIN", "30"))
@@ -107,25 +108,34 @@ _DISTILL_BUSY_MSG = (
     f"你已有蒸馏任务在运行（每用户同时最多 {DISTILL_MAX_PER_USER} 个），"
     "请等它完成或停止后再试"
 )
-_user_slots: dict[str, int] = {}
+_DISTILL_SAME_TARGET_MSG = "这个角色正在蒸馏中，请等它完成或停止后再试"
+_user_slots: dict[str, set[tuple[str, str]]] = {}
 
 
-def _reserve_user_slot(user_id: str) -> bool:
-    """同步占一个用户槽位；满了返回 False。纯同步无 await —— 并发双 /start 的裁决点。"""
+def _reserve_user_slot(user_id: str, target: tuple[str, str]) -> str | None:
+    """同步占一个用户槽位；被拒返回文案，成功返回 None。
+
+    纯同步无 await —— 并发双 /start 的裁决点。`target` 是 (text_id, character_name)：
+    同一目标并发第二次要先于「用户满 3 个」拦下，文案才说得清原因。
+    """
     with _task_lock:
-        if _user_slots.get(user_id, 0) >= DISTILL_MAX_PER_USER:
-            return False
-        _user_slots[user_id] = _user_slots.get(user_id, 0) + 1
-        return True
+        slots = _user_slots.setdefault(user_id, set())
+        if target in slots:
+            return _DISTILL_SAME_TARGET_MSG
+        if len(slots) >= DISTILL_MAX_PER_USER:
+            return _DISTILL_BUSY_MSG
+        slots.add(target)
+        return None
 
 
-def _release_user_slot(user_id: str) -> None:
-    """释放一个用户槽位；未占坑的用户是 no-op（不产生负数）。"""
+def _release_user_slot(user_id: str, target: tuple[str, str]) -> None:
+    """释放一个目标槽位；未占坑的目标是 no-op。"""
     with _task_lock:
-        n = _user_slots.get(user_id, 0) - 1
-        if n > 0:
-            _user_slots[user_id] = n
-        else:
+        slots = _user_slots.get(user_id)
+        if slots is None:
+            return
+        slots.discard(target)
+        if not slots:
             _user_slots.pop(user_id, None)
 
 
@@ -517,7 +527,7 @@ def _run_distill_task(
         logger.warning("[distill] 并发蒸馏达上限，任务超时: %s", char_name)
         _set_task(task_id, {"status": "error", "message": "服务器繁忙，请稍后重试"})
         _confirm_terminal_persist(task_id)
-        _release_user_slot(user_id)   # 没进 try/finally，按用户槽要在这里放
+        _release_user_slot(user_id, (text_id, char_name))   # 没进 try/finally，按用户槽要在这里放
         return
     try:
         from deps import get_distiller
@@ -674,7 +684,7 @@ def _run_distill_task(
         _confirm_terminal_persist(task_id)
         _DISTILL_SEMAPHORE.release()
         # 按用户槽同样最后放：先让 DB 终态落定，再允许该用户开下一个任务。
-        _release_user_slot(user_id)
+        _release_user_slot(user_id, (text_id, char_name))
 
 
 # ---- Shared helpers ----
@@ -803,15 +813,17 @@ async def _gated_start(
     user_id: str,
     storage: StorageBase,
     start: Callable[[], Awaitable[dict[str, Any]]],
+    target: tuple[str, str],
 ) -> dict[str, Any]:
     """按用户并发闸包住一次启动：占坑 → 两道门 → 跑。
 
     槽位所有权只在 start **正常返回**时转移给后台线程（由 _run_distill_task 退出时
     释放）。start 抛任何异常（404 / 503 / DB 出错）都在这里释放，否则该用户会被自己
-    永久挡住。占坑是第一条语句，前面没有任何 await。
+    永久挡住。占坑是第一条语句，前面没有任何 await。`target` = (text_id, character_name)。
     """
-    if not _reserve_user_slot(user_id):
-        raise HTTPException(429, _DISTILL_BUSY_MSG)
+    msg = _reserve_user_slot(user_id, target)
+    if msg is not None:
+        raise HTTPException(429, msg)
     try:
         # 第二道门：DB 真相复核。占坑挡进程内并发，这道挡跨重启残留的 running 行；
         # 时效窗让超期未刷新的幽灵行出局（见 DISTILL_GHOST_IDLE_MIN）。
@@ -821,7 +833,7 @@ async def _gated_start(
             raise HTTPException(429, _DISTILL_BUSY_MSG)
         return await start()
     except BaseException:
-        _release_user_slot(user_id)
+        _release_user_slot(user_id, target)
         raise
 
 
@@ -833,7 +845,8 @@ async def distill_start(
 ) -> dict[str, Any]:
     """起一次蒸馏；并发闸与 slot 释放口径见 `_gated_start`。"""
     return await _gated_start(
-        user["id"], storage, lambda: _distill_start_impl(req, user, storage))
+        user["id"], storage, lambda: _distill_start_impl(req, user, storage),
+        target=(req.text_id, req.character_name))
 
 
 async def _distill_start_impl(
@@ -1454,7 +1467,8 @@ async def redraft_card(
         entry="redraft")
     return await _gated_start(
         user_id, storage,
-        lambda: _distill_start_impl(req, user, storage, draft=payload["draft"]))
+        lambda: _distill_start_impl(req, user, storage, draft=payload["draft"]),
+        target=(req.text_id, req.character_name))
 
 
 @router.post("/card/{card_id}/unlocated/move")

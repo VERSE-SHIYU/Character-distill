@@ -159,11 +159,12 @@ def test_g4_redraft_shares_the_per_user_gate(monkeypatch, store):
 
     _llm, threads = _install(monkeypatch, store, _DraftStub(_draft()))
 
-    assert D._reserve_user_slot(uid), "前置：本用例应能占住该用户唯一的槽位"
+    assert D._reserve_user_slot(uid, (tid, _DISTILL_NAME)) is None, \
+        "前置：本用例应能占住该用户这次 redraft 的目标槽位"
     try:
         resp = _redraft(_build_client(store, uid), card_id)
     finally:
-        D._release_user_slot(uid)
+        D._release_user_slot(uid, (tid, _DISTILL_NAME))
 
     assert resp.status_code == 429, resp.text
     assert threads == [], "被闸挡下的请求不该起后台线程"

@@ -236,14 +236,20 @@ class TestA2Wiring:
     def test_acquire_timeout_calls_confirm(self, monkeypatch):
         """acquire(timeout=300) 超时拿不到 → confirm 兜底终态后 return，不放行、不 release。"""
         events = self._test_events(monkeypatch, acquired=False, distiller_boom=False)
+        assert D._reserve_user_slot("usr_x", ("txt_x", "甲")) is None
         D._run_distill_task("tW1", "txt_x", "甲", False, "usr_x", "正文", "story", self._LLM)
         assert events == ["acquire", "confirm:tW1"]   # 无 release
+        # 超时分支放回的必须是本任务的（书,角色）——放错目标该角色会永久 429
+        assert "usr_x" not in D._user_slots
 
     def test_finally_confirms_before_release(self, monkeypatch):
         """异常路径进 finally：confirm 必须发生在 release 之前。"""
         events = self._test_events(monkeypatch, acquired=True, distiller_boom=True)
+        assert D._reserve_user_slot("usr_x", ("txt_x", "甲")) is None
         D._run_distill_task("tW2", "txt_x", "甲", False, "usr_x", "正文", "story", self._LLM)
         assert events == ["acquire", "confirm:tW2", "release"]
+        # finally 放回的必须是本任务的（书,角色）
+        assert "usr_x" not in D._user_slots
 
 
 # ── 后置步骤「挑选对话示例」（WP17 步骤 4）──────────────────────────────────
@@ -952,7 +958,7 @@ class TestFPerUserGate:
 
         second, _ = _capture_start(monkeypatch, store, user_id, tid)
         assert second.status_code == 429
-        assert "已有蒸馏任务在运行" in second.json()["detail"]
+        assert "这个角色正在蒸馏中" in second.json()["detail"]
 
     def test_different_users_do_not_interfere(self, store, monkeypatch):
         """不同用户各开 1 个 → 都 200（按用户闸不串台）。"""
@@ -973,14 +979,17 @@ class TestFPerUserGate:
     def test_db_gate_blocks_live_row_but_not_ghost(self, store, user_id, monkeypatch):
         """第二道门：新鲜 running 行挡；推老到时效窗外的幽灵行不挡。"""
         tid = self._text(store, user_id)
-        _seed_distill_row(store, "dtLive", user_id, status="running", text_id=tid)
+        for idx, name in enumerate(("甲", "乙", "丙")):
+            _seed_distill_row(store, f"dtLive{idx}", user_id, status="running",
+                              text_id=tid, character=name)
 
-        blocked, _ = _capture_start(monkeypatch, store, user_id, tid)
+        blocked, _ = _capture_start(monkeypatch, store, user_id, tid, character="丁")
         assert blocked.status_code == 429
         assert "已有蒸馏任务在运行" in blocked.json()["detail"]
 
-        _age_row(store, "dtLive", D.DISTILL_GHOST_IDLE_MIN + 90)
-        allowed, _ = _capture_start(monkeypatch, store, user_id, tid)
+        for idx in range(3):
+            _age_row(store, f"dtLive{idx}", D.DISTILL_GHOST_IDLE_MIN + 90)
+        allowed, _ = _capture_start(monkeypatch, store, user_id, tid, character="丁")
         assert allowed.status_code == 200, allowed.text
 
     async def test_concurrent_double_start_same_target(self, store, user_id, monkeypatch):
