@@ -539,20 +539,22 @@ class _ToolClient:
             self._up.leave()
 
 
-def test_g12_select_by_schema_waits_on_the_gate_and_429_downscales(monkeypatch):
+def test_g12_select_by_schema_waits_on_the_gate_and_429_downscales(monkeypatch, tmp_path):
     C.reset_account_gates()
 
+    # 走蒸馏实际会拿到的那只代理：若代理漏了 select_by_schema 的转发，请求就不带闸。
     llm = _adapter("http://acct-g12.invalid/v1")
     upstream = _Upstream(limit=99, hold_s=0.0)
     llm._client = _ToolClient(upstream, args={"slot_1": 3})
-    gate = C.account_gate(llm.account_id, 1)
+    proxy = Distiller(llm, config_path=_config(tmp_path, 1)).llm
+    gate = proxy.gate
 
     gate.acquire()
     outcome: dict = {}
 
     def worker() -> None:
-        outcome["value"] = llm.select_by_schema(
-            "sys", [{"role": "user", "content": "挑"}], _TOOL, gate=gate)
+        outcome["value"] = proxy.select_by_schema(
+            "sys", [{"role": "user", "content": "挑"}], _TOOL)
 
     t = threading.Thread(target=worker)
     t.start()
@@ -566,11 +568,11 @@ def test_g12_select_by_schema_waits_on_the_gate_and_429_downscales(monkeypatch):
     monkeypatch.setattr(M, "_RATE_LIMIT_ATTEMPTS", 1)
     throttled = _adapter("http://acct-g12b.invalid/v1")
     throttled._client = _ToolClient(_Upstream(limit=0))
-    gate2 = C.account_gate(throttled.account_id, 10)
+    proxy2 = Distiller(throttled, config_path=_config(tmp_path, 10)).llm
     with pytest.raises(M.UpstreamFailure):
-        throttled.select_by_schema(
-            "sys", [{"role": "user", "content": "挑"}], _TOOL, gate=gate2)
-    assert gate2.ceiling < 10, f"429 没把闸压下来：{gate2.ceiling}"
+        proxy2.select_by_schema(
+            "sys", [{"role": "user", "content": "挑"}], _TOOL)
+    assert proxy2.gate.ceiling < 10, f"429 没把闸压下来：{proxy2.gate.ceiling}"
 
 
 # ── G13：形态守卫 —— 蒸馏流用到的每个模型方法都必须在带闸代理上显式定义 ───────
