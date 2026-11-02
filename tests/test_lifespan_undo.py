@@ -63,5 +63,11 @@ def test_lifespan_undoes_every_process_wide_registration():
         assert _ours_on_root() == [], (
             f"关停后根日志器上还剩本仓的 handler：{_ours_on_root()}"
         )
+        # 蒸馏池同属进程级全局，关停后必须仍可用：同会话里下一个 app 的 /start
+        # 没有任何 lifespan 会把它再建出来（生产单进程无所谓，测试同进程会撞上）。
+        from routers import distill as distill_router
+        assert distill_router._DISTILL_POOL.submit(lambda: 7).result(timeout=5) == 7, (
+            "关停后蒸馏池不可再用 —— 后续 /start 会抛 "
+            "\"cannot schedule new futures after shutdown\"")
     finally:
         root.handlers[:] = saved_handlers

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-import threading
 import uuid
 
 import pytest
@@ -35,8 +34,8 @@ def _start(monkeypatch, store, uid, tid, body):
     A._assert_premise_resolves(store, A._install_user_llm(monkeypatch))
     monkeypatch.setattr("deps.get_distiller", lambda llm=None: A._ResumeDistillerStub(3000))
     started: list = []
-    monkeypatch.setattr("core.concurrency.ctx_thread",
-                        lambda *a, **k: started.append(k) or threading.Thread())
+    monkeypatch.setattr("core.concurrency.ctx_submit",
+                        lambda pool, fn, *a, **k: started.append(k))
     resp = A._build_client(store, uid).post("/api/distill/start", json={"text_id": tid, **body})
     return resp, started
 
@@ -81,7 +80,7 @@ def test_e3_redraft_records_redraft_entry(store, user_id, monkeypatch):
     A._run_async(store.save_card_draft(cid, json.dumps({"character": "甲", "draft": {"name": "甲"}})))
     A._assert_premise_resolves(store, A._install_user_llm(monkeypatch))
     monkeypatch.setattr("deps.get_distiller", lambda llm=None: A._ResumeDistillerStub(3000))
-    monkeypatch.setattr("core.concurrency.ctx_thread", lambda *a, **k: threading.Thread())
+    monkeypatch.setattr("core.concurrency.ctx_submit", lambda pool, fn, *a, **k: None)
     resp = A._build_client(store, user_id).post(f"/api/distill/card/{cid}/redraft")
     assert resp.status_code == 200, resp.text
     assert _row(store, resp.json()["task_id"]) == (True, "redraft")
@@ -104,11 +103,11 @@ def test_e5_task_start_log_carries_entry(store, user_id, monkeypatch, caplog):
                            {"character_name": "甲", "force": True, "entry": "workbench_card"})
     assert resp.status_code == 200, resp.text
     kw = started[0]
-    assert kw.get("kwargs", {}).get("entry") == "workbench_card", kw   # 入口随线程参数传下去
+    assert kw.get("entry") == "workbench_card", kw   # 入口随提交参数传下去
     with caplog.at_level(logging.WARNING):
         try:
             D._run_distill_task(resp.json()["task_id"], tid, "甲", True, user_id, "正文", "story",
-                                None, **kw["kwargs"])
+                                None, **kw)
         except AssertionError:
             pass       # llm=None 撞函数体开头的硬门（distill.py「硬门而不是注释」）；开始行由装饰器在进入函数体之前打
     starts = [r.getMessage() for r in caplog.records if r.getMessage().startswith("任务开始")]

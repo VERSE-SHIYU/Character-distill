@@ -193,13 +193,13 @@ def _post(name: str, monkeypatch):
         identified.append(1)
         return []
 
-    def _thread(*a, **kw):
+    def _submit(*a, **kw):
         threads.append((a, kw))
         raise AssertionError("没配百炼 key 却起了后台线程")
 
     monkeypatch.setattr(D, "get_indexing_service", lambda: indexing)
     monkeypatch.setattr(D, "resolve_characters", _identify)
-    monkeypatch.setattr(C, "ctx_thread", _thread)
+    monkeypatch.setattr(C, "ctx_submit", _submit)
     client = _build(store)
     resp = getattr(client, method)(path, json=body)
     return resp, store, indexing, threads, identified

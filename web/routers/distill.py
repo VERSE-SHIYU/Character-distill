@@ -9,7 +9,7 @@ import json
 import os
 import threading
 import uuid as _uuid
-from concurrent.futures import TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Any, Awaitable, Callable, Literal
 
 from urllib.parse import quote
@@ -24,7 +24,8 @@ from deps import get_indexing_service, get_sessions, get_storage
 from adapters.llm_adapter import LLMAdapter, user_facing_error
 from core.arc_view import project_card, valid_phase
 from core.card_out import CARD_CONFLICT, card_revision, out_card
-from core.character_roster import aliases_for, resolve_characters, target_character_name
+from core.character_roster import (
+    aliases_for, cached_characters, resolve_characters, target_character_name)
 from core.retro_cache import resolve_retro_regions
 from core.retro_regions import NOT_DETECTED, RetroRegions
 from core.distiller import DistillError, Distiller, text_fingerprint
@@ -87,7 +88,19 @@ class DistillRequest(BaseModel):
 _tasks: dict[str, dict[str, Any]] = {}
 _task_lock = threading.Lock()
 DISTILL_MAX_CONCURRENT = 3
-_DISTILL_SEMAPHORE = threading.Semaphore(DISTILL_MAX_CONCURRENT)  # 最多同时3个蒸馏任务
+# 全局并发闸就是这把线程池：最多 3 个在跑，其余按提交顺序排队（标准库语义）。
+# 提交一律走 `C.ctx_submit` —— 它在**提交时**拷贝上下文，排队后才开跑的任务仍带
+# 请求身份 / 模型 / 嵌入 key。
+_DISTILL_POOL = ThreadPoolExecutor(
+    max_workers=DISTILL_MAX_CONCURRENT, thread_name_prefix="distill")
+
+
+def _restart_distill_pool() -> None:
+    """关停旧池再补一个空的：进程级全局在 lifespan 关停后仍可用（同进程可再起 app）。"""
+    global _DISTILL_POOL
+    _DISTILL_POOL.shutdown(wait=False, cancel_futures=True)
+    _DISTILL_POOL = ThreadPoolExecutor(
+        max_workers=DISTILL_MAX_CONCURRENT, thread_name_prefix="distill")
 
 # ── 按用户并发闸 ──────────────────────────────────────────────────────────
 # 每用户同时允许 DISTILL_MAX_PER_USER 个蒸馏（与全局上限相同）；同一（书, 角色）
@@ -112,20 +125,26 @@ _DISTILL_SAME_TARGET_MSG = "这个角色正在蒸馏中，请等它完成或停�
 _user_slots: dict[str, set[tuple[str, str]]] = {}
 
 
-def _reserve_user_slot(user_id: str, target: tuple[str, str]) -> str | None:
-    """同步占一个用户槽位；被拒返回文案，成功返回 None。
+def _reserve_user_slots(user_id: str, targets: list[tuple[str, str]]) -> str | None:
+    """同步占一批用户槽位，全成或全不成；被拒返回文案，成功返回 None。
 
-    纯同步无 await —— 并发双 /start 的裁决点。`target` 是 (text_id, character_name)：
+    纯同步无 await —— 并发双 /start 的裁决点。每项是 (text_id, character_name)：
     同一目标并发第二次要先于「用户满 3 个」拦下，文案才说得清原因。
     """
+    targets = list(dict.fromkeys(targets))
     with _task_lock:
         slots = _user_slots.setdefault(user_id, set())
-        if target in slots:
+        if any(t in slots for t in targets):
             return _DISTILL_SAME_TARGET_MSG
-        if len(slots) >= DISTILL_MAX_PER_USER:
+        if len(slots) + len(targets) > DISTILL_MAX_PER_USER:
             return _DISTILL_BUSY_MSG
-        slots.add(target)
+        slots.update(targets)
         return None
+
+
+def _reserve_user_slot(user_id: str, target: tuple[str, str]) -> str | None:
+    """单个目标的占坑；批量入口共用 `_reserve_user_slots` 的判据。"""
+    return _reserve_user_slots(user_id, [target])
 
 
 def _release_user_slot(user_id: str, target: tuple[str, str]) -> None:
@@ -147,12 +166,12 @@ _DB_TERMINAL = {"done", "error", "interrupted"}
 
 
 def _db_status(mem_status: str) -> str:
-    """内存 rich 状态 → DB 四态。done/error/interrupted 原样，其余(含 queued)→ running。
+    """内存 rich 状态 → DB 五态。queued 与终态原样，其余(识别/分析/合并/保存)→ running。
 
-    排队/识别/分析/合并/格式化/保存都是「没结束、占一个 worker」，DB 统一记
-    running 作跨重启决策；rich 细节只给前端看、存内存就够。
+    queued 落库才能跨重启被清扫、被 DB 复核计数；识别/分析等阶段仍是「占一个
+    worker」，DB 记 running。rich 细节只给前端看、存内存就够。
     """
-    if mem_status in _DB_TERMINAL:
+    if mem_status == "queued" or mem_status in _DB_TERMINAL:
         return mem_status
     return "running"
 
@@ -224,7 +243,7 @@ def _confirm_terminal_persist(task_id: str) -> None:
     在 _run_distill_task 的 finally（及 acquire 失败分支）调用，此刻 bg 线程已无别的
     写者。只有当内存条目仍带终态且 _db 未确认（即此前那次终态写失败）才补写；成功后
     照常 pop。重试仍失败：打区别于普通 non-fatal 的日志，提示 boot reconcile 兜底；
-    不 pop（保持内存可见供查询 stage）、不抛异常影响 semaphore release。
+    不 pop（保持内存可见供查询 stage）、不抛异常影响终态收尾。
     """
     with _task_lock:
         task = _tasks.get(task_id)
@@ -258,11 +277,21 @@ def _confirm_terminal_persist(task_id: str) -> None:
         )
 
 
+DistillEntry = Literal["", "character_page", "workbench_card", "workbench_task", "task_bar", "redraft"]
+
+
 class DistillTaskRequest(BaseModel):
     text_id: str
     character_name: str = ""
     force: bool = False
-    entry: Literal["", "character_page", "workbench_card", "workbench_task", "task_bar", "redraft"] = ""
+    entry: DistillEntry = ""
+
+
+class DistillBatchRequest(BaseModel):
+    """一本书勾选多个角色一次提交；`entry` 与单任务同一个类型，不复制。"""
+    text_id: str
+    names: list[str]
+    entry: DistillEntry = ""
 
 
 async def cancel_distill_tasks_by_text_id(text_id: str) -> int:
@@ -488,6 +517,17 @@ def _distill_to_draft(
     return data
 
 
+def _cancelled_while_queued(task_id: str) -> bool:
+    """排队期间被取消（内存已置 error）→ True。只在线程入口问这一次。
+
+    三条取消路径（按任务 / 按文本 / 按用户）都只改内存与 DB、不感知排队，
+    线程开跑前在这里统一收口。
+    """
+    with _task_lock:
+        task = _tasks.get(task_id)
+        return task is not None and task.get("status") == "error"
+
+
 @T.spanned("distill.task", wf="distill")
 @task_log.scoped(lambda b: (b["task_id"], {
     "来源": "草稿重转" if b["draft"] is not None else "蒸馏",
@@ -522,14 +562,12 @@ def _run_distill_task(
     # 线程，所以这条断言在生产的任何路径上都不会触发 —— 它钉的是「谁负责解析」这个
     # 契约，将来有人把解析搬回线程内会当场在这里现形。
     assert llm is not None, "后台蒸馏任务必须由请求线程传入已解析的 llm（§2.10）"
-    acquired = _DISTILL_SEMAPHORE.acquire(timeout=300)
-    if not acquired:
-        logger.warning("[distill] 并发蒸馏达上限，任务超时: %s", char_name)
-        _set_task(task_id, {"status": "error", "message": "服务器繁忙，请稍后重试"})
-        _confirm_terminal_persist(task_id)
-        _release_user_slot(user_id, (text_id, char_name))   # 没进 try/finally，按用户槽要在这里放
-        return
     try:
+        # 线程池排队期间可能已被取消（三条取消路径只改内存/DB）：入口收口一次，
+        # 不启动后续任何工作；finally 照常确认终态并释放用户槽。
+        if _cancelled_while_queued(task_id):
+            return
+        _set_task(task_id, {"status": "running", "message": "开始蒸馏…"})
         from deps import get_distiller
 
         # `get_distiller(llm) is None ⟺ llm is None`，而上面已断言非 None ⇒ 这里拿到的
@@ -546,7 +584,7 @@ def _run_distill_task(
 
         # 名单走唯一入口，读缓存/落库在主 loop 上（asyncpg 池只属于主 loop）。
         # 身份靠 `run_coroutine_threadsafe` 传递：它在**调用线程**里 copy_context，
-        # 所以本线程经 `C.ctx_thread` 带来的 LLM_CALLER 会一路传到识别调用里，
+        # 所以本线程经 `C.ctx_submit` 提交时带来的 LLM_CALLER 会一路传到识别调用里，
         # 记账不丢人（与 `_persist_snap` 走的是同一条投递）。
         # 识别失败与「挑不出目标角色」都不在此捕获：两者都是 DistillError 家族，
         # 冒泡到本函数外层 except，走 `user_facing_error` 那条唯一的渲染路径。
@@ -683,8 +721,7 @@ def _run_distill_task(
         # 终态确认在 release 之前：若刚才的终态 _set_task 落库失败，这里补最后一次
         # 写，否则 DB 行会永久停 running 占 count_running 槽（release 了 DB 没跟上）。
         _confirm_terminal_persist(task_id)
-        _DISTILL_SEMAPHORE.release()
-        # 按用户槽同样最后放：先让 DB 终态落定，再允许该用户开下一个任务。
+        # 按用户槽最后放：先让 DB 终态落定，再允许该用户开下一个任务。
         _release_user_slot(user_id, (text_id, char_name))
 
 
@@ -810,6 +847,18 @@ async def distill_by_text_id(
         raise HTTPException(400, str(exc)) from exc
 
 
+async def _db_capacity_check(user_id: str, storage: StorageBase, n: int) -> None:
+    """第二道门：DB 真相复核（本批 n 个任务是否放得下）。
+
+    占坑挡进程内并发，这道挡跨重启残留的 queued/running 行；时效窗让超期未刷新的
+    幽灵行出局（见 DISTILL_GHOST_IDLE_MIN）。`/start` 与 `/batch` 共用此判据。
+    """
+    occupied = await storage.count_running_distills(
+        user_id, window_minutes=DISTILL_GHOST_IDLE_MIN)
+    if occupied + n > DISTILL_MAX_PER_USER:
+        raise HTTPException(429, _DISTILL_BUSY_MSG)
+
+
 async def _gated_start(
     user_id: str,
     storage: StorageBase,
@@ -826,12 +875,7 @@ async def _gated_start(
     if msg is not None:
         raise HTTPException(429, msg)
     try:
-        # 第二道门：DB 真相复核。占坑挡进程内并发，这道挡跨重启残留的 running 行；
-        # 时效窗让超期未刷新的幽灵行出局（见 DISTILL_GHOST_IDLE_MIN）。
-        occupied = await storage.count_running_distills(
-            user_id, window_minutes=DISTILL_GHOST_IDLE_MIN)
-        if occupied >= DISTILL_MAX_PER_USER:
-            raise HTTPException(429, _DISTILL_BUSY_MSG)
+        await _db_capacity_check(user_id, storage, 1)
         return await start()
     except BaseException:
         _release_user_slot(user_id, target)
@@ -848,6 +892,54 @@ async def distill_start(
     return await _gated_start(
         user["id"], storage, lambda: _distill_start_impl(req, user, storage),
         target=(req.text_id, req.character_name))
+
+
+@router.post("/batch")
+async def distill_batch(
+    req: DistillBatchRequest,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """一本书勾选多个角色一次提交：校验 → 一次占槽 → 一次 DB 复核 → 逐个起。
+
+    单个名字失败只释放它自己的槽，其余照常；占槽后、逐个启动前抛出的异常释放全部本批槽。
+    """
+    user_id = user["id"]
+    names = list(dict.fromkeys(n.strip() for n in req.names))
+    if not names or any(not n for n in names):
+        raise HTTPException(400, "请至少选择一个角色")
+    roster = await cached_characters(storage, req.text_id, user_id)
+    allowed = {c["name"] for c in roster} if roster else set()
+    if any(n not in allowed for n in names):
+        raise HTTPException(400, "只能蒸馏识别名单里的角色")
+
+    targets = [(req.text_id, n) for n in names]
+    msg = _reserve_user_slots(user_id, targets)
+    if msg is not None:
+        raise HTTPException(429, msg)
+    try:
+        await _db_capacity_check(user_id, storage, len(targets))
+    except BaseException:
+        for target in targets:
+            _release_user_slot(user_id, target)
+        raise
+
+    tasks: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for name, target in zip(names, targets):
+        try:
+            res = await _distill_start_impl(
+                DistillTaskRequest(text_id=req.text_id, character_name=name, entry=req.entry),
+                user, storage)
+            tasks.append({"name": name, "task_id": res["task_id"]})
+        except HTTPException as exc:
+            _release_user_slot(user_id, target)
+            errors.append({"name": name, "detail": str(exc.detail)})
+        except Exception as exc:
+            logger.error("[distill] batch start %s failed: %s", name, exc, exc_info=True)
+            _release_user_slot(user_id, target)
+            errors.append({"name": name, "detail": user_facing_error(exc)})
+    return {"tasks": tasks, "errors": errors}
 
 
 async def _distill_start_impl(
@@ -927,10 +1019,10 @@ async def _distill_start_impl(
     else:
         task_id = _uuid.uuid4().hex[:12]
 
-    # DB 先落一行（queued 粗粒度记 running），再放内存写缓存、再启线程。三者都发生在
+    # DB 先落一行 queued，再放内存写缓存、再入线程池。三者都发生在
     # loop 线程：DB 写在 thread.start() 前完成，bg 线程的 _set_task 只做 update（不再 upsert）。
     # 落库失败必须拒绝启动：DB 是查询真相源，无行 = 不可观测的野线程 —— 查询会 404
-    # 报"任务丢失"，后台却仍在烧 LLM 额度、占 semaphore。绝不能"能跑但不给查"。
+    # 报"任务丢失"，后台却仍在烧 LLM 额度、占全局名额。绝不能"能跑但不给查"。
     # chunk_size/text_fingerprint 每次起跑都盖章：复用行重跑时也要刷新成当前 checkpoint
     # （否则陈旧值会让下次续跑反复误判）。overlap 无对应切分概念（_split_chunks 无重叠），
     # 保持 NULL。
@@ -941,7 +1033,7 @@ async def _distill_start_impl(
             # 之间被删（如文本被删）→ 拒绝启动，否则会起一条查询 404 的野线程。一次原子
             # UPDATE 的返回即裁决，没有 SELECT-then-UPDATE 的窗口。
             affected = await storage.update_distill_task(
-                task_id, status="running", progress_pct=0, message=_queued_msg,
+                task_id, status="queued", progress_pct=0, message=_queued_msg,
                 card_id="", awakening="",
                 chunk_size=chunk_size, text_fingerprint=text_fp,
                 force=req.force, entry=req.entry,
@@ -956,7 +1048,7 @@ async def _distill_start_impl(
             # 新任务：纯 INSERT。主键冲突是真异常（新铸 uuid），由下面 except 兜成 503。
             await storage.create_distill_task(
                 task_id, user_id, req.text_id, character=req.character_name,
-                status="running", progress_pct=0, message=_queued_msg,
+                status="queued", progress_pct=0, message=_queued_msg,
                 card_id="", awakening="",
                 chunk_size=chunk_size, text_fingerprint=text_fp,
                 force=req.force, entry=req.entry,
@@ -971,16 +1063,14 @@ async def _distill_start_impl(
         _tasks[task_id] = {"status": "queued", "progress_pct": 0, "user_id": user_id,
                            "text_id": req.text_id, "character": req.character_name,
                            "message": _queued_msg,
-                           "card_id": "", "awakening": "", "_db": ("running", 0)}
+                           "card_id": "", "awakening": "", "_db": ("queued", 0)}
 
-    thread = C.ctx_thread(  # context 传播点：蒸馏后台线程挂到发起请求 trace
-        _run_distill_task,
-        args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type,
-              llm, emb.key, emb.region, resume_candidates),
-        kwargs={"draft": draft, "entry": req.entry},
-        daemon=True,
+    C.ctx_submit(  # context 传播点：提交时拷贝上下文，排队后开跑仍带请求身份
+        _DISTILL_POOL, _run_distill_task,
+        task_id, req.text_id, req.character_name, req.force, user_id, content, text_type,
+        llm, emb.key, emb.region, resume_candidates,
+        draft=draft, entry=req.entry,
     )
-    thread.start()
 
     return {"task_id": task_id}
 
@@ -1003,6 +1093,7 @@ def _task_affordances(status: str) -> tuple[bool, list[str], int]:
     停止观察一个可能仍在跑的任务。
     """
     return {
+        "queued":      (False, ["cancel"], _DEFAULT_POLL_MS),
         "running":     (False, ["cancel"], _DEFAULT_POLL_MS),
         "done":        (True,  [],         0),
         "error":       (True,  ["retry"],  0),
@@ -1019,7 +1110,7 @@ def _task_response(row: dict[str, Any], mem: dict[str, Any] | None = None) -> di
 
     status/progress_pct/所有权/存在性永远以 DB 为准；mem 只作展示字段细化，且仅在
     DB running 时覆盖 stage/message（跨重启后 mem 为空 → stage 空串、message 回落
-    DB 值，展示不崩、四态不谎）。
+    DB 值，展示不崩、五态不谎）。
     """
     status = row["status"]
     done, actions, poll_after_ms = _task_affordances(status)
@@ -1051,10 +1142,10 @@ async def distill_task_status(
 ) -> dict[str, Any]:
     """Poll distillation task status — DB 是真相源，内存只作写缓存，不作查询依据。
 
-    DB 只有 running/done/error/interrupted 四态 + 进度，rich 阶段细节只存内存作
+    DB 有 queued/running/done/error/interrupted 五态 + 进度，rich 阶段细节只存内存作
     **展示字段**：仅当 DB running 且本进程确有活跃条目时，用内存的 message / stage
     细化展示；status/progress_pct/所有权/存在性永远以 DB 为准，绝不被内存覆盖。
-    跨重启后内存空 → stage 为空串、message 回落 DB 值，展示不崩、四态不谎。
+    跨重启后内存空 → stage 为空串、message 回落 DB 值，展示不崩、五态不谎。
     """
     row = await storage.get_distill_task_owned(task_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 task_id 存在。

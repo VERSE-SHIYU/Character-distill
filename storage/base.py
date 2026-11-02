@@ -1107,11 +1107,11 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def mark_interrupted_distills(self, message: str = "服务重启，任务已中断，等待自动恢复") -> int:
-        """Boot-time reconcile: flip every status='running' row to 'interrupted'.
+        """Boot-time reconcile: flip every queued/running row to 'interrupted'.
 
         Runs once at process start when the in-memory worker set is empty, so a
-        running row can only belong to a dead previous process. Returns the
-        number of rows transitioned.
+        queued/running row can only belong to a dead previous process. Returns
+        the number of rows transitioned.
         """
 
     @abstractmethod
