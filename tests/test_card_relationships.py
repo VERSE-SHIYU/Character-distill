@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+
 from core.card_relationships import dedupe_relationship_targets
 from core.schema import CharacterCard
+from core.unlocated import move_unlocated
 
 CARD = {
     "name": "刘姥姥",
@@ -75,3 +78,98 @@ def test_each_dropped_entry_logs_one_warning_line(caplog):
     assert len(msgs) == 2, msgs
     assert "relationships" in msgs[0] and "贾母" in msgs[0] and "第二条" in msgs[0]
     assert "第三条" in msgs[1]
+
+
+# ── 目标检查：关系对象按识别名单归一（D24 ①a） ─────────────────────────
+
+ROSTER = [
+    {"name": "云绮", "aliases": ["绮绮"]},
+    {"name": "柳若芙", "aliases": ["慕容昭瑜"]},
+    {"name": "甲", "aliases": ["阿三"]},
+    {"name": "乙", "aliases": ["阿三"]},
+]
+
+
+def _card(relationships, attitudes=()):
+    return CharacterCard.model_validate({
+        "name": "云绮",
+        "relationships": list(relationships),
+        "character_arc": {
+            "phases": [{"state": "s1"}, {"state": "s2"}],
+            "unlocated": {"attitudes": list(attitudes)},
+        },
+    })
+
+
+def _warnings(caplog):
+    return [r.getMessage() for r in caplog.records
+            if r.name == "core.card_relationships"]
+
+
+@pytest.mark.xfail(strict=True, reason="①a：去重还不认名单")
+def test_alias_and_primary_collapse_to_one_relationship():
+    """同一人的两个写法（主名 + 名单里的别名）按名单归一 → 只留第一条。"""
+    card = _card([
+        {"target": "柳若芙", "relation": "A"},
+        {"target": "慕容昭瑜", "relation": "B"},
+    ])
+
+    new, dropped = dedupe_relationship_targets(card, ROSTER)
+
+    assert [(r.target, r.relation) for r in new.relationships] == [("柳若芙", "A")]
+    assert len(dropped) == 1
+    assert dropped[0]["original_target"] == "慕容昭瑜"
+
+
+@pytest.mark.xfail(strict=True, reason="①a：去重还不认名单")
+def test_alias_target_is_rewritten_to_primary_name():
+    """只有别名写法的一条：target 换成名单里的主名，relation 不变。"""
+    card = _card([{"target": "慕容昭瑜", "relation": "B"}])
+
+    new, dropped = dedupe_relationship_targets(card, ROSTER)
+
+    assert ([(r.target, r.relation) for r in new.relationships], dropped) == (
+        [("柳若芙", "B")], [])
+
+
+@pytest.mark.xfail(strict=True, reason="①a：去重还不认名单")
+def test_target_outside_roster_is_kept_and_warned(caplog):
+    """名单里没有的对象原样保留，并记一行「不在名单」的 WARNING。"""
+    card = _card([{"target": "某人", "relation": "C"}])
+
+    with caplog.at_level(logging.WARNING, logger="core.card_relationships"):
+        new, dropped = dedupe_relationship_targets(card, ROSTER)
+
+    assert [(r.target, r.relation) for r in new.relationships] == [("某人", "C")]
+    assert dropped == []
+    warnings = _warnings(caplog)
+    assert len(warnings) == 1 and "某人" in warnings[0]
+
+
+@pytest.mark.xfail(strict=True, reason="①a：去重还不认名单")
+def test_unlocated_attitude_follows_the_merged_target():
+    """未定位态度与关系用同一套映射换名，挪回时能按主名找到留下的关系。"""
+    card = _card([
+        {"target": "柳若芙", "relation": "A"},
+        {"target": "慕容昭瑜", "relation": "B"},
+    ], attitudes=[{"target": "慕容昭瑜", "attitude": "X"}])
+
+    new, _ = dedupe_relationship_targets(card, ROSTER)
+    assert [a.target for a in new.character_arc.unlocated.attitudes] == ["柳若芙"]
+
+    moved = move_unlocated(new, section="attitudes", index=0, phase=1)
+    assert [pa.attitude for pa in moved.relationships[0].phase_attitudes] == ["X"]
+
+
+@pytest.mark.xfail(strict=True, reason="①a：去重还不认名单")
+def test_alias_shared_by_two_people_is_not_canonicalized(caplog):
+    """「阿三」同时是甲和乙的别名 → 不能判定归属，原样保留并记 WARNING。"""
+    card = _card([{"target": "阿三", "relation": "F"}])
+
+    with caplog.at_level(logging.WARNING, logger="core.card_relationships"):
+        new, dropped = dedupe_relationship_targets(card, ROSTER)
+
+    assert [(r.target, r.relation) for r in new.relationships] == [("阿三", "F")]
+    assert dropped == []
+    warnings = _warnings(caplog)
+    assert len(warnings) == 1 and "阿三" in warnings[0]
