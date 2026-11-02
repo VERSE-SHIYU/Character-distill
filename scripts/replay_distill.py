@@ -202,11 +202,12 @@ class _ReplayDistiller(Distiller):
 
     def _chat_accounted(self, system_prompt: str, messages: list[dict], label: str,
                         action: str, stream: bool = False,
-                        max_tokens: int | None = None) -> tuple[str, bool]:
+                        max_tokens: int | None = None, *, on_first_piece=None) -> tuple[str, bool]:
         self._recorder.annotate(label, action)
         try:
             return super()._chat_accounted(
-                system_prompt, messages, label, action, stream=stream, max_tokens=max_tokens)
+                system_prompt, messages, label, action, stream=stream, max_tokens=max_tokens,
+                on_first_piece=on_first_piece)
         finally:
             self._recorder.clear()
 

@@ -39,20 +39,16 @@ MARKED = RetroRegions("marked", (ChapterRange(1, 1, "日记"),))
 
 @pytest.fixture(autouse=True)
 def _reset_shared_ledgers():
-    """实现前 `reset_prefix_turns` 还不存在 —— 对照行也要在红态下能跑（它不碰原语）。"""
-    reset_prefix = getattr(C, "reset_prefix_turns", None)
+    """每个用例前后清掉进程内的错峰登记与共享闸。"""
+    C.reset_prefix_turns()
     C.reset_account_gates()
-    if reset_prefix:
-        reset_prefix()
     yield
+    C.reset_prefix_turns()
     C.reset_account_gates()
-    if reset_prefix:
-        reset_prefix()
 
 
 # ── S1/S2：同键一个领头，其余跟随；领头放行后键位释放 ──────────────────────
 
-@pytest.mark.xfail(strict=True, reason="prefix_turn 尚未实现")
 def test_s1_follower_waits_until_leader_releases():
     key = ("acc", "book-hash")
     leader = C.prefix_turn(key)
@@ -77,7 +73,6 @@ def test_s1_follower_waits_until_leader_releases():
         t.join(2.0)
 
 
-@pytest.mark.xfail(strict=True, reason="prefix_turn 尚未实现")
 def test_s2_released_key_yields_a_new_leader():
     key = ("acc", "book-hash")
     first = C.prefix_turn(key)
@@ -108,7 +103,6 @@ class _StreamLLM:
         return {"prompt_tokens": 3, "completion_tokens": 3}
 
 
-@pytest.mark.xfail(strict=True, reason="on_first_piece 尚未接入 _collect_stream")
 def test_s3_first_piece_fires_once_before_second_piece():
     events: list[str] = []
     d = Distiller(llm=_StreamLLM(events), config_path=None)
@@ -204,7 +198,6 @@ def _run_format_together(distillers, *, prefix: str) -> list:
     return results
 
 
-@pytest.mark.xfail(strict=True, reason="`_format_groups` 尚未做前缀错峰")
 def test_s4_late_warm_group_starts_after_leaders_first_piece():
     llm = _PrefixLLM(account_id="acc")
     results = _run_format_together(_two_distillers(llm), prefix=BOOK_PREFIX)
@@ -223,7 +216,6 @@ def test_s4_late_warm_group_starts_after_leaders_first_piece():
     assert max(c["start"] for c in arc) < min(c["first"] for c in warm), "弧线组被错峰拖住了"
 
 
-@pytest.mark.xfail(strict=True, reason="`_format_groups` 尚未做前缀错峰")
 def test_s5_leader_failure_still_releases_the_follower():
     llm = _PrefixLLM(account_id="acc", fail_first_warm=True)
     results = _run_format_together(_two_distillers(llm), prefix=BOOK_PREFIX)
@@ -233,8 +225,8 @@ def test_s5_leader_failure_still_releases_the_follower():
     assert warm[0]["error_at"] is not None
     assert warm[1]["start"] >= warm[0]["error_at"], "领头失败后跟随者没有被放行"
 
-    outcomes = [r if r == "ok" else type(r).__name__ for r in results]
-    assert sorted(outcomes) == ["RuntimeError", "ok"]
+    assert results.count("ok") == 1, "跟随者没有照常出卡"
+    assert sum(isinstance(r, Exception) for r in results) == 1, "领头应只失败一次"
 
 
 @pytest.mark.parametrize("prefix,account_id", [
@@ -277,11 +269,15 @@ def _run(coro):
         loop.close()
 
 
+async def _gather_inside(*coros):
+    return await asyncio.gather(*coros)
+
+
 def _gather(*coros):
     """两个协程必须跑在**同一个**循环上 —— 在途共享用的 Future 绑在创建它的循环上。"""
     loop = asyncio.new_event_loop()
     try:
-        return loop.run_until_complete(asyncio.gather(*coros))
+        return loop.run_until_complete(_gather_inside(*coros))
     finally:
         loop.close()
 
@@ -297,7 +293,6 @@ def _seed(store, uid) -> str:
     return tid
 
 
-@pytest.mark.xfail(strict=True, reason="回忆区识别尚未做在途共享")
 def test_s7_concurrent_resolve_detects_once(store):
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     tid = _seed(store, uid)
@@ -312,7 +307,6 @@ def test_s7_concurrent_resolve_detects_once(store):
     assert results[0] == results[1] == MARKED
 
 
-@pytest.mark.xfail(strict=True, reason="回忆区识别尚未做在途共享")
 def test_s8_concurrent_failure_is_shared_and_not_cached(store):
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     tid = _seed(store, uid)

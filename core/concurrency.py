@@ -104,6 +104,7 @@ __all__ = [
     "ContextCarrier", "register_context_carrier", "get_context_carriers",
     "set_context_carriers", "ctx_thread", "ctx_submit", "AdaptiveGate",
     "AccountGate", "GatedLLM", "account_gate", "reset_account_gates",
+    "PrefixTurn", "prefix_turn", "reset_prefix_turns",
 ]
 
 
@@ -330,6 +331,55 @@ def reset_account_gates() -> None:
     """测试隔离用：丢掉进程内所有共享闸。"""
     with _ACCOUNT_GATES_LOCK:
         _ACCOUNT_GATES.clear()
+
+
+_PREFIX_TURNS: dict[tuple[str, str], threading.Event] = {}
+_PREFIX_TURNS_LOCK = threading.Lock()
+
+
+class PrefixTurn:
+    """同键请求的一轮错峰：领头先发，跟随者等领头放行后再发。
+
+    给前缀缓存冷启动用 —— 缓存条目在第一个响应开始返回后才可用，同时发出会让所有
+    请求都按未命中计费（Cache-Prefix Staggering）。只认键，不认识蒸馏、不认识缓存。
+    """
+
+    def __init__(self, key: tuple[str, str], is_leader: bool,
+                 event: threading.Event) -> None:
+        self._key = key
+        self.is_leader = is_leader
+        self._event = event
+        self._released = False
+
+    def wait(self) -> None:
+        """跟随者阻塞到领头放行；领头调用立即返回。"""
+        if not self.is_leader:
+            self._event.wait()
+
+    def release(self) -> None:
+        """只第一次生效：放行所有跟随者，并把自己从登记表移除。"""
+        with _PREFIX_TURNS_LOCK:
+            if not self.is_leader or self._released:
+                return
+            self._released = True
+            _PREFIX_TURNS.pop(self._key, None)
+            self._event.set()
+
+
+def prefix_turn(key: tuple[str, str]) -> PrefixTurn:
+    """同键没有进行中的领头 → 新建并成为领头；有 → 跟随者共享领头的放行信号。"""
+    with _PREFIX_TURNS_LOCK:
+        event = _PREFIX_TURNS.get(key)
+        if event is None:
+            event = _PREFIX_TURNS[key] = threading.Event()
+            return PrefixTurn(key, True, event)
+        return PrefixTurn(key, False, event)
+
+
+def reset_prefix_turns() -> None:
+    """测试隔离用：丢掉进程内所有错峰登记。"""
+    with _PREFIX_TURNS_LOCK:
+        _PREFIX_TURNS.clear()
 
 
 class GatedLLM:

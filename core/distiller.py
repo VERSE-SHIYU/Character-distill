@@ -505,6 +505,13 @@ PHASE_DEPENDENT_GROUPS: frozenset[str] = frozenset(
 _CACHE_WARM_GROUP = next(g for g in FORMAT_GROUPS
                          if g != _PHASE_SOURCE_GROUP and g not in PHASE_DEPENDENT_GROUPS)
 
+#: 前缀错峰在领头哪一刻放行跟随者：``"first_token"``（吐出第一段）或 ``"done"``（整组返回）。
+#: 通行做法是等第一个响应开始返回（Cache-Prefix Staggering，引 Anthropic 提示缓存文档：
+#: 并发请求时缓存条目在第一个响应开始返回后才可用）。DeepSeek 未写可用时机，部署后按
+#: ``usage_stats.prompt_cache_hit_tokens`` 核实：跟随者命中接近整书 token 数即保持，
+#: 基本为 0 就改成 ``"done"`` 再看等待时长。
+PREFIX_STAGGER_RELEASE = "first_token"
+
 
 def format_prompt_after(group: str | None = None, *,
                         start_by: phase_anchoring.StartBy = phase_anchoring.StartBy.ANCHOR) -> str:
@@ -1109,7 +1116,8 @@ class Distiller:
 
     def _collect_stream(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str,
-        usage_action: str, max_tokens: int | None = None,
+        usage_action: str, max_tokens: int | None = None, *,
+        on_first_piece: Callable[[], None] | None = None,
     ) -> tuple[str, bool]:
         """流式收全文 → ``(文本, 上游是否已确定截断)``，**并在本级记账**。
 
@@ -1141,12 +1149,17 @@ class Distiller:
                 system_prompt, messages,
                 max_tokens=self.CARD_MAX_TOKENS if max_tokens is None else max_tokens,
             )
+            first_piece = True
             while True:
                 try:
                     parts.append(next(stream))
                 except StopIteration as stop:   # `for` 会把返回值吞掉，只能自己驱动
                     usage = stop.value
                     break
+                if first_piece:
+                    first_piece = False
+                    if on_first_piece is not None:
+                        on_first_piece()
         except Exception as exc:
             text = "".join(parts)
             self._try_record_usage(
@@ -1218,7 +1231,8 @@ class Distiller:
 
     def _chat_accounted(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str, action: str,
-        stream: bool = False, max_tokens: int | None = None,
+        stream: bool = False, max_tokens: int | None = None, *,
+        on_first_piece: Callable[[], None] | None = None,
     ) -> tuple[str, bool]:
         """调一次 LLM 并把这一笔记进唯一出口 → ``(回复文本, 上游是否已确定截断)``。
 
@@ -1247,7 +1261,8 @@ class Distiller:
         """
         _mt = self.CARD_MAX_TOKENS if max_tokens is None else max_tokens
         if stream:
-            return self._collect_stream(system_prompt, messages, label, action, _mt)
+            return self._collect_stream(system_prompt, messages, label, action, _mt,
+                                        on_first_piece=on_first_piece)
         truncated = False
         usage = None
         try:
@@ -2748,10 +2763,23 @@ class Distiller:
         fmt_queue: queue.Queue = queue.Queue()
         shared = ArcInput(system_prefix, user_message)
         arc = arc_input or shared
+        # 同一账号、同一整书前缀的并发蒸馏只让一个先发，其余等它的缓存建好再发。
+        account_id = getattr(self._llm, "account_id", None)
+        turn = (
+            C.prefix_turn(
+                (account_id, hashlib.sha256(system_prefix.encode("utf-8")).hexdigest()))
+            if system_prefix and isinstance(account_id, str) else None
+        )
 
         def _format_one_group(group: str, phase_list_note: str = "") -> None:
             inputs = arc if group == _PHASE_SOURCE_GROUP else shared
+            staggering = turn is not None and group == _CACHE_WARM_GROUP
+            waited = 0.0
             try:
+                if staggering and not turn.is_leader:
+                    started = time.monotonic()
+                    turn.wait()          # 等领头建好缓存再发；等待不占账号闸名额
+                    waited = time.monotonic() - started
                 sub_schema = json.dumps(
                     draft_schema(group, start_by=inputs.start_by), ensure_ascii=False, indent=2
                 )
@@ -2765,6 +2793,10 @@ class Distiller:
                 reply, upstream_truncated = self._chat_accounted(
                     system_prompt, messages, "最终格式化", action,
                     stream=True, max_tokens=self.CARD_MAX_TOKENS,
+                    on_first_piece=(
+                        turn.release
+                        if staggering and turn.is_leader
+                        and PREFIX_STAGGER_RELEASE == "first_token" else None),
                 )
                 data = self._parse_json_with_retry(
                     reply, system_prompt, messages,
@@ -2778,6 +2810,12 @@ class Distiller:
                 fmt_queue.put(("ok", group, data))
             except Exception as exc:
                 fmt_queue.put(("error", group, exc))   # 上屏口径交给调用方统一出口
+            finally:
+                if staggering:
+                    turn.release()   # 成功、截断、抛错都放行；只第一次生效
+                    logger.warning(
+                        "[distill] prefix stagger role=%s waited=%.1fs",
+                        "leader" if turn.is_leader else "follower", waited)
 
         group_data: dict[str, dict[str, Any]] = {}
 
