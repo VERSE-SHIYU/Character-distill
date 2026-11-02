@@ -103,7 +103,7 @@ class _DraftStub:
         return card_from_draft(data, source_text, retro=retro)
 
     def finalize_card(self, card, content, name, aliases=(), roster=()):
-        card, _ = dedupe_relationship_targets(card)
+        card, _ = dedupe_relationship_targets(card, roster)
         card, _ = retract_unverified(card, content)
         return card
 
@@ -271,7 +271,9 @@ def test_stored_draft_round_trips_to_the_saved_card(monkeypatch, store):
     payload = _load_payload(store, card_id, uid)
     # 存的是那次转卡真正用的草稿 → 照 `finalize_card` 的后置顺序（先去重、再核引文）重跑一遍，
     # 应还原同一张卡
-    rebuilt, _ = dedupe_relationship_targets(card_from_draft(payload["draft"], _SRC, retro=NOT_DETECTED))
+    rebuilt, _ = dedupe_relationship_targets(
+        card_from_draft(payload["draft"], _SRC, retro=NOT_DETECTED),
+        [{"name": _CARD_NAME, "aliases": []}])
     rebuilt, _ = retract_unverified(rebuilt, _SRC)
 
     stored = _run_async(store.get_card_owned(card_id, uid))

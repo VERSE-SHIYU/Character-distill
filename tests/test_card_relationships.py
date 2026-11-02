@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""`core.card_relationships.dedupe_relationship_targets`：同一 target 的关系条目只留第一条。
+"""`core.card_relationships.dedupe_relationship_targets`：关系对象按名单归一后，同一 target 只留第一条。
 
 刘姥姥验收实测：一张卡里「贾母」出现两条（`relation` 分别是「老亲家、贾府老祖宗」与
 「老亲家」）—— 同一个人被拆成两条，注入时同一段关系被说两遍。§10 C4 的关系判据就是
@@ -14,8 +14,6 @@
 from __future__ import annotations
 
 import logging
-
-import pytest
 
 from core.card_relationships import dedupe_relationship_targets
 from core.schema import CharacterCard
@@ -33,7 +31,7 @@ CARD = {
 
 def _dedupe(d: dict = CARD):
     card = CharacterCard.model_validate(d)
-    return card, dedupe_relationship_targets(card)
+    return card, dedupe_relationship_targets(card, roster=[])
 
 
 def test_a_repeated_target_keeps_only_the_first_entry():
@@ -106,7 +104,6 @@ def _warnings(caplog):
             if r.name == "core.card_relationships"]
 
 
-@pytest.mark.xfail(strict=True, reason="①a：去重还不认名单")
 def test_alias_and_primary_collapse_to_one_relationship():
     """同一人的两个写法（主名 + 名单里的别名）按名单归一 → 只留第一条。"""
     card = _card([
@@ -121,7 +118,6 @@ def test_alias_and_primary_collapse_to_one_relationship():
     assert dropped[0]["original_target"] == "慕容昭瑜"
 
 
-@pytest.mark.xfail(strict=True, reason="①a：去重还不认名单")
 def test_alias_target_is_rewritten_to_primary_name():
     """只有别名写法的一条：target 换成名单里的主名，relation 不变。"""
     card = _card([{"target": "慕容昭瑜", "relation": "B"}])
@@ -132,7 +128,6 @@ def test_alias_target_is_rewritten_to_primary_name():
         [("柳若芙", "B")], [])
 
 
-@pytest.mark.xfail(strict=True, reason="①a：去重还不认名单")
 def test_target_outside_roster_is_kept_and_warned(caplog):
     """名单里没有的对象原样保留，并记一行「不在名单」的 WARNING。"""
     card = _card([{"target": "某人", "relation": "C"}])
@@ -146,7 +141,6 @@ def test_target_outside_roster_is_kept_and_warned(caplog):
     assert len(warnings) == 1 and "某人" in warnings[0]
 
 
-@pytest.mark.xfail(strict=True, reason="①a：去重还不认名单")
 def test_unlocated_attitude_follows_the_merged_target():
     """未定位态度与关系用同一套映射换名，挪回时能按主名找到留下的关系。"""
     card = _card([
@@ -161,7 +155,6 @@ def test_unlocated_attitude_follows_the_merged_target():
     assert [pa.attitude for pa in moved.relationships[0].phase_attitudes] == ["X"]
 
 
-@pytest.mark.xfail(strict=True, reason="①a：去重还不认名单")
 def test_alias_shared_by_two_people_is_not_canonicalized(caplog):
     """「阿三」同时是甲和乙的别名 → 不能判定归属，原样保留并记 WARNING。"""
     card = _card([{"target": "阿三", "relation": "F"}])
