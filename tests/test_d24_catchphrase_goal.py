@@ -15,18 +15,25 @@ G3 「还欠十九个钱」都是掌柜 → 去，1 次调用
 G4 「书」有一处是喝酒的人 → 去（别人说过就区分不开）
 G5 同 G1、但没有「第N章」标题 → 认不出章节，去，0 次调用
 G6 顶层「酒」留、阶段 overlay 的「不多」删
+G7 卡里没有口头禅 → 不核对，0 次调用
+G8 同 G1、但模型抛异常 → 照常出卡、口头禅原样，1 条 ERROR
+G9 同 G1、但第 1 处是「无法判断」→ 本人只剩第 4 章 1/4，去
+G10 41 处（>MAX_CANDIDATES）分两批判：第二批有外人 → 去、2 次；第一批就有外人 → 去、1 次
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import core.distiller as distiller_module
+
 from core.card_layers import get_path
+from core.chapters import chapter_bodies
 from core.distiller import Distiller
+from core.quotes import Candidate
 from core.schema import CharacterCard
 
 _FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "kongyiji.txt")
@@ -80,12 +87,28 @@ class _VerifyLLM:
         return self.calls.count("verify_catchphrase")
 
 
+class _BoomLLM(_VerifyLLM):
+    """核对口头禅那次调用直接抛异常；其余（挑对话示例）照常回 0。"""
+
+    def select_by_schema(self, system_prompt, messages, function, max_tokens=None):
+        if function["name"] == "verify_catchphrase":
+            raise RuntimeError("模型挂了")
+        return super().select_by_schema(system_prompt, messages, function, max_tokens)
+
+
+def _synthetic_41() -> list[Candidate]:
+    """41 处合成候选：起点均匀落在 4 章里（彼此不同，避免被当成同一处）。"""
+    bodies = list(chapter_bodies(_with_chapters()).values())
+    starts = [bodies[i % 4][0] + 1 + (i // 4) for i in range(41)]
+    return [Candidate(n=0, lead="", line="酒", prev_lead="", prev_line="",
+                      context="", start=s) for s in starts]
+
+
 def _finalize(card, content, llm):
     return Distiller(llm=llm, config_path=None).finalize_card(
         card, content, NAME, [], ROSTER)
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ③b：口头禅核对尚未实现")
 def test_g1_said_often_by_the_character_is_kept():
     llm = _VerifyLLM([[NAME] * 4])
 
@@ -95,7 +118,6 @@ def test_g1_said_often_by_the_character_is_kept():
     assert llm.verify_calls == 1, "核对「酒」应当恰好调用模型一次"
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ③b：口头禅核对尚未实现")
 def test_g2_too_few_chapters_is_dropped_without_a_call():
     llm = _VerifyLLM([])
 
@@ -105,7 +127,6 @@ def test_g2_too_few_chapters_is_dropped_without_a_call():
     assert llm.verify_calls == 0, "上限预判就能判掉，不该调模型"
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ③b：口头禅核对尚未实现")
 def test_g3_said_by_another_person_is_dropped():
     llm = _VerifyLLM([["掌柜"] * 4])
 
@@ -115,7 +136,6 @@ def test_g3_said_by_another_person_is_dropped():
     assert llm.verify_calls == 1
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ③b：口头禅核对尚未实现")
 def test_g4_any_line_by_someone_else_is_dropped():
     llm = _VerifyLLM([["名单外的人", NAME, NAME, NAME]])
 
@@ -124,7 +144,6 @@ def test_g4_any_line_by_someone_else_is_dropped():
     assert out.speaking_style.catchphrases == []
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ③b：口头禅核对尚未实现")
 def test_g5_without_chapter_headings_is_dropped_without_a_call():
     llm = _VerifyLLM([])
 
@@ -134,7 +153,6 @@ def test_g5_without_chapter_headings_is_dropped_without_a_call():
     assert llm.verify_calls == 0, "认不出章节就不该调模型"
 
 
-@pytest.mark.xfail(strict=True, reason="D24 ③b：口头禅核对尚未实现")
 def test_g6_top_level_kept_and_phase_overlay_dropped():
     llm = _VerifyLLM([[NAME] * 4])
 
@@ -143,3 +161,54 @@ def test_g6_top_level_kept_and_phase_overlay_dropped():
     assert out.speaking_style.catchphrases == ["酒"]
     overlay = out.character_arc.phases[0].overlay
     assert get_path(overlay, "speaking_style.catchphrases") == []
+
+
+def test_g7_no_catchphrases_makes_no_verification_call():
+    llm = _VerifyLLM([])
+
+    out = _finalize(_card([]), _with_chapters(), llm)
+
+    assert out.speaking_style.catchphrases == []
+    assert llm.verify_calls == 0
+
+
+def test_g8_model_failure_keeps_the_catchphrase_and_logs_one_error(caplog):
+    llm = _BoomLLM([])
+
+    with caplog.at_level(logging.ERROR):
+        out = _finalize(_card(["酒"]), _with_chapters(), llm)
+
+    assert out.speaking_style.catchphrases == ["酒"]
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1, "核对口头禅出错应记且只记一条 ERROR"
+
+
+def test_g9_undecided_first_line_leaves_only_one_chapter():
+    llm = _VerifyLLM([["无法判断", NAME, NAME, NAME]])
+
+    out = _finalize(_card(["酒"]), _with_chapters(), llm)
+
+    assert out.speaking_style.catchphrases == []
+    assert llm.verify_calls == 1
+
+
+def test_g10_more_than_forty_is_judged_in_two_batches(monkeypatch):
+    monkeypatch.setattr(distiller_module, "phrase_occurrences",
+                        lambda text, phrase: _synthetic_41())
+    llm = _VerifyLLM([[NAME] * 40, ["名单外的人"]])
+
+    out = _finalize(_card(["酒"]), _with_chapters(), llm)
+
+    assert out.speaking_style.catchphrases == []
+    assert llm.verify_calls == 2
+
+
+def test_g10_outsider_in_first_batch_stops_after_one_call(monkeypatch):
+    monkeypatch.setattr(distiller_module, "phrase_occurrences",
+                        lambda text, phrase: _synthetic_41())
+    llm = _VerifyLLM([["名单外的人"] + [NAME] * 39])
+
+    out = _finalize(_card(["酒"]), _with_chapters(), llm)
+
+    assert out.speaking_style.catchphrases == []
+    assert llm.verify_calls == 1

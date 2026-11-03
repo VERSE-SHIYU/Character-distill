@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import asyncio
+import bisect
 import hashlib
 import json
 import queue
@@ -30,24 +31,29 @@ from adapters.llm_adapter import (
 )
 from core.card_quotes import VERBATIM_FIELDS, retract_unverified
 from core.arc_view import phase_header, phase_of
+from core.chapters import chapter_bodies
 from core.llm_json import extract_json
 from core.card_relationships import dedupe_relationship_targets
 from core.chat_preprocessor import ChatPreprocessor
 from core.quotes import (
+    MAX_CANDIDATES,
     MAX_EXAMPLES,
     OUTSIDER,
     PICK_SLOTS,
     UNDECIDED,
     Candidate,
     SpeakerOptions,
+    _same_width,
     build_example,
     extract_candidates,
     locate_in_normalized,
     normalize,
     normalized_starts,
+    phrase_occurrences,
     pick_slot,
     pick_slot_properties,
     render_candidates,
+    render_occurrences,
     spread_evenly,
     valid_picks,
 )
@@ -214,7 +220,7 @@ _VERBATIM_VALUE = '原文里的原话，逐字照抄'
 # 别各写一份措辞（锁 S4 数它）。
 _BASELINE_ZERO_RULE = (
     '从头到尾一直如此的（此人的底色），只写一条，phase 填 0；'
-    '故事里因某人某事才出现或改变的（如对某人的称呼），不填 0，标出它确实成立的阶段。'
+    '故事里因某人某事才出现或改变的（如后来才有的习惯），不填 0，标出它确实成立的阶段。'
 )
 # 状态类字段（性格、价值观、说话方式、雷点软肋…）的写法：描述随阶段变，故一条描述附它在
 # 哪些阶段成立的摘录。只定义一次：各处引用它，别复制这句（锁 S4 数它）。
@@ -243,6 +249,14 @@ _PHASE_VERBATIM_RULE = (
 _STABLE_FIELD_RULE = (
     '这类字段全程不变：只写一次，不按阶段拆，只写取值本身，不附依据。'
 )
+# 口头禅的定义只写一处，G3 维度 C 引用它：本人经常说 + 别人不这么说；称呼归关系，不算口头禅。
+CATCHPHRASE_RULE = (
+    '口头禅：此人经常说、并且能把他和别人区分开的词或短句（别的人物不这么说）。'
+    '对某人的称呼不算（称呼写在关系里）；别人也说的、人人都说的常用语和语气词都不算。'
+    '确实没有就留空。'
+)
+# 「经常」的门槛：本人说过它的章数 ÷ 本人出场章数 ≥ 1/3。只此一处（Shiyu 11-04 定）。
+CATCHPHRASE_MIN_CHAPTER_SHARE = 1 / 3
 
 
 # 按阶段字段的写法：逐字清单 → 原话规则；登记表单值 → 单值规则；其余 → 描述规则。
@@ -338,7 +352,7 @@ _FORMAT_DIMS: tuple[tuple[str, str | _ByStart], ...] = (
            '负面动机（贪、算计、报复）照原文如实写，不美化。' + _phase_rule("motives")),
     ("G3", 'C. 说话风格：语气、句式、口癖（直接从原文对话提取）。语气/句式按阶段给，'
            + _phase_rule("speaking_style.tone") +
-           '口癖按阶段给，' + _phase_rule("speaking_style.catchphrases") +
+           '口癖按阶段给，' + _phase_rule("speaking_style.catchphrases") + CATCHPHRASE_RULE +
            '用词水平是稳定项，' + _STABLE_FIELD_RULE +
            '禁忌用词（taboo_words）：根据角色性格，推断他绝对不会说出口的话或词'
            '（如违背人设的示弱话、不符其语言习惯的词）。从原文和人设推断，确实没有才留空。'),
@@ -2295,6 +2309,132 @@ class Distiller:
             card_dict["dialogue_examples"] = [text for text, _ in picked]
         return CharacterCard.model_validate(card_dict)
 
+    def verify_catchphrases(
+        self,
+        card: CharacterCard,
+        content: str,
+        name: str,
+        aliases: Sequence[str] = (),
+        roster: Sequence[dict] = (),
+    ) -> CharacterCard:
+        """按「本人经常说 + 能区分开」核对口头禅；不合格的从顶层与所有 overlay 一起删。
+
+        「提取到了」不等于「是他的口头禅」：SG 实测 12 条里 4 条是对某人的称呼、8 条只说过
+        一两次或别人也常说。这里按章统计 —— 含该词的台词只落在不到 1/3 的出场章就足够判掉，
+        不调模型；否则由模型读片段判说话人，任一处是别人说的就删；最后本人格所在章数够门槛
+        才留。认不出「第N章」的书一律删（一章都判不了经常与区分）。
+
+        本方法照实抛异常；要不要因此作废整张卡由调用方定（`finalize_card` 里保底）。
+        """
+        dump = card.model_dump()
+        slots = [dump["speaking_style"]["catchphrases"]]
+        slots += [(phase.get("overlay") or {}).get("speaking_style", {}).get("catchphrases")
+                  for phase in dump["character_arc"]["phases"]]
+        slots.append((dump["character_arc"].get("unlocated", {}).get("overlay") or {})
+                     .get("speaking_style", {}).get("catchphrases"))
+        slots = [slot for slot in slots if isinstance(slot, list)]
+        values = list(dict.fromkeys(v for slot in slots for v in slot))
+        if not values:
+            return card
+
+        bodies = chapter_bodies(content)
+        drop: set[str] = set()
+        if not bodies:
+            drop = set(values)
+        else:
+            wanted = [_same_width(w) for w in (name, *aliases) if w]
+            appearance = {n for n, (_, body) in bodies.items()
+                          if any(w in _same_width(body) for w in wanted)}
+            spans = sorted((a, a + len(body), n) for n, (a, body) in bodies.items())
+            span_starts = [a for a, _, _ in spans]
+
+            def chapter_at(pos: int) -> int | None:
+                i = bisect.bisect_right(span_starts, pos) - 1
+                if i < 0:
+                    return None
+                a, end, n = spans[i]
+                return n if pos < end else None
+
+            others = _other_people(roster, name, aliases)
+            options = SpeakerOptions(
+                tuple(dict.fromkeys(o.get("name") for o in others if o.get("name"))), name)
+            for phrase in values:
+                occs = phrase_occurrences(content, phrase)
+                occ_chapters = {chapter_at(c.start) for c in occs} - {None}
+                if (not appearance or not occ_chapters or len(occ_chapters) / len(appearance)
+                        < CATCHPHRASE_MIN_CHAPTER_SHARE):
+                    drop.add(phrase)
+                    continue
+                subject = self._catchphrase_subject_lines(phrase, occs, others, options)
+                if subject is None:
+                    drop.add(phrase)
+                    continue
+                subject_chapters = {chapter_at(pos) for pos in subject} - {None}
+                if len(subject_chapters) / len(appearance) < CATCHPHRASE_MIN_CHAPTER_SHARE:
+                    drop.add(phrase)
+
+        if not drop:
+            return card
+        for slot in slots:
+            slot[:] = [v for v in slot if v not in drop]
+        return CharacterCard.model_validate(dump)
+
+    def _catchphrase_subject_lines(
+        self, phrase: str, occs: Sequence[Candidate],
+        others: Sequence[dict], options: SpeakerOptions,
+    ) -> list[int] | None:
+        """逐批判说话人；全是本人或「无法判断」时返回本人那些台词的起点，出现别人即返回 None。"""
+        batches = [spread_evenly(occs)]
+        if len(occs) > MAX_CANDIDATES:
+            chosen = {c.start for c in batches[0]}
+            rest = [c for c in occs if c.start not in chosen]
+            batches += [spread_evenly(rest[i:i + MAX_CANDIDATES])
+                        for i in range(0, len(rest), MAX_CANDIDATES)]
+        subject: list[int] = []
+        for batch in batches:
+            judges = self._judge_catchphrase_batch(phrase, batch, len(occs), others, options)
+            for cand in batch:
+                speaker = judges.get(cand.n)
+                if speaker in options.others or speaker == OUTSIDER:
+                    return None
+                if speaker == options.subject:
+                    subject.append(cand.start)
+        return subject
+
+    def _judge_catchphrase_batch(
+        self, phrase: str, batch: Sequence[Candidate], total: int,
+        others: Sequence[dict], options: SpeakerOptions,
+    ) -> dict[int, object]:
+        """一次 `select_by_schema`：回 `who1…who{k}` 的说话人。非对象按「无法判断」处理。"""
+        k = len(batch)
+        properties = {f"who{i}": {"type": "string", "enum": options.enum}
+                      for i in range(1, k + 1)}
+        function = {
+            "name": "verify_catchphrase",
+            "description": f"判断含「{phrase}」的每句台词是谁说的",
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": list(properties),
+                "additionalProperties": False,
+            },
+        }
+        system = (
+            f"下面是原文里含「{phrase}」的台词（全书共 {total} 处，这里按出场顺序均匀取了 {k} 处），"
+            "每条含编号、原文片段、本句。片段是原文的连续一段，请读片段判断本句是谁说的 —— "
+            f"片段里出现某个名字，不等于是他说的话（名字常是宾语，如「送入{options.subject}口中，因笑道」）。\n"
+            f"人物名单（标准名（别名））：{_roster_hint(others)}\n"
+            f"每个编号的说话人填进 who1 到 who{k}：是「{options.subject}」本人说的，填「{options.subject}」；"
+            "是名单里的其他人，填他的标准名；是名单以外的人，填「名单外的人」；"
+            "判不准，填「无法判断」。请如实填，不要为了凑数从名单里挑一个最像的。"
+        )
+        raw = self._llm.select_by_schema(
+            system, [{"role": "user", "content": render_occurrences(batch)}], function)
+        self._try_record_usage("distill_catchphrase")
+        if not isinstance(raw, dict):
+            return {}
+        return {i: raw.get(f"who{i}") for i in range(1, k + 1)}
+
     def finalize_card(
         self,
         card: CharacterCard,
@@ -2303,7 +2443,7 @@ class Distiller:
         aliases: Sequence[str] = (),
         roster: Sequence[dict] = (),
     ) -> CharacterCard:
-        """落卡前的后置步骤：先关系去重、再核对引文、最后贴对话示例（WP18 / WP17）。
+        """落卡前的后置步骤：先关系去重、再核对引文与口头禅、最后贴对话示例（WP18 / WP17）。
 
         合成一个入口是因为三条产卡通道各接一次后置步骤 —— 分成三个方法就有六条调用线，
         其中一条漏掉一步从成品看不出来（卡上「没有引文 / 示例」与「本来就没有」同形）。
@@ -2311,9 +2451,9 @@ class Distiller:
         必是原文（核对去掉查不到的引文的引号）、示例按编号从原文复制
         （`attach_dialogue_examples`）。
 
-        **对话示例这一步保底**：挑不出来或调用模型出错，卡照常返回、只是没有示例，原因
-        进日志 —— 不让最后一个后置字段把已经付费蒸好的整张卡作废（标签、苏醒台词本来
-        就是这样）。保底只此一处，三条通道因此口径相同；通道用
+        **对话示例与口头禅两步保底**：挑不出来、核对不出说话人或调用模型出错，卡照常返回
+        （没有示例 / 口头禅保持核对前原样），原因进日志 —— 不让后置字段把已经付费蒸好的整张
+        卡作废（标签、苏醒台词本来就是这样）。两步各自保底，三条通道因此口径相同；通道用
         `CharacterCard.has_dialogue_examples` 判有没有配上，自己渲染提示。去重与核对引文出错仍然抛。
 
         去重放在核对之前：先丢掉重复条目，引文撤回日志就只涉及留下来的那些条目，不会为一条
@@ -2321,6 +2461,13 @@ class Distiller:
         """
         card, _ = dedupe_relationship_targets(card, roster)
         card, _ = retract_unverified(card, content)
+        try:
+            card = self.verify_catchphrases(card, content, name, aliases, roster)
+        except DistillError as exc:
+            # 认不出章节、模型没给出可用的说话人：保留核对前的口头禅。
+            logger.warning("[distill] 「%s」核对口头禅未完成，保留原样：%s", name, exc)
+        except Exception:
+            logger.error("[distill] 「%s」核对口头禅出错，保留原样", name, exc_info=True)
         try:
             return self.attach_dialogue_examples(card, content, name, aliases, roster)
         except DistillError as exc:
