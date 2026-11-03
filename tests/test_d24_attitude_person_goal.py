@@ -92,3 +92,12 @@ def test_other_name_containing_main_name_is_not_flagged():
     calls, _ = _run({"甄宝玉": _ok("甄宝玉", attitude="与我同名同貌，见了甄宝玉便觉无趣"), "袭人": _ok("袭人")},
                     name="宝玉")
     assert len(calls) == 1
+
+
+def test_first_person_fields_exist_in_both_shapes():
+    """第 8 条要查的字段必须同时是顶层字段与阶段字段 —— 只在一侧存在，判据就会漏查另一侧。"""
+    from core.relationship_batch import _FIRST_PERSON_FIELDS, _PHASE_FIELDS, _ROW_FIELDS
+
+    assert _FIRST_PERSON_FIELDS
+    assert set(_FIRST_PERSON_FIELDS) <= set(_ROW_FIELDS)
+    assert set(_FIRST_PERSON_FIELDS) <= set(_PHASE_FIELDS)

@@ -34,6 +34,19 @@ class RelationshipBatchError(RuntimeError):
     """某一批关系生成失败 —— 整步失败，不把这一批的人悄悄丢掉。"""
 
 
+# 关系条目的形状：**只此一处**（D24 ⑥）。输出格式（`_OUTPUT_FORMAT`）与第 8 条判据
+# （`relationship_violation`）都从这里取 —— 字段名写两处，增删字段时就会漏改一处。
+_ROW_FIELDS = ("target", "relation", "attitude", "note")
+_PHASES_KEY = "attitudes"
+_PHASE_FIELDS = ("phase", "attitude", "quote", "note")
+# 第 8 条要求主角写「我」的字段（顶层与每个阶段都有）；quote 是原文摘录，不在其中。
+_FIRST_PERSON_FIELDS = ("attitude", "note")
+_OUTPUT_FORMAT = (
+    f"输出 JSON 数组，每个元素含 {' / '.join(_ROW_FIELDS)}，"
+    f"以及 {_PHASES_KEY}: [{{{', '.join(_PHASE_FIELDS)}}}]。"
+)
+
+
 # 关系生成的口径（八条）：**只在这里写一次**（锁 S13），由 `_batch_prompt` 引用。
 # 主调用维度 F 的「只出名单」讲的是「这一步先别写关系详情」，这八条讲的是「这一步怎么写」，
 # 是同一件事的两步、两句话 —— 规则若也内联进 distiller 的维度说明就成了「一处两写」。
@@ -90,11 +103,11 @@ def relationship_violation(row: dict, name: str, names: Sequence[str] = ()) -> s
     if not name:
         return None
     longer = [n for n in names if n and n != name and name in n]
-    fields = [("attitude", row.get("attitude")), ("note", row.get("note"))]
-    for a in row.get("attitudes") or []:
+    fields = [(key, row.get(key)) for key in _FIRST_PERSON_FIELDS]
+    for a in row.get(_PHASES_KEY) or []:
         if isinstance(a, dict):
-            fields += [(f"阶段 {a.get('phase')} attitude", a.get("attitude")),
-                       (f"阶段 {a.get('phase')} note", a.get("note"))]
+            fields += [(f"阶段 {a.get('phase')} {key}", a.get(key))
+                       for key in _FIRST_PERSON_FIELDS]
     for label, value in fields:
         text = str(value or "")
         for other in longer:
@@ -138,8 +151,7 @@ def _batch_prompt(prefix: str, name: str, batch: list[str], phase_note: str, *,
         f"{retry_line}"
         f"{phase_note}\n每条关系按阶段给态度。\n"
         f"{RELATIONSHIP_RULES}\n"
-        "输出 JSON 数组，每个元素含 target / relation / attitude / note，"
-        "以及 attitudes: [{phase, attitude, quote, note}]。"
+        f"{_OUTPUT_FORMAT}"
     )
     source = f"以下是关于「{name}」的分析档案：\n\n{material}\n\n" if material else ""
     user = f"{source}请写出「{name}」与这几个人物的关系：{people}。只输出 JSON 数组。"
