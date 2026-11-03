@@ -1,5 +1,6 @@
-import { useCallback, useRef } from 'react'
+import { useRef } from 'react'
 import useIsMobile from '../../hooks/useIsMobile'
+import useSplitDrag from '../../hooks/useSplitDrag'
 
 /**
  * Desktop: flex row with draggable splitter (matching current behavior).
@@ -23,22 +24,9 @@ export default function SplitOrFullscreen({
   const isMobile = useIsMobile()
   const containerRef = useRef(null)
 
-  const onSplitterMouseDown = useCallback((e) => {
-    e.preventDefault()
-    const container = containerRef.current
-    if (!container) return
-    const rect = container.getBoundingClientRect()
-    const onMove = (moveE) => {
-      const ratio = (moveE.clientX - rect.left) / rect.width
-      onSplitRatioChange?.(Math.min(0.8, Math.max(0.4, ratio)))
-    }
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-    }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-  }, [onSplitRatioChange])
+  const onSplitterPointerDown = useSplitDrag(containerRef, {
+    axis: 'x', min: 0.4, max: 0.8, onChange: onSplitRatioChange,
+  })
 
   if (isMobile) {
     if (!open) return <>{main}</>
@@ -56,7 +44,7 @@ export default function SplitOrFullscreen({
       </div>
       {open && (
         <>
-          <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />
+          <div className="chat-splitter" onPointerDown={onSplitterPointerDown} />
           <div className={panelClassName} style={{ flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw' }}>
             {panel}
           </div>
