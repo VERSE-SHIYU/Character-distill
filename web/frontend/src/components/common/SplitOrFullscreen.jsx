@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import useIsMobile from '../../hooks/useIsMobile'
 import useSplitDrag from '../../hooks/useSplitDrag'
+import useStoredRatio from '../../hooks/useStoredRatio'
 
 /**
  * Desktop: flex row with draggable splitter (matching current behavior).
@@ -10,22 +11,27 @@ import useSplitDrag from '../../hooks/useSplitDrag'
  *   open               boolean — show the panel?
  *   main               ReactNode — primary content
  *   panel              ReactNode — sidebar / history panel content
- *   splitRatio         number (0.4–0.8), default 0.65 — desktop main fraction
- *   onSplitRatioChange fn(ratio) — called when user drags splitter
+ *   defaultRatio       number (0.4–0.8), default 0.65 — desktop main fraction before any drag
+ *   storageKey         string — where the dragged ratio is remembered (localStorage)
+ *
+ * The ratio is owned here (useStoredRatio), not by callers: all three callers used to pass
+ * `onSplitRatioChange={() => {}}`, so the splitter could never move.
+ * Trigger chain: drag splitter → useSplitDrag → setSplitRatio (persisted) → main / panel flex re-layout.
  */
 export default function SplitOrFullscreen({
   open,
   main,
   panel,
-  splitRatio = 0.65,
-  onSplitRatioChange,
+  defaultRatio = 0.65,
+  storageKey,
   panelClassName = 'history-sidebar',
 }) {
   const isMobile = useIsMobile()
   const containerRef = useRef(null)
+  const [splitRatio, setSplitRatio] = useStoredRatio(storageKey, defaultRatio, 0.4, 0.8)
 
   const onSplitterPointerDown = useSplitDrag(containerRef, {
-    axis: 'x', min: 0.4, max: 0.8, onChange: onSplitRatioChange,
+    axis: 'x', min: 0.4, max: 0.8, onChange: setSplitRatio,
   })
 
   if (isMobile) {
