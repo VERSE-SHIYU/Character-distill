@@ -34,6 +34,24 @@ class RelationshipBatchError(RuntimeError):
     """某一批关系生成失败 —— 整步失败，不把这一批的人悄悄丢掉。"""
 
 
+# 关系条目的形状：**只此一处**（D24 ⑥）。输出格式（`_OUTPUT_FORMAT`）与第 8 条判据
+# （`relationship_violation`）都从这里取 —— 字段名写两处，增删字段时就会漏改一处。
+TARGET_FIELD = "target"
+RELATION_FIELD = "relation"
+# 解析时每条必须有的键（`distiller` 的 `list_item_keys` 用它）：「至少含这两个键」，与整条形状
+# `_ROW_FIELDS` 是两种契约，故分开定义、由同一组名字拼出。
+REQUIRED_ROW_FIELDS = (TARGET_FIELD, RELATION_FIELD)
+_ROW_FIELDS = (*REQUIRED_ROW_FIELDS, "attitude", "note")
+_PHASES_KEY = "attitudes"
+_PHASE_FIELDS = ("phase", "attitude", "quote", "note")
+# 第 8 条要求主角写「我」的字段（顶层与每个阶段都有）；quote 是原文摘录，不在其中。
+_FIRST_PERSON_FIELDS = ("attitude", "note")
+_OUTPUT_FORMAT = (
+    f"输出 JSON 数组，每个元素含 {' / '.join(_ROW_FIELDS)}，"
+    f"以及 {_PHASES_KEY}: [{{{', '.join(_PHASE_FIELDS)}}}]。"
+)
+
+
 # 关系生成的口径（八条）：**只在这里写一次**（锁 S13），由 `_batch_prompt` 引用。
 # 主调用维度 F 的「只出名单」讲的是「这一步先别写关系详情」，这八条讲的是「这一步怎么写」，
 # 是同一件事的两步、两句话 —— 规则若也内联进 distiller 的维度说明就成了「一处两写」。
@@ -51,8 +69,9 @@ RELATIONSHIP_RULES = (
     f"relation 是关系类型，一个 {REL_RELATION_MAX} 字以内的名词短语"
     "（挚友 / 前队友 / 仇人 / 暗恋对象 / 名义上的兄长……），不写经过，"
     "不用他 / 她 / 我 / 你指人；"
-    f"attitude 是态度描述（{REL_ATTITUDE_MAX} 字以内）；"
-    "note 见第 2 条，主角一律写「我」，不用「她 / 他」指主角。"
+    f"attitude 是态度描述（{REL_ATTITUDE_MAX} 字以内）；note 见第 2 条；"
+    "attitude 与 note（含各阶段的）里主角一律写「我」或省略主语，"
+    "不写主角名，不用「她 / 他」指主角。"
 )
 
 
@@ -75,11 +94,39 @@ def relation_violation(relation: str) -> str | None:
     return None
 
 
+def relationship_violation(row: dict, name: str, names: Sequence[str] = ()) -> str | None:
+    """一整条关系不合第 8 条时返回原因，合规返回 None。判据只此一处：补跑筛选与复核都调它。
+
+    - relation：`relation_violation` 原口径；
+    - attitude / note 与 attitudes[] 的 attitude / note 写了主角名 `name` 即违规。quote 是原文
+      摘录，不查。`names` 里含主角名的别人的名字（「甄宝玉」含「宝玉」）先去掉再查。
+    - 「她 / 他」指主角不查：规则分不清它指主角还是对方，只靠提示词（D24 ⑥ 方案）。
+    """
+    why = relation_violation(str(row.get(RELATION_FIELD) or ""))
+    if why:
+        return f"relation {why}"
+    if not name:
+        return None
+    longer = [n for n in names if n and n != name and name in n]
+    fields = [(key, row.get(key)) for key in _FIRST_PERSON_FIELDS]
+    for a in row.get(_PHASES_KEY) or []:
+        if isinstance(a, dict):
+            fields += [(f"阶段 {a.get('phase')} {key}", a.get(key))
+                       for key in _FIRST_PERSON_FIELDS]
+    for label, value in fields:
+        text = str(value or "")
+        for other in longer:
+            text = text.replace(other, "")
+        if name in text:
+            return f"{label} 写了主角名「{name}」"
+    return None
+
+
 # 补跑那一次额外点明的一句：名单是我们给的，模型只需**逐字照抄** target，别改名、别用别称。
 # 名字对不上就看不出「谁还没回」，于是同一个人被当成缺人反复补、或反过来静默丢掉。
 _EXACT_TARGET_NOTE = "target 逐字使用上面名单里的写法：不要改名、不要用别称。"
 # 补跑同时重写不合第 8 条的人：逐条给出「人名：原因」，只重写这几人。
-_RELATION_FIX_NOTE = "上次这几人的 relation 不合第 8 条：{items}。重写这几人。"
+_RELATION_FIX_NOTE = "上次这几人不合第 8 条：{items}。重写这几人。"
 
 
 def _batch_prompt(prefix: str, name: str, batch: list[str], phase_note: str, *,
@@ -109,8 +156,7 @@ def _batch_prompt(prefix: str, name: str, batch: list[str], phase_note: str, *,
         f"{retry_line}"
         f"{phase_note}\n每条关系按阶段给态度。\n"
         f"{RELATIONSHIP_RULES}\n"
-        "输出 JSON 数组，每个元素含 target / relation / attitude / note，"
-        "以及 attitudes: [{phase, attitude, quote, note}]。"
+        f"{_OUTPUT_FORMAT}"
     )
     source = f"以下是关于「{name}」的分析档案：\n\n{material}\n\n" if material else ""
     user = f"{source}请写出「{name}」与这几个人物的关系：{people}。只输出 JSON 数组。"
@@ -145,7 +191,7 @@ def batch_relationships(targets: list[str], phase_note: str, *,
     那些**补跑一次**（那次提示里点明「逐字使用名单里的写法」）；补跑后仍缺 →
     `RelationshipBatchError` 点名是谁。名单外的条目（写错名 / 多写的）一律丢弃。
 
-    **relation 口径**（D24 ⑤）：不合 `relation_violation` 的人与缺人**合成一次补跑**；
+    **第 8 条口径**（D24 ⑤ ⑥）：不合 `relationship_violation` 的人与缺人**合成一次补跑**；
     补跑结果照收，仍不合口径只记 WARNING（内容仍可用，整步失败要多花一次蒸馏的钱）。
 
     **不解析别名**：别名→标准名要名单（`{name, aliases}`），蒸馏入口拿不到（要读存储）；
@@ -164,7 +210,7 @@ def batch_relationships(targets: list[str], phase_note: str, *,
 
     def _merge(rows: list) -> None:
         for row in rows or []:
-            key = row.get("target")
+            key = row.get(TARGET_FIELD)
             if key in seen and key not in found:
                 found[key] = dict(row)
 
@@ -174,8 +220,7 @@ def batch_relationships(targets: list[str], phase_note: str, *,
         return list(stream_call(system, user, batch) or [])
 
     _merge(_fan_out([want[i:i + batch_size] for i in range(0, len(want), batch_size)], _run))
-    bad = {k: relation_violation(str(found[k].get("relation") or ""))
-           for k in want if k in found}
+    bad = {k: relationship_violation(found[k], name, want) for k in want if k in found}
     bad = {k: why for k, why in bad.items() if why}
     retry = [k for k in want if k not in found or k in bad]
     if retry:
@@ -186,7 +231,7 @@ def batch_relationships(targets: list[str], phase_note: str, *,
         for row in _fan_out(
                 [retry[i:i + batch_size] for i in range(0, len(retry), batch_size)],
                 lambda b: _run(b, retry_notes=notes)):
-            key = row.get("target")
+            key = row.get(TARGET_FIELD)
             if key in retry:
                 found[key] = dict(row)
         still = [k for k in want if k not in found]
@@ -194,7 +239,7 @@ def batch_relationships(targets: list[str], phase_note: str, *,
             raise RelationshipBatchError(f"关系生成缺少人物：{'、'.join(still)}")
         for k in retry:
             if k in found:
-                why = relation_violation(str(found[k].get("relation") or ""))
+                why = relationship_violation(found[k], name, want)
                 if why:
-                    logger.warning("关系类型仍不合第 8 条：%s：%s", k, why)
+                    logger.warning("关系仍不合第 8 条：%s：%s", k, why)
     return [found[k] for k in want]
