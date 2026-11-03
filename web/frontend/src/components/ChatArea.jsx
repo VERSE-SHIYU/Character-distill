@@ -525,8 +525,8 @@ function ChatView() {
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
       <SplitOrFullscreen
         open={historyOpen}
-        splitRatio={0.65}
-        onSplitRatioChange={() => {}}
+        defaultRatio={0.65}
+        storageKey="chat_split"
         main={
           <div className="chat-main-content" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ position: 'relative', flexShrink: 0 }}>

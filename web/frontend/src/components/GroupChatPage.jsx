@@ -940,8 +940,8 @@ export default function GroupChatPage() {
           ) : (
             <SplitOrFullscreen
               open={historyOpen}
-              splitRatio={0.7}
-              onSplitRatioChange={() => {}}
+              defaultRatio={0.7}
+              storageKey="group_chat_split"
               panelClassName="group-right-panel history-sidebar-mode"
               main={
                 <div className="group-chat-main">

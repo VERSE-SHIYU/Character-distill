@@ -442,8 +442,8 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
     <div className="chat-view private-chat">
       <SplitOrFullscreen
         open={historyOpen}
-        splitRatio={0.65}
-        onSplitRatioChange={() => {}}
+        defaultRatio={0.65}
+        storageKey="private_chat_split"
         main={
           <div className="chat-main-content" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div className="dm">
