@@ -65,6 +65,7 @@ from core.phase_excerpt import build_excerpt, excerpt_prefix
 from core.retro_regions import NOT_DETECTED, RetroRegions
 from core.relationship_batch import (
     REL_BATCH_SIZE,
+    REQUIRED_ROW_FIELDS,
     RelationshipBatchError,
     batch_relationships,
 )
@@ -1201,7 +1202,7 @@ class Distiller:
                 system, messages, "关系生成", "distill_relationships")
             return self._parse_json_with_retry(
                 reply, system, messages, action_label="distill_relationships",
-                upstream_truncated=truncated, list_item_keys=("target", "relation"),
+                upstream_truncated=truncated, list_item_keys=REQUIRED_ROW_FIELDS,
                 stream=True)
 
         try:

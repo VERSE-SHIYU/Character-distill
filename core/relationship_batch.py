@@ -36,7 +36,12 @@ class RelationshipBatchError(RuntimeError):
 
 # 关系条目的形状：**只此一处**（D24 ⑥）。输出格式（`_OUTPUT_FORMAT`）与第 8 条判据
 # （`relationship_violation`）都从这里取 —— 字段名写两处，增删字段时就会漏改一处。
-_ROW_FIELDS = ("target", "relation", "attitude", "note")
+TARGET_FIELD = "target"
+RELATION_FIELD = "relation"
+# 解析时每条必须有的键（`distiller` 的 `list_item_keys` 用它）：「至少含这两个键」，与整条形状
+# `_ROW_FIELDS` 是两种契约，故分开定义、由同一组名字拼出。
+REQUIRED_ROW_FIELDS = (TARGET_FIELD, RELATION_FIELD)
+_ROW_FIELDS = (*REQUIRED_ROW_FIELDS, "attitude", "note")
 _PHASES_KEY = "attitudes"
 _PHASE_FIELDS = ("phase", "attitude", "quote", "note")
 # 第 8 条要求主角写「我」的字段（顶层与每个阶段都有）；quote 是原文摘录，不在其中。
@@ -97,7 +102,7 @@ def relationship_violation(row: dict, name: str, names: Sequence[str] = ()) -> s
       摘录，不查。`names` 里含主角名的别人的名字（「甄宝玉」含「宝玉」）先去掉再查。
     - 「她 / 他」指主角不查：规则分不清它指主角还是对方，只靠提示词（D24 ⑥ 方案）。
     """
-    why = relation_violation(str(row.get("relation") or ""))
+    why = relation_violation(str(row.get(RELATION_FIELD) or ""))
     if why:
         return f"relation {why}"
     if not name:
@@ -205,7 +210,7 @@ def batch_relationships(targets: list[str], phase_note: str, *,
 
     def _merge(rows: list) -> None:
         for row in rows or []:
-            key = row.get("target")
+            key = row.get(TARGET_FIELD)
             if key in seen and key not in found:
                 found[key] = dict(row)
 
@@ -226,7 +231,7 @@ def batch_relationships(targets: list[str], phase_note: str, *,
         for row in _fan_out(
                 [retry[i:i + batch_size] for i in range(0, len(retry), batch_size)],
                 lambda b: _run(b, retry_notes=notes)):
-            key = row.get("target")
+            key = row.get(TARGET_FIELD)
             if key in retry:
                 found[key] = dict(row)
         still = [k for k in want if k not in found]

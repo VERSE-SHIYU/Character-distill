@@ -101,3 +101,9 @@ def test_first_person_fields_exist_in_both_shapes():
     assert _FIRST_PERSON_FIELDS
     assert set(_FIRST_PERSON_FIELDS) <= set(_ROW_FIELDS)
     assert set(_FIRST_PERSON_FIELDS) <= set(_PHASE_FIELDS)
+
+
+def test_empty_main_name_flags_nothing():
+    """主角名为空时不查主角名：空串是任何文本的子串，不设守卫会把整批人判违规、白补跑一次。"""
+    calls, _ = _run({"甲": _ok("甲"), "乙": _ok("乙")}, name="")
+    assert len(calls) == 1
