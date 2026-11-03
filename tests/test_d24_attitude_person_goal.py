@@ -14,12 +14,9 @@ from __future__ import annotations
 
 import logging
 
-import pytest
-
 from core.relationship_batch import batch_relationships
 
 _NOTE = "本角色弧线的阶段（略）。"
-_XFAIL = pytest.mark.xfail(strict=True, reason="D24 ⑥：attitude / note 不写主角名")
 
 
 def _ok(target: str, **over) -> dict:
@@ -44,7 +41,6 @@ def _run(first: dict[str, dict], *, name: str = "云绮", targets=None, retry_fi
     return calls, out
 
 
-@_XFAIL
 def test_rules_require_first_person_in_attitude():
     from core.relationship_batch import RELATIONSHIP_RULES
 
@@ -52,7 +48,6 @@ def test_rules_require_first_person_in_attitude():
     assert "attitude" in rule8 and "主角名" in rule8
 
 
-@_XFAIL
 def test_top_attitude_with_main_name_is_retried():
     calls, out = _run({"兰香": _ok("兰香", attitude="云绮二话不说就是两记耳光"), "甲": _ok("甲")})
     assert len(calls) == 2 and calls[1][0] == ["兰香"]
@@ -60,20 +55,17 @@ def test_top_attitude_with_main_name_is_retried():
     assert {r["target"]: r["attitude"] for r in out}["兰香"] == "信得过"
 
 
-@_XFAIL
 def test_phase_attitude_with_main_name_is_retried():
     bad = _ok("阿生", attitudes=[{"phase": 2, "attitude": "云绮看他好笑", "quote": "原文", "note": "我"}])
     calls, _ = _run({"阿生": bad})
     assert len(calls) == 2 and calls[1][0] == ["阿生"]
 
 
-@_XFAIL
 def test_note_with_main_name_is_retried():
     calls, _ = _run({"明昭": _ok("明昭", note="明昭是云绮挑来的人")})
     assert len(calls) == 2 and calls[1][0] == ["明昭"]
 
 
-@_XFAIL
 def test_still_violating_after_retry_warns_but_keeps(caplog):
     with caplog.at_level(logging.WARNING, logger="core.relationship_batch"):
         calls, out = _run({"兰香": _ok("兰香", attitude="云绮扇她耳光")}, retry_fix=False)
