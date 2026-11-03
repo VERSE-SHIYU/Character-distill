@@ -158,3 +158,24 @@ describe('D24 ①b 回归：进角色页直接显示已存名单（不花钱）'
     expect(useAppStore.getState().identifiedChars).toEqual([])
   })
 })
+
+describe('侧栏：已有卡片与识别结果上下分栏（11-03 卡片被名单挤没）', () => {
+  const card = { id: 'c1', name: '卡片甲', text_id: 't1', card_json: JSON.stringify({ name: '卡片甲', identity: '身份' }) }
+
+  it('两块都有：卡片在上栏、识别结果在下栏，中间可拖动', async () => {
+    serverRoster = [{ name: '名单乙' }]
+    useAppStore.setState({ cards: [card], identifiedChars: [{ name: '名单乙' }] })
+    const { container } = render(<CharCard />)
+
+    expect(screen.getByRole('separator')).toBeTruthy()
+    expect(container.querySelector('[data-pane="top"]').textContent).toContain('卡片甲')
+    expect(container.querySelector('[data-pane="bottom"]').textContent).toContain('名单乙')
+  })
+
+  it('只有识别结果：不分栏', () => {
+    withServerRoster([{ name: '名单乙' }])
+    render(<CharCard />)
+    expect(screen.queryByRole('separator')).toBeNull()
+    expect(screen.getByText('名单乙')).toBeTruthy()
+  })
+})

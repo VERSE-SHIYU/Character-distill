@@ -22,6 +22,7 @@ import StartChatButton from './StartChatButton'
 import EditCardModal from './EditCardModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
+import StackSplit from './common/StackSplit'
 import DistillWorkbenchButton from './common/DistillWorkbenchButton'
 import { taskLabel } from './distillStatus'
 
@@ -155,6 +156,17 @@ function CharPanelBody({ textId, goBack }) {
 }
 
 // ---- Left: character list + identify/distill flow ----
+
+/**
+ * 侧栏两块：已有的卡（含来自市场的）在上、识别结果在下。两块都有时上下分栏、中间可拖动
+ * （StackSplit：各自滚动、各有最低高度，名单再长也挤不没卡片）；只有一块时照常排。
+ */
+function CharSidebarLists({ top, bottom, hasBottom }) {
+  if (top && hasBottom) {
+    return <StackSplit top={top} bottom={bottom} storageKey="char_sidebar_split" />
+  }
+  return <>{top}{hasBottom && bottom}</>
+}
 
 function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const canWrite = useCanWrite()
@@ -404,6 +416,8 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       ) : (
       <>
 
+      <CharSidebarLists
+        top={(hasCards || standaloneCards.length > 0) && (<>
       {/* Distilled cards list */}
       {hasCards && (
         <div className="char-list">
@@ -496,7 +510,8 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
           </ul>
         </div>
       )}
-
+        </>)}
+        bottom={<>
       {/* Identified but not yet distilled */}
       {hasIdentified && (
         <div className="char-identified">
@@ -562,6 +577,9 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
           )}
         </div>
       )}
+        </>}
+        hasBottom={hasIdentified}
+      />
 
       {/* Action buttons */}
       {canWrite && (

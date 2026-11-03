@@ -3236,6 +3236,11 @@ label[for] {
   overflow-y: auto;
   padding-right: 4px;
 }
+/* 侧栏里不分栏时（手机，或只有一块）：卡片列表不许被同列的识别结果挤到 0 高，整列一起滚 */
+.char-sidebar-inner > .char-list,
+.char-sidebar-inner > .char-standalone {
+  flex-shrink: 0;
+}
 
 /* ── Character Card ── */
 .char-list-item {
@@ -12729,6 +12734,63 @@ label[for] {
   right: -3px;
   top: 0;
   bottom: 0;
+}
+
+/* 上下分栏（StackSplit）：两栏各自滚动、各有最低高度；分隔条样式与左右分栏 .chat-splitter 同一套 */
+.stack-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.stack-split-pane {
+  min-height: 96px;
+  overflow-y: auto;
+}
+/* 识别结果在下栏时：名单在栏内滚动，「蒸馏所选」按钮固定在栏底、不随名单滚走 */
+.stack-split-pane .char-identified {
+  margin-top: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.stack-split-pane .char-identified-list {
+  max-height: none;
+  flex: 1;
+  min-height: 0;
+}
+.stack-splitter {
+  height: 6px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background: transparent;
+  position: relative;
+  z-index: 5;
+  touch-action: none;
+}
+.stack-splitter:hover,
+.stack-splitter:active {
+  background: var(--primary);
+  opacity: 0.15;
+}
+.stack-splitter::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 32px;
+  height: 2px;
+  border-radius: 1px;
+  transform: translateX(-50%);
+  background: var(--input-border);
+}
+.stack-splitter::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: 0;
+  right: 0;
 }
 
 .history-sidebar {
