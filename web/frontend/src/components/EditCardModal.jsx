@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { cloneElement, useEffect, useRef, useState } from 'react'
 import ErrorBox from './common/ErrorBox'
 import ObjectListField from './common/ObjectListField'
 import { withRowKeys, cleanRows } from '../utils/objectRows'
 import { examplesByPhase, examplesToText, textToExamples } from '../utils/dialogueExamples'
+import { FIELD_MAX, REL_MAX, ARC_MAX, BEHAVIOR_MAX, PHASE_BEHAVIOR_MAX } from '../utils/cardEditLimits'
 
 function splitLines(val) {
   return (Array.isArray(val) ? val.join('\n') : val || '')
@@ -12,39 +13,16 @@ function joinLines(val) {
   return val.split('\n').map((s) => s.trim()).filter(Boolean)
 }
 
-const LIMITS = {
-  identity: { max: 80 },
-  personality_traits: { max: 600, maxLines: 8, perLine: 100 },
-  tone: { max: 90 },
-  sentence_pattern: { max: 100 },
-  catchphrases: { max: 240, maxLines: 6, perLine: 40 },
-  vocabulary_level: { max: 40 },
-  taboo_words: { max: 120, maxLines: 6, perLine: 20 },
-  values: { max: 180, maxLines: 6, perLine: 30 },
-  key_memories: { max: 800, maxLines: 8, perLine: 80 },
-  inner_tensions: { max: 500, maxLines: 5, perLine: 100 },
-  background: { max: 300 },
-  first_message: { max: 300 },
-  emotional_patterns: { max: 550, maxLines: 6, perLine: 70 },
-  decision_style: { max: 180 },
-  arc_axis: { max: 40 },
-  dialogue_examples: { max: 600 },
-}
-
-// 三张对象列表的列定义与条数上限。上限只管「还能不能再加」（见 ObjectListField）。
-const REL_MAX = 8
+// 三张对象列表的列定义。条数上限见 cardEditLimits。
 const REL_COLUMNS = [
   { key: 'target', placeholder: '对方名字', maxLength: 20 },
   { key: 'relation', placeholder: '关系', maxLength: 20 },
   { key: 'attitude', placeholder: '态度', maxLength: 50 },
 ]
-const ARC_MAX = 5
 const ARC_COLUMNS = [
   { key: 'label', placeholder: '心态/立场', maxLength: 8 },
   { key: 'state', placeholder: '这一阶段的状态（句首点明故事时期）', maxLength: 100, flex: 3 },
 ]
-const BEHAVIOR_MAX = 12        // 从头到尾都成立的做法
-const PHASE_BEHAVIOR_MAX = 6   // 每个阶段专属的做法
 const BEHAVIOR_COLUMNS = [
   { key: 'situation', placeholder: '遇到什么情境', maxLength: 40 },
   { key: 'behavior', placeholder: '具体怎么做', maxLength: 80, flex: 2 },
@@ -147,45 +125,7 @@ function EditCardForm({
     }
   }
 
-  const FIELD_LABELS = {
-    personality_traits: '性格特征',
-    catchphrases: '口癖',
-    taboo_words: '禁忌用词',
-    values: '核心价值观',
-    key_memories: '关键记忆',
-    inner_tensions: '内在矛盾',
-    emotional_patterns: '情感模式',
-  }
-
   const handleSave = async () => {
-    const checks = [
-      { field: 'personality_traits', lines: form.personality_traits.split('\n').filter(Boolean) },
-      { field: 'catchphrases', lines: form.catchphrases.split('\n').filter(Boolean) },
-      { field: 'taboo_words', lines: form.taboo_words.split('\n').filter(Boolean) },
-      { field: 'values', lines: form.values.split('\n').filter(Boolean) },
-      { field: 'key_memories', lines: form.key_memories.split('\n').filter(Boolean) },
-      { field: 'inner_tensions', lines: form.inner_tensions.split('\n').filter(Boolean) },
-      { field: 'emotional_patterns', lines: form.emotional_patterns.split('\n').filter(Boolean) },
-    ]
-    for (const { field, lines } of checks) {
-      const limit = LIMITS[field]
-      if (limit.maxLines && lines.length > limit.maxLines) {
-        alert(`「${FIELD_LABELS[field] || field}」最多 ${limit.maxLines} 行，当前 ${lines.length} 行`)
-        return
-      }
-      if (limit.perLine) {
-        for (const line of lines) {
-          if (line.length > limit.perLine) {
-            alert(`「${FIELD_LABELS[field] || field}」每行最多 ${limit.perLine} 个字符`)
-            return
-          }
-        }
-      }
-    }
-    if (relationships.length > REL_MAX) {
-      alert(`人物关系最多 ${REL_MAX} 条`)
-      return
-    }
     const cardJson = {
       ...data,
       name: editName ? form.name.trim() : data.name,
@@ -249,64 +189,64 @@ function EditCardForm({
               <input className="modal-input" value={form.name} onChange={(e) => update('name', e.target.value)} maxLength={40} />
             </Field>
           )}
-          <Field label="一句话身份" mono field="identity" value={form.identity}>
-            <input className="modal-input" value={form.identity} onChange={(e) => update('identity', e.target.value)} maxLength={LIMITS.identity.max} />
+          <Field label="一句话身份" field="identity" value={form.identity}>
+            <input className="modal-input" value={form.identity} onChange={(e) => update('identity', e.target.value)} />
           </Field>
 
-          <Field label="性格特征（每行一条）" mono field="personality_traits" value={form.personality_traits}>
-            <textarea className="modal-textarea" rows={3} value={form.personality_traits} onChange={(e) => update('personality_traits', e.target.value)} maxLength={LIMITS.personality_traits.max} />
+          <Field label="性格特征（每行一条）" field="personality_traits" value={form.personality_traits}>
+            <textarea className="modal-textarea" rows={3} value={form.personality_traits} onChange={(e) => update('personality_traits', e.target.value)} />
           </Field>
 
-          <Field label="语气" mono field="tone" value={form.tone}>
-            <input className="modal-input" value={form.tone} onChange={(e) => update('tone', e.target.value)} maxLength={LIMITS.tone.max} />
+          <Field label="语气" field="tone" value={form.tone}>
+            <input className="modal-input" value={form.tone} onChange={(e) => update('tone', e.target.value)} />
           </Field>
 
-          <Field label="句式特征" mono field="sentence_pattern" value={form.sentence_pattern}>
-            <input className="modal-input" value={form.sentence_pattern} onChange={(e) => update('sentence_pattern', e.target.value)} maxLength={LIMITS.sentence_pattern.max} />
+          <Field label="句式特征" field="sentence_pattern" value={form.sentence_pattern}>
+            <input className="modal-input" value={form.sentence_pattern} onChange={(e) => update('sentence_pattern', e.target.value)} />
           </Field>
 
-          <Field label="口癖（每行一条）" mono field="catchphrases" value={form.catchphrases}>
-            <textarea className="modal-textarea" rows={2} value={form.catchphrases} onChange={(e) => update('catchphrases', e.target.value)} maxLength={LIMITS.catchphrases.max} />
+          <Field label="口癖（每行一条）" field="catchphrases" value={form.catchphrases}>
+            <textarea className="modal-textarea" rows={2} value={form.catchphrases} onChange={(e) => update('catchphrases', e.target.value)} />
           </Field>
 
-          <Field label="用词水平" mono field="vocabulary_level" value={form.vocabulary_level}>
-            <input className="modal-input" value={form.vocabulary_level} onChange={(e) => update('vocabulary_level', e.target.value)} maxLength={LIMITS.vocabulary_level.max} />
+          <Field label="用词水平" field="vocabulary_level" value={form.vocabulary_level}>
+            <input className="modal-input" value={form.vocabulary_level} onChange={(e) => update('vocabulary_level', e.target.value)} />
           </Field>
 
-          <Field label="禁忌用词（每行一条）" mono field="taboo_words" value={form.taboo_words}>
-            <textarea className="modal-textarea" rows={2} value={form.taboo_words} onChange={(e) => update('taboo_words', e.target.value)} maxLength={LIMITS.taboo_words.max} />
+          <Field label="禁忌用词（每行一条）" field="taboo_words" value={form.taboo_words}>
+            <textarea className="modal-textarea" rows={2} value={form.taboo_words} onChange={(e) => update('taboo_words', e.target.value)} />
           </Field>
 
-          <Field label="核心价值观（每行一条）" mono field="values" value={form.values}>
-            <textarea className="modal-textarea" rows={2} value={form.values} onChange={(e) => update('values', e.target.value)} maxLength={LIMITS.values.max} />
+          <Field label="核心价值观（每行一条）" field="values" value={form.values}>
+            <textarea className="modal-textarea" rows={2} value={form.values} onChange={(e) => update('values', e.target.value)} />
           </Field>
 
-          <Field label="关键记忆（每行一条）" mono field="key_memories" value={form.key_memories}>
-            <textarea className="modal-textarea" rows={3} value={form.key_memories} onChange={(e) => update('key_memories', e.target.value)} maxLength={LIMITS.key_memories.max} />
+          <Field label="关键记忆（每行一条）" field="key_memories" value={form.key_memories}>
+            <textarea className="modal-textarea" rows={3} value={form.key_memories} onChange={(e) => update('key_memories', e.target.value)} />
           </Field>
 
-          <Field label="内在矛盾（每行一条）" mono field="inner_tensions" value={form.inner_tensions}>
-            <textarea className="modal-textarea" rows={2} value={form.inner_tensions} onChange={(e) => update('inner_tensions', e.target.value)} maxLength={LIMITS.inner_tensions.max} />
+          <Field label="内在矛盾（每行一条）" field="inner_tensions" value={form.inner_tensions}>
+            <textarea className="modal-textarea" rows={2} value={form.inner_tensions} onChange={(e) => update('inner_tensions', e.target.value)} />
           </Field>
 
-          <Field label="背景" mono field="background" value={form.background}>
-            <textarea className="modal-textarea" rows={3} value={form.background} onChange={(e) => update('background', e.target.value)} maxLength={LIMITS.background.max} />
+          <Field label="背景" field="background" value={form.background}>
+            <textarea className="modal-textarea" rows={3} value={form.background} onChange={(e) => update('background', e.target.value)} />
           </Field>
 
-          <Field label="开场白" mono field="first_message" value={form.first_message}>
-            <textarea className="modal-textarea" rows={3} value={form.first_message} onChange={(e) => update('first_message', e.target.value)} maxLength={LIMITS.first_message.max} />
+          <Field label="开场白" field="first_message" value={form.first_message}>
+            <textarea className="modal-textarea" rows={3} value={form.first_message} onChange={(e) => update('first_message', e.target.value)} />
           </Field>
 
-          <Field label="情感模式（每行一条）" mono field="emotional_patterns" value={form.emotional_patterns}>
-            <textarea className="modal-textarea" rows={2} value={form.emotional_patterns} onChange={(e) => update('emotional_patterns', e.target.value)} maxLength={LIMITS.emotional_patterns.max} />
+          <Field label="情感模式（每行一条）" field="emotional_patterns" value={form.emotional_patterns}>
+            <textarea className="modal-textarea" rows={2} value={form.emotional_patterns} onChange={(e) => update('emotional_patterns', e.target.value)} />
           </Field>
 
-          <Field label="决策风格" mono field="decision_style" value={form.decision_style}>
-            <textarea className="modal-textarea" rows={2} value={form.decision_style} onChange={(e) => update('decision_style', e.target.value)} maxLength={LIMITS.decision_style.max} />
+          <Field label="决策风格" field="decision_style" value={form.decision_style}>
+            <textarea className="modal-textarea" rows={2} value={form.decision_style} onChange={(e) => update('decision_style', e.target.value)} />
           </Field>
 
-          <Field label="角色弧线 · 变化轴（一句「从…到…」）" mono field="arc_axis" value={form.arc_axis}>
-            <input className="modal-input" value={form.arc_axis} onChange={(e) => update('arc_axis', e.target.value)} maxLength={LIMITS.arc_axis.max} placeholder="从冷漠到学会信任" />
+          <Field label="角色弧线 · 变化轴（一句「从…到…」）" field="arc_axis" value={form.arc_axis}>
+            <input className="modal-input" value={form.arc_axis} onChange={(e) => update('arc_axis', e.target.value)} placeholder="从冷漠到学会信任" />
           </Field>
           <ObjectListField legend="角色弧线 · 阶段（按故事顺序）" rows={arcPhases} onChange={edit(setArcPhases)} columns={ARC_COLUMNS} maxCount={ARC_MAX} addLabel="+ 添加阶段" />
           {arcPhases.map((p, i) => (
@@ -323,8 +263,8 @@ function EditCardForm({
           <ObjectListField legend="情境→行为（从头到尾都成立的做法）" rows={behaviors} onChange={edit(setBehaviors)} columns={BEHAVIOR_COLUMNS} maxCount={BEHAVIOR_MAX} addLabel="+ 添加一条" />
 
           <div ref={examplesRef}>
-            <Field label="对话示例（每组间空行分隔）" mono field="dialogue_examples" value={form.dialogue_examples}>
-              <textarea className="modal-textarea" rows={4} value={form.dialogue_examples} onChange={(e) => update('dialogue_examples', e.target.value)} maxLength={LIMITS.dialogue_examples.max} placeholder="对方：xxx&#10;角色：xxx&#10;&#10;对方：xxx&#10;角色：xxx" />
+            <Field label="对话示例（每组间空行分隔）" field="dialogue_examples" value={form.dialogue_examples}>
+              <textarea className="modal-textarea" rows={4} value={form.dialogue_examples} onChange={(e) => update('dialogue_examples', e.target.value)} placeholder="对方：xxx&#10;角色：xxx&#10;&#10;对方：xxx&#10;角色：xxx" />
             </Field>
             {examplesByPhase(data).map(({ index, label, examples }) => (
               <div key={index} className="modal-field">
@@ -366,17 +306,17 @@ function ExamplesNotice({ onRefind, refinding, disabled, refound }) {
   return null
 }
 
-function Field({ label, children, mono, field, value }) {
-  const limit = field ? LIMITS[field] : null
+function Field({ label, children, field, value }) {
+  const max = field ? FIELD_MAX[field] : null
   const len = value ? value.length : 0
-  const over = limit && len > limit.max
+  const over = max && len > max
   return (
     <div className="modal-field">
       <label className="modal-label">
         {label}
-        {limit && <span className={`field-counter${over ? ' over' : ''}`}>{len}/{limit.max}</span>}
+        {max && <span className={`field-counter${over ? ' over' : ''}`}>{len}/{max}</span>}
       </label>
-      {children}
+      {max ? cloneElement(children, { maxLength: max }) : children}
     </div>
   )
 }
