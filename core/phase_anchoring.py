@@ -18,7 +18,7 @@ from typing import NamedTuple, Sequence
 
 import bisect
 
-from core.chapters import chapter_body_start, chapter_starts
+from core.chapters import Chapters
 from core.quotes import (has_ellipsis, locate_anchor, locate_in_normalized, normalize,
                          normalized_starts, paragraph_bounds, raw_offsets)
 
@@ -111,11 +111,11 @@ def checked_starts(phases) -> list[tuple[int, StartBy, str]]:
 
 
 def _start_position(kind: StartBy, phase, source_text: str, source_norm: str,
-                    paragraphs: list[int] | None) -> int | None:
+                    paragraphs: list[int] | None, chapters: Chapters) -> int | None:
     """起点在规范化原文里的位置；定不了位为 None。章号 → 该章正文起点（`core.chapters`）→
     规范化坐标（`quotes.normalized_starts`）；锚点 → `quotes.locate_anchor`。"""
     if kind is StartBy.CHAPTER:
-        raw = chapter_body_start(source_text, _chapter_of(phase))
+        raw = chapters.body_start(source_text, _chapter_of(phase))
         return None if raw is None else normalized_starts(source_text, [raw])[0]
     loc = locate_anchor(source_text, source_norm, _anchor_of(phase), paragraphs)
     return None if loc is None else loc[0]
@@ -183,7 +183,8 @@ def _region_of(retro: Sequence[tuple[int, int, str]], pos: int) -> str | None:
 
 def locate_starts(phases, source_text: str, source_norm: str,
                   paragraphs: list[int] | None = None,
-                  retro: Sequence[tuple[int, int, str]] = ()) -> list[PhaseStart]:
+                  retro: Sequence[tuple[int, int, str]] = (),
+                  chapters: Chapters | None = None) -> list[PhaseStart]:
     """逐阶段定位起点 —— **「这个阶段的起点算不算数」只在这里判定**。
 
     每个阶段都给出结论（不在第一个失败处停），整卡跳过原因（`_skip_reason`）与整卡跳过明细
@@ -192,6 +193,7 @@ def locate_starts(phases, source_text: str, source_norm: str,
     逐字 → 规范化 → 省略号拼接，判定顺序只在那一处）。回忆区与递增对两种起点口径相同。
     """
     checked = dict(checked_anchors(phases))
+    table = Chapters.of(source_text, chapters)
     out: list[PhaseStart] = []
     for k, phase in enumerate(phases, 1):
         kind, given = start_of(phase)
@@ -201,7 +203,7 @@ def locate_starts(phases, source_text: str, source_norm: str,
         if not given:
             out.append(PhaseStart(k, kind, given, StartStatus.EMPTY))
             continue
-        pos = _start_position(kind, phase, source_text, source_norm, paragraphs)
+        pos = _start_position(kind, phase, source_text, source_norm, paragraphs, table)
         if pos is None:
             out.append(PhaseStart(k, kind, given, StartStatus.NOT_FOUND))
             continue
@@ -273,41 +275,48 @@ class PhaseAnchors(NamedTuple):
     retro: Sequence[tuple[int, int, str]] = ()   # 回忆区（规范化区间 + 标签），见 `verify`
     source_text: str = ""
     starts: tuple[PhaseStart, ...] = ()          # 逐阶段起点结论（`locate_starts`），明细日志直接读
+    chapters: Chapters = Chapters()              # 这本书的章节表（`chapter_labels` 从这里取）
 
 
 def build_anchors(phases, source_text: str, *,
-                  retro: Sequence[tuple[int, int, str]] = ()) -> PhaseAnchors:
+                  retro: Sequence[tuple[int, int, str]] = (),
+                  chapters: Chapters | None = None) -> PhaseAnchors:
     """按草稿的阶段与原文建一次上下文。无阶段的卡不归一化（规则 5：整卡不做位置检查）。
 
     `retro`：回忆区在规范化原文里的区间（`RetroRegions.spans` 给出；空 = 没有回忆区，行为同前）。
+    `chapters`：这本书的章节表；不传退回正则（`Chapters.of`）。
 
     段落边界只在**有省略号锚点**时才算（多一趟切分；无省略号的卡零开销）。
     """
     if not phases:
         return PhaseAnchors(0, "", [], "")
+    table = Chapters.of(source_text, chapters)
     source_norm = normalize(source_text)
     paragraphs = (paragraph_bounds(source_text, source_norm)
                   if any(has_ellipsis(a) for _, a in checked_anchors(phases)) else None)
-    starts = tuple(locate_starts(phases, source_text, source_norm, paragraphs, retro))
+    starts = tuple(locate_starts(phases, source_text, source_norm, paragraphs, retro, table))
     ranges, reason = _ranges_from(starts, len(source_norm))
-    return PhaseAnchors(len(phases), source_norm, ranges, reason, tuple(retro), source_text, starts)
+    return PhaseAnchors(len(phases), source_norm, ranges, reason, tuple(retro), source_text,
+                        starts, table)
 
 
-def chapter_labels(source_text: str, raw_positions: Sequence[int | None]) -> list[str]:
+def chapter_labels(source_text: str, raw_positions: Sequence[int | None],
+                   chapters: Chapters | None = None) -> list[str]:
     """原文坐标 → 「第N章」/「首章之前」/「无章节标题」/「章号未知」；**全仓唯一换算处**。
 
     输入是 `raw_offsets` 的结果。`None`（换不回原文坐标）给「章号未知」；原文没有章节
     标题时给「无章节标题」；第一个标题之前给「首章之前」。
     """
-    chapters = chapter_starts(source_text)
-    cuts = [r for _, r in chapters or []]
+    chapter_list = Chapters.of(source_text, chapters).starts
+    cuts = [r for _, r in chapter_list]
     out: list[str] = []
     for raw in raw_positions:
         if raw is None:
             out.append("章号未知")
             continue
         i = bisect.bisect_right(cuts, raw) - 1
-        out.append(f"第{chapters[i][0]}章" if i >= 0 else ("无章节标题" if not cuts else "首章之前"))
+        out.append(f"第{chapter_list[i][0]}章" if i >= 0
+                   else ("无章节标题" if not cuts else "首章之前"))
     return out
 
 
@@ -343,7 +352,8 @@ def log_phase_starts(phases, source_text: str, anchors: PhaseAnchors, name: str)
              if not (skipped and st.status in _DETAIL_NO_POSITION)]
     positions = list(raw_offsets(source_text, anchors.source_norm, [st.pos for st in shown]))
     tails = {st.k: (pos, raw, where) for st, pos, raw, where in zip(
-        shown, [st.pos for st in shown], positions, chapter_labels(source_text, positions))}
+        shown, [st.pos for st in shown], positions,
+        chapter_labels(source_text, positions, anchors.chapters))}
     for st, phase in zip(anchors.starts, phases):
         head = f"{title}（{name}）阶段 {st.k}「{_field_of(phase, 'label')}」{_START_NOUN[st.kind]}「{st.given}」→ "
         if st.k not in tails:
@@ -478,7 +488,7 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
     if pending_rehang:
         positions = list(raw_offsets(anchors.source_text, source_norm,
                                      [pos for *_, pos in pending_rehang]))
-        wheres = chapter_labels(anchors.source_text, positions)
+        wheres = chapter_labels(anchors.source_text, positions, anchors.chapters)
         for (kind_, label_, p, landed, _pos), where in zip(pending_rehang, wheres):
             logger.warning("改挂：%s %r 标在阶段 %d，摘录落在阶段 %s（摘录在%s）",
                            kind_, label_, p, landed, where)

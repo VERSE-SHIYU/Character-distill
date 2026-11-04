@@ -31,14 +31,16 @@ import logging
 from dataclasses import dataclass
 from typing import Callable
 
-from core.chapters import chapter_openings, chapter_starts
+from core.chapters import Chapters
 from core.llm_json import extract_json
 from core.quotes import normalized_starts
 
 logger = logging.getLogger(__name__)
 
-# 识别口径的版本：提示词或解析规则一改就 +1，库里的旧结果随之失效（同 `Distiller.IDENTIFY_VERSION`）。
-RETRO_VERSION = 1
+#: 识别口径的版本：提示词或解析规则一改就 +1，库里的旧结果随之失效（同 `Distiller.IDENTIFY_VERSION`）。
+#: 2：章节来源从「只认行首阿拉伯第N章」改为「代码列候选、模型逐行判」（D24）—— 1 的「未标」
+#: 可能是认不出章节，必须失效重标。
+RETRO_VERSION = 2
 
 RETRO_INSTRUCTION = (
     "## 本步：标出倒叙的章节\n"
@@ -95,43 +97,47 @@ class RetroRegions:
         return cls(d["status"], tuple(ChapterRange(a, b, k) for a, b, k in d["ranges"]),
                    d.get("reason", ""), True)
 
-    def spans(self, source_text: str) -> list[tuple[int, int, str]]:
+    def spans(self, source_text: str, chapters: Chapters | None = None
+              ) -> list[tuple[int, int, str]]:
         """回忆区在**规范化**原文里的半开区间 ``[(起, 止, 标签), …]`` —— 位置核对用的形态。
 
         区间从首章标题起、到末章的下一章标题止（末章是最后一章则到全文末尾）。未标、或章节
         标题与标注时对不上（原文变了）→ 空表，位置核对行为同没有回忆区。
         """
-        chapters = self._matched_chapters(source_text)
-        if chapters is None:
+        table = self._matched_chapters(source_text, chapters)
+        if table is None:
             return []
-        index = {n: i for i, (n, _) in enumerate(chapters)}
-        raw = [(chapters[index[r.first]][1],
-                chapters[index[r.last] + 1][1] if index[r.last] + 1 < len(chapters)
+        index = {n: i for i, (n, _) in enumerate(table)}
+        raw = [(table[index[r.first]][1],
+                table[index[r.last] + 1][1] if index[r.last] + 1 < len(table)
                 else len(source_text),
                 f"第{r.first}–{r.last}章{r.kind}") for r in self.ranges]
         points = sorted({x for a, b, _ in raw for x in (a, b)})
         norm = dict(zip(points, normalized_starts(source_text, points)))
         return [(norm[a], norm[b], label) for a, b, label in raw]
 
-    def chapters(self, source_text: str) -> set[int]:
+    def chapters(self, source_text: str, chapters: Chapters | None = None) -> set[int]:
         """回忆区覆盖的章号（按原文实际存在的章）。口径与 `spans` 同一份：未标或对不上原文 → 空集。"""
-        chapters = self._matched_chapters(source_text)
-        if chapters is None:
+        table = self._matched_chapters(source_text, chapters)
+        if table is None:
             return set()
-        nums = [n for n, _ in chapters]
+        nums = [n for n, _ in table]
         return {n for r in self.ranges for n in nums if r.first <= n <= r.last}
 
-    def _matched_chapters(self, source_text: str) -> list[tuple[int, int]] | None:
+    def _matched_chapters(self, source_text: str,
+                          chapters: Chapters | None = None) -> list[tuple[int, int]] | None:
         """可用时返回原文章节表；未标、无区间、或章节标题与标注时对不上（原文变了）→ None。
         `spans` 与 `chapters` 共用这一处判定，两种形态不会一边按未标、一边仍按已标。"""
         if self.status != "marked" or not self.ranges:
             return None
-        chapters = chapter_starts(source_text)
-        index = {n for n, _ in chapters or []}
-        if chapters is None or any(r.first not in index or r.last not in index for r in self.ranges):
+        table = list(Chapters.of(source_text, chapters).starts)
+        if not table:
+            return None
+        index = {n for n, _ in table}
+        if any(r.first not in index or r.last not in index for r in self.ranges):
             logger.warning("[retro] 原文章节与回忆区对不上，本次按未标处理：%s", self.summary())
             return None
-        return chapters
+        return table
 
     def summary(self) -> str:
         if self.status != "marked":
@@ -147,7 +153,7 @@ NOT_DETECTED = RetroRegions.unavailable("本入口不识别回忆区", final=Fal
 def instruction(source_text: str, chapters: list[tuple[int, int]]) -> str:
     """本步指令 + 代码列的全书目录（每章一行：「第N章：开头几十个字」）。"""
     return RETRO_INSTRUCTION + "\n".join(f"第{n}章：{head}"
-                                          for n, head in chapter_openings(source_text, chapters))
+                                          for n, head in Chapters(tuple(chapters)).openings(source_text))
 
 
 def parse(reply: str, chapters: list[tuple[int, int]]) -> RetroRegions:
@@ -175,9 +181,13 @@ def parse(reply: str, chapters: list[tuple[int, int]]) -> RetroRegions:
 
 
 def detect(source_text: str, *, prefix: str,
-           call: Callable[[str, str], str]) -> RetroRegions:
-    """标一本书的回忆区：没有可用的章节标题就不问模型，直接「未标」。"""
-    chapters = chapter_starts(source_text)
-    if chapters is None:
-        return RetroRegions.unavailable("原文没有可用的「第N章」标题", final=True)
-    return parse(call(f"{prefix}\n\n{instruction(source_text, chapters)}", RETRO_USER), chapters)
+           call: Callable[[str, str], str],
+           chapters: Chapters | None = None) -> RetroRegions:
+    """标一本书的回忆区：没有可用的章节标题就不问模型，直接「未标」。
+
+    `chapters` 是调用方已判好的章节表（D24）；不传退回正则（`Chapters.of`）。
+    """
+    table = list(Chapters.of(source_text, chapters).starts)
+    if not table:
+        return RetroRegions.unavailable("原文没有可用的章节标题", final=True)
+    return parse(call(f"{prefix}\n\n{instruction(source_text, table)}", RETRO_USER), table)

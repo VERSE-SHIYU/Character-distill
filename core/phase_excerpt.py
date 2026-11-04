@@ -5,7 +5,7 @@ spec：`docs/specs/phase-start-chapter.md` §2 J5、J11。代码给内容编号�
 【第N章】，模型交 `start_chapter`，由 `core.phase_anchoring` 把章号换成该章正文起点。规则逐字照
 探针第六版的输入（10-25 在原书上重建，祈灼、谢凛羽两份逐字一致）：
 
-- 按 `core.chapters.chapter_bodies` 分章（标题行不算正文）；没有可用的章节标题 → 不建（None）；
+- 按 `core.chapters.Chapters` 分章（标题行不算正文）；没有可用的章节标题 → 不建（None）；
 - 每章正文按换行切段，去首尾空白，丢掉空段；
 - 名字或任一别名所在段，前后各 `WINDOW` 段（只在本章内数）进摘录；
 - 回忆区的章（`skip_chapters`，由调用方从 `RetroRegions.chapters` 取）整章不进；
@@ -15,18 +15,19 @@ from __future__ import annotations
 
 from typing import AbstractSet, Sequence
 
-from core.chapters import chapter_bodies
+from core.chapters import Chapters
 
 WINDOW = 6           # 名字所在段前后各带几段（探针第一至六版同）
 GAP = "……"           # 章内略去处（探针第六版的输入用它；有章节的书不另换未验过的标记）
 
 
 def build_excerpt(source_text: str, terms: Sequence[str],
-                  skip_chapters: AbstractSet[int] = frozenset()) -> str | None:
+                  skip_chapters: AbstractSet[int] = frozenset(),
+                  chapters: Chapters | None = None) -> str | None:
     """按上面的规则建摘录；原文没有可用的章节标题、或没有一段提到此人时返回 None。"""
     names = [t for t in terms if t]
     blocks: list[str] = []
-    for chapter, (_, body) in chapter_bodies(source_text).items():
+    for chapter, (_, body) in Chapters.of(source_text, chapters).bodies(source_text).items():
         if chapter in skip_chapters:
             continue
         paras = [s for s in (line.strip() for line in body.split("\n")) if s]

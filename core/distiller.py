@@ -32,7 +32,7 @@ from adapters.llm_adapter import (
 from core.card_quotes import VERBATIM_FIELDS, retract_unverified
 from core.arc_view import phase_header, phase_of
 from core import chapter_headings
-from core.chapters import Chapters, chapter_bodies
+from core.chapters import Chapters
 from core.llm_json import extract_json
 from core.card_relationships import dedupe_relationship_targets
 from core.chat_preprocessor import ChatPreprocessor
@@ -621,11 +621,14 @@ class ArcInput(NamedTuple):
 
 
 def arc_input_for(text: str, character_name: str, aliases: Sequence[str],
-                  retro: RetroRegions) -> ArcInput | None:
+                  retro: RetroRegions,
+                  chapters: Chapters | None = None) -> ArcInput | None:
     """一次读完时弧线组读什么：原文有可用章节 → 人物摘录 + 章号写法（去掉回忆区的章）；
     建不出摘录（没有章节标题、没一段提到此人）→ None，与其余组相同、照旧用锚点。
     **「问模型要哪种起点」只在这里定**（spec phase-start-chapter §2 J3）。"""
-    excerpt = build_excerpt(text, [character_name, *aliases], retro.chapters(text))
+    table = Chapters.of(text, chapters)
+    excerpt = build_excerpt(text, [character_name, *aliases], retro.chapters(text, table),
+                            chapters=table)
     if excerpt is None:
         return None
     return ArcInput(excerpt_prefix(character_name, excerpt),
@@ -1247,7 +1250,7 @@ class Distiller:
             logger.warning("关系分批失败：%s", exc)
             raise DistillError("蒸馏失败：关系生成失败，请重试", str(exc)) from exc
 
-    def detect_retro_regions(self, text: str) -> RetroRegions:
+    def detect_retro_regions(self, text: str, chapters: Chapters | None = None) -> RetroRegions:
         """标这本书的回忆区（`core.retro_regions`）。整书前缀与主调用同源（`book_prefix`），
         命中缓存；只有一次读完的书才能标 —— 分组路径的整书不在同一个前缀里，直接「未标」。"""
         if not self._takes_one_pass(text):
@@ -1261,7 +1264,8 @@ class Distiller:
                 raise DistillError("回忆区识别输出被截断", "distill_retro truncated")
             return reply
 
-        return retro_regions.detect(text, prefix=book_prefix(text), call=_call)
+        return retro_regions.detect(text, prefix=book_prefix(text), call=_call,
+                                    chapters=chapters)
 
     def detect_chapters(self, text: str) -> Chapters:
         """模型逐行判「是不是章节标题」（`core.chapter_headings`）：宽网为空不调模型。
@@ -1977,7 +1981,8 @@ class Distiller:
     # ── 摘录修复 → 转卡 ────────────────────────────────────────────────
 
     def draft_to_card(self, data: Any, source_text: str, *,
-                      retro: RetroRegions) -> CharacterCard:
+                      retro: RetroRegions,
+                      chapters: Chapters | None = None) -> CharacterCard:
         """草稿 → 存卡：先把逐字查不到的摘录换回原文原句，再走 `card_from_draft`。
 
         模型的摘录常改几个字（「想」→「要」），逐字定位查不到，条目就进未定位区、不进
@@ -1985,7 +1990,7 @@ class Distiller:
         `card_from_draft` 本身保持纯函数。
         """
         self._repair_quotes(data, source_text)
-        return card_from_draft(data, source_text, retro=retro)
+        return card_from_draft(data, source_text, retro=retro, chapters=chapters)
 
     def _repair_quotes(self, data: Any, source_text: str) -> None:
         """一张卡只调一次模型核对所有查不到的摘录；失败不挡转卡（同 `_auto_tag` 的口径）。"""
@@ -2137,7 +2142,8 @@ class Distiller:
 
     def _distill_longcontext(self, text: str, character_name: str, *,
                              aliases: Sequence[str] = (),
-                             retro: RetroRegions = NOT_DETECTED) -> CharacterCard:
+                             retro: RetroRegions = NOT_DETECTED,
+                             chapters: Chapters | None = None) -> CharacterCard:
         """整本蒸：按组专注调用（弧线先发，其余组带阶段列表）→ 合并 → 转卡。
 
         整本书放在 system 最前（`book_prefix`），同一本书的不同角色与关系分批都命中
@@ -2151,16 +2157,17 @@ class Distiller:
                 rel_material="",
                 action="distill_longcontext",
                 system_prefix=book_prefix(text) + "\n\n",
-                arc_input=arc_input_for(text, character_name, aliases, retro),
+                arc_input=arc_input_for(text, character_name, aliases, retro, chapters),
             ))
-            return self.draft_to_card(draft.model_dump(), text, retro=retro)
+            return self.draft_to_card(draft.model_dump(), text, retro=retro, chapters=chapters)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
 
     def _distill_longcontext_stream(self, text: str, character_name: str, *,
                                     aliases: Sequence[str] = (),
-                                    retro: RetroRegions = NOT_DETECTED):
+                                    retro: RetroRegions = NOT_DETECTED,
+                                    chapters: Chapters | None = None):
         """整本蒸流式版：按组专注调用，逐组心跳 + 一个草稿 JSON 串。"""
         yield from self._format_groups_stream(
             character_name=character_name,
@@ -2169,7 +2176,7 @@ class Distiller:
             rel_material="",
             action="distill_longcontext",
             system_prefix=book_prefix(text) + "\n\n",
-            arc_input=arc_input_for(text, character_name, aliases, retro),
+            arc_input=arc_input_for(text, character_name, aliases, retro, chapters),
         )
 
     def dialogue_candidates(
@@ -2347,6 +2354,7 @@ class Distiller:
         name: str,
         aliases: Sequence[str] = (),
         roster: Sequence[dict] = (),
+        chapters: Chapters | None = None,
     ) -> CharacterCard:
         """按「本人经常说 + 能区分开」核对口头禅；不合格的从顶层与所有 overlay 一起删。
 
@@ -2363,7 +2371,7 @@ class Distiller:
         if not values:
             return card
 
-        bodies = chapter_bodies(content)
+        bodies = Chapters.of(content, chapters).bodies(content)
         drop: set[str] = set()
         if not bodies:
             drop = set(values)
@@ -2464,6 +2472,7 @@ class Distiller:
         name: str,
         aliases: Sequence[str] = (),
         roster: Sequence[dict] = (),
+        chapters: Chapters | None = None,
     ) -> CharacterCard:
         """落卡前的后置步骤：先关系去重、再核对引文与口头禅、最后贴对话示例（WP18 / WP17）。
 
@@ -2484,7 +2493,7 @@ class Distiller:
         card, _ = dedupe_relationship_targets(card, roster)
         card, _ = retract_unverified(card, content)
         try:
-            card = self.verify_catchphrases(card, content, name, aliases, roster)
+            card = self.verify_catchphrases(card, content, name, aliases, roster, chapters)
         except Exception:
             # 核对没做完就说不清哪条合格：宁可少，全删（与认不出章节同一口径）。
             # verify_catchphrases 不抛 DistillError，这里只有调用模型出错或本步自己的缺陷。
@@ -2756,6 +2765,7 @@ class Distiller:
         on_progress: "callable | None" = None,
         text_type: str = "story",
         retro: RetroRegions = NOT_DETECTED,
+        chapters: Chapters | None = None,
     ) -> CharacterCard:
         """MapReduce 蒸馏：Map 并发分析 → Reduce 合并 → Format 输出 CharacterCard。
 
@@ -2778,7 +2788,8 @@ class Distiller:
             if on_progress:
                 on_progress(0, 1)
             card = self._distill_longcontext(text, character_name,
-                                             aliases=aliases or (), retro=retro)
+                                             aliases=aliases or (), retro=retro,
+                                             chapters=chapters)
             if on_progress:
                 on_progress(1, 1)
             return card
@@ -3076,6 +3087,7 @@ class Distiller:
         on_chunk_done: "callable | None" = None,
         resume_candidates: dict[int, dict] | None = None,
         retro: RetroRegions = NOT_DETECTED,
+        chapters: Chapters | None = None,
     ):
         """MapReduce 流式蒸馏 — 实时推送进度 + 流式 JSON 生成。
 
@@ -3105,7 +3117,8 @@ class Distiller:
                 text = preprocessor._layer2_character_context(text, character_name)
             # 长上下文单次路径无分片 checkpoint，续跑候选无从对应：直接整跑。
             yield from self._distill_longcontext_stream(text, character_name,
-                                                        aliases=aliases or (), retro=retro)
+                                                        aliases=aliases or (), retro=retro,
+                                                        chapters=chapters)
             return
         # ── End long-context routing ──────────────────────────────────────
 

@@ -30,6 +30,7 @@ from pydantic import (
 
 from core import phase_anchoring
 from core.card_layers import REGISTRY, get_path, set_path
+from core.chapters import Chapters
 from core.fingerprint import content_fingerprint
 from core.retro_regions import RetroRegions
 from core.schema import (
@@ -496,7 +497,8 @@ def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[d
     return out, loose, res.rehung, to_last
 
 
-def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions) -> CharacterCard:
+def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions,
+                    chapters: Chapters | None = None) -> CharacterCard:
     """模型输出（草稿）→ 存卡。形态不对抛 `pydantic.ValidationError`，由调用方按各自口径上屏。
 
     先做阶段编号合法性过滤（越界、空 → 对不上的撤回、打 warning，一条的编号全部作废就整条
@@ -516,7 +518,8 @@ def card_from_draft(data: Any, source_text: str, *, retro: RetroRegions) -> Char
     phases = draft.character_arc.phases
     count = len(phases)
     anchors = phase_anchoring.build_anchors(                       # 整本原文只归一化这一次
-        phases, source_text, retro=retro.spans(source_text) if phases else ())
+        phases, source_text, retro=retro.spans(source_text, chapters) if phases else (),
+        chapters=chapters)
     phase_anchoring.log_phase_starts(phases, source_text, anchors, draft.name)   # 每张卡只在这里打一次
 
     # 做法是口头禅一类反复出现的摘录的大户；经历类（记忆）不传 —— 挂早了会提前泄露剧情
