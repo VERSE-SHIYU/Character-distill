@@ -31,7 +31,8 @@ from adapters.llm_adapter import (
 )
 from core.card_quotes import VERBATIM_FIELDS, retract_unverified
 from core.arc_view import phase_header, phase_of
-from core.chapters import chapter_bodies
+from core import chapter_headings
+from core.chapters import Chapters, chapter_bodies
 from core.llm_json import extract_json
 from core.card_relationships import dedupe_relationship_targets
 from core.chat_preprocessor import ChatPreprocessor
@@ -1261,6 +1262,18 @@ class Distiller:
             return reply
 
         return retro_regions.detect(text, prefix=book_prefix(text), call=_call)
+
+    def detect_chapters(self, text: str) -> Chapters:
+        """模型逐行判「是不是章节标题」（`core.chapter_headings`）：宽网为空不调模型。
+
+        按书缓存由调用方 `core.chapters_cache.resolve_chapters` 负责，这里只做一次判定。
+        """
+        def _call(system: str, user: str, function: dict[str, Any]) -> Any:
+            raw = self._llm.select_by_schema(system, [{"role": "user", "content": user}], function)
+            self._try_record_usage("distill_chapters")
+            return raw
+
+        return chapter_headings.detect(text, judge=_call)
 
     def _chat_accounted(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str, action: str,

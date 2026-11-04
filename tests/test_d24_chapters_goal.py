@@ -90,9 +90,8 @@ def _book_juan() -> str:
 
 
 def _heading_texts(book: str) -> set[str]:
-    return {ln.strip() for ln in book.splitlines() if ln.strip() and (
-        ln.strip().startswith("☆、") or re.match(r"^第[0-9一二三四]+[章回]", ln.strip())
-        or re.match(r"^第[一二]卷", ln.strip()))}
+    # 夹具里真正的标题都带「标题N」；正文里的「第二回合」与简介里的「第五章」不带。
+    return {ln.strip() for ln in book.splitlines() if "标题" in ln}
 
 
 def _line_starts(book: str, headings: set[str]) -> list[int]:
@@ -128,7 +127,7 @@ class _Judge:
         self.boom = boom
         self.calls: list[tuple[str, str]] = []
 
-    def __call__(self, system: str, user: str) -> str:
+    def __call__(self, system: str, user: str, function=None) -> str:
         self.calls.append((system, user))
         if self.boom:
             raise RuntimeError("模型挂了")
@@ -216,7 +215,8 @@ def test_g2_hui_style_skips_prose_line():
     judge = _Judge(_heading_texts(book))
     got = _detect_via(book, judge)
     assert list(got.starts) == _expected(book)
-    assert all("第二回合" not in ln for _, ln in got.starts)
+    decoy = book.index("第二回合的交锋结束。")
+    assert decoy not in [s for _, s in got.starts]
 
 
 # ── 3. 阿拉伯数字 + 简介里的「第五章」不算；结果与 from_text 逐项相同 ──────
