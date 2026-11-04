@@ -512,3 +512,73 @@ def test_g14_without_chapters_keeps_regex_behavior():
         {"name": NAME, "speaking_style": {"catchphrases": ["酒"]}})
     out = distiller.finalize_card(card, book, NAME, [], ROSTER)
     assert out.speaking_style.catchphrases == ["酒"]
+
+
+# ── 15–17：审计补测（PR #249 审计 11-04 20:30，三条变异存活）────────────────
+# 都是普通测试：实现本来就对，补上是为了守住 —— 去掉任何一条对应的代码，就该红。
+
+
+def _many_chapters(n: int) -> str:
+    """n 章短书：每章一行标题 + 一行正文（宽网候选 = n 行，正文不含「第…章」）。"""
+    return "".join(f"　　第{i}章 标题{i}\n　　正文{i}。\n" for i in range(1, n + 1))
+
+
+def test_g15_more_than_one_batch_is_judged_in_full():
+    """宽网 85 行 → 40 + 40 + 5 三批，全部判完；云绮 518 行要 13 批，只判第一批会静默丢章。"""
+    book = _many_chapters(85)
+    judge = _Judge(_heading_texts(book))
+    chapters = _detect_via(book, judge)
+    assert len(judge.calls) == 3, f"应分 3 批判，实际 {len(judge.calls)} 次"
+    assert list(chapters.starts) == _expected(book)
+    assert len(chapters.starts) == 85
+
+
+class _MissingCellJudge(_Judge):
+    """第一批少回一格（去掉 h3）。"""
+
+    def __call__(self, system, user, function=None):
+        reply = json.loads(super().__call__(system, user, function))
+        reply.pop("h3", None)
+        return json.dumps(reply, ensure_ascii=False)
+
+
+def test_g16_reply_missing_a_cell_falls_back_and_is_not_cached(caplog):
+    """缺格不建部分章节表：退回正则、不写缓存、1 条 WARNING（缺格当「不是」会漏章并被缓存）。"""
+    book = _book_arabic()
+    Chapters = _Chapters()
+    detector = _Detector(_MissingCellJudge(_heading_texts(book)))
+    store = _ChapterStore()
+    with caplog.at_level(logging.WARNING):
+        got = _run(_resolve_chapters()(store, detector, "t1", "u1", book))
+    assert list(got.starts) == list(Chapters.from_text(book).starts)
+    assert store.saved == [], "缺格还写了缓存"
+    warns = [r for r in caplog.records
+             if r.levelno == logging.WARNING and "章节" in r.getMessage()]
+    assert len(warns) == 1, [r.getMessage() for r in caplog.records]
+
+
+class _RetroStore:
+    async def get_retro_regions_owned(self, text_id, user_id, *, version):
+        return ""
+
+    async def save_retro_regions(self, text_id, retro_json, *, version):
+        pass
+
+
+class _RetroSpy:
+    def __init__(self) -> None:
+        self.got = []
+
+    def detect_retro_regions(self, content, chapters=None):
+        self.got.append(chapters)
+        return NOT_DETECTED
+
+
+def test_g17_retro_receives_the_resolved_chapters():
+    """resolve_retro_regions 必须把章节表交给 detect_retro_regions（同一个对象）。"""
+    from core.retro_cache import resolve_retro_regions
+    book = _book_case1()
+    table = _detect_via(book, _Judge(_heading_texts(book)))
+    spy = _RetroSpy()
+    _run(resolve_retro_regions(_RetroStore(), spy, "t1", "u1", book, table))
+    assert len(spy.got) == 1 and spy.got[0] is table, spy.got
