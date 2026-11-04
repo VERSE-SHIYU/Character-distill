@@ -174,7 +174,7 @@ def test_g2_step_timings_in_order(capsys, monkeypatch, store):
         assert resp_bad.status_code == 200, resp_bad.text
         out_bad = capsys.readouterr().out
 
-    want = ["名单", "回忆区", "蒸馏", "转卡", "后置", "打标签", "落卡", "待补", "苏醒台词"]
+    want = ["名单", "章节", "回忆区", "蒸馏", "转卡", "后置", "打标签", "落卡", "待补", "苏醒台词"]
     got = re.findall(r"步骤 (\S+) 完成 耗时 (\d+\.\d+)s", out_start)
     assert [name for name, _ in got] == want
     assert all(secs for _, secs in got)
