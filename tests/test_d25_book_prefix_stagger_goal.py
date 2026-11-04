@@ -256,7 +256,7 @@ class _Detector:
         self.calls = 0
         self._lock = threading.Lock()
 
-    def detect_retro_regions(self, content):
+    def detect_retro_regions(self, content, chapters=None):
         with self._lock:
             self.calls += 1
         time.sleep(0.1)

@@ -31,6 +31,7 @@ from fastapi.testclient import TestClient
 import deps
 import server  # web/server.py 装配层（conftest 已把 web/ 加进 sys.path）
 from adapters.llm_adapter import IncompleteResponseError, llm_error_types, user_facing_error
+from core.chapters import Chapters
 from core.distiller import DistillError, IdentifyResult
 from deps import get_storage
 from routers.auth import get_current_user
@@ -68,7 +69,11 @@ class _FakeDistiller:
     def identify_roster(self, content: str) -> IdentifyResult:
         return IdentifyResult(self.identify_characters(content), trace=None)
 
-    def distill_incremental_stream(self, content, name, aliases, text_type, retro=None):
+    def detect_chapters(self, content: str) -> Chapters:
+        return Chapters()
+
+    def distill_incremental_stream(self, content, name, aliases, text_type, retro=None,
+                                   chapters=None):
         raise self._exc
         yield  # noqa: unreachable —— 只为把它变成 generator
 
@@ -84,6 +89,13 @@ class _Store:
     async def get_user_api_config(self, user_id: str) -> dict:
         # 本文件不测 key 门：给个百炼 key，否则面向用户入口一律 400。
         return {"embedding_key": "k", "embedding_region": "cn"}
+
+    # 章节缓存的出入口 —— `resolve_chapters` 必经，签名与 SQLiteStore 一致。
+    async def get_chapters_owned(self, text_id: str, user_id: str, *, version: int) -> str:
+        return ""
+
+    async def save_chapters(self, text_id: str, chapters_json: str, *, version: int) -> None:
+        return None
 
     async def get_session_owned(self, session_id: str, user_id: str):
         return self._session

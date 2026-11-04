@@ -193,7 +193,7 @@ MUTATIONS = [
     # 撞到 [68]
     ('M21  distiller 长文同步入口（distill_incremental 长文分支）退回 model_validate',
      TARGET, [("repl", DIST, [
-         ('            return self.draft_to_card(draft.model_dump(), text, retro=retro)\n'
+         ('            return self.draft_to_card(draft.model_dump(), text, retro=retro, chapters=chapters)\n'
           '        except ValidationError as exc:\n'
           '            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n'
           '            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n'
@@ -259,14 +259,14 @@ MUTATIONS = [
     # 撞到 [68, 69]
     ('M29  路由 R1（/start 后台任务）退回 CharacterCard.model_validate',
      TARGET, [("repl", ROUTE, [
-         ('                card = distiller.draft_to_card(data, content, retro=retro)',
+         ('                card = distiller.draft_to_card(data, content, retro=retro, chapters=chapters)',
           '                card = CharacterCard.model_validate(data)'),
      ])], "RED"),
     # 撞到 [68, 69]
     ('M30  路由 R2（/run_stream）退回 CharacterCard.model_validate',
      TARGET, [("repl", ROUTE, [
          ('            card = await asyncio.to_thread(\n'
-          '                distiller.draft_to_card, data, content, retro=retro)',
+          '                distiller.draft_to_card, data, content, retro=retro, chapters=chapters)',
           '            card = CharacterCard.model_validate(data)'),
      ])], "RED"),
     # 撞到 [304]
@@ -330,11 +330,11 @@ MUTATIONS = [
     # 宽容兜底）到不了这里了。补两条直接针对入口口径的变异：格式错误被吞成一张空卡。
     ('M39  长文同步入口吞掉格式错误，交出空卡（不再抛 DistillError）',
      TARGET, [("repl", DIST, [
-         ('            return self.draft_to_card(draft.model_dump(), text, retro=retro)\n'
+         ('            return self.draft_to_card(draft.model_dump(), text, retro=retro, chapters=chapters)\n'
           '        except ValidationError as exc:\n'
           '            print(f"Pydantic 校验 CharacterCard 失败：{exc}")\n'
           '            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc\n',
-          '            return self.draft_to_card(draft.model_dump(), text, retro=retro)\n'
+          '            return self.draft_to_card(draft.model_dump(), text, retro=retro, chapters=chapters)\n'
           '        except ValidationError as exc:\n'
           '            return CharacterCard(name=character_name)\n'),
      ])], "RED"),

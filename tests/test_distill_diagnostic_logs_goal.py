@@ -66,7 +66,7 @@ def _quiet_retro(monkeypatch):
     """真 distiller 有 `detect_retro_regions`；替身缺这个方法时回忆区那步会打一条带堆栈的
     warning，堆栈续行的行首自然没有任务 ID（与 G1 要断言的日志格式无关）。"""
     monkeypatch.setattr(_DraftStub, "detect_retro_regions",
-                        lambda self, content: NOT_DETECTED, raising=False)
+                        lambda self, content, chapters=None: NOT_DETECTED, raising=False)
 
 
 def _start_with_draft(monkeypatch, store, uid, tid, draft):
@@ -174,7 +174,7 @@ def test_g2_step_timings_in_order(capsys, monkeypatch, store):
         assert resp_bad.status_code == 200, resp_bad.text
         out_bad = capsys.readouterr().out
 
-    want = ["名单", "回忆区", "蒸馏", "转卡", "后置", "打标签", "落卡", "待补", "苏醒台词"]
+    want = ["名单", "章节", "回忆区", "蒸馏", "转卡", "后置", "打标签", "落卡", "待补", "苏醒台词"]
     got = re.findall(r"步骤 (\S+) 完成 耗时 (\d+\.\d+)s", out_start)
     assert [name for name, _ in got] == want
     assert all(secs for _, secs in got)
