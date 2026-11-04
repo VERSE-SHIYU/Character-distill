@@ -18,6 +18,9 @@ from typing import Sequence
 _HEADING = re.compile(r"(?m)^[ \t　]*第(\d+)章")
 _FILLER = re.compile(r"[…—\-·.。\s]+")
 
+#: 章节表缓存口径的版本（`texts.chapters_version`）。判定规则一改就升。
+CHAPTERS_VERSION = 1
+
 
 @dataclass(frozen=True)
 class Chapters:
