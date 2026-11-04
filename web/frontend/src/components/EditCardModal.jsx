@@ -13,25 +13,6 @@ function joinLines(val) {
   return val.split('\n').map((s) => s.trim()).filter(Boolean)
 }
 
-const LIMITS = {
-  identity: { max: 80 },
-  personality_traits: { max: 600, maxLines: 8, perLine: 100 },
-  tone: { max: 90 },
-  sentence_pattern: { max: 100 },
-  catchphrases: { max: 240, maxLines: 6, perLine: 40 },
-  vocabulary_level: { max: 40 },
-  taboo_words: { max: 120, maxLines: 6, perLine: 20 },
-  values: { max: 180, maxLines: 6, perLine: 30 },
-  key_memories: { max: 800, maxLines: 8, perLine: 80 },
-  inner_tensions: { max: 500, maxLines: 5, perLine: 100 },
-  background: { max: 300 },
-  first_message: { max: 300 },
-  emotional_patterns: { max: 550, maxLines: 6, perLine: 70 },
-  decision_style: { max: 180 },
-  arc_axis: { max: 40 },
-  dialogue_examples: { max: 600 },
-}
-
 // 三张对象列表的列定义。条数上限见 cardEditLimits。
 const REL_COLUMNS = [
   { key: 'target', placeholder: '对方名字', maxLength: 20 },
@@ -144,45 +125,7 @@ function EditCardForm({
     }
   }
 
-  const FIELD_LABELS = {
-    personality_traits: '性格特征',
-    catchphrases: '口癖',
-    taboo_words: '禁忌用词',
-    values: '核心价值观',
-    key_memories: '关键记忆',
-    inner_tensions: '内在矛盾',
-    emotional_patterns: '情感模式',
-  }
-
   const handleSave = async () => {
-    const checks = [
-      { field: 'personality_traits', lines: form.personality_traits.split('\n').filter(Boolean) },
-      { field: 'catchphrases', lines: form.catchphrases.split('\n').filter(Boolean) },
-      { field: 'taboo_words', lines: form.taboo_words.split('\n').filter(Boolean) },
-      { field: 'values', lines: form.values.split('\n').filter(Boolean) },
-      { field: 'key_memories', lines: form.key_memories.split('\n').filter(Boolean) },
-      { field: 'inner_tensions', lines: form.inner_tensions.split('\n').filter(Boolean) },
-      { field: 'emotional_patterns', lines: form.emotional_patterns.split('\n').filter(Boolean) },
-    ]
-    for (const { field, lines } of checks) {
-      const limit = LIMITS[field]
-      if (limit.maxLines && lines.length > limit.maxLines) {
-        alert(`「${FIELD_LABELS[field] || field}」最多 ${limit.maxLines} 行，当前 ${lines.length} 行`)
-        return
-      }
-      if (limit.perLine) {
-        for (const line of lines) {
-          if (line.length > limit.perLine) {
-            alert(`「${FIELD_LABELS[field] || field}」每行最多 ${limit.perLine} 个字符`)
-            return
-          }
-        }
-      }
-    }
-    if (relationships.length > REL_MAX) {
-      alert(`人物关系最多 ${REL_MAX} 条`)
-      return
-    }
     const cardJson = {
       ...data,
       name: editName ? form.name.trim() : data.name,

@@ -33,7 +33,7 @@ afterEach(() => {
 })
 
 describe('上限只管新输入', () => {
-  it.fails('L1 卡有 34 条关系，不改直接保存 → 保存成功、无 alert、34 条原样交回', async () => {
+  it('L1 卡有 34 条关系，不改直接保存 → 保存成功、无 alert、34 条原样交回', async () => {
     alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     const onSave = vi.fn().mockResolvedValue()
     render(modal({ data: { name: 'x', relationships: relationships(34) }, onSave }))
@@ -44,7 +44,7 @@ describe('上限只管新输入', () => {
     expect(saved.relationships).toHaveLength(34)
   })
 
-  it.fails('L2 values 一行 45 字、personality_traits 10 条，只改名保存 → 保存成功、无 alert、原样交回', async () => {
+  it('L2 values 一行 45 字、personality_traits 10 条，只改名保存 → 保存成功、无 alert、原样交回', async () => {
     alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     const onSave = vi.fn().mockResolvedValue()
     const values = ['正'.repeat(45)]
