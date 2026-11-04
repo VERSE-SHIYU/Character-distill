@@ -29,6 +29,7 @@ from httpx import ASGITransport, AsyncClient
 from core import concurrency as C  # 派生与上下文传播
 import deps
 from core.card_draft import card_from_draft
+from core.chapters import Chapters
 from core.distiller import DistillError, Distiller, IdentifyResult, text_fingerprint
 from deps import get_storage
 from routers import distill as D
@@ -68,6 +69,12 @@ class _FakeStore:
         self.calls: list[dict] = []
         self.attempts = 0
         self.fail = False
+
+    async def get_chapters_owned(self, text_id, user_id, *, version):
+        return ""
+
+    async def save_chapters(self, text_id, chapters_json, *, version):
+        pass
 
     async def update_distill_task(self, task_id, *, status=None, progress_pct=None,
                                   message=None, card_id=None, awakening=None,
@@ -272,19 +279,22 @@ class _CardStubDistiller:
     def identify_roster(self, content):
         return IdentifyResult(self.identify_characters(content), trace=None)
 
+    def detect_chapters(self, content):
+        return Chapters()
+
     def distill_incremental_stream(self, text, character_name, *, aliases=None,
                                    text_type="story", on_chunk_done=None,
-                                   resume_candidates=None, retro=None):
+                                   resume_candidates=None, retro=None, chapters=None):
         yield {"status": "formatting", "current": 1, "total": 1}
         yield json.dumps(self.CARD, ensure_ascii=False)
 
     def _auto_tag(self, card_dict):
         return []
 
-    def draft_to_card(self, data, source_text, *, retro):
-        return card_from_draft(data, source_text, retro=retro)
+    def draft_to_card(self, data, source_text, *, retro, chapters=None):
+        return card_from_draft(data, source_text, retro=retro, chapters=chapters)
 
-    def finalize_card(self, card, content, name, aliases=(), roster=()):
+    def finalize_card(self, card, content, name, aliases=(), roster=(), *, chapters=None):
         self.pick_calls.append((content, name, tuple(aliases), len(roster)))
         if self.pick_error is not None:
             raise self.pick_error
@@ -740,9 +750,13 @@ class _ChunkEmittingDistiller:
     def identify_roster(self, content):
         return IdentifyResult(self.identify_characters(content), trace=None)
 
+    def detect_chapters(self, content):
+        return Chapters()
+
     def distill_incremental_stream(self, text, character_name, *,
                                    aliases=None, text_type="story",
-                                   on_chunk_done=None, resume_candidates=None, retro=None):
+                                   on_chunk_done=None, resume_candidates=None, retro=None,
+                                   chapters=None):
         for i in range(self.N):
             self.map_calls += 1
             if on_chunk_done:
@@ -828,7 +842,8 @@ class _ResumeSkippingDistiller(_ChunkEmittingDistiller):
 
     def distill_incremental_stream(self, text, character_name, *,
                                    aliases=None, text_type="story",
-                                   on_chunk_done=None, resume_candidates=None, retro=None):
+                                   on_chunk_done=None, resume_candidates=None, retro=None,
+                                   chapters=None):
         self.seen_candidates = resume_candidates
         hits = set(resume_candidates or {})
         for i in range(self.N):

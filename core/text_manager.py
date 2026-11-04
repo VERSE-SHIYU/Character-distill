@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from adapters.llm_adapter import LLMAdapter
 from core import examples_pending
+from core.chapters_cache import resolve_chapters
 from core.character_roster import aliases_for, cached_characters, resolve_characters
 from core.chat_engine import ChatEngine
 from core.chat_preprocessor import ChatPreprocessor
@@ -469,17 +470,21 @@ class TextManager:
             chars = await resolve_characters(
                 self._storage, self._distiller, text_id, user_id, content)
             aliases = aliases_for(chars, character_name)
+            # 章节表（书的属性，按书缓存）：蒸馏与后置读同一份；判不了退回正则、不挡蒸馏。
+            chapters = await resolve_chapters(
+                self._storage, self._distiller, text_id, user_id, content)
 
             try:
                 card = await asyncio.to_thread(
-                    self._distiller.distill_incremental, content, character_name, aliases
+                    self._distiller.distill_incremental, content, character_name, aliases,
+                    chapters=chapters,
                 )
                 # 后置步骤（WP18 / WP17）：核对引文 + 贴对话示例。格式化模板里已没有示例
                 # 这个字段，三条产卡通道各接一次。挑不出示例时卡照常返回（保底在
                 # `finalize_card` 里）；其余后置步骤出错仍冒泡，交给统一出口。
                 card = await asyncio.to_thread(
                     self._distiller.finalize_card,
-                    card, content, character_name, aliases, chars,
+                    card, content, character_name, aliases, chars, chapters=chapters,
                 )
             except Exception as exc:
                 print(f"[TextManager] Distill '{character_name}' failed: {exc}")

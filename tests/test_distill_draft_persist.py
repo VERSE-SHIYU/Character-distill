@@ -18,6 +18,7 @@ import pytest
 import deps
 from core import concurrency as C
 from core.card_draft import card_from_draft
+from core.chapters import Chapters
 from core.retro_regions import NOT_DETECTED
 from core.card_quotes import retract_unverified
 from core.card_relationships import dedupe_relationship_targets
@@ -93,19 +94,23 @@ class _DraftStub:
     def identify_roster(self, content):
         return IdentifyResult(self.identify_characters(content), trace=None)
 
+    def detect_chapters(self, content):
+        # 原文没有候选行（见 `_SRC`）：照生产等于宽网为空，返回空表、不调模型。
+        return Chapters()
+
     def distill_incremental_stream(self, text, character_name, *, aliases=None,
                                    text_type="story", on_chunk_done=None,
-                                   resume_candidates=None, retro=None):
+                                   resume_candidates=None, retro=None, chapters=None):
         yield {"status": "formatting", "current": 1, "total": 1}
         yield json.dumps(self.draft, ensure_ascii=False)
 
     def _auto_tag(self, card_dict):
         return []
 
-    def draft_to_card(self, data, source_text, *, retro):
-        return card_from_draft(data, source_text, retro=retro)
+    def draft_to_card(self, data, source_text, *, retro, chapters=None):
+        return card_from_draft(data, source_text, retro=retro, chapters=chapters)
 
-    def finalize_card(self, card, content, name, aliases=(), roster=()):
+    def finalize_card(self, card, content, name, aliases=(), roster=(), *, chapters=None):
         card, _ = dedupe_relationship_targets(card, roster)
         card, _ = retract_unverified(card, content)
         return card

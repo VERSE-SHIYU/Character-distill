@@ -414,6 +414,13 @@ def test_g9b_opening_variation_waits_on_the_account_gate(tmp_path):
         async def get_text_owned(self, text_id, user_id):
             return {"content": "正文"}
 
+        # 照生产语义：首跑无缓存返回 ""，写回不关本用例的事。
+        async def get_chapters_owned(self, text_id, user_id, *, version):
+            return ""
+
+        async def save_chapters(self, text_id, chapters_json, *, version):
+            pass
+
         async def list_cards(self, text_id, user_id):
             return [{"id": "c1", "name": "角色", "card_json": card.model_dump_json()}]
 

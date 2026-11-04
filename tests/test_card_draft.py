@@ -337,6 +337,12 @@ class _DraftRouteStore:
     async def get_user_api_config(self, user_id):
         return {"embedding_key": "k", "embedding_region": "cn"}
 
+    async def get_chapters_owned(self, text_id, user_id, *, version):
+        return ""
+
+    async def save_chapters(self, text_id, chapters_json, *, version):
+        pass
+
 
 class TestDraftConversion:
     def test_bg_task_converts_draft(self, monkeypatch):

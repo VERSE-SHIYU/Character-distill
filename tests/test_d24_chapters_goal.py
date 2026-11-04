@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """D24 目标检查：章节识别改为「代码列候选行 → 模型逐行判 → 代码按序编号」。
 
-基线 f1232de1。第 1–13 条 xfail(strict)：现在没有 `Chapters` / `chapter_headings` /
-`distill_chapters` 存储，必须红；第 14 条是「不传章节表就退回正则」的普通对照，改前就绿。
+基线 f1232de1。第 1–13 条是目标检查（实现前 xfail(strict) 先红）；第 14 条是
+「不传章节表就退回正则」的对照，改前就绿。
 
 夹具沿用 `tests/fixtures/kongyiji.txt` 与 #248 的四章切法（`test_d24_catchphrase_goal.py`
 的 `_GROUPS`），只换成真实书的标题写法。
@@ -198,7 +198,6 @@ def _resolve_chapters():
 # ── 1. 魔道祖师写法 ────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g1_mdzs_heading_style():
     book = _book_case1()
     judge = _Judge(_heading_texts(book))
@@ -209,7 +208,6 @@ def test_g1_mdzs_heading_style():
 # ── 2. 中文数字 + 回；正文里的「第二回合」不算 ────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g2_hui_style_skips_prose_line():
     book = _book_hui()
     judge = _Judge(_heading_texts(book))
@@ -222,7 +220,6 @@ def test_g2_hui_style_skips_prose_line():
 # ── 3. 阿拉伯数字 + 简介里的「第五章」不算；结果与 from_text 逐项相同 ──────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g3_arabic_matches_regex():
     book = _book_intro()
     judge = _Judge(_heading_texts(book))
@@ -235,7 +232,6 @@ def test_g3_arabic_matches_regex():
 # ── 4. 卷章写一行、每卷重编号：代码按出现顺序编号 1..K ───────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g4_volume_and_chapter_renumbered():
     book = _book_juan()
     judge = _Judge(_heading_texts(book))
@@ -247,7 +243,6 @@ def test_g4_volume_and_chapter_renumbered():
 # ── 5. 没有候选行：空表，0 次判定 ─────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g5_no_candidates_is_empty_and_silent():
     book = "\n".join(_paragraphs())
     judge = _Judge(set(), boom=True)          # 一调就炸：证明 0 次调用
@@ -259,7 +254,6 @@ def test_g5_no_candidates_is_empty_and_silent():
 # ── 6. 同一本书两次：第二次读缓存，0 次判定 ───────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g6_second_resolve_reads_cache():
     book = _book_case1()
     judge = _Judge(_heading_texts(book))
@@ -277,7 +271,6 @@ def test_g6_second_resolve_reads_cache():
 # ── 7. 判定抛异常：退回正则、不写缓存、1 条 WARNING ───────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g7_failure_falls_back_and_warns(caplog):
     book = _book_arabic()
     Chapters = _Chapters()
@@ -296,7 +289,6 @@ def test_g7_failure_falls_back_and_warns(caplog):
 # ── 8. 缓存与当前原文对不上：当无缓存，重新判一轮 ─────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g8_stale_cache_is_recomputed():
     from core.chapters import CHAPTERS_VERSION
     book = _book_case1()
@@ -312,7 +304,6 @@ def test_g8_stale_cache_is_recomputed():
 # ── 9. build_excerpt 读章节表 ─────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g9_excerpt_uses_given_chapters():
     book = _book_case1()
     chapters = _detect_via(book, _Judge(_heading_texts(book)))
@@ -339,7 +330,6 @@ class _VerifyAllLLM:
                 for k in function["parameters"]["properties"]}
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g10_catchphrase_kept_with_chapters():
     book = _book_case1()
     chapters = _detect_via(book, _Judge(_heading_texts(book)))
@@ -353,7 +343,6 @@ def test_g10_catchphrase_kept_with_chapters():
 # ── 11. retro_regions.detect 的目录来自给定章节表 ──────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g11_retro_directory_uses_given_chapters():
     from core import retro_regions
     book = _book_case1()
@@ -465,7 +454,6 @@ def _run_bg(store, uid, tid, body, spy, monkeypatch):
     D._run_distill_task(task_id, tid, NAME, False, uid, body, "story", object())
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g12_three_channels_share_the_object(tmp_path, monkeypatch):
     from core.text_manager import TextManager
     book = _book_case1()
@@ -506,7 +494,6 @@ def test_g12_three_channels_share_the_object(tmp_path, monkeypatch):
 # ── 13. 回忆区版本升到 2 ──────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="D24 未实现")
 def test_g13_retro_version_bumped():
     from core.retro_cache import RETRO_VERSION
     assert RETRO_VERSION == 2

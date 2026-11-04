@@ -36,6 +36,7 @@ from httpx import ASGITransport, AsyncClient
 import deps
 import server
 from core.card_draft import CardDraft, card_from_draft
+from core.chapters import Chapters
 from core.distiller import DISTILL_PROMPT_BEFORE_NAME, DistillError, Distiller, IdentifyResult
 from core.schema import FORMAT_GROUPS, CharacterCard
 from core.text_manager import TextManager
@@ -422,11 +423,14 @@ class _RosterDistiller:
     def identify_roster(self, content):
         return IdentifyResult(self.identify_characters(content), trace=None)
 
+    def detect_chapters(self, content):
+        return Chapters()
+
     def distill_incremental(self, content, character_name, aliases=None, **kw):
         return CharacterCard.model_validate(
             {"name": character_name, "dialogue_examples": ["模型编的示例"]})
 
-    def finalize_card(self, card, content, name, aliases=(), roster=()):
+    def finalize_card(self, card, content, name, aliases=(), roster=(), *, chapters=None):
         card_dict = card.model_dump()
         card_dict["dialogue_examples"] = ["路人：先前的话。\n角色：我说一句话。"]
         return CharacterCard.model_validate(card_dict)
@@ -624,16 +628,19 @@ class _SleepyDistiller:
     def identify_roster(self, content):
         return IdentifyResult(self.identify_characters(content), trace=None)
 
+    def detect_chapters(self, content):
+        return Chapters()
+
     def distill_incremental(self, content, character_name, aliases=None, **kw):
         return CharacterCard.model_validate({"name": character_name})
 
     def distill_incremental_stream(self, content, name, aliases=None, **kw):
         yield json.dumps({"name": name}, ensure_ascii=False)
 
-    def draft_to_card(self, data, source_text, *, retro):
-        return card_from_draft(data, source_text, retro=retro)
+    def draft_to_card(self, data, source_text, *, retro, chapters=None):
+        return card_from_draft(data, source_text, retro=retro, chapters=chapters)
 
-    def finalize_card(self, card, content, name, aliases=(), roster=()):
+    def finalize_card(self, card, content, name, aliases=(), roster=(), *, chapters=None):
         time.sleep(SLEEPY)
         card_dict = card.model_dump()
         card_dict["dialogue_examples"] = ["路人：先前的话。\n角色：我说一句话。"]

@@ -26,6 +26,8 @@ from core.arc_view import project_card, valid_phase
 from core.card_out import CARD_CONFLICT, card_revision, out_card
 from core.character_roster import (
     aliases_for, cached_characters, resolve_characters, target_character_name)
+from core.chapters import Chapters
+from core.chapters_cache import resolve_chapters
 from core.retro_cache import resolve_retro_regions
 from core.retro_regions import NOT_DETECTED, RetroRegions
 from core.distiller import DistillError, Distiller, text_fingerprint
@@ -397,10 +399,12 @@ def _distill_to_draft(
     task_id: str, name: str, content: str, text_type: str,
     aliases: list[str], resume_candidates: dict[int, dict] | None,
     distiller: Distiller, retro: RetroRegions = NOT_DETECTED,
+    chapters: Chapters | None = None,
 ) -> dict | None:
     """蒸馏 → 解析 JSON（草稿交出时关系已在 distiller 内补全）；失败时已 `_set_task`，返回 None。
 
-    `retro`：这本书的回忆区（路由在蒸馏前已取到），交给 distiller 建弧线组的人物摘录。"""
+    `retro` / `chapters`：这本书的回忆区与章节表（路由在蒸馏前已取到），交给 distiller
+    建弧线组的人物摘录。"""
     # Step 2: run incremental distill (synchronous, collect full output)
     full = ""
     cur_phase = None
@@ -422,7 +426,7 @@ def _distill_to_draft(
         content, name,
         aliases=aliases, text_type=text_type,
         on_chunk_done=_persist_chunk, resume_candidates=resume_candidates,
-        retro=retro,
+        retro=retro, chapters=chapters,
     )
     for piece in stream:
         with _task_lock:
@@ -596,18 +600,25 @@ def _run_distill_task(
         if not name:
             name = target_character_name(chars)
         aliases = aliases_for(chars, name)
+        # 章节表（书的属性，按书缓存）：先判章节，回忆区与摘录都读同一份。
+        # 判不了不挡蒸馏，失败口径在 resolve_chapters 里（退回正则）。
+        with task_log.step("章节"):
+            chapters = submit_to_main_loop(
+                resolve_chapters(get_storage(), distiller, text_id, user_id, content))
         # 回忆区（书的属性，按书缓存）：转卡时交给位置核对（倒叙章节里的位置不作阶段证据）。
         # 标不了不挡蒸馏，失败口径在 resolve_retro_regions 里。
         with task_log.step("回忆区"):
             retro = submit_to_main_loop(
-                resolve_retro_regions(get_storage(), distiller, text_id, user_id, content))
+                resolve_retro_regions(get_storage(), distiller, text_id, user_id, content,
+                                      chapters))
 
         _set_task(task_id, {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
 
         if draft is None:
             with task_log.step("蒸馏"):
                 data = _distill_to_draft(
-                    task_id, name, content, text_type, aliases, resume_candidates, distiller, retro)
+                    task_id, name, content, text_type, aliases, resume_candidates, distiller,
+                    retro, chapters)
         else:
             data = draft
         if data is None:
@@ -617,7 +628,7 @@ def _run_distill_task(
             # 蒸馏流交出的是模型输出契约（草稿），转成卡只经 `draft_to_card`
             # 一处（它先修查不到的摘录，再走 `card_from_draft`）。
             with task_log.step("转卡"):
-                card = distiller.draft_to_card(data, content, retro=retro)
+                card = distiller.draft_to_card(data, content, retro=retro, chapters=chapters)
         except Exception as exc:
             # ValidationError 的 str() 带字段名与输入值（可能含原文片段），只进日志
             logger.error("Card validation failed for %s: %s", name, exc, exc_info=True)
@@ -627,7 +638,7 @@ def _run_distill_task(
         # 后置步骤：核对引文 + 贴对话示例（WP18 / WP17）。挑不出示例时卡照常返回（保底在
         # `finalize_card` 里）；它抛出来的都按任务失败处理。
         with task_log.step("后置"):
-            card = distiller.finalize_card(card, content, name, aliases, chars)
+            card = distiller.finalize_card(card, content, name, aliases, chars, chapters=chapters)
         card_dict = card.model_dump()
 
         # AI auto-tagging (fails open)
@@ -1287,13 +1298,17 @@ async def distill_stream(
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
 
+        # 章节表：同 /start 后台任务，回忆区、摘录、转卡、后置都读这一份。
+        chapters = await resolve_chapters(storage, distiller, req.text_id, user_id, content)
         # 回忆区：同 /start 后台任务，转卡时交给位置核对；标不了不挡蒸馏（按未标核对）。
-        retro = await resolve_retro_regions(storage, distiller, req.text_id, user_id, content)
+        retro = await resolve_retro_regions(storage, distiller, req.text_id, user_id, content,
+                                            chapters)
 
         # Incremental distillation with aliases for broader chunk matching
         full = ""
         stream = distiller.distill_incremental_stream(
-            content, char_name, aliases=aliases, text_type=text_type, retro=retro)
+            content, char_name, aliases=aliases, text_type=text_type, retro=retro,
+            chapters=chapters)
         while True:
             try:
                 piece, done = await asyncio.to_thread(_next_piece, stream)
@@ -1341,7 +1356,7 @@ async def distill_stream(
             # 位置检查要 normalize 整本原文（约 0.3s CPU），本生成器跑在事件循环线程上 ——
             # 同步跑会堵住它，故挪进 to_thread。
             card = await asyncio.to_thread(
-                distiller.draft_to_card, data, content, retro=retro)
+                distiller.draft_to_card, data, content, retro=retro, chapters=chapters)
         except Exception as exc:
             logger.error("Card validation failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': '蒸馏失败：数据校验错误，请重试'}, ensure_ascii=False, default=str)}\n\n"
@@ -1353,7 +1368,7 @@ async def distill_stream(
         try:
             card = await asyncio.to_thread(
                 distiller.finalize_card,
-                card, content, char_name, aliases, chars)
+                card, content, char_name, aliases, chars, chapters=chapters)
         except Exception as exc:
             logger.error("Finalize card failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"

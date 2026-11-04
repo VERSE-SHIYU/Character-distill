@@ -23,6 +23,7 @@ import test_distill_task_api as A
 from test_distill_task_api import store, user_id  # noqa: F401  复用同一套夹具
 from core import concurrency as C
 from core.card_draft import card_from_draft
+from core.chapters import Chapters
 from core.distiller import Distiller, IdentifyResult
 from core.request_context import Caller, LLM_CALLER, current_user_id
 from deps import get_storage
@@ -90,9 +91,12 @@ class _QueueProbeDistiller:
     def identify_roster(self, content):
         return IdentifyResult(self.identify_characters(content), trace=None)
 
+    def detect_chapters(self, content):
+        return Chapters()
+
     def distill_incremental_stream(self, text, character_name, *, aliases=None,
                                    text_type="story", on_chunk_done=None,
-                                   resume_candidates=None, retro=None):
+                                   resume_candidates=None, retro=None, chapters=None):
         started, release = self._pair(character_name)
         with self._lock:
             self.calls[character_name] = self.calls.get(character_name, 0) + 1
@@ -102,10 +106,10 @@ class _QueueProbeDistiller:
         yield {"status": "analyzing", "current": 1, "total": 1}
         yield json.dumps(self.CARD, ensure_ascii=False)
 
-    def draft_to_card(self, data, source_text, *, retro):
-        return card_from_draft(data, source_text, retro=retro)
+    def draft_to_card(self, data, source_text, *, retro, chapters=None):
+        return card_from_draft(data, source_text, retro=retro, chapters=chapters)
 
-    def finalize_card(self, card, content, name, aliases=(), roster=()):
+    def finalize_card(self, card, content, name, aliases=(), roster=(), *, chapters=None):
         return card
 
     def _auto_tag(self, card_dict):

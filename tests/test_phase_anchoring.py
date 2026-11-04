@@ -24,6 +24,7 @@ from pathlib import Path
 from core import phase_anchoring
 from core.card_draft import DraftBehavior, card_from_draft
 from core.card_layers import get_path
+from core.chapters import Chapters
 from core.retro_regions import NOT_DETECTED
 from core.quotes import locate_in_normalized, normalize, verbatim_in_normalized
 from core.schema import SituationBehavior
@@ -565,19 +566,23 @@ class _DraftStubDistiller:
     def identify_characters(self, content):
         return [{"name": "角色", "aliases": []}]
 
+    def detect_chapters(self, content):
+        # 原文没有候选行（`_SRC`）：照生产等于宽网为空，返回空表、不调模型。
+        return Chapters()
+
     def distill_incremental_stream(self, text, character_name, *, aliases=None,
                                    text_type="story", on_chunk_done=None,
-                                   resume_candidates=None, retro=None):
+                                   resume_candidates=None, retro=None, chapters=None):
         yield {"status": "formatting", "current": 1, "total": 1}
         yield json.dumps(self.draft, ensure_ascii=False)
 
     def _auto_tag(self, card_dict):
         return []
 
-    def draft_to_card(self, data, source_text, *, retro):
-        return card_from_draft(data, source_text, retro=retro)
+    def draft_to_card(self, data, source_text, *, retro, chapters=None):
+        return card_from_draft(data, source_text, retro=retro, chapters=chapters)
 
-    def finalize_card(self, card, content, name, aliases=(), roster=()):
+    def finalize_card(self, card, content, name, aliases=(), roster=(), *, chapters=None):
         return card
 
 
@@ -604,9 +609,9 @@ def _anchoring_content_route(monkeypatch, draft):
     threads: list[tuple[str, int]] = []
     real_dtc = stub.draft_to_card
 
-    def _spy(data, content, *, retro):
+    def _spy(data, content, *, retro, chapters=None):
         threads.append(("draft", threading.get_ident()))
-        return real_dtc(data, content, retro=retro)
+        return real_dtc(data, content, retro=retro, chapters=chapters)
 
     stub.draft_to_card = _spy
 
@@ -618,6 +623,13 @@ def _anchoring_content_route(monkeypatch, draft):
 
         async def get_user_api_config(self, user_id):
             return {"embedding_key": "k", "embedding_region": "cn"}
+
+        # 照生产语义：首跑无缓存返回 ""，写回不关本用例的事。
+        async def get_chapters_owned(self, text_id, user_id, *, version):
+            return ""
+
+        async def save_chapters(self, text_id, chapters_json, *, version):
+            pass
 
     stream_saved: list = []
 
@@ -687,7 +699,8 @@ def _entry_calls(tree, name):
 
 def test_s1_draft_to_card_has_five_production_callers_each_with_source_and_retro():
     """转卡只经 `draft_to_card`：生产调用点恰好五处，每处传草稿 + 原文两个位置参数和
-    `retro`（回忆区，PR-4）；`card_from_draft` 在生产代码里只剩它内部那一处。"""
+    `retro`（回忆区，PR-4）；接了章节表的路径再带上 `chapters`（D24）。
+    `card_from_draft` 在生产代码里只剩 `draft_to_card` 内部那一处。"""
     entries: dict[str, list[tuple[int, frozenset]]] = {}
     raw: dict[str, list[tuple[int, frozenset]]] = {}
     for root in ("core", "web"):
@@ -698,8 +711,9 @@ def test_s1_draft_to_card_has_five_production_callers_each_with_source_and_retro
             raw.setdefault(rel, []).extend(_entry_calls(tree, "card_from_draft"))
     counts = {k: len(v) for k, v in entries.items() if v}
     raw_counts = {k: len(v) for k, v in raw.items() if v}
-    well_formed = all(shape == (2, frozenset({"retro"}))
-                      for v in (*entries.values(), *raw.values()) for shape in v)
+    well_formed = all(
+        shape[0] == 2 and shape[1] in (frozenset({"retro"}), frozenset({"retro", "chapters"}))
+        for v in (*entries.values(), *raw.values()) for shape in v)
     assert (counts, raw_counts, well_formed) == (
         {"core/distiller.py": 3, "web/routers/distill.py": 2},
         {"core/distiller.py": 1}, True)

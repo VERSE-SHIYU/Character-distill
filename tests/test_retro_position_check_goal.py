@@ -90,7 +90,7 @@ def test_g5_card_from_draft_requires_retro():
 
 
 class _Stub(P._DraftStub):
-    def detect_retro_regions(self, content):
+    def detect_retro_regions(self, content, chapters=None):
         return _RETRO
 
 
@@ -103,9 +103,9 @@ def _spy(monkeypatch):
     seen = []
     real = P._DraftStub.draft_to_card
 
-    def _wrapped(self, data, source_text, *, retro):
+    def _wrapped(self, data, source_text, *, retro, chapters=None):
         seen.append(retro)
-        return real(self, data, source_text, retro=retro)
+        return real(self, data, source_text, retro=retro, chapters=chapters)
 
     monkeypatch.setattr(P._DraftStub, "draft_to_card", _wrapped)
     monkeypatch.setattr(P, "_DraftStub", _Stub)

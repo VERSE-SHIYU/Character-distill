@@ -130,7 +130,7 @@ class _Detector:
     def __init__(self, result):
         self.result, self.calls = result, 0
 
-    def detect_retro_regions(self, content):
+    def detect_retro_regions(self, content, chapters=None):
         self.calls += 1
         if isinstance(self.result, Exception):
             raise self.result
@@ -200,7 +200,7 @@ class _RetroDraftStub(P._DraftStub):
         super().__init__(draft)
         self.retro_calls = 0
 
-    def detect_retro_regions(self, content):
+    def detect_retro_regions(self, content, chapters=None):
         self.retro_calls += 1
         return _MARKED
 
