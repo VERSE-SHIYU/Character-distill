@@ -16,7 +16,7 @@ G4 「书」有一处是喝酒的人 → 去（别人说过就区分不开）
 G5 同 G1、但没有「第N章」标题 → 认不出章节，去，0 次调用
 G6 顶层「酒」留、阶段 overlay 的「不多」删
 G7 卡里没有口头禅 → 不核对，0 次调用
-G8 同 G1、但模型抛异常 → 照常出卡、口头禅原样，1 条 ERROR
+G8 同 G6、但模型抛异常 → 照常出卡、顶层与 overlay 的口头禅全删（宁可少），1 条 ERROR
 G9 同 G1、但第 1 处是「无法判断」→ 本人只剩第 4 章 1/4，去
 G10 41 处（>MAX_CANDIDATES）分两批判：第二批有外人 → 去、2 次；第一批就有外人 → 去、1 次
 """
@@ -172,13 +172,15 @@ def test_g7_no_catchphrases_makes_no_verification_call():
     assert llm.verify_calls == 0
 
 
-def test_g8_model_failure_keeps_the_catchphrase_and_logs_one_error(caplog):
+def test_g8_model_failure_drops_every_catchphrase_and_logs_one_error(caplog):
     llm = _BoomLLM([])
 
     with caplog.at_level(logging.ERROR):
-        out = _finalize(_card(["酒"]), _with_chapters(), llm)
+        out = _finalize(_card(["酒"], overlay=["不多"]), _with_chapters(), llm)
 
-    assert out.speaking_style.catchphrases == ["酒"]
+    assert out.speaking_style.catchphrases == [], "核对没做完不留未核过的口头禅"
+    overlay = out.character_arc.phases[0].overlay
+    assert get_path(overlay, "speaking_style.catchphrases") == []
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert len(errors) == 1, "核对口头禅出错应记且只记一条 ERROR"
 

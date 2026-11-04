@@ -15,7 +15,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Container, NamedTuple, Sequence, TypeVar
 import collections.abc as _cabc
 
 import yaml
@@ -852,6 +852,24 @@ def _roster_hint(others: Sequence[dict]) -> str:
         aliases = [a for a in (o.get("aliases") or []) if a]
         parts.append(f"{name}（{'、'.join(aliases)}）" if aliases else name)
     return "；".join(parts)
+
+
+def _catchphrase_slots(dump: dict) -> list[list]:
+    """卡上存口头禅的全部位置：顶层、各阶段 overlay、未定位区 overlay。只此一处列举。"""
+    slots = [dump["speaking_style"]["catchphrases"]]
+    slots += [(phase.get("overlay") or {}).get("speaking_style", {}).get("catchphrases")
+              for phase in dump["character_arc"]["phases"]]
+    slots.append((dump["character_arc"].get("unlocated", {}).get("overlay") or {})
+                 .get("speaking_style", {}).get("catchphrases"))
+    return [slot for slot in slots if isinstance(slot, list)]
+
+
+def drop_catchphrases(card: CharacterCard, drop: Container[str] | None = None) -> CharacterCard:
+    """从顶层与所有 overlay 删掉 `drop` 里的口头禅；`drop` 为 None 时全删。"""
+    dump = card.model_dump()
+    for slot in _catchphrase_slots(dump):
+        slot[:] = [] if drop is None else [v for v in slot if v not in drop]
+    return CharacterCard.model_validate(dump)
 
 
 class Distiller:
@@ -2324,16 +2342,11 @@ class Distiller:
         不调模型；否则由模型读片段判说话人，任一处是别人说的就删；最后本人格所在章数够门槛
         才留。认不出「第N章」的书一律删（一章都判不了经常与区分）。
 
-        本方法照实抛异常；要不要因此作废整张卡由调用方定（`finalize_card` 里保底）。
+        本方法照实抛异常；调用方 `finalize_card` 接住后把口头禅全删（核对没做完就说不清哪条
+        合格，宁可少，与认不出章节同一口径）。
         """
-        dump = card.model_dump()
-        slots = [dump["speaking_style"]["catchphrases"]]
-        slots += [(phase.get("overlay") or {}).get("speaking_style", {}).get("catchphrases")
-                  for phase in dump["character_arc"]["phases"]]
-        slots.append((dump["character_arc"].get("unlocated", {}).get("overlay") or {})
-                     .get("speaking_style", {}).get("catchphrases"))
-        slots = [slot for slot in slots if isinstance(slot, list)]
-        values = list(dict.fromkeys(v for slot in slots for v in slot))
+        values = list(dict.fromkeys(
+            v for slot in _catchphrase_slots(card.model_dump()) for v in slot))
         if not values:
             return card
 
@@ -2373,11 +2386,7 @@ class Distiller:
                 if len(subject_chapters) / len(appearance) < CATCHPHRASE_MIN_CHAPTER_SHARE:
                     drop.add(phrase)
 
-        if not drop:
-            return card
-        for slot in slots:
-            slot[:] = [v for v in slot if v not in drop]
-        return CharacterCard.model_validate(dump)
+        return drop_catchphrases(card, drop) if drop else card
 
     def _catchphrase_subject_lines(
         self, phrase: str, occs: Sequence[Candidate],
@@ -2451,8 +2460,8 @@ class Distiller:
         必是原文（核对去掉查不到的引文的引号）、示例按编号从原文复制
         （`attach_dialogue_examples`）。
 
-        **对话示例与口头禅两步保底**：挑不出来、核对不出说话人或调用模型出错，卡照常返回
-        （没有示例 / 口头禅保持核对前原样），原因进日志 —— 不让后置字段把已经付费蒸好的整张
+        **对话示例与口头禅两步保底**：挑不出示例或核对口头禅出错，卡照常返回（没有示例 /
+        口头禅全部去掉 —— 核对不完就不留未核过的），原因进日志 —— 不让后置字段把已经付费蒸好的整张
         卡作废（标签、苏醒台词本来就是这样）。两步各自保底，三条通道因此口径相同；通道用
         `CharacterCard.has_dialogue_examples` 判有没有配上，自己渲染提示。去重与核对引文出错仍然抛。
 
@@ -2463,11 +2472,11 @@ class Distiller:
         card, _ = retract_unverified(card, content)
         try:
             card = self.verify_catchphrases(card, content, name, aliases, roster)
-        except DistillError as exc:
-            # 认不出章节、模型没给出可用的说话人：保留核对前的口头禅。
-            logger.warning("[distill] 「%s」核对口头禅未完成，保留原样：%s", name, exc)
         except Exception:
-            logger.error("[distill] 「%s」核对口头禅出错，保留原样", name, exc_info=True)
+            # 核对没做完就说不清哪条合格：宁可少，全删（与认不出章节同一口径）。
+            # verify_catchphrases 不抛 DistillError，这里只有调用模型出错或本步自己的缺陷。
+            logger.error("[distill] 「%s」核对口头禅出错，口头禅已全部去掉", name, exc_info=True)
+            card = drop_catchphrases(card)
         try:
             return self.attach_dialogue_examples(card, content, name, aliases, roster)
         except DistillError as exc:
