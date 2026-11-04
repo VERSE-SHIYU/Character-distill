@@ -24,6 +24,7 @@ from core.quotes import (
     extract_candidates,
     is_spoken,
     normalize,
+    phrase_occurrences,
     quoted_spans,
     render_candidates,
     spread_evenly,
@@ -598,6 +599,18 @@ def test_normalized_starts_unsorted_and_duplicate_starts_keep_caller_order():
     text = "甲乙丙。丁戊己！\n庚辛壬癸" * 10
     raw = [30, 0, 30, 7, len(text), 2]
     assert ns(text, raw) == [len(norm(text[:r])) for r in raw]
+
+
+def test_phrase_occurrences_lists_every_spoken_line_containing_the_phrase():
+    """含「孔乙己」的台词共 7 处；叙述里带引号的「上大人孔乙己」不是台词，不收。"""
+    from pathlib import Path
+
+    text = (Path(__file__).parent / "fixtures" / "kongyiji.txt").read_text(encoding="utf-8")
+    cands = phrase_occurrences(text, "孔乙己")
+    assert len(cands) == 7
+    assert all("孔乙己" in c.line for c in cands)
+    assert "上大人孔乙己" not in [c.line for c in cands]
+    assert [c.n for c in cands] == list(range(1, 8))
 
 
 def test_normalized_starts_falls_back_when_segments_do_not_add_up(monkeypatch):

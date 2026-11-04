@@ -416,16 +416,52 @@ def extract_candidates(text: str, names: Sequence[str]) -> list[Candidate]:
         prev = quotes[i - 1]
         if not is_spoken(m.group(1)) or not _pairable(text, prev, m):
             continue
-        lead, _ = _lead_before(text, quotes, i, m.start())
-        tail, end = _tail_after(text, quotes, i)
-        if not _names_any((lead, tail), wanted):
-            continue
         prev_lead, prev_start = _lead_before(text, quotes, i - 1, prev.start())
-        start = _context_start(text, quotes, sentence_ends, prev_start)
-        out.append(Candidate(n=0, lead=lead, line=m.group(1),
-                             prev_lead=prev_lead, prev_line=prev.group(1),
-                             context=text[start:end], start=m.start()))
+        cand, tail = _quote_fragment(text, quotes, sentence_ends, i, prev_start)
+        if not _names_any((cand.lead, tail), wanted):
+            continue
+        out.append(cand._replace(prev_lead=prev_lead, prev_line=prev.group(1)))
     return _numbered(out)
+
+
+def phrase_occurrences(text: str, phrase: str) -> list[Candidate]:
+    """原文里含 `phrase` 的全部台词（`is_spoken`），按出场顺序编号（1 起）。
+
+    不管署名是谁、不要求与上一句成对：这里找的是「这个词在谁嘴里出现过」，说话人由模型
+    读片段判（见 `render_occurrences`）。片段起点用本句自己的引导语起点。
+    """
+    wanted = _same_width(phrase)
+    if not wanted:
+        return []
+    quote_re = _quote_re(text)
+    if quote_re is None:
+        return []
+    quotes = list(quote_re.finditer(text))
+    sentence_ends = [s.end() for s in _NARRATION_SENTENCE.finditer(text)]
+    out: list[Candidate] = []
+    for i, m in enumerate(quotes):
+        if not is_spoken(m.group(1)) or wanted not in _same_width(m.group(1)):
+            continue
+        _, lead_start = _lead_before(text, quotes, i, m.start())
+        cand, _ = _quote_fragment(text, quotes, sentence_ends, i, lead_start)
+        out.append(cand)
+    return _numbered(out)
+
+
+def _quote_fragment(
+    text: str, quotes: list, sentence_ends: Sequence[int], i: int, context_anchor: int
+) -> tuple[Candidate, str]:
+    """第 i 个引号 → 带引导语与片段的 Candidate（`n=0`，`prev_*` 留空），以及引号后的署名。
+
+    片段起点从 `context_anchor` 往前数（`_context_start`）：对话示例传上一句的引导语起点，
+    口头禅出现传本句自己的。
+    """
+    m = quotes[i]
+    lead, _ = _lead_before(text, quotes, i, m.start())
+    tail, end = _tail_after(text, quotes, i)
+    start = _context_start(text, quotes, sentence_ends, context_anchor)
+    return Candidate(n=0, lead=lead, line=m.group(1), prev_lead="", prev_line="",
+                     context=text[start:end], start=m.start()), tail
 
 
 def _numbered(candidates: Sequence[Candidate]) -> list[Candidate]:
@@ -513,6 +549,17 @@ def render_candidates(candidates: Sequence[Candidate]) -> str:
         blocks.append(f"[{c.n}] 片段：{c.context}\n"
                       f"    上一句：{c.prev_lead}“{c.prev_line}”\n"
                       f"    本句：{c.lead}“{c.line}”")
+    return "\n".join(blocks)
+
+
+def render_occurrences(candidates: Sequence[Candidate]) -> str:
+    """「这个词出现在哪些台词里」的编号块：没有「上一句」那一行。
+
+    编号仍由 `_numbered` / `spread_evenly` 定，与 `render_candidates` 共用同一个 `n`。
+    """
+    blocks = [f"[{c.n}] 片段：{c.context}\n"
+              f"    本句：{c.lead}“{c.line}”"
+              for c in candidates]
     return "\n".join(blocks)
 
 
