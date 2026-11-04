@@ -178,6 +178,8 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "109_distill_task_entry.sql",
     # 110：PG 045 新增列的孪生，同上。
     "110_text_characters_trace.sql",
+    # 111：PG 046 新增列的孪生，同上。
+    "111_text_chapters.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -4616,6 +4618,31 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get retro regions failed: {exc}")
             raise StoreError("get_retro_regions_owned", exc) from exc
+
+    async def save_chapters(self, text_id: str, chapters_json: str, *, version: int) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE texts SET chapters_json = ?, chapters_version = ? WHERE id = ?",
+                    (chapters_json, version, text_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save chapters failed: {exc}")
+            raise StoreError("save_chapters", exc) from exc
+
+    async def get_chapters_owned(self, text_id: str, user_id: str, *, version: int) -> str:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT chapters_json, chapters_version FROM texts WHERE id = ? AND user_id = ?",
+                    (text_id, user_id),
+                )
+                row = await cursor.fetchone()
+            return row[0] if row and row[0] and row[1] == version else ""
+        except Exception as exc:
+            print(f"[SQLiteStore] Get chapters failed: {exc}")
+            raise StoreError("get_chapters_owned", exc) from exc
 
     async def load_session_record_unscoped(self, session_id: str) -> str:
         try:

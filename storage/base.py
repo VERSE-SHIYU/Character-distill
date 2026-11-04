@@ -842,6 +842,19 @@ class StorageBase(ABC):
         Owner filter in SQL (`texts.user_id`), same shape as `get_characters_owned`."""
 
     @abstractmethod
+    async def save_chapters(self, text_id: str, chapters_json: str, *, version: int) -> None:
+        """Persist a text's chapter table (`texts.chapters_json` / `chapters_version`).
+
+        `version` is supplied by the caller (`core.chapters.CHAPTERS_VERSION`); the store only
+        stores it. Written only by `core.chapters_cache.resolve_chapters`."""
+
+    @abstractmethod
+    async def get_chapters_owned(self, text_id: str, user_id: str, *, version: int) -> str:
+        """Return the cached chapter-table JSON for a text the user owns ("" when none or
+        version differs). Owner filter in SQL (`texts.user_id`), same shape as
+        `get_retro_regions_owned`."""
+
+    @abstractmethod
     async def save_group_session_record(self, group_id: str, card_id: str, record_json: str) -> None:
         """Upsert one group member's record JSON (`group_session_records`, keyed by (group, card)).
 
