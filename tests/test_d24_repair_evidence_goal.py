@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """D24-B 目标检查：修摘录、核对口头禅时，没成的每一条都留一条 WARNING 写明原因。
 
-逐行对应提示词 Q1–Q10 / C1–C7。新行为（Q1–Q7、C1–C5）标 `xfail(strict=True)`；
-对照行（Q8–Q10、C6、C7）改前就该绿，不标。
+逐行对应提示词 Q1–Q10 / C1–C7。新行为（Q1–Q7、C1–C5）先以 `xfail(strict=True)`
+验证为红；对照行（Q8–Q10、C6、C7）改前就该绿。
 
 原文与期望值都是字面量，不从被测模块取。
 """
@@ -11,8 +11,6 @@ from __future__ import annotations
 import copy
 import json
 import logging
-
-import pytest
 
 from core.card_draft import card_from_draft
 from core.distiller import Distiller
@@ -82,7 +80,6 @@ def _same_card_as_direct_conversion(card, data):
 
 # ── Q1–Q7：新行为（先红）──────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True)
 def test_q1_too_short_quote_logs_reason(caplog):
     data = _draft([_behavior("投潭呀")])                    # 规范化后 3 字 < 6
     with caplog.at_level(logging.WARNING):
@@ -96,7 +93,6 @@ def test_q1_too_short_quote_logs_reason(caplog):
     _same_card_as_direct_conversion(card, data)
 
 
-@pytest.mark.xfail(strict=True)
 def test_q2_no_candidate_logs_reason(caplog):
     data = _draft([_behavior("银河战舰在木星轨道集结完毕")])
     with caplog.at_level(logging.WARNING):
@@ -109,7 +105,6 @@ def test_q2_no_candidate_logs_reason(caplog):
     _same_card_as_direct_conversion(card, data)
 
 
-@pytest.mark.xfail(strict=True)
 def test_q3_missing_row_logs_model_omitted(caplog):
     data = _draft([
         _behavior(_CHANGED, situation="s1"),
@@ -130,7 +125,6 @@ def test_q3_missing_row_logs_model_omitted(caplog):
     _same_card_as_direct_conversion(card, data)
 
 
-@pytest.mark.xfail(strict=True)
 def test_q4_null_sentence_logs_empty_reply(caplog):
     data = _draft([_behavior(_CHANGED)])
     reply = json.dumps([{"id": 1, "sentence": None}])
@@ -144,7 +138,6 @@ def test_q4_null_sentence_logs_empty_reply(caplog):
     _same_card_as_direct_conversion(card, data)
 
 
-@pytest.mark.xfail(strict=True)
 def test_q5_sentence_absent_from_source_logs_reason(caplog):
     data = _draft([_behavior(_CHANGED)])
     reply = json.dumps([{"id": 1, "sentence": "她偏要做那投潭的石头"}],
@@ -157,7 +150,6 @@ def test_q5_sentence_absent_from_source_logs_reason(caplog):
     _same_card_as_direct_conversion(card, data)
 
 
-@pytest.mark.xfail(strict=True)
 def test_q6_low_similarity_logs_reason_and_score(caplog):
     data = _draft([_behavior(_CHANGED)])
     reply = json.dumps([{"id": 1, "sentence": _LOW_SIMILARITY}], ensure_ascii=False)
@@ -169,7 +161,6 @@ def test_q6_low_similarity_logs_reason_and_score(caplog):
     _same_card_as_direct_conversion(card, data)
 
 
-@pytest.mark.xfail(strict=True)
 def test_q7_one_raw_reply_warning_even_with_multiple_failures(caplog):
     data = _draft([
         _behavior(_CHANGED, situation="s1"),
@@ -242,6 +233,7 @@ _CONTENT_NO_CHAPTERS = (
     "云绮道：“酒。”\n"
     "云绮走了进来。\n"
     "云绮道：“酒。”\n"
+    "云绮道：“不多。”\n"
 )
 
 
@@ -285,7 +277,6 @@ def _catchphrase_warnings(caplog):
 
 # ── C1–C5：新行为（先红）──────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True)
 def test_c1_unknown_chapters_logs_reason_for_each(caplog):
     llm = _VerifyLLM([])
     with caplog.at_level(logging.WARNING):
@@ -301,7 +292,6 @@ def test_c1_unknown_chapters_logs_reason_for_each(caplog):
     assert not [m for m in rows if "第N章" not in m]
 
 
-@pytest.mark.xfail(strict=True)
 def test_c2_too_few_chapters_logs_both_counts(caplog):
     llm = _VerifyLLM([])
     with caplog.at_level(logging.WARNING):
@@ -314,7 +304,6 @@ def test_c2_too_few_chapters_logs_both_counts(caplog):
     assert "含该词的章 1 / 出场章 4 < 1/3" in rows[0]
 
 
-@pytest.mark.xfail(strict=True)
 def test_c3_said_by_roster_other_logs_the_speaker(caplog):
     llm = _VerifyLLM([["掌柜", "掌柜"]])
     with caplog.at_level(logging.WARNING):
@@ -327,7 +316,6 @@ def test_c3_said_by_roster_other_logs_the_speaker(caplog):
     assert "模型判为「掌柜」说" in rows[0]
 
 
-@pytest.mark.xfail(strict=True)
 def test_c4_said_by_outsider_logs_the_outsider(caplog):
     llm = _VerifyLLM([["名单外的人", _NAME]])
     with caplog.at_level(logging.WARNING):
@@ -339,7 +327,6 @@ def test_c4_said_by_outsider_logs_the_outsider(caplog):
     assert "模型判为「名单外的人」说" in rows[0]
 
 
-@pytest.mark.xfail(strict=True)
 def test_c5_too_few_subject_chapters_logs_both_counts(caplog):
     llm = _VerifyLLM([[_NAME, "无法判断"]])
     with caplog.at_level(logging.WARNING):

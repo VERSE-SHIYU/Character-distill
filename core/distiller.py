@@ -2006,6 +2006,12 @@ class Distiller:
             cands = quote_repair.candidates(source_text, source_norm, quote)
             if cands:
                 pending.append((slot, quote, cands))
+            elif quote_repair.too_short(quote):
+                logger.warning("[quote_repair] 「%s」太短（规范化后不足 %s 字），未发给模型",
+                               quote, quote_repair.MIN_LEN)
+            else:
+                logger.warning("[quote_repair] 「%s」无 ≥%s 分候选，未发给模型",
+                               quote, quote_repair.PREFILTER_CUTOFF)
         if not pending:
             return
 
@@ -2038,12 +2044,20 @@ class Distiller:
             if isinstance(row, dict) and isinstance(row.get("id"), int)
             and not isinstance(row.get("id"), bool)
         }
+        failed = False
         for i, (slot, quote, _cands) in enumerate(pending, 1):
             sentence = answers.get(i)
             sentence = sentence.strip() if isinstance(sentence, str) else ""
             if quote_repair.accept(source_norm, quote, sentence):
                 slot["quote"] = sentence
                 logger.warning("修摘录：%s → %s", quote, sentence)
+                continue
+            reason = ("模型漏回" if i not in answers
+                      else quote_repair.reject_reason(source_norm, quote, sentence))
+            logger.warning("[quote_repair] 「%s」未修成：%s", quote, reason)
+            failed = True
+        if failed:
+            logger.warning("[quote_repair] 模型原始回复：%s", reply)
 
     def distill(self, text: str, character_name: str) -> CharacterCard:
         """蒸馏指定角色的 ``CharacterCard``（简单截断模式，适合短文本）。
@@ -2372,9 +2386,9 @@ class Distiller:
             return card
 
         bodies = Chapters.of(content, chapters).bodies(content)
-        drop: set[str] = set()
+        reasons: dict[str, str] = {}
         if not bodies:
-            drop = set(values)
+            reasons = {phrase: "认不出第N章" for phrase in values}
         else:
             wanted = [_same_width(w) for w in (name, *aliases) if w]
             appearance = {n for n, (_, body) in bodies.items()
@@ -2395,25 +2409,35 @@ class Distiller:
             for phrase in values:
                 occs = phrase_occurrences(content, phrase)
                 occ_chapters = {chapter_at(c.start) for c in occs} - {None}
-                if (not appearance or not occ_chapters or len(occ_chapters) / len(appearance)
-                        < CATCHPHRASE_MIN_CHAPTER_SHARE):
-                    drop.add(phrase)
+                if not appearance:
+                    reasons[phrase] = "没认出角色出场章"
+                    continue
+                if not occ_chapters:
+                    reasons[phrase] = f"含该词的章 0 / 出场章 {len(appearance)}"
+                    continue
+                if len(occ_chapters) / len(appearance) < CATCHPHRASE_MIN_CHAPTER_SHARE:
+                    reasons[phrase] = (f"含该词的章 {len(occ_chapters)} / 出场章 "
+                                       f"{len(appearance)} < 1/3")
                     continue
                 subject = self._catchphrase_subject_lines(phrase, occs, others, options)
-                if subject is None:
-                    drop.add(phrase)
+                if isinstance(subject, str):
+                    reasons[phrase] = f"模型判为「{subject}」说"
                     continue
                 subject_chapters = {chapter_at(pos) for pos in subject} - {None}
                 if len(subject_chapters) / len(appearance) < CATCHPHRASE_MIN_CHAPTER_SHARE:
-                    drop.add(phrase)
+                    reasons[phrase] = (f"本人说的章 {len(subject_chapters)} / 出场章 "
+                                       f"{len(appearance)} < 1/3")
 
+        drop = set(reasons)
+        for phrase, reason in reasons.items():
+            logger.warning("[distill] 「%s」口头禅「%s」已删：%s", name, phrase, reason)
         return drop_catchphrases(card, drop) if drop else card
 
     def _catchphrase_subject_lines(
         self, phrase: str, occs: Sequence[Candidate],
         others: Sequence[dict], options: SpeakerOptions,
-    ) -> list[int] | None:
-        """逐批判说话人；全是本人或「无法判断」时返回本人那些台词的起点，出现别人即返回 None。"""
+    ) -> list[int] | str:
+        """逐批判说话人；全是本人或「无法判断」时返回本人那些台词的起点，出现别人即返回那个说话人。"""
         batches = [spread_evenly(occs)]
         if len(occs) > MAX_CANDIDATES:
             chosen = {c.start for c in batches[0]}
@@ -2426,7 +2450,7 @@ class Distiller:
             for cand in batch:
                 speaker = judges.get(cand.n)
                 if speaker in options.others or speaker == OUTSIDER:
-                    return None
+                    return speaker
                 if speaker == options.subject:
                     subject.append(cand.start)
         return subject
