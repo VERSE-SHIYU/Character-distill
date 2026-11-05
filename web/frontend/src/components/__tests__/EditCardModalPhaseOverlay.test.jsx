@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import EditCardModal from '../EditCardModal'
 
 // D24-A：编辑框里只读显示各阶段特有的内容。E1/E2/E5 改前必须红（it.fails）。
@@ -30,12 +30,13 @@ function open() {
 }
 
 describe('EditCardModal 阶段特有内容（只读）', () => {
-  it('E1 打开编辑框：显示该阶段特有的性格与语气', () => {
+  it('E1 打开编辑框：第 1 阶段的只读块里显示性格与语气', () => {
     open()
-    expect(screen.getByText('疑心重')).toBeTruthy()
-    expect(screen.getByText('冷淡')).toBeTruthy()
-    expect(screen.getByText('性格')).toBeTruthy()
-    expect(screen.getAllByText('语气').length).toBeGreaterThanOrEqual(2)
+    const block = screen.getByText(/第 1 阶段「冷漠」特有的内容/).closest('.modal-field')
+    expect(within(block).getByText('性格')).toBeTruthy()
+    expect(within(block).getByText('疑心重')).toBeTruthy()
+    expect(within(block).getByText('语气')).toBeTruthy()
+    expect(within(block).getByText('冷淡')).toBeTruthy()
   })
 
   it('E2 只读：疑心重不出现在任何输入框里', () => {
