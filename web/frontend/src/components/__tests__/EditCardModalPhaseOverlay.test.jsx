@@ -30,7 +30,7 @@ function open() {
 }
 
 describe('EditCardModal 阶段特有内容（只读）', () => {
-  it.fails('E1 打开编辑框：显示该阶段特有的性格与语气', () => {
+  it('E1 打开编辑框：显示该阶段特有的性格与语气', () => {
     open()
     expect(screen.getByText('疑心重')).toBeTruthy()
     expect(screen.getByText('冷淡')).toBeTruthy()
@@ -38,7 +38,7 @@ describe('EditCardModal 阶段特有内容（只读）', () => {
     expect(screen.getAllByText('语气').length).toBeGreaterThanOrEqual(2)
   })
 
-  it.fails('E2 只读：疑心重不出现在任何输入框里', () => {
+  it('E2 只读：疑心重不出现在任何输入框里', () => {
     open()
     expect(screen.getByText('疑心重')).toBeTruthy()
     const fields = Array.from(document.querySelectorAll('input, textarea'))
@@ -56,7 +56,7 @@ describe('EditCardModal 阶段特有内容（只读）', () => {
     expect(screen.queryByText('价值观')).toBeNull()
   })
 
-  it.fails('E5 删掉阶段 1：疑心重随之消失', () => {
+  it('E5 删掉阶段 1：疑心重随之消失', () => {
     open()
     expect(screen.getByText('疑心重')).toBeTruthy()
     fireEvent.click(screen.getAllByRole('button', { name: '删除这一行' })[0])

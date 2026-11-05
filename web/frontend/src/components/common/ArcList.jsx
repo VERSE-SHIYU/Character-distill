@@ -35,9 +35,12 @@ export function overlayLabel(path) {
   return OVERLAY_LABELS[path] || path
 }
 
-function OverlayBlock({ overlay }) {
-  const entries = overlayLeaves(overlay)
+function overlayEntries(overlay) {
+  return overlayLeaves(overlay)
     .filter(([, v]) => (Array.isArray(v) ? v.length > 0 : Boolean(v)))
+}
+
+function OverlayBlock({ entries }) {
   if (entries.length === 0) return null
   return (
     <dl className="card-arc-overlay">
@@ -57,6 +60,31 @@ function OverlayBlock({ overlay }) {
   )
 }
 
+// 阶段下「只在这个阶段成立」的内容：overlay 叶子 + memories。卡片详情直接显示；
+// 编辑框传 title 时套上 modal-field 外壳（两者都没有时整块不渲染，标题也不渲染）。
+export function PhaseExtras({ phase, title }) {
+  const entries = overlayEntries(phase.overlay)
+  const memories = phase.memories || []
+  if (entries.length === 0 && memories.length === 0) return null
+  const body = (
+    <>
+      <OverlayBlock entries={entries} />
+      {memories.length > 0 && (
+        <ul className="card-arc-memories">
+          {memories.map((m, j) => <li key={j} className="card-arc-memory">{m}</li>)}
+        </ul>
+      )}
+    </>
+  )
+  if (!title) return body
+  return (
+    <div className="modal-field">
+      <div className="modal-label">{title}</div>
+      {body}
+    </div>
+  )
+}
+
 export default function ArcList({ arc }) {
   return (
     <>
@@ -72,12 +100,7 @@ export default function ArcList({ arc }) {
                 {p.state}
               </span>
               {p.behaviors?.length > 0 && <BehaviorList items={p.behaviors} />}
-              <OverlayBlock overlay={p.overlay} />
-              {p.memories?.length > 0 && (
-                <ul className="card-arc-memories">
-                  {p.memories.map((m, j) => <li key={j} className="card-arc-memory">{m}</li>)}
-                </ul>
-              )}
+              <PhaseExtras phase={p} />
             </div>
           </li>
         ))}
