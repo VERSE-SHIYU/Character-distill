@@ -25,6 +25,11 @@ TOP_K = 3
 ACCEPT_SIMILARITY = 75
 
 
+def too_short(quote: str) -> bool:
+    """规范化后不足 `MIN_LEN` 字 —— 太短，模糊匹配没有分辨力。"""
+    return len(normalize(quote)) < MIN_LEN
+
+
 def candidates(source_text: str, source_norm: str, quote: str) -> list[str]:
     """在 `source_norm` 上滑窗打分，返回至多 `TOP_K` 个候选段落（原文里整行，按 `\\n` 分）。
 
@@ -34,9 +39,9 @@ def candidates(source_text: str, source_norm: str, quote: str) -> list[str]:
     位置相距不足一个窗长的只留分高的 —— 同一处连续几窗是同一个候选。每个命中位置用
     `raw_offsets` 换回原文坐标，取那一行。
     """
-    q = normalize(quote)
-    if len(q) < MIN_LEN:
+    if too_short(quote):
         return []
+    q = normalize(quote)
     win = int(len(q) * 1.5) + 2
     step = max(1, len(q) // 3)
     scored: list[tuple[int, float]] = []
@@ -71,10 +76,18 @@ def candidates(source_text: str, source_norm: str, quote: str) -> list[str]:
     return out
 
 
+def reject_reason(source_norm: str, quote: str, sentence: str | None) -> str | None:
+    """`sentence` 不能替换 `quote` 的原因（给日志）；通过时返回 None。"""
+    if not sentence:
+        return "模型回空"
+    if locate_in_normalized(source_norm, sentence) is None:
+        return "原文查不到"
+    score = fuzz.partial_ratio(normalize(quote), normalize(sentence))
+    if score < ACCEPT_SIMILARITY:
+        return f"相似度 {score} < {ACCEPT_SIMILARITY}"
+    return None
+
+
 def accept(source_norm: str, quote: str, sentence: str | None) -> bool:
     """模型抄回的 `sentence` 能不能替换原摘录：非空、逐字在原文里、与原摘录足够像。"""
-    if not sentence:
-        return False
-    if locate_in_normalized(source_norm, sentence) is None:
-        return False
-    return fuzz.partial_ratio(normalize(quote), normalize(sentence)) >= ACCEPT_SIMILARITY
+    return reject_reason(source_norm, quote, sentence) is None
