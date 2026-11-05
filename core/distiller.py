@@ -261,6 +261,11 @@ CATCHPHRASE_RULE = (
 CATCHPHRASE_MIN_CHAPTER_SHARE = Fraction(1, 3)
 
 
+def _below_share(n: int, total: int) -> bool:
+    """`n / total` 是否低于门槛 —— 用 `Fraction` 精确比较，浮点会把恰好 1/3 判成低于。"""
+    return Fraction(n, total) < CATCHPHRASE_MIN_CHAPTER_SHARE
+
+
 # 按阶段字段的写法：逐字清单 → 原话规则；登记表单值 → 单值规则；其余 → 描述规则。
 def _phase_rule(path: str) -> str:
     if f"{path}[]" in VERBATIM_FIELDS:
@@ -2416,7 +2421,7 @@ class Distiller:
                 if not occ_chapters:
                     reasons[phrase] = f"含该词的章 0 / 出场章 {len(appearance)}"
                     continue
-                if len(occ_chapters) / len(appearance) < CATCHPHRASE_MIN_CHAPTER_SHARE:
+                if _below_share(len(occ_chapters), len(appearance)):
                     reasons[phrase] = (f"含该词的章 {len(occ_chapters)} / 出场章 "
                                        f"{len(appearance)} < {CATCHPHRASE_MIN_CHAPTER_SHARE}")
                     continue
@@ -2425,7 +2430,7 @@ class Distiller:
                     reasons[phrase] = f"模型判为「{subject}」说"
                     continue
                 subject_chapters = {chapter_at(pos) for pos in subject} - {None}
-                if len(subject_chapters) / len(appearance) < CATCHPHRASE_MIN_CHAPTER_SHARE:
+                if _below_share(len(subject_chapters), len(appearance)):
                     reasons[phrase] = (f"本人说的章 {len(subject_chapters)} / 出场章 "
                                        f"{len(appearance)} < {CATCHPHRASE_MIN_CHAPTER_SHARE}")
 

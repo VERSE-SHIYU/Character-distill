@@ -250,6 +250,15 @@ _CONTENT_FIVE_CHAPTERS = (
     "第5章\n"
     "云绮看着窗外。\n"
 )
+# 3 章都出场；「酒」只在第 1 章（恰好 1/3）。
+_CONTENT_THREE_CHAPTERS = (
+    "第1章\n"
+    "云绮道：“酒。”\n"
+    "第2章\n"
+    "云绮走了进来。\n"
+    "第3章\n"
+    "云绮笑了笑。\n"
+)
 
 
 class _VerifyLLM:
@@ -387,3 +396,14 @@ def test_c8_threshold_in_reason_follows_the_constant(caplog, monkeypatch):
     rows = _catchphrase_warnings(caplog)
     assert len(rows) == 1, rows
     assert "含该词的章 1 / 出场章 5 < 1/4" in rows[0]
+
+
+def test_c9_exact_third_is_kept_and_not_logged(caplog):
+    """C9：比值恰好 1/3 不算「低于」—— 保留，且没有删除日志。"""
+    llm = _VerifyLLM([[_NAME]])
+    with caplog.at_level(logging.WARNING):
+        out = _finalize(_card(["酒"]), _CONTENT_THREE_CHAPTERS, llm)
+
+    assert out.speaking_style.catchphrases == ["酒"]
+    assert llm.verify_calls == 1
+    assert not [m for m in _catchphrase_warnings(caplog) if "酒" in m]
