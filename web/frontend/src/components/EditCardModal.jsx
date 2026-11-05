@@ -1,5 +1,6 @@
-import { cloneElement, useEffect, useRef, useState } from 'react'
+import { cloneElement, Fragment, useEffect, useRef, useState } from 'react'
 import ErrorBox from './common/ErrorBox'
+import { PhaseExtras } from './common/ArcList'
 import ObjectListField from './common/ObjectListField'
 import { withRowKeys, cleanRows } from '../utils/objectRows'
 import { examplesByPhase, examplesToText, textToExamples } from '../utils/dialogueExamples'
@@ -250,15 +251,20 @@ function EditCardForm({
           </Field>
           <ObjectListField legend="角色弧线 · 阶段（按故事顺序）" rows={arcPhases} onChange={edit(setArcPhases)} columns={ARC_COLUMNS} maxCount={ARC_MAX} addLabel="+ 添加阶段" />
           {arcPhases.map((p, i) => (
-            <ObjectListField
-              key={p._key}
-              legend={`第 ${i + 1} 阶段${p.label ? `「${p.label}」` : ''}的做法（只在这一阶段成立）`}
-              rows={p.behaviors || []}
-              onChange={(rows) => edit(setArcPhases)((ps) => ps.map((q) => (q._key === p._key ? { ...q, behaviors: rows } : q)))}
-              columns={BEHAVIOR_COLUMNS}
-              maxCount={PHASE_BEHAVIOR_MAX}
-              addLabel="+ 添加阶段做法"
-            />
+            <Fragment key={p._key}>
+              <ObjectListField
+                legend={`第 ${i + 1} 阶段${p.label ? `「${p.label}」` : ''}的做法（只在这一阶段成立）`}
+                rows={p.behaviors || []}
+                onChange={(rows) => edit(setArcPhases)((ps) => ps.map((q) => (q._key === p._key ? { ...q, behaviors: rows } : q)))}
+                columns={BEHAVIOR_COLUMNS}
+                maxCount={PHASE_BEHAVIOR_MAX}
+                addLabel="+ 添加阶段做法"
+              />
+              <PhaseExtras
+                phase={{ ...p, overlay: { ...p.overlay, dialogue_examples: undefined } }}
+                title={`第 ${i + 1} 阶段${p.label ? `「${p.label}」` : ''}特有的内容（这里只能看）`}
+              />
+            </Fragment>
           ))}
           <ObjectListField legend="情境→行为（从头到尾都成立的做法）" rows={behaviors} onChange={edit(setBehaviors)} columns={BEHAVIOR_COLUMNS} maxCount={BEHAVIOR_MAX} addLabel="+ 添加一条" />
 
