@@ -14,6 +14,7 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Container, NamedTuple, Sequence, TypeVar
 import collections.abc as _cabc
@@ -257,7 +258,7 @@ CATCHPHRASE_RULE = (
     '确实没有就留空。'
 )
 # 「经常」的门槛：本人说过它的章数 ÷ 本人出场章数 ≥ 1/3。只此一处（Shiyu 11-04 定）。
-CATCHPHRASE_MIN_CHAPTER_SHARE = 1 / 3
+CATCHPHRASE_MIN_CHAPTER_SHARE = Fraction(1, 3)
 
 
 # 按阶段字段的写法：逐字清单 → 原话规则；登记表单值 → 单值规则；其余 → 描述规则。
@@ -2417,7 +2418,7 @@ class Distiller:
                     continue
                 if len(occ_chapters) / len(appearance) < CATCHPHRASE_MIN_CHAPTER_SHARE:
                     reasons[phrase] = (f"含该词的章 {len(occ_chapters)} / 出场章 "
-                                       f"{len(appearance)} < 1/3")
+                                       f"{len(appearance)} < {CATCHPHRASE_MIN_CHAPTER_SHARE}")
                     continue
                 subject = self._catchphrase_subject_lines(phrase, occs, others, options)
                 if isinstance(subject, str):
@@ -2426,7 +2427,7 @@ class Distiller:
                 subject_chapters = {chapter_at(pos) for pos in subject} - {None}
                 if len(subject_chapters) / len(appearance) < CATCHPHRASE_MIN_CHAPTER_SHARE:
                     reasons[phrase] = (f"本人说的章 {len(subject_chapters)} / 出场章 "
-                                       f"{len(appearance)} < 1/3")
+                                       f"{len(appearance)} < {CATCHPHRASE_MIN_CHAPTER_SHARE}")
 
         drop = set(reasons)
         for phrase, reason in reasons.items():

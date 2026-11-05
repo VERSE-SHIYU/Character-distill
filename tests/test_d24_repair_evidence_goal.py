@@ -11,7 +11,9 @@ from __future__ import annotations
 import copy
 import json
 import logging
+from fractions import Fraction
 
+import core.distiller as distiller_module
 from core.card_draft import card_from_draft
 from core.distiller import Distiller
 from core.retro_regions import NOT_DETECTED
@@ -235,6 +237,19 @@ _CONTENT_NO_CHAPTERS = (
     "云绮道：“酒。”\n"
     "云绮道：“不多。”\n"
 )
+# 5 章都出场；「酒」只在第 1 章（1/5）。
+_CONTENT_FIVE_CHAPTERS = (
+    "第1章\n"
+    "云绮道：“酒。”\n"
+    "第2章\n"
+    "云绮走了进来。\n"
+    "第3章\n"
+    "云绮笑了笑。\n"
+    "第4章\n"
+    "云绮离开了。\n"
+    "第5章\n"
+    "云绮看着窗外。\n"
+)
 
 
 class _VerifyLLM:
@@ -357,3 +372,18 @@ def test_c7_dropped_set_is_unchanged(caplog):
 
     assert out.speaking_style.catchphrases == ["酒"]
     assert set(["酒", "不多"]) - set(out.speaking_style.catchphrases) == {"不多"}
+
+
+def test_c8_threshold_in_reason_follows_the_constant(caplog, monkeypatch):
+    """C8：原因里的门槛跟着常量走 —— 改成 1/4，日志显示 < 1/4（不是 1/3）。"""
+    monkeypatch.setattr(distiller_module, "CATCHPHRASE_MIN_CHAPTER_SHARE",
+                        Fraction(1, 4))
+    llm = _VerifyLLM([])
+    with caplog.at_level(logging.WARNING):
+        out = _finalize(_card(["酒"]), _CONTENT_FIVE_CHAPTERS, llm)
+
+    assert out.speaking_style.catchphrases == []
+    assert llm.verify_calls == 0
+    rows = _catchphrase_warnings(caplog)
+    assert len(rows) == 1, rows
+    assert "含该词的章 1 / 出场章 5 < 1/4" in rows[0]
