@@ -2,7 +2,7 @@
 """D24 目标检查：阶段 1 不许为空 —— 正文开始前的经历只算背景；按章号定起点时，
 空阶段 1 让弧线组重做一次，仍为空则记 WARNING 照常往下走。
 
-G1–G7 先以 ``xfail(strict=True)`` 落红；C1–C2 是对照（改前就绿）。
+G1–G7 是目标检查；C1–C2 是对照（改前就绿）。
 替身照 ``test_phase_start_chapter_goal.py`` 的 ``_group_llm`` / ``_run`` 写：
 同一入口 ``distill_incremental_stream``、同一套组回包、同一个关系替身。差别只有：
 G6 每次调用按顺序取下一份弧线（要测重做）；``calls`` 记成列表（要数 G6 次数）。
@@ -153,7 +153,6 @@ def _retry_warnings(caplog):
 
 # ── G1 / G2：判定函数 ────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True)
 def test_g1_empty_phase1_is_detected_on_real_starts():
     from core.phase_anchoring import phase1_has_no_chapter
 
@@ -161,7 +160,6 @@ def test_g1_empty_phase1_is_detected_on_real_starts():
     assert phase1_has_no_chapter(_phases(0, 5, 9), 5) is True          # 首章晚出场
 
 
-@pytest.mark.xfail(strict=True)
 def test_g2_non_empty_or_undecidable_is_not_flagged():
     from core.phase_anchoring import phase1_has_no_chapter
 
@@ -177,7 +175,6 @@ def test_g2_non_empty_or_undecidable_is_not_flagged():
 
 # ── G3：摘录首章 ────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True)
 def test_g3_first_chapter_is_the_first_marker_in_the_excerpt():
     from core.phase_excerpt import build_excerpt, first_chapter
 
@@ -188,7 +185,6 @@ def test_g3_first_chapter_is_the_first_marker_in_the_excerpt():
 
 # ── G4 / G5：空阶段 1 让弧线组重做一次 ──────────────────────────────────
 
-@pytest.mark.xfail(strict=True)
 def test_g4_empty_phase1_retries_the_arc_group_once(caplog):
     with caplog.at_level(logging.WARNING, logger="core.distiller"):
         calls, draft = _run(_SRC, [_ARC_EMPTY, _ARC_OK])
@@ -216,7 +212,6 @@ def test_g4_empty_phase1_retries_the_arc_group_once(caplog):
     assert starts == [0, 3, 5], starts
 
 
-@pytest.mark.xfail(strict=True)
 def test_g5_still_empty_after_retry_warns_and_continues(caplog):
     with caplog.at_level(logging.WARNING, logger="core.distiller"):
         calls, draft = _run(_SRC, [_ARC_EMPTY, _ARC_EMPTY])
@@ -230,7 +225,6 @@ def test_g5_still_empty_after_retry_warns_and_continues(caplog):
 
 # ── G6 / G7：提示词与结构 ───────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True)
 def test_g6_arc_dimension_puts_phase1_inside_the_narrative():
     from core.distiller import _PRE_STORY
 
@@ -242,7 +236,6 @@ def test_g6_arc_dimension_puts_phase1_inside_the_narrative():
         assert _PRE_STORY in text
 
 
-@pytest.mark.xfail(strict=True)
 def test_g7_draft_schema_uses_narrative_order_wording():
     blob = json.dumps(draft_schema("G6"), ensure_ascii=False)
     assert "按故事顺序排列" not in blob

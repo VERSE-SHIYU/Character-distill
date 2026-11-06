@@ -164,7 +164,7 @@ _START_SCHEMA: dict[phase_anchoring.StartBy, tuple[str, dict[str, Any] | None]] 
 
 
 class DraftArc(ArcAxis):
-    """角色弧线：一条变化轴 + 按故事顺序排列的阶段；做法不写在阶段下，写在 situation_behaviors。"""
+    """角色弧线：一条变化轴 + 按正文叙述顺序排列的阶段；做法不写在阶段下，写在 situation_behaviors。"""
     phases: list[DraftPhase] = []
 
 

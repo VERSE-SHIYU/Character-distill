@@ -263,7 +263,7 @@ def _positions_usable(starts: list[int | None], fingerprint: str) -> bool:
 
 
 class CharacterArc(ArcAxis):
-    """角色弧线：一条变化轴 + 按故事顺序排列的阶段（「变的部分」）。"""
+    """角色弧线：一条变化轴 + 按正文叙述顺序排列的阶段（「变的部分」）。"""
     phases: list[ArcPhase] = []
     source_fingerprint: str = ""   # 阶段起点所依据的正文指纹（§3.4 坐标的前提）
     unlocated: UnlocatedItems = UnlocatedItems()   # 阶段核对不上的状态类条目（不进 prompt）
