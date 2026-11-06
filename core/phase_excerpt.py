@@ -13,12 +13,17 @@ spec：`docs/specs/phase-start-chapter.md` §2 J5、J11。代码给内容编号�
 """
 from __future__ import annotations
 
+import re
 from typing import AbstractSet, Sequence
 
 from core.chapters import Chapters
 
 WINDOW = 6           # 名字所在段前后各带几段（探针第一至六版同）
 GAP = "……"           # 章内略去处（探针第六版的输入用它；有章节的书不另换未验过的标记）
+
+# 章标记的**唯一写法**：建摘录与读首章共用，改这里两处一起变。
+_CHAPTER_MARKER = "【第{chapter}章】"
+_CHAPTER_MARKER_RE = re.compile(_CHAPTER_MARKER.replace("{chapter}", r"(\d+)"))
 
 
 def build_excerpt(source_text: str, terms: Sequence[str],
@@ -37,7 +42,7 @@ def build_excerpt(source_text: str, terms: Sequence[str],
                 keep.update(range(max(0, i - WINDOW), min(len(paras), i + WINDOW + 1)))
         if not keep:
             continue
-        lines, prev = [f"【第{chapter}章】"], None
+        lines, prev = [_CHAPTER_MARKER.format(chapter=chapter)], None
         for i in sorted(keep):
             if prev is not None and i > prev + 1:
                 lines.append(GAP)
@@ -45,6 +50,12 @@ def build_excerpt(source_text: str, terms: Sequence[str],
             prev = i
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) or None
+
+
+def first_chapter(excerpt: str) -> int | None:
+    """摘录里第一个章标记的章号 = 此人在正文（非回忆区）首次出场的章；没有标记返回 None。"""
+    match = _CHAPTER_MARKER_RE.search(excerpt)
+    return int(match.group(1)) if match else None
 
 
 def excerpt_prefix(name: str, excerpt: str) -> str:

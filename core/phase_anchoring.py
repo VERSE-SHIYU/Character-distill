@@ -96,6 +96,16 @@ def _chapter_of(phase) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def phase1_has_no_chapter(phases, first_chapter: int | None) -> bool:
+    """阶段 1 在正文里一章都没有：阶段 2 的起始章 ≤ 此人在摘录里的首章（阶段 1 从全书开头
+    算起，其覆盖到阶段 2 之前；首章之前此人都没出场）。不判（返回 False）：`first_chapter`
+    为 None（非摘录输入 / 按锚点）、阶段少于 2 个、阶段 2 不是章号写法。"""
+    if first_chapter is None or len(phases) < 2:
+        return False
+    second = _chapter_of(phases[1])
+    return second is not None and second <= first_chapter
+
+
 def start_of(phase) -> tuple[StartBy, str]:
     """模型给的起点：``(写法, 给的什么)``，章号写成「第N章」。**「按章号还是按锚点」只在这里分**：
     带章号就按章号，否则按锚点（旧草稿、没有章节的书）。定位、文案、下游的阶段列表都从这一处取。"""

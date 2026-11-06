@@ -69,7 +69,7 @@ from core.roster_aggregate import (
 from core.card_draft import CardDraft, card_from_draft, draft_schema, quote_slots
 from core.card_layers import REGISTRY
 from core import phase_anchoring, quote_repair, retro_regions
-from core.phase_excerpt import build_excerpt, excerpt_prefix
+from core.phase_excerpt import build_excerpt, excerpt_prefix, first_chapter
 from core.retro_regions import NOT_DETECTED, RetroRegions
 from core.relationship_batch import (
     REL_BATCH_SIZE,
@@ -319,12 +319,23 @@ _START_WORDING: dict[phase_anchoring.StartBy, _StartWording] = {
 # 随起点写法变的提示词条目：取值是 ``start_by → 文本`` 的函数（其余条目是定串）。
 _ByStart = Callable[[phase_anchoring.StartBy], str]
 
+# 「正文之前」的定义：维度 L、草稿结构说明、重做提示都用这一句。**只此一处**。
+_PRE_STORY = "正文开始之前就已发生的经历（穿越或重生之前、前世、首次出场之前）"
+
+# 阶段 1 为空时的重做提示（只对按章号的书；`_format_groups` 里拼在用户句后）。
+_PHASE1_EMPTY_RETRY = (
+    "上一次给出的阶段 2 从第{second}章开始，而此人在摘录里第一次出现就是第{first}章，"
+    "阶段 1 在正文里一章都没有。" + _PRE_STORY + "不单列为阶段，"
+    "阶段 1 必须从此人在正文里首次出场开始。请按模板重新输出全部字段。"
+)
+
 
 def _arc_dimension(start_by: phase_anchoring.StartBy) -> str:
     return (
-        'L. 角色弧线：此人从故事开始到结束，心态或立场发生了怎样的变化？无明显变化则 axis 留空、phases 输出空数组 []。\n'
+        'L. 角色弧线：此人从在正文里首次出场到结束，心态或立场发生了怎样的变化？无明显变化则 axis 留空、phases 输出空数组 []。\n'
         '   - axis：一句「从…到…」（≤30字），两端都写心态或立场，不写情节。\n'
-        '   - phases：按故事顺序排列。只在心态或立场确实变了的地方分段，通常2-3个、最多4个；同一种心态下的不同场景不算新阶段。每个阶段都必须是此人还在场、还能与人交谈的时期，死亡、失踪、离场不单列为阶段。\n'
+        '   - phases：按正文的叙述顺序排列，阶段 1 从此人在正文里首次出场开始。只在心态或立场确实变了的地方分段，通常2-3个、最多4个；同一种心态下的不同场景不算新阶段。每个阶段都必须是此人还在场、还能与人交谈的时期，死亡、失踪、离场不单列为阶段；'
+        + _PRE_STORY + '也不单列为阶段，它们属于背景。\n'
         '   - label：这一阶段的心态或立场（≤8字，如「隐忍不发」），不要写事件或结局（如「被逐出师门」「死去」）。\n'
         '   - state：一句话。句首用书里的具体事件或时段点明这是什么时候（如「被逐出师门之后」），不要写「前期」「中期」「后期」；再写此时的心态与行事方式。\n'
         + _START_WORDING[start_by].rule +
@@ -620,10 +631,12 @@ def _phase_list_note(phases: list[dict]) -> str:
 
 
 class ArcInput(NamedTuple):
-    """弧线组（G6）的输入：前缀、用户句、起点写法。其余组都用整书（或分析档案）+ 锚点写法。"""
+    """弧线组（G6）的输入：前缀、用户句、起点写法、摘录首章。其余组都用整书（或分析档案）+ 锚点写法。
+    `first_chapter`：摘录里第一个章标记的章号（= 此人在正文里首次出场的章）；非摘录输入为 None。"""
     system_prefix: str
     user_message: str
     start_by: phase_anchoring.StartBy = phase_anchoring.StartBy.ANCHOR
+    first_chapter: int | None = None
 
 
 def arc_input_for(text: str, character_name: str, aliases: Sequence[str],
@@ -639,7 +652,8 @@ def arc_input_for(text: str, character_name: str, aliases: Sequence[str],
         return None
     return ArcInput(excerpt_prefix(character_name, excerpt),
                     f"请基于以上摘录为「{character_name}」输出模板中的字段",
-                    phase_anchoring.StartBy.CHAPTER)
+                    phase_anchoring.StartBy.CHAPTER,
+                    first_chapter(excerpt))
 
 
 class DistillError(ValueError):
@@ -2982,8 +2996,9 @@ class Distiller:
             if system_prefix and isinstance(account_id, str) else None
         )
 
-        def _format_one_group(group: str, phase_list_note: str = "") -> None:
-            inputs = arc if group == _PHASE_SOURCE_GROUP else shared
+        def _format_one_group(group: str, phase_list_note: str = "",
+                              inputs: ArcInput | None = None) -> None:
+            inputs = inputs or (arc if group == _PHASE_SOURCE_GROUP else shared)
             staggering = turn is not None and group == _CACHE_WARM_GROUP
             waited = 0.0
             try:
@@ -3044,6 +3059,32 @@ class Distiller:
         for group in first:
             C.ctx_thread(_format_one_group, args=(group,), name=f"format-{group}").start()
         yield from _collect(first)
+
+        # 按章号的弧线若阶段 1 为空（阶段 2 不比此人首次出场更晚），带说明让弧线组重做一次；
+        # 仍为空就记 WARNING 照常往下走。其余组都还没发，重做只影响这一组。
+        arc_phases = _arc_phases(group_data[_PHASE_SOURCE_GROUP])
+        if phase_anchoring.phase1_has_no_chapter(arc_phases, arc.first_chapter):
+            second = phase_anchoring._chapter_of(arc_phases[1])
+            logger.warning(
+                "[distill] %s 的阶段 1 在正文里一章都没有：阶段 2 从第%s章开始，"
+                "摘录首章第%s章；第一次结果 %s",
+                character_name, second, arc.first_chapter,
+                [(p.get("label"), p.get("start_chapter")) for p in arc_phases])
+            group_data.pop(_PHASE_SOURCE_GROUP, None)
+            C.ctx_thread(
+                _format_one_group, args=(_PHASE_SOURCE_GROUP,),
+                kwargs={"inputs": arc._replace(
+                    user_message=arc.user_message + "\n\n" + _PHASE1_EMPTY_RETRY.format(
+                        second=second, first=arc.first_chapter))},
+                name=f"format-{_PHASE_SOURCE_GROUP}-retry").start()
+            yield from _collect((_PHASE_SOURCE_GROUP,))
+            retried = _arc_phases(group_data[_PHASE_SOURCE_GROUP])
+            if phase_anchoring.phase1_has_no_chapter(retried, arc.first_chapter):
+                logger.warning(
+                    "[distill] %s 的阶段 1 在正文里一章都没有：重做后仍为空，照常往下走"
+                    "（阶段 2 从第%s章开始，摘录首章第%s章）",
+                    character_name, phase_anchoring._chapter_of(retried[1]),
+                    arc.first_chapter)
 
         # 首批到手 → 其余组一起发；依赖组附上弧线组定出的阶段列表
         phase_list_note = _phase_list_note(_arc_phases(group_data[_PHASE_SOURCE_GROUP]))
