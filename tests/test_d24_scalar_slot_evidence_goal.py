@@ -72,7 +72,6 @@ def _loose_value(card, path):
 
 
 # ── E1 挪进来的落选 ────────────────────────────────────────────────────
-@_XFAIL
 def test_e1_rehung_loser_goes_to_unlocated(caplog):
     """B 标阶段 3、原文在阶段 2：A（原标本阶段）赢，B（改挂进来）进未定位区。"""
     with caplog.at_level(logging.WARNING):
@@ -107,7 +106,6 @@ def test_e3_same_tier_keeps_the_first():
     assert _phase_value(card, "decision_style", 1) == "A"
 
 
-@_XFAIL
 def test_e3b_same_tier_loser_goes_to_unlocated():
     card = _card([_v("A", 2, PA._Q2), _v("B", 2, PA._Q2)])
     assert _loose_value(card, "decision_style") == ["B"]
@@ -129,7 +127,6 @@ def test_e4_loser_that_won_another_phase_is_not_unlocated():
             _loose_value(card, "decision_style")) == ("B", "A", None)
 
 
-@_XFAIL
 def test_e4b_loser_that_won_elsewhere_is_named_in_log(caplog):
     with caplog.at_level(logging.WARNING):
         _won_elsewhere_card()
@@ -146,7 +143,6 @@ def test_e5_experience_scalar_loser_is_not_unlocated():
             _loose_value(card, "cognitive.knowledge_scope")) == ("A", None)
 
 
-@_XFAIL
 def test_e5b_experience_scalar_loser_is_dropped_with_reason(caplog):
     with caplog.at_level(logging.WARNING):
         _card([_v("A", 2, PA._Q2), _v("B", 2, PA._Q2)],
@@ -163,7 +159,6 @@ def test_e6_card_without_phases_drops_the_loser():
 
 
 # ── E7 整卡跳过 ────────────────────────────────────────────────────────
-@_XFAIL
 def test_e7_skipped_card_loser_goes_to_unlocated():
     card = _card([_v("A", 3, PA._Q1), _v("B", 3, PA._Q1)],
                  anchors={2: "锚点查无此句", 3: PA._Q3})

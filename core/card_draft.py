@@ -347,6 +347,7 @@ def dispatch(final_phases: list[list[int]], count: int, *,
              zero_only: list[int] = (),
              describe: Callable[[int, int], str] | None = None,
              tagged: Callable[[int], set[int]] | None = None,
+             present: Callable[[int], set[int]] | None = None,
              ) -> tuple[list[int], list[list[int]], list[int]]:
     """按最终阶段把条目分发到顶层、各阶段与未定位区 —— 分发只此一处（S6 / B1）。
 
@@ -363,7 +364,11 @@ def dispatch(final_phases: list[list[int]], count: int, *,
     阶段 1，故事前的经历在原文里多半是后文回忆，位置都定不了时间）。
 
     `kind` 决定「一个格子放几条」（登记表说了算）：``list`` → 全放；``scalar`` → 顶层与
-    每个阶段都只留第一条，其余丢弃 + warning（单值字段一个格子存不下两条）。
+    每个阶段都只留一条。单值撞车的去向也只在这里：已在别的格子赢下 → 不处理；状态类且有阶段
+    → 序号进第三项（未定位区）；其余（无阶段的卡、经历类）→ 丢弃 + warning。
+
+    `present(i)`（可选，只对 ``scalar`` 有意义）给出第 i 条有现世位置证据的阶段集合，参与
+    `slot_winner` 的三档判定；不给则沿用两档（关系态度不传，行为不变）。
 
     返回 `(顶层序号, by_phase, 未定位序号)`，`by_phase[p-1]` 是挂到阶段 p 的序号，
     **`by_phase[` 只在这里出现**。
@@ -390,40 +395,68 @@ def dispatch(final_phases: list[list[int]], count: int, *,
         if tagged is None:
             raise ValueError(f"单值字段 {label or '(未命名)'} 分发时必须给 tagged（模型原标），"
                              "否则撞车会静默退回「排前面优先」")
-        top = _cap_slot(top, label, "顶层", 0, describe, tagged)
-        by_phase = [_cap_slot(slot, label, f"阶段 {p}", p, describe, tagged)
-                    for p, slot in enumerate(by_phase, 1)]
+        caps = [(0, "顶层", top)] + [(p, f"阶段 {p}", slot)
+                                     for p, slot in enumerate(by_phase, 1)]
+        capped = [_cap_slot(slot, phase, tagged, present) for phase, _, slot in caps]
+        won_in: dict[int, list[int]] = {}        # 条目 → 赢下的格子（0 = 顶层，阶段升序）
+        for (phase, _, _), (winner, _) in zip(caps, capped):
+            if winner is not None:
+                won_in.setdefault(winner, []).append(phase)
+        top, by_phase = [], [[] for _ in range(count)]
+        for (phase, where, _), (winner, losers) in zip(caps, capped):
+            if winner is not None:
+                (top if phase == 0 else by_phase[phase - 1]).append(winner)
+            for i in losers:
+                if i in won_in:                  # 已在别的格子保留 → 不再处理
+                    places = won_in[i]
+                    route = ("已在顶层保留" if places == [0]
+                             else "已在" + "、".join(f"阶段 {r}" for r in places) + " 保留")
+                elif layer == "state" and count > 0:
+                    loose.append(i)              # 状态类有阶段的卡 → 进未定位区（备份）
+                    route = "进未定位区"
+                else:
+                    route = "丢弃"
+                if describe is None:
+                    logger.warning("[card_draft] %s 的%s有多条取值，保留第一条", label, where)
+                elif route == "丢弃":
+                    reason = "无阶段的卡" if count == 0 else "经历类不进未定位区"
+                    logger.warning("[card_draft] %s 的%s 有多条取值，保留%s，丢弃%s（%s）",
+                                   label, where, describe(winner, phase), describe(i, phase), reason)
+                else:
+                    logger.warning("[card_draft] %s 的%s 有多条取值，保留%s，%s%s",
+                                   label, where, describe(winner, phase), describe(i, phase), route)
     return top, by_phase, loose
 
 
 def slot_winner(cands: list[int], phase: int,
-                tagged: Callable[[int], set[int]]) -> int:
-    """「一格留谁」只在这里判定：原标此阶段（顶层为 0）的那条优先，没有则取第一条。
+                tagged: Callable[[int], set[int]],
+                present: Callable[[int], set[int]] | None = None) -> int:
+    """「一格留谁」只在这里判定。
 
-    `tagged(i)` 返回第 i 条**模型原标**的阶段集合；不用位置核对结果（整卡跳过时它为空）。
+    不给 `present`（关系态度）：原标此阶段（顶层为 0）的那条优先，没有则取第一条。
+    给了 `present`（单值字段）：三档，高档胜，同档取行序第一条 ——
+    ① 本阶段有现世位置证据；② 原标本阶段、没有现世位置证据；③ 从别的阶段挪进来的。
+
+    `tagged(i)` 返回第 i 条**模型原标**的阶段集合；`present(i)` 返回它有现世位置证据的阶段集合。
     """
-    return next((i for i in cands if phase in tagged(i)), cands[0])
+    if present is None:
+        return next((i for i in cands if phase in tagged(i)), cands[0])
+
+    def tier(i: int) -> int:
+        if phase not in tagged(i):
+            return 2
+        return 0 if phase in present(i) else 1
+
+    return min(cands, key=tier)                 # 同档取第一条：`min` 保留最先出现的最小值
 
 
-def _cap_slot(slot: list[int], label: str, where: str, phase: int,
-              describe: Callable[[int, int], str] | None,
-              tagged: Callable[[int], set[int]]) -> list[int]:
-    """单值字段的一个格子只留一条，其余丢弃 + warning（顶层格子同此规则）。
-
-    `describe` 为 None 时文案与旧版逐字一致；给了就写明保留的是哪条、丢弃的是哪条及其来源。
-    """
+def _cap_slot(slot: list[int], phase: int, tagged: Callable[[int], set[int]],
+              present: Callable[[int], set[int]] | None) -> tuple[int | None, list[int]]:
+    """单值字段的一个格子：返回 ``(赢家, 落选者)``，不在这里丢、也不打日志。"""
     if not slot:
-        return []
-    winner = slot_winner(slot, phase, tagged)
-    for i in slot:
-        if i == winner:
-            continue
-        if describe is None:
-            logger.warning("[card_draft] %s 的%s有多条取值，保留第一条", label, where)
-        else:
-            logger.warning("[card_draft] %s 的%s 有多条取值，保留%s，丢弃%s",
-                           label, where, describe(winner, phase), describe(i, phase))
-    return [winner]
+        return None, []
+    winner = slot_winner(slot, phase, tagged, present)
+    return winner, [i for i in slot if i != winner]
 
 
 def _convert_relationships(rels, anchors, count: int, name: str) -> tuple[list[dict], list[dict], int, int]:

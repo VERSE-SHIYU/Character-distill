@@ -106,9 +106,10 @@ def test_g4_originally_tagged_phase_wins_collision(caplog):
     with caplog.at_level(logging.WARNING):
         card = card_from_draft(_collision_card(), PA._SRC, retro=NOT_DETECTED)
     assert card.character_arc.phases[1].overlay.get("decision_style") == "A"
+    assert card.character_arc.unlocated.overlay.get("decision_style") == ["B"]
     assert [r.getMessage() for r in caplog.records if "有多条取值" in r.getMessage()] == [
         "[card_draft] decision_style 的阶段 2 有多条取值，"
-        "保留「A」（原标此阶段），丢弃「B」（由阶段 1 改挂进来）"]
+        "保留「A」（原标此阶段），「B」（由阶段 1 改挂进来）进未定位区"]
 
 
 def test_g5_two_rows_tagged_same_phase_keep_the_first(caplog):
@@ -120,9 +121,10 @@ def test_g5_two_rows_tagged_same_phase_keep_the_first(caplog):
     with caplog.at_level(logging.WARNING):
         card = card_from_draft(draft, PA._SRC, retro=NOT_DETECTED)
     assert card.character_arc.phases[1].overlay.get("decision_style") == "B"
+    assert card.character_arc.unlocated.overlay.get("decision_style") == ["A"]
     assert [r.getMessage() for r in caplog.records if "有多条取值" in r.getMessage()] == [
         "[card_draft] decision_style 的阶段 2 有多条取值，"
-        "保留「B」（原标此阶段），丢弃「A」（原标此阶段）"]
+        "保留「B」（原标此阶段），「A」（原标此阶段）进未定位区"]
 
 
 def test_g8_top_level_prefers_originally_tagged_zero():

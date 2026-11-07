@@ -292,7 +292,7 @@ def test_g9_scalar_collision_names_kept_and_dropped(caplog):
     assert card.character_arc.phases[1].overlay.get("decision_style") == "A"
     assert [m for m in msgs if "有多条取值" in m] == [
         "[card_draft] decision_style 的阶段 2 有多条取值，"
-        "保留「A」（原标此阶段），丢弃「B」（由阶段 1 改挂进来）"]
+        "保留「A」（原标此阶段），「B」（由阶段 1 改挂进来）进未定位区"]
 
     both = {
         "name": "角色",
@@ -307,4 +307,4 @@ def test_g9_scalar_collision_names_kept_and_dropped(caplog):
         card_from_draft(both, PA._SRC, retro=NOT_DETECTED)
     assert [r.getMessage() for r in caplog.records if "有多条取值" in r.getMessage()] == [
         "[card_draft] decision_style 的阶段 2 有多条取值，"
-        "保留「B」（原标此阶段），丢弃「A」（原标此阶段）"]
+        "保留「B」（原标此阶段），「A」（原标此阶段）进未定位区"]
