@@ -51,8 +51,10 @@ class Verification(NamedTuple):
     —— 关系态度按它逐条分发（每个阶段的态度文字不同，不能整条挪）。`unlocated` 是有合法标注、
     却没有任何一段摘录能定位的条目序号（由 `card_from_draft` 按类别处置）。`rehung_items` 是
     其中发生改挂的条目序号，与 `rehung` 同源，供只读消费方逐条取用。`starts` 是各阶段
-    起点在规范化原文里的位置（整卡跳过 / 无阶段时 None）。计数口径见 spec §3 —— 由
-    `card_from_draft` 打监测行（本模块不打，避免日志出处分家）。
+    起点在规范化原文里的位置（整卡跳过 / 无阶段时 None）。`present_phases[i]` 是第 i 条条目
+    有现世位置证据的阶段集合（摘录在回忆区外、且落进该阶段）；整卡跳过 / 无阶段 / 只在回忆区时
+    为空集。只记事实，不判「留谁」。计数口径见 spec §3 —— 由 `card_from_draft` 打监测行
+    （本模块不打，避免日志出处分家）。
     """
     phases: list[list[int]]
     phase_quotes: list[dict[int, str]]
@@ -67,6 +69,7 @@ class Verification(NamedTuple):
     rehung_items: list[int]
     unlocated: list[int]
     starts: list[int] | None
+    present_phases: list[set[int]]
 
 
 def _field_of(phase, name: str) -> str:
@@ -404,7 +407,8 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
     n = anchors.n
     if n == 0:                                   # 规则 5：无阶段的卡不做位置检查
         return Verification([[] for _ in items], [{} for _ in items], [{} for _ in items],
-                            False, 0, 0, 0, 0, 0, 0, [], [], None)
+                            False, 0, 0, 0, 0, 0, 0, [], [], None,
+                            [set() for _ in items])
 
     source_norm = anchors.source_norm
     ranges, reason = anchors.ranges, anchors.reason
@@ -414,6 +418,7 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
     final: list[list[int]] = []
     phase_quotes: list[dict[int, str]] = []
     tag_targets: list[dict[int, list[int]]] = []
+    present_phases: list[set[int]] = []
     unlocated: list[int] = []
     rehung_items: list[int] = []
     pending_rehang: list[tuple[str, str, int, list[int], int]] = []
@@ -428,18 +433,21 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
             final.append([])
             phase_quotes.append({})
             tag_targets.append({})
+            present_phases.append(set())
             continue
         if skipped:                              # 规则 2：保留标注，摘录取首段
             tags += len(valid)                   # 分母照常计（监测比例要用）
             final.append(list(valid))
             phase_quotes.append(_first_quotes(by_phase, valid))
             tag_targets.append({p: [p] for p in valid})
+            present_phases.append(set())
             continue
 
         targets: dict[int, list[int]] = {}
         own: dict[int, str] = {}                 # 落进所标阶段的摘录（优先作该阶段的 source_quote）
         moved: dict[int, str] = {}               # 改挂过来的摘录
         move_pos: dict[int, int] = {}            # 每个标注第一处落点的规范化位置（打章号用）
+        present: set[int] = set()                # 本条目有现世位置证据的阶段（回忆区外）
         item_moved = False                       # 本条是否有标注真的被改挂（按条目计 rehung）
         for p in valid:                          # 计数单位是标注（条目, 阶段），不是摘录
             tags += 1
@@ -459,6 +467,8 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
                         reasons.append(f"出现 {len(loc)} 次：{quote}")
                         continue
                 landed = sorted({phase_at(ranges, x) for x in loc})
+                if p in landed:
+                    present.add(p)               # 本阶段有现世位置证据（超限展开的情况也算）
                 # 超限摘录仍作证据时（frequent_counts）：RELOCATE 不再「只认所标阶段」，挂全部落点
                 spread = len(loc) > MAX_OCCURRENCES and placement is Placement.RELOCATE
                 # 只在回忆区里（`loc` 已空）：查得到、却没有位置证据 → 保留模型标注；
@@ -486,6 +496,7 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
 
         landed_all = sorted({t for ts in targets.values() for t in ts})
         tag_targets.append(targets)
+        present_phases.append(present)
         final.append(landed_all)
         phase_quotes.append({t: own.get(t) or moved[t] for t in landed_all})
         if not landed_all:                       # 没有任何位置证据 → 交调用方按类别处置
@@ -504,4 +515,5 @@ def verify(items, valid_rows: list[list[int]], anchors: PhaseAnchors, *,
                            kind_, label_, p, landed, where)
 
     return Verification(final, phase_quotes, tag_targets, skipped, tags, dropped, ambiguous,
-                        unverified, too_frequent, rehung, rehung_items, unlocated, starts)
+                        unverified, too_frequent, rehung, rehung_items, unlocated, starts,
+                        present_phases)

@@ -181,7 +181,6 @@ def test_e8_monitoring_counts_rehung_unlocated_to_last(caplog):
 
 
 # ── E9 事实层 ──────────────────────────────────────────────────────────
-@_XFAIL
 def test_e9_present_phases_records_only_present_day_evidence():
     anchors = phase_anchoring.build_anchors(
         PA._phases(3, _YI_ANCHORS), _YI_SRC, retro=_YI_RETRO.spans(_YI_SRC))
